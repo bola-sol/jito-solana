@@ -1,6 +1,7 @@
-import { count, percent, shortKey, sol, solCompact, duration } from "../format";
+import { count, percent, sol, solCompact, duration } from "../format";
 import type { StakeSummary, ValidatorCounts } from "../types";
 import { useStore } from "../useStore";
+import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 
 export function Header() {
@@ -30,9 +31,11 @@ export function Header() {
           <Logo url={icon} size={20} />
           {name}
         </div>
-        <div className="header-key" title={identity ?? undefined}>
-          {shortKey(identity, 10, 8)}
-        </div>
+        {identity ? (
+          <Copyable text={identity} className="header-key" />
+        ) : (
+          <div className="header-key">—</div>
+        )}
       </div>
 
       <div className="header-stats">

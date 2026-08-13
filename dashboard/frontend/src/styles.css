@@ -123,6 +123,37 @@ body {
   font-size: 11px;
 }
 
+/* Sized to its text so a full address shows when the header has room, and
+   clipped rather than wrapping when it does not. */
+.copyable {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.copyable:hover {
+  color: var(--text);
+}
+
+.copyable:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.copyable.copied {
+  color: var(--good);
+}
+
 .header-stats {
   display: flex;
   gap: 24px;
@@ -234,11 +265,16 @@ body {
   gap: 14px;
 }
 
+/* Reserved at two lines so a label that wraps does not push its value below
+   the one beside it. Most cards already carry a wrapping label per row, so
+   this costs little height and keeps values on a shared baseline. */
 .stat-label {
   color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  line-height: 1.3;
+  min-height: 2.6em;
 }
 
 .stat-value {

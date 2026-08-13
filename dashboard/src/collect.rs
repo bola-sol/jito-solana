@@ -219,6 +219,9 @@ pub struct Collector {
     leaders_resolved_to: Slot,
     /// Highest slot already swept for validator-info writes.
     info_scanned_to: Slot,
+    /// Tip at the moment the collector started. Slots below it were never
+    /// watched, so they are neither tracked nor counted as skipped.
+    first_observed_slot: Option<Slot>,
     last_counters: Option<TxnCounters>,
     slot_duration_nanos: f64,
     last_completed_slot: Slot,
@@ -248,6 +251,7 @@ impl Collector {
             info_cache,
             leaders_resolved_to: 0,
             info_scanned_to: 0,
+            first_observed_slot: None,
             last_counters: None,
             slot_duration_nanos: DEFAULT_MS_PER_SLOT as f64 * 1_000_000.0,
             last_completed_slot: 0,
@@ -404,9 +408,19 @@ impl Collector {
     /// view so the strip and sidebar can show who is producing each one.
     fn collect_leaders(&mut self, root_bank: &Bank, highest_slot: Slot) {
         let me = self.ctx.identity();
-        let from = self
-            .leaders_resolved_to
-            .max(highest_slot.saturating_sub(self.config.slot_history as u64));
+        // On the first tick the ring starts at the current tip. Filling it with
+        // the schedule for earlier slots would add slots this validator never
+        // watched, and every one of them would then be reported as skipped
+        // because no bank for them will ever appear.
+        let from = match self.first_observed_slot {
+            None => {
+                self.first_observed_slot = Some(highest_slot);
+                highest_slot
+            }
+            Some(_) => self
+                .leaders_resolved_to
+                .max(highest_slot.saturating_sub(self.config.slot_history as u64)),
+        };
 
         for slot in from..=highest_slot {
             let Some(leader) = self

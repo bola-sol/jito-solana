@@ -69,25 +69,13 @@ impl ValidatorInfoCache {
         true
     }
 
-    /// One-time full scan. This is expensive, so call it from a background
-    /// thread.
-    pub fn load_all(&mut self, bank: &Bank) -> usize {
-        let accounts = match bank.get_program_accounts(&solana_sdk_ids::config::id()) {
-            Ok(accounts) => accounts,
-            Err(err) => {
-                log::warn!("dashboard: could not scan validator info accounts: {err}");
-                return 0;
-            }
-        };
-        let mut loaded = 0;
-        for (_pubkey, account) in accounts {
-            if let Some((identity, info)) = parse(account.data())
-                && self.insert(identity, info)
-            {
-                loaded += 1;
-            }
-        }
-        loaded
+    /// Merges the result of [`scan_all`], returning how many entries changed.
+    /// Kept separate from the scan so the lock is only held for the merge.
+    pub fn merge(&mut self, entries: Vec<(Pubkey, ValidatorInfo)>) -> usize {
+        entries
+            .into_iter()
+            .filter(|(identity, info)| self.insert(*identity, info.clone()))
+            .count()
     }
 
     /// Cheap incremental refresh from the config accounts written in `bank`'s
@@ -100,6 +88,25 @@ impl ValidatorInfoCache {
             .map(|(identity, _)| identity)
             .collect()
     }
+}
+
+/// Walks every config account and returns the validator info it finds.
+///
+/// This is a full accounts-database scan and takes minutes on a real cluster.
+/// It must run on a background thread, and no lock may be held across it, or
+/// anything else wanting that lock stalls for the duration.
+pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
+    let accounts = match bank.get_program_accounts(&solana_sdk_ids::config::id()) {
+        Ok(accounts) => accounts,
+        Err(err) => {
+            log::warn!("dashboard: could not scan validator info accounts: {err}");
+            return Vec::new();
+        }
+    };
+    accounts
+        .into_iter()
+        .filter_map(|(_pubkey, account)| parse(account.data()))
+        .collect()
 }
 
 /// Extracts the validator identity and its advertised info from a config

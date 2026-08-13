@@ -63,8 +63,9 @@ impl DashboardService {
         };
 
         // The one-time scan of validator info accounts walks the whole accounts
-        // database. It runs off the collector's timer and fills the cache
-        // whenever it happens to finish.
+        // database and takes minutes. It runs off the collector's timer, and
+        // the cache lock is taken only to merge the result, never across the
+        // scan itself, or the collector would block behind it.
         let info_loader = {
             let context = context.clone();
             let info_cache = info_cache.clone();
@@ -72,8 +73,15 @@ impl DashboardService {
                 .name("solDashInfo".to_string())
                 .spawn(move || {
                     let bank = context.bank_forks.read().unwrap().root_bank();
-                    let loaded = info_cache.write().unwrap().load_all(&bank);
-                    log::info!("dashboard: loaded {loaded} validator info accounts");
+                    let started = std::time::Instant::now();
+                    let entries = crate::validator_info::scan_all(&bank);
+                    let found = entries.len();
+                    let loaded = info_cache.write().unwrap().merge(entries);
+                    log::info!(
+                        "dashboard: scanned validator info in {:?}, {found} accounts, {loaded} \
+                         cached",
+                        started.elapsed()
+                    );
                 })?
         };
 

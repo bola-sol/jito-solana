@@ -1,0 +1,71 @@
+//! The handles the dashboard reads validator state through.
+//!
+//! This crate does not depend on `solana-core`. The validator owns the
+//! dashboard, not the other way around. Anything that only exists in
+//! `solana-core`, such as startup progress, comes in behind a small interface
+//! defined here. That keeps the wiring at the validator's post-init site down
+//! to a handful of lines.
+
+use {
+    serde::Serialize,
+    solana_cluster_type::ClusterType,
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_pubkey::Pubkey,
+    solana_runtime::{bank_forks::BankForks, commitment::BlockCommitmentCache},
+    std::{
+        sync::{Arc, RwLock},
+        time::SystemTime,
+    },
+};
+
+/// A coarse description of where the validator is in its boot sequence,
+/// mirroring `solana_core::validator::ValidatorStartProgress` without depending
+/// on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StartupProgress {
+    /// Machine-readable phase name, e.g. `"loading_ledger"`.
+    pub phase: String,
+    /// Human-readable detail for the phase, when there is any.
+    pub detail: Option<String>,
+    /// True once the validator is fully running.
+    pub running: bool,
+}
+
+/// Supplies the current startup phase on demand.
+pub type StartupProgressFn = Arc<dyn Fn() -> StartupProgress + Send + Sync>;
+
+#[derive(Clone)]
+pub struct DashboardContext {
+    pub cluster_info: Arc<ClusterInfo>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    /// Where confirmed and finalized slot positions come from. Always present,
+    /// unlike the optimistically-confirmed bank tracker, which only runs when
+    /// RPC is enabled.
+    pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    pub blockstore: Arc<Blockstore>,
+    pub leader_schedule_cache: Arc<LeaderScheduleCache>,
+    /// The vote account this validator votes with, if it is a voting validator.
+    pub vote_account: Pubkey,
+    pub cluster_type: ClusterType,
+    /// When the validator process started, for the uptime readout.
+    pub start_time: SystemTime,
+    pub startup_progress: StartupProgressFn,
+}
+
+impl DashboardContext {
+    pub fn identity(&self) -> Pubkey {
+        self.cluster_info.id()
+    }
+
+    /// The cluster name as the dashboard reports it. `ClusterType` is derived
+    /// from genesis, so a custom cluster reports as `development`.
+    pub fn cluster_name(&self) -> &'static str {
+        match self.cluster_type {
+            ClusterType::Testnet => "testnet",
+            ClusterType::MainnetBeta => "mainnet-beta",
+            ClusterType::Devnet => "devnet",
+            ClusterType::Development => "development",
+        }
+    }
+}

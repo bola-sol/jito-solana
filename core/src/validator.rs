@@ -36,6 +36,9 @@ use {
         // tip_manager::TipManagerConfig,
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
+    agave_dashboard::{
+        DashboardConfig, DashboardContext, DashboardService, StartupProgress as DashStartupProgress,
+    },
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
@@ -168,7 +171,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime},
     },
     strum::VariantNames,
     strum_macros::{Display, EnumCount, EnumIter, EnumString, IntoStaticStr},
@@ -406,6 +409,8 @@ pub struct ValidatorConfig {
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
+    /// Serve the web dashboard. `None` disables it entirely, costing nothing.
+    pub dashboard_config: Option<DashboardConfig>,
     // jito configuration
     pub relayer_config: Arc<ArcSwap<RelayerConfig>>,
     pub block_engine_config: Arc<ArcSwap<BlockEngineConfig>>,
@@ -507,6 +512,7 @@ impl ValidatorConfig {
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
+            dashboard_config: None,
             relayer_config: Arc::new(ArcSwap::from_pointee(RelayerConfig::default())),
             block_engine_config: Arc::new(ArcSwap::from_pointee(BlockEngineConfig::default())),
             shred_receiver_addresses: Arc::new(
@@ -568,6 +574,44 @@ pub enum ValidatorStartProgress {
     // `Running` is the terminal state once the validator fully starts and all services are
     // operational
     Running,
+}
+
+impl ValidatorStartProgress {
+    /// Flattens the progress into the shape the dashboard publishes. The
+    /// dashboard crate cannot depend on `solana-core`, so the translation lives
+    /// here rather than there.
+    fn to_dashboard(self) -> DashStartupProgress {
+        let (phase, detail) = match self {
+            Self::Initializing => ("initializing", None),
+            Self::SearchingForRpcService => ("searching_for_rpc_service", None),
+            Self::DownloadingSnapshot { slot, rpc_addr } => (
+                "downloading_snapshot",
+                Some(format!("slot {slot} from {rpc_addr}")),
+            ),
+            Self::CleaningBlockStore => ("cleaning_blockstore", None),
+            Self::CleaningAccounts => ("cleaning_accounts", None),
+            Self::LoadingLedger => ("loading_ledger", None),
+            Self::ProcessingLedger { slot, max_slot } => (
+                "processing_ledger",
+                Some(format!("slot {slot} of {max_slot}")),
+            ),
+            Self::StartingServices => ("starting_services", None),
+            Self::Halted => ("halted", None),
+            Self::WaitingForSupermajority {
+                slot,
+                gossip_stake_percent,
+            } => (
+                "waiting_for_supermajority",
+                Some(format!("slot {slot}, {gossip_stake_percent}% of stake in gossip")),
+            ),
+            Self::Running => ("running", None),
+        };
+        DashStartupProgress {
+            phase: phase.to_string(),
+            detail,
+            running: matches!(self, Self::Running),
+        }
+    }
 }
 
 pub struct XdpTransmitSetup {
@@ -684,6 +728,7 @@ pub struct Validator {
     #[cfg_attr(not(unix), allow(dead_code))]
     log_config: Option<ValidatorLogConfig>,
     json_rpc_service: Option<JsonRpcService>,
+    dashboard_service: Option<DashboardService>,
     pubsub_service: Option<PubSubService>,
     rpc_completed_slots_service: Option<JoinHandle<()>>,
     optimistically_confirmed_bank_tracker: Option<OptimisticallyConfirmedBankTracker>,
@@ -1890,6 +1935,39 @@ impl Validator {
             )
         });
 
+        // Started last, so it reads a validator that is fully assembled. It
+        // only ever reads, and holds no handle the validator needs back.
+        let dashboard_service = match &config.dashboard_config {
+            None => None,
+            Some(dashboard_config) => {
+                let start_progress = start_progress.clone();
+                let context = DashboardContext {
+                    cluster_info: cluster_info.clone(),
+                    bank_forks: bank_forks.clone(),
+                    block_commitment_cache: block_commitment_cache.clone(),
+                    blockstore: blockstore.clone(),
+                    leader_schedule_cache: leader_schedule_cache.clone(),
+                    vote_account: *vote_account,
+                    cluster_type: genesis_config.cluster_type,
+                    // `start_time` is an `Instant`; the dashboard reports an
+                    // absolute uptime, so translate it to wall-clock.
+                    start_time: SystemTime::now() - start_time.elapsed(),
+                    startup_progress: Arc::new(move || {
+                        start_progress.read().unwrap().to_dashboard()
+                    }),
+                };
+                Some(
+                    DashboardService::new(dashboard_config.clone(), context, exit.clone())
+                        .map_err(|err| {
+                            anyhow!(
+                                "Failed to start the dashboard on {}: {err}",
+                                dashboard_config.listen_addr
+                            )
+                        })?,
+                )
+            }
+        };
+
         Ok(Self {
             log_config: config.log_config.clone(),
             exit,
@@ -1897,6 +1975,7 @@ impl Validator {
             gossip_service,
             serve_repair_service,
             json_rpc_service,
+            dashboard_service,
             pubsub_service,
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
@@ -2025,6 +2104,10 @@ impl Validator {
 
         if let Some(json_rpc_service) = self.json_rpc_service {
             json_rpc_service.join().expect("rpc_service");
+        }
+
+        if let Some(dashboard_service) = self.dashboard_service {
+            dashboard_service.join().expect("dashboard_service");
         }
 
         if let Some(pubsub_service) = self.pubsub_service {

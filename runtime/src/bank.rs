@@ -140,7 +140,8 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+            ProgramCache, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         program_cache_entry::ProgramCacheEntry,
     },
@@ -1645,6 +1646,13 @@ impl Bank {
             epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environment = Some(upcoming_environment);
         }
+    }
+
+    /// The program cache shared by every bank on this fork. Exposed for
+    /// read-only observability (the dashboard reports its hit rate and size);
+    /// callers must not hold the lock across transaction processing.
+    pub fn program_cache(&self) -> &Arc<RwLock<ProgramCache<BankForks>>> {
+        &self.transaction_processor.global_program_cache
     }
 
     pub fn prune_program_cache(&self, bank_forks: &BankForks) {

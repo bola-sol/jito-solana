@@ -1,0 +1,171 @@
+import { bytes, count, decimal, duration, percent } from "../format";
+import type {
+  EpochInfo,
+  Health,
+  ProgramCacheSummary,
+  SkipRate,
+  StartupProgress,
+  Tps,
+  ValidatorCounts,
+} from "../types";
+import { useStore } from "../useStore";
+import { Card, Donut, Meter, Stat } from "./primitives";
+import { TpsChart } from "./TpsChart";
+
+export function EpochCard() {
+  const store = useStore();
+  const epoch = store.get<EpochInfo>("epoch", "new");
+  const slot = store.get<number>("summary", "completed_slot");
+
+  if (!epoch) return <Card title="Epoch">{waiting}</Card>;
+
+  const elapsed = Math.max(0, (slot ?? epoch.start_slot) - epoch.start_slot);
+  const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
+  const remainingMs = Math.max(0, epoch.end_time_nanos / 1e6 - Date.now());
+
+  return (
+    <Card title="Epoch">
+      <Stat label="Current Epoch" value={count(epoch.epoch)} />
+      <Stat label="Time to Next Epoch" value={duration(remainingMs)} />
+      <Meter fraction={progress} />
+      <div className="card-footnote">
+        slot {count(elapsed)} of {count(epoch.slots_in_epoch)} · {count(epoch.my_leader_slots.length)}{" "}
+        leader slots this epoch
+      </div>
+    </Card>
+  );
+}
+
+export function StatusCard() {
+  const store = useStore();
+  const slot = store.get<number>("summary", "completed_slot");
+  const nextLeader = store.get<number | null>("summary", "next_leader_slot");
+  const health = store.get<Health>("summary", "health");
+  const voteDistance = store.get<number | null>("summary", "vote_distance");
+  const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
+  const startup = store.get<StartupProgress>("summary", "startup_progress");
+  const skip = store.get<SkipRate>("summary", "skip_rate");
+
+  // The leader countdown means nothing until the validator is running, so show
+  // where it has got to in its boot sequence instead.
+  if (startup && !startup.running) {
+    return (
+      <Card title="Status">
+        <Stat label="Starting up" value={startup.phase.replace(/_/g, " ")} tone="warn" />
+        {startup.detail && <div className="card-footnote">{startup.detail}</div>}
+      </Card>
+    );
+  }
+
+  const untilLeaderMs =
+    nextLeader !== null && nextLeader !== undefined && slot !== undefined && slotDurationNanos
+      ? Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6))
+      : undefined;
+
+  return (
+    <Card title="Status">
+      <div className="stat-grid">
+        <Stat label="Slot" value={count(slot)} />
+        <Stat label="Time until leader" value={duration(untilLeaderMs)} />
+        <Stat
+          label="Vote Status"
+          value={health?.vote ?? "—"}
+          sub={voteDistance === null || voteDistance === undefined ? undefined : `${voteDistance} behind`}
+          tone={health?.vote === "voting" ? "good" : health?.vote === "delinquent" ? "bad" : "muted"}
+        />
+        <Stat
+          label="Next leader slot"
+          value={nextLeader === null || nextLeader === undefined ? "—" : count(nextLeader)}
+        />
+        <Stat
+          label="Replay"
+          value={health?.replay ?? "—"}
+          tone={health?.replay === "running" ? "good" : "bad"}
+        />
+        <Stat label="Skip rate" value={percent(skip?.rate)} />
+      </div>
+    </Card>
+  );
+}
+
+export function ValidatorsCard() {
+  const store = useStore();
+  const counts = store.get<ValidatorCounts>("summary", "validator_counts");
+  if (!counts) return <Card title="Validators">{waiting}</Card>;
+
+  const total = counts.non_delinquent_stake + counts.delinquent_stake;
+  const healthy = total === 0 ? 0 : counts.non_delinquent_stake / total;
+
+  return (
+    <Card title="Validators" className="validators-card">
+      <div className="stat-grid">
+        <Stat label="Total Validators" value={count(counts.total)} />
+        <Stat
+          label="Non-delinquent Stake"
+          value={`${(counts.non_delinquent_stake / 1e9 / 1e6).toFixed(1)}M`}
+          sub="SOL"
+        />
+        <Stat label="RPC Nodes" value={count(counts.rpc_nodes)} />
+        <Stat
+          label="Delinquent Stake"
+          value={`${(counts.delinquent_stake / 1e9 / 1e3).toFixed(1)}K`}
+          sub="SOL"
+          tone="bad"
+        />
+      </div>
+      <Donut
+        fraction={healthy}
+        label={percent(healthy)}
+        sublabel={percent(1 - healthy)}
+      />
+    </Card>
+  );
+}
+
+export function ProgramCacheCard() {
+  const store = useStore();
+  const cache = store.get<ProgramCacheSummary>("summary", "live_program_cache");
+  if (!cache) return <Card title="Program Cache">{waiting}</Card>;
+
+  const lookups = cache.hits + cache.misses;
+  const hitRate = lookups === 0 ? null : cache.hits / lookups;
+
+  return (
+    <Card title="Program Cache">
+      <div className="stat-grid">
+        <Stat
+          label="Hit Rate"
+          value={percent(hitRate)}
+          sub={`${count(cache.hits)} hits · ${count(cache.misses)} misses`}
+          tone={hitRate !== null && hitRate > 0.95 ? "good" : "warn"}
+        />
+        <Stat label="Water Level" value={bytes(cache.water_level)} />
+        <Stat label="Insertions" value={count(cache.insertions)} />
+        <Stat label="Evictions" value={count(cache.evictions)} />
+        <Stat label="Reloads" value={count(cache.reloads)} />
+      </div>
+    </Card>
+  );
+}
+
+export function TransactionsCard() {
+  const store = useStore();
+  const tps = store.get<Tps>("summary", "estimated_tps");
+  const samples = store.getTps();
+
+  return (
+    <Card title="Transactions" className="transactions-card">
+      <div className="transactions-figures">
+        <Stat label="Total TPS" value={decimal(tps?.total)} />
+        <div className="stat-grid stat-grid-tight">
+          <Stat label="Non-vote TPS Success" value={decimal(tps?.non_vote_success)} tone="good" />
+          <Stat label="Non-vote TPS Fail" value={decimal(tps?.non_vote_failed)} tone="bad" />
+          <Stat label="Vote TPS" value={decimal(tps?.vote)} tone="muted" />
+        </div>
+      </div>
+      <TpsChart samples={samples} />
+    </Card>
+  );
+}
+
+const waiting = <div className="card-footnote">waiting for data…</div>;

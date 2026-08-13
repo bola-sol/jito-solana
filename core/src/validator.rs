@@ -1732,7 +1732,7 @@ impl Validator {
             config.vote_history_storage.clone(),
             &leader_schedule_cache,
             exit.clone(),
-            block_commitment_cache,
+            block_commitment_cache.clone(),
             config.turbine_mode.clone(),
             transaction_status_sender.clone(),
             entry_notification_sender.clone(),

@@ -80,6 +80,15 @@ export interface Peer {
   name: string | null;
 }
 
+export interface Network {
+  received_per_second: number;
+  sent_per_second: number;
+}
+
+export interface NetworkSample extends Network {
+  timestamp_nanos: number;
+}
+
 export interface StartupProgress {
   phase: string;
   detail: string | null;

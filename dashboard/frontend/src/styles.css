@@ -550,6 +550,27 @@ body {
   gap: 12px;
 }
 
+.network-body {
+  display: grid;
+  grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+}
+
+.chart-ingress,
+.chart-egress {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.chart-ingress {
+  stroke: var(--level-optimistically_confirmed);
+}
+
+.chart-egress {
+  stroke: var(--warn);
+}
+
 .chart {
   min-width: 0;
 }
@@ -600,7 +621,8 @@ body {
   }
 
   .transactions-body,
-  .validators-body {
+  .validators-body,
+  .network-body {
     grid-template-columns: 1fr;
   }
 }

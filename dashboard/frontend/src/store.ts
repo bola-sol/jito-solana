@@ -7,7 +7,7 @@
  * re-render the tree several hundred times a second to no visible effect.
  */
 
-import type { Envelope, SlotEntry, TpsSample } from "./types";
+import type { Envelope, NetworkSample, SlotEntry, TpsSample } from "./types";
 
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
 const MAX_SLOTS = 512;
@@ -22,6 +22,7 @@ export class Store {
   private values = new Map<string, unknown>();
   private slots = new Map<number, SlotEntry>();
   private tps: TpsSample[] = [];
+  private network: NetworkSample[] = [];
   private connection: ConnectionState = "connecting";
 
   private listeners = new Set<() => void>();
@@ -62,6 +63,10 @@ export class Store {
     return this.tps;
   }
 
+  getNetwork(): NetworkSample[] {
+    return this.network;
+  }
+
   apply(envelope: Envelope): void {
     const { topic, key, value } = envelope;
 
@@ -76,6 +81,14 @@ export class Store {
       const entry = value as SlotEntry;
       this.slots.set(entry.slot, entry);
       this.trimSlots();
+    } else if (topic === "summary" && key === "network_history") {
+      this.network = (value as NetworkSample[]).slice(-MAX_TPS_SAMPLES);
+    } else if (topic === "summary" && key === "network_sample") {
+      const sample = value as NetworkSample;
+      const last = this.network[this.network.length - 1];
+      if (!last || sample.timestamp_nanos > last.timestamp_nanos) {
+        this.network = [...this.network, sample].slice(-MAX_TPS_SAMPLES);
+      }
     } else if (topic === "summary" && key === "tps_history") {
       this.tps = (value as TpsSample[]).slice(-MAX_TPS_SAMPLES);
     } else if (topic === "summary" && key === "tps_sample") {

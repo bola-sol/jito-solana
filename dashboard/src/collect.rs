@@ -14,6 +14,7 @@ use {
         context::DashboardContext,
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
+        net_stats::{self, NetCounters},
         validator_info::ValidatorInfoCache,
     },
     serde::Serialize,
@@ -135,6 +136,20 @@ pub struct Peer {
     pub name: Option<String>,
 }
 
+/// Host interface throughput, in bytes per second.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Network {
+    pub received_per_second: u64,
+    pub sent_per_second: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NetworkSample {
+    pub timestamp_nanos: u64,
+    #[serde(flatten)]
+    pub rates: Network,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Health {
     pub replay: &'static str,
@@ -221,6 +236,11 @@ pub struct Collector {
     /// watched, so they are neither tracked nor counted as skipped.
     first_observed_slot: Option<Slot>,
     last_counters: Option<TxnCounters>,
+    last_net: Option<(NetCounters, Instant)>,
+    net_history: Vec<NetworkSample>,
+    /// Set once the counters prove unreadable, so the failure is logged once
+    /// rather than every second.
+    net_unavailable: bool,
     /// This validator's leader slots for the current epoch, kept so the skip
     /// rate can walk them as the root passes each one.
     my_leader_slots: Vec<Slot>,
@@ -257,6 +277,9 @@ impl Collector {
             info_scanned_to: 0,
             first_observed_slot: None,
             last_counters: None,
+            last_net: None,
+            net_history: Vec::new(),
+            net_unavailable: false,
             my_leader_slots: Vec::new(),
             skip_epoch: None,
             skip_next_index: 0,
@@ -315,6 +338,7 @@ impl Collector {
             self.last_second_tick = now;
             self.collect_clock();
             self.collect_tps(&working_bank);
+            self.collect_network();
         }
 
         if now.duration_since(self.last_slow_tick) >= SLOW_TICK {
@@ -745,6 +769,62 @@ impl Collector {
         }
         self.publisher
             .retain_only(TOPIC_SUMMARY, "tps_history", &self.tps_history);
+    }
+
+    /// Host interface throughput, derived from cumulative counters.
+    ///
+    /// Publishes nothing when the counters cannot be read, so the panel is
+    /// absent rather than showing zeros that look like an idle network.
+    fn collect_network(&mut self) {
+        if self.net_unavailable {
+            return;
+        }
+        let current = match net_stats::read() {
+            Ok(counters) => counters,
+            Err(err) => {
+                self.net_unavailable = true;
+                log::info!("dashboard: network counters unavailable, panel disabled: {err}");
+                return;
+            }
+        };
+        let now = Instant::now();
+        let Some((previous, sampled_at)) = self.last_net.replace((current, now)) else {
+            return;
+        };
+
+        let seconds = now.duration_since(sampled_at).as_secs_f64();
+        if seconds <= 0.0 {
+            return;
+        }
+        // Counters are unsigned and wrap or reset when an interface goes down,
+        // so a decrease is discarded rather than read as negative throughput.
+        let (Some(received), Some(sent)) = (
+            current.received.checked_sub(previous.received),
+            current.sent.checked_sub(previous.sent),
+        ) else {
+            return;
+        };
+
+        let rates = Network {
+            received_per_second: (received as f64 / seconds) as u64,
+            sent_per_second: (sent as f64 / seconds) as u64,
+        };
+        self.publisher.publish(TOPIC_SUMMARY, "network", &rates);
+
+        let sample = NetworkSample {
+            timestamp_nanos: system_time_nanos(SystemTime::now()),
+            rates,
+        };
+        self.publisher
+            .publish_ephemeral(TOPIC_SUMMARY, "network_sample", &sample);
+
+        self.net_history.push(sample);
+        if self.net_history.len() > self.config.tps_history {
+            let excess = self.net_history.len() - self.config.tps_history;
+            self.net_history.drain(..excess);
+        }
+        self.publisher
+            .retain_only(TOPIC_SUMMARY, "network_history", &self.net_history);
     }
 
     // ---- peers ----------------------------------------------------------

@@ -10,12 +10,35 @@ export function SlotStrip() {
   const processed = store.get<number>("summary", "completed_slot");
   const slots = store.getSlots().slice(-STRIP_LENGTH);
 
-  const positions: Array<[string, number | undefined]> = [
-    ["Root", store.get<number>("summary", "root_slot")],
-    ["Finalized", store.get<number>("summary", "finalized_slot")],
-    ["Confirmed", store.get<number>("summary", "optimistically_confirmed_slot")],
-    ["Processed", processed],
-    ["Estimated", store.get<number>("summary", "estimated_slot")],
+  // Ordered from most settled to least, so the deltas read monotonically from
+  // left to right. Deltas are relative to Processed, this validator's own tip.
+  const positions: Array<[string, number | undefined, string]> = [
+    [
+      "Finalized",
+      store.get<number>("summary", "finalized_slot"),
+      "Highest root a supermajority of stake has also rooted",
+    ],
+    [
+      "Root",
+      store.get<number>("summary", "root_slot"),
+      "Highest slot this validator has rooted. Rooting needs 32 slots built on top, so this sits about 32 behind",
+    ],
+    [
+      "Confirmed",
+      store.get<number>("summary", "optimistically_confirmed_slot"),
+      "Highest slot two thirds of stake has voted for",
+    ],
+    [
+      "Voted",
+      store.get<number | null>("summary", "vote_slot") ?? undefined,
+      "The slot this validator last voted on",
+    ],
+    ["Processed", processed, "Highest slot this validator has replayed and frozen"],
+    [
+      "Highest",
+      store.get<number>("summary", "estimated_slot"),
+      "Highest slot this validator holds a bank for, whether or not it has been replayed",
+    ],
   ];
 
   return (
@@ -23,8 +46,8 @@ export function SlotStrip() {
       <div className="slot-strip-head">
         <h2 className="card-title">Slots</h2>
         <div className="slot-positions">
-          {positions.map(([label, slot]) => (
-            <div className="slot-position" key={label}>
+          {positions.map(([label, slot, explanation]) => (
+            <div className="slot-position" key={label} title={explanation}>
               <div className="slot-position-label">
                 {label}
                 <span className="slot-position-delta">{slotDelta(slot, processed)}</span>

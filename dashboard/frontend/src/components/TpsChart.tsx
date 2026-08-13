@@ -1,5 +1,6 @@
 import { decimal } from "../format";
 import type { TpsSample } from "../types";
+import { useNow, windowed } from "../useNow";
 
 const WIDTH = 600;
 const HEIGHT = 120;
@@ -15,16 +16,18 @@ const WINDOW_SECONDS = 60;
  * existed across the full width, which made the line compress as it grew and
  * kept old spikes on screen setting the vertical scale.
  *
+ * The window carries one sample past its left edge and the viewBox clips it, so
+ * the series slides out of view rather than the leftmost segment vanishing when
+ * its older end expires.
+ *
  * Hand-rolled rather than pulled from a charting library: the built bundle is
  * embedded in the validator binary, and a chart library would roughly triple
  * its size for the sake of one chart.
  */
 export function TpsChart({ samples }: { samples: TpsSample[] }) {
-  const now = Date.now();
+  const now = useNow();
   const windowMs = WINDOW_SECONDS * 1000;
-  const visible = samples.filter(
-    (sample) => now - sample.timestamp_nanos / 1e6 <= windowMs,
-  );
+  const visible = windowed(samples, now, windowMs, (sample) => sample.timestamp_nanos);
 
   if (visible.length < 2) {
     return <div className="chart-empty">collecting samples…</div>;

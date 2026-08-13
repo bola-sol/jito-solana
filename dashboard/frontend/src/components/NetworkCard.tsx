@@ -1,5 +1,6 @@
 import { bytes } from "../format";
 import type { Network, NetworkSample } from "../types";
+import { useNow, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, Stat } from "./primitives";
 
@@ -23,8 +24,14 @@ export function NetworkCard() {
   return (
     <Card title="Network" className="network-body">
       <div className="stat-grid stat-grid-tight">
-        <Stat label="Ingress" value={`${bytes(rates.received_per_second)}/s`} />
-        <Stat label="Egress" value={`${bytes(rates.sent_per_second)}/s`} tone="muted" />
+        <Stat
+          label={<><span className="swatch swatch-ingress" />Ingress</>}
+          value={`${bytes(rates.received_per_second)}/s`}
+        />
+        <Stat
+          label={<><span className="swatch swatch-egress" />Egress</>}
+          value={`${bytes(rates.sent_per_second)}/s`}
+        />
       </div>
       <NetworkChart samples={store.getNetwork()} />
     </Card>
@@ -32,11 +39,9 @@ export function NetworkCard() {
 }
 
 function NetworkChart({ samples }: { samples: NetworkSample[] }) {
-  const now = Date.now();
+  const now = useNow();
   const windowMs = WINDOW_SECONDS * 1000;
-  const visible = samples.filter(
-    (sample) => now - sample.timestamp_nanos / 1e6 <= windowMs,
-  );
+  const visible = windowed(samples, now, windowMs, (sample) => sample.timestamp_nanos);
 
   if (visible.length < 2) {
     return <div className="chart-empty">collecting samples…</div>;

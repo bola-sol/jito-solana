@@ -557,6 +557,24 @@ body {
   align-items: center;
 }
 
+/* Ties each figure to its line, so the chart reads without checking numbers. */
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+
+.swatch-ingress {
+  background: var(--level-optimistically_confirmed);
+}
+
+.swatch-egress {
+  background: var(--warn);
+}
+
 .chart-ingress,
 .chart-egress {
   fill: none;

@@ -25,7 +25,7 @@ export function Stat({
   sub,
   tone,
 }: {
-  label: string;
+  label: ReactNode;
   value: ReactNode;
   sub?: ReactNode;
   tone?: "good" | "warn" | "bad" | "muted";

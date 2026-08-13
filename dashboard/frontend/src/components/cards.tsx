@@ -103,19 +103,23 @@ export function ValidatorsCard() {
   return (
     <Card title="Validators" className="validators-body">
       <div className="stat-grid">
-        <Stat label="Total Validators" value={count(counts.total)} />
         <Stat
-          label="Non-delinquent Stake"
+          label="Active Validators"
+          value={count(counts.total - counts.delinquent)}
+          sub={`${count(counts.total)} staked`}
+        />
+        <Stat
+          label="Delinquent"
+          value={count(counts.delinquent)}
+          sub={`${(counts.delinquent_stake / 1e9 / 1e3).toFixed(1)}K SOL`}
+          tone={counts.delinquent > 0 ? "bad" : undefined}
+        />
+        <Stat
+          label="Active Stake"
           value={`${(counts.non_delinquent_stake / 1e9 / 1e6).toFixed(1)}M`}
           sub="SOL"
         />
         <Stat label="RPC Nodes" value={count(counts.rpc_nodes)} />
-        <Stat
-          label="Delinquent Stake"
-          value={`${(counts.delinquent_stake / 1e9 / 1e3).toFixed(1)}K`}
-          sub="SOL"
-          tone="bad"
-        />
       </div>
       <Donut
         fraction={healthy}

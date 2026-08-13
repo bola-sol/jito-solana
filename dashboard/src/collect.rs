@@ -139,7 +139,9 @@ pub struct Health {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipRate {
     pub epoch: Epoch,
-    /// Skip rate over this validator's recent leader slots, in `[0, 1]`.
+    /// Fraction of this validator's leader slots in the epoch so far that
+    /// produced no block, in `[0, 1]`. `None` until the root has passed at
+    /// least one of them.
     pub rate: Option<f64>,
 }
 
@@ -171,6 +173,7 @@ impl TxnCounters {
 struct Debounces {
     identity_key: Debounced<String>,
     identity_name: Debounced<Option<String>>,
+    identity_icon: Debounced<Option<String>>,
     vote_key: Debounced<String>,
     startup_progress: Debounced<crate::context::StartupProgress>,
     root_slot: Debounced<Slot>,
@@ -213,6 +216,13 @@ pub struct Collector {
     /// watched, so they are neither tracked nor counted as skipped.
     first_observed_slot: Option<Slot>,
     last_counters: Option<TxnCounters>,
+    /// This validator's leader slots for the current epoch, kept so the skip
+    /// rate can walk them as the root passes each one.
+    my_leader_slots: Vec<Slot>,
+    skip_epoch: Option<Epoch>,
+    skip_next_index: usize,
+    skip_produced: usize,
+    skip_elapsed: usize,
     last_completed_slot: Slot,
     last_completed_at: Instant,
     last_vote_advance: Instant,
@@ -242,6 +252,11 @@ impl Collector {
             info_scanned_to: 0,
             first_observed_slot: None,
             last_counters: None,
+            my_leader_slots: Vec::new(),
+            skip_epoch: None,
+            skip_next_index: 0,
+            skip_produced: 0,
+            skip_elapsed: 0,
             last_completed_slot: 0,
             last_completed_at: now,
             last_vote_advance: now,
@@ -419,8 +434,11 @@ impl Collector {
                 self.leaders_resolved_to = slot;
                 return;
             };
-            let name = self.peer_name(&leader.id);
-            if let Some(entry) = self.slots.set_leader(slot, &leader.id, name, leader.id == me) {
+            let (name, icon) = self.peer_display(&leader.id);
+            if let Some(entry) =
+                self.slots
+                    .set_leader(slot, &leader.id, name, icon, leader.id == me)
+            {
                 self.publish_slot(&entry);
             }
             self.leaders_resolved_to = slot + 1;
@@ -534,12 +552,13 @@ impl Collector {
             "vote_key",
             self.ctx.vote_account.to_string(),
         );
-        self.debounces.identity_name.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "identity_name",
-            self.peer_name(&identity),
-        );
+        let (my_name, my_icon) = self.peer_display(&identity);
+        self.debounces
+            .identity_name
+            .publish(&self.publisher, TOPIC_SUMMARY, "identity_name", my_name);
+        self.debounces
+            .identity_icon
+            .publish(&self.publisher, TOPIC_SUMMARY, "identity_icon", my_icon);
         self.debounces.identity_balance.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -632,6 +651,7 @@ impl Collector {
                     .collect()
             })
             .unwrap_or_default();
+        self.my_leader_slots = my_leader_slots.clone();
 
         self.debounces.epoch.publish(
             &self.publisher,
@@ -839,31 +859,35 @@ impl Collector {
         if missing.is_empty() {
             return;
         }
-        let resolved: Vec<(Slot, String)> = {
+        let resolved: Vec<(Slot, Option<String>, Option<String>)> = {
             let cache = self.info_cache.read().unwrap();
             missing
                 .into_iter()
                 .filter_map(|(slot, leader)| {
                     let identity = leader.parse().ok()?;
-                    let name = cache.get(&identity)?.name.clone()?;
-                    Some((slot, name))
+                    let info = cache.get(&identity)?;
+                    // Only worth republishing the slot if something resolved.
+                    info.name.is_some().then(|| {
+                        (slot, info.name.clone(), info.icon_url.clone())
+                    })
                 })
                 .collect()
         };
-        for (slot, name) in resolved {
-            if let Some(entry) = self.slots.set_leader_name(slot, name) {
+        for (slot, name, icon) in resolved {
+            if let Some(entry) = self.slots.set_leader_display(slot, name, icon) {
                 self.publish_slot(&entry);
             }
         }
     }
 
-    /// Display name for an identity, from the on-chain validator info.
-    fn peer_name(&self, identity: &Pubkey) -> Option<String> {
-        self.info_cache
-            .read()
-            .unwrap()
-            .get(identity)
-            .and_then(|info| info.name.clone())
+    /// Display name and icon URL for an identity, from its on-chain validator
+    /// info. The icon is an arbitrary third-party URL the operator published,
+    /// so the client fetches it directly and treats a failure as no icon.
+    fn peer_display(&self, identity: &Pubkey) -> (Option<String>, Option<String>) {
+        match self.info_cache.read().unwrap().get(identity) {
+            None => (None, None),
+            Some(info) => (info.name.clone(), info.icon_url.clone()),
+        }
     }
 
     /// Picks up validator names published since the last sweep.
@@ -944,9 +968,42 @@ impl Collector {
             .publish(&self.publisher, TOPIC_SUMMARY, "health", Health { replay, vote });
     }
 
+    /// Skip rate across this validator's leader slots for the whole epoch.
+    ///
+    /// Taken from the blockstore rather than the in-memory slot ring, which
+    /// only covers slots seen since the collector started and so reported
+    /// nothing for most of an epoch. This is the same basis `solana
+    /// block-production` uses, so the two agree.
+    ///
+    /// Each leader slot is checked once, as the root passes it, which comes to
+    /// a few hundred point lookups spread over the epoch.
     fn collect_skip_rate(&mut self, root_bank: &Bank) {
         let epoch = root_bank.epoch();
-        let rate = self.slots.my_skip_rate();
+        if self.skip_epoch != Some(epoch) {
+            self.skip_epoch = Some(epoch);
+            self.skip_next_index = 0;
+            self.skip_produced = 0;
+            self.skip_elapsed = 0;
+        }
+
+        // Only slots the root has passed have a settled outcome.
+        let root = root_bank.slot();
+        let leader_slots = self.my_leader_slots.clone();
+        while self.skip_next_index < leader_slots.len() {
+            let slot = leader_slots[self.skip_next_index];
+            if slot > root {
+                break;
+            }
+            if self.ctx.blockstore.is_full(slot) {
+                self.skip_produced += 1;
+            }
+            self.skip_elapsed += 1;
+            self.skip_next_index += 1;
+        }
+
+        let rate = (self.skip_elapsed > 0).then(|| {
+            (self.skip_elapsed - self.skip_produced) as f64 / self.skip_elapsed as f64
+        });
         self.debounces
             .skip_rate
             .publish(&self.publisher, TOPIC_SUMMARY, "skip_rate", SkipRate { epoch, rate });

@@ -35,6 +35,8 @@ pub struct SlotEntry {
     /// The leader's display name, carried here so the client needs no copy of
     /// the cluster's peer table just to label a row.
     pub leader_name: Option<String>,
+    /// The leader's on-chain icon URL, when it published one.
+    pub leader_icon: Option<String>,
     /// True when this validator was the scheduled leader.
     pub mine: bool,
     /// Transactions in the block, once replayed.
@@ -52,6 +54,7 @@ impl SlotEntry {
             level: SlotLevel::Incomplete,
             leader: None,
             leader_name: None,
+            leader_icon: None,
             mine: false,
             transactions: None,
             non_vote_transactions: None,
@@ -167,29 +170,6 @@ impl SlotRing {
             .collect()
     }
 
-    /// Fraction of this validator's own leader slots in the ring that were
-    /// skipped, as a value in `[0, 1]`. `None` when it has had no leader slots.
-    pub fn my_skip_rate(&self) -> Option<f64> {
-        let mine: Vec<&SlotEntry> = self.entries.values().filter(|entry| entry.mine).collect();
-        if mine.is_empty() {
-            return None;
-        }
-        // Only count slots that have resolved one way or the other; slots still
-        // in flight would otherwise read as skips.
-        let resolved: Vec<&&SlotEntry> = mine
-            .iter()
-            .filter(|entry| entry.level != SlotLevel::Incomplete)
-            .collect();
-        if resolved.is_empty() {
-            return None;
-        }
-        let skipped = resolved
-            .iter()
-            .filter(|entry| entry.level == SlotLevel::Skipped)
-            .count();
-        Some(skipped as f64 / resolved.len() as f64)
-    }
-
     /// Slots that know their leader but have no name for it yet, as
     /// `(slot, leader)` pairs.
     pub fn leaders_without_names(&self) -> Vec<(Slot, String)> {
@@ -200,8 +180,16 @@ impl SlotRing {
             .collect()
     }
 
-    pub fn set_leader_name(&mut self, slot: Slot, name: String) -> Option<SlotEntry> {
-        self.update(slot, |entry| entry.leader_name = Some(name))
+    pub fn set_leader_display(
+        &mut self,
+        slot: Slot,
+        name: Option<String>,
+        icon: Option<String>,
+    ) -> Option<SlotEntry> {
+        self.update(slot, |entry| {
+            entry.leader_name = name;
+            entry.leader_icon = icon;
+        })
     }
 
     pub fn set_leader(
@@ -209,12 +197,14 @@ impl SlotRing {
         slot: Slot,
         leader: &Pubkey,
         name: Option<String>,
+        icon: Option<String>,
         mine: bool,
     ) -> Option<SlotEntry> {
         let leader = leader.to_string();
         self.update(slot, |entry| {
             entry.leader = Some(leader);
             entry.leader_name = name;
+            entry.leader_icon = icon;
             entry.mine = mine;
         })
     }
@@ -248,20 +238,6 @@ mod tests {
         assert_eq!(ring.entries.len(), 4);
         assert!(ring.get(0).is_none());
         assert!(ring.get(9).is_some());
-    }
-
-    #[test]
-    fn skip_rate_ignores_slots_still_in_flight() {
-        let mut ring = SlotRing::new(16);
-        let me = Pubkey::new_unique();
-        for slot in 0..4 {
-            ring.set_leader(slot, &me, None, true);
-        }
-        assert_eq!(ring.my_skip_rate(), None);
-
-        ring.update(0, |entry| entry.level = SlotLevel::Completed);
-        ring.update(1, |entry| entry.level = SlotLevel::Skipped);
-        assert_eq!(ring.my_skip_rate(), Some(0.5));
     }
 
     #[test]

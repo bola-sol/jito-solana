@@ -104,6 +104,17 @@ body {
 .header-name {
   font-weight: 600;
   font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Third-party images of unknown dimensions, so they are boxed and clipped. */
+.logo {
+  border-radius: 3px;
+  object-fit: cover;
+  flex: none;
+  background: var(--panel-raised);
 }
 
 .header-key {
@@ -441,6 +452,9 @@ body {
 }
 
 .sidebar-leader {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

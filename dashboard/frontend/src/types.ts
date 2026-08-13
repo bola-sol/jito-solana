@@ -13,6 +13,7 @@ export interface SlotEntry {
   level: SlotLevel;
   leader: string | null;
   leader_name: string | null;
+  leader_icon: string | null;
   mine: boolean;
   transactions: number | null;
   non_vote_transactions: number | null;

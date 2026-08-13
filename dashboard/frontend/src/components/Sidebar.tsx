@@ -1,6 +1,7 @@
 import { count, shortKey } from "../format";
 import type { SlotEntry } from "../types";
 import { useStore } from "../useStore";
+import { Logo } from "./Logo";
 
 /** Rows in the live slot list, newest first. */
 const ROWS = 48;
@@ -30,6 +31,7 @@ function SidebarRow({ entry }: { entry: SlotEntry }) {
     <div className={`sidebar-row level-${entry.level}${entry.mine ? " mine" : ""}`}>
       <div className="sidebar-leader" title={entry.leader ?? undefined}>
         {entry.mine && <span className="sidebar-mine-marker" aria-label="our slot" />}
+        <Logo url={entry.leader_icon} size={14} />
         {name}
       </div>
       <div className="sidebar-slot">{count(entry.slot)}</div>

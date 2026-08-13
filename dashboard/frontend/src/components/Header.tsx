@@ -1,6 +1,7 @@
 import { count, percent, shortKey, sol, solCompact, duration } from "../format";
 import type { StakeSummary, ValidatorCounts } from "../types";
 import { useStore } from "../useStore";
+import { Logo } from "./Logo";
 
 export function Header() {
   const store = useStore();
@@ -15,6 +16,7 @@ export function Header() {
   const connection = store.getConnection();
 
   const name = store.get<string | null>("summary", "identity_name") ?? "Private";
+  const icon = store.get<string | null>("summary", "identity_icon") ?? null;
 
   return (
     <header className="header">
@@ -24,7 +26,10 @@ export function Header() {
       </div>
 
       <div className="header-identity">
-        <div className="header-name">{name}</div>
+        <div className="header-name">
+          <Logo url={icon} size={20} />
+          {name}
+        </div>
         <div className="header-key" title={identity ?? undefined}>
           {shortKey(identity, 10, 8)}
         </div>

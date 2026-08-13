@@ -30,8 +30,12 @@ const MAX_REQUEST_HEAD: usize = 8192;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Clients only send small control frames. Anything larger is either a client
-/// bug or an attempt to make the server allocate.
+/// bug or an attempt to make the server allocate, so the connection is closed.
 const MAX_CLIENT_MESSAGE: usize = 4096;
+
+/// Ceiling for messages the server sends. The full peer list is the largest,
+/// and grows with the size of the cluster.
+const MAX_SERVER_MESSAGE: usize = 32 * 1024 * 1024;
 
 /// Served when the crate was built without `frontend/dist` present.
 const MISSING_FRONTEND: &str = include_str!("missing_frontend.html");
@@ -50,6 +54,8 @@ enum ConnectionError {
     Connection(#[from] soketto::connection::Error),
     #[error("client fell too far behind and was disconnected")]
     Lagged,
+    #[error("client sent an oversized message of {0} bytes")]
+    Oversized(usize),
 }
 
 pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>) {
@@ -225,13 +231,22 @@ async fn serve_websocket(
     let mut updates = publisher.subscribe();
     let snapshot = publisher.snapshot();
 
+    // These limits apply to the connection in both directions, so they have to
+    // accommodate the largest message the server sends. The full peer list runs
+    // to hundreds of kilobytes on a real cluster. Client messages are bounded
+    // separately, on receipt.
     let mut builder = server.into_builder();
-    builder.set_max_message_size(MAX_CLIENT_MESSAGE);
-    builder.set_max_frame_size(MAX_CLIENT_MESSAGE);
+    builder.set_max_message_size(MAX_SERVER_MESSAGE);
+    builder.set_max_frame_size(MAX_SERVER_MESSAGE);
     let (mut sender, mut receiver) = builder.finish();
 
     for message in snapshot {
-        sender.send_text(&*message).await?;
+        if let Err(err) = sender.send_text(&*message).await {
+            // Losing the snapshot leaves the client with a blank dashboard, so
+            // say so rather than letting it look like missing data.
+            log::warn!("dashboard: failed to send snapshot: {err}");
+            return Err(err.into());
+        }
     }
     sender.flush().await?;
 
@@ -281,6 +296,11 @@ async fn serve_websocket(
             }
         }
 
+        // The connection-level limit has to be large enough for what the server
+        // sends, so the bound on client messages is applied here instead.
+        if incoming.len() > MAX_CLIENT_MESSAGE {
+            return Err(ConnectionError::Oversized(incoming.len()));
+        }
         if let Some(reply) = respond(&incoming) {
             sender.send_text(&*reply).await?;
             sender.flush().await?;

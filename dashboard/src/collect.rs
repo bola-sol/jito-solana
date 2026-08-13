@@ -48,6 +48,11 @@ const SLOT_OVERVIEW_LEN: usize = 512;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
+/// Above this rate of slots replayed per second the validator is catching up
+/// rather than following the cluster, so throughput samples are discarded. A
+/// healthy cluster produces about two and a half slots a second.
+const CATCH_UP_SLOTS_PER_SECOND: f64 = 6.0;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Tps {
     pub total: f64,
@@ -691,6 +696,16 @@ impl Collector {
         }
         let seconds = current.sampled_at.duration_since(previous.sampled_at).as_secs_f64();
         if seconds <= 0.0 {
+            return;
+        }
+
+        // While catching up, replay chews through slots far faster than the
+        // cluster produces them, and dividing a whole backlog of transactions
+        // by one second reports tens of thousands of TPS. That is replay
+        // throughput, not network throughput, and one such sample pins the
+        // chart's scale for as long as it stays in view.
+        let slots_per_second = (current.slot - previous.slot) as f64 / seconds;
+        if slots_per_second > CATCH_UP_SLOTS_PER_SECOND {
             return;
         }
 

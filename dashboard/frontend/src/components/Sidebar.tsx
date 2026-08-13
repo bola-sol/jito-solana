@@ -25,7 +25,7 @@ export function Sidebar() {
 function SidebarRow({ entry }: { entry: SlotEntry }) {
   const store = useStore();
   const peer = store.getPeer(entry.leader);
-  const name = peer?.info?.name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : "unknown");
+  const name = peer?.name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : "unknown");
 
   return (
     <div className={`sidebar-row level-${entry.level}${entry.mine ? " mine" : ""}`}>

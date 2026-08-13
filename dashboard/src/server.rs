@@ -240,15 +240,26 @@ async fn serve_websocket(
     builder.set_max_frame_size(MAX_SERVER_MESSAGE);
     let (mut sender, mut receiver) = builder.finish();
 
-    for message in snapshot {
-        if let Err(err) = sender.send_text(&*message).await {
+    let total: usize = snapshot.iter().map(|message| message.len()).sum();
+    for (index, message) in snapshot.iter().enumerate() {
+        if let Err(err) = sender.send_text(&**message).await {
             // Losing the snapshot leaves the client with a blank dashboard, so
-            // say so rather than letting it look like missing data.
-            log::warn!("dashboard: failed to send snapshot: {err}");
+            // report exactly where it stopped rather than letting it look like
+            // missing data.
+            log::warn!(
+                "dashboard: snapshot send failed on message {} of {} ({} bytes, {total} bytes \
+                 total, starts {:.120}): {err}",
+                index + 1,
+                snapshot.len(),
+                message.len(),
+                message,
+            );
             return Err(err.into());
         }
+        // Flushing per message keeps one oversized entry from taking the whole
+        // snapshot down with it.
+        sender.flush().await?;
     }
-    sender.flush().await?;
 
     let mut incoming = Vec::new();
     loop {

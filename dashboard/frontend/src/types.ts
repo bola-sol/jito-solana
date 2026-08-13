@@ -64,14 +64,6 @@ export interface EpochInfo {
   my_leader_slots: number[];
 }
 
-export interface ValidatorInfo {
-  name: string | null;
-  website: string | null;
-  details: string | null;
-  iconUrl: string | null;
-  keybaseUsername: string | null;
-}
-
 export interface Peer {
   identity: string;
   vote_account: string | null;
@@ -84,7 +76,7 @@ export interface Peer {
   shred_version: number | null;
   version: string | null;
   has_rpc: boolean;
-  info: ValidatorInfo | null;
+  name: string | null;
 }
 
 export interface PeerDelta {

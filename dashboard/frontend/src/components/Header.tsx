@@ -14,7 +14,7 @@ export function Header() {
   const connection = store.getConnection();
 
   const me = store.getPeer(identity);
-  const name = me?.info?.name ?? "Private";
+  const name = me?.name ?? "Private";
 
   return (
     <header className="header">

@@ -14,7 +14,7 @@ use {
         context::DashboardContext,
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
-        validator_info::{ValidatorInfo, ValidatorInfoCache},
+        validator_info::ValidatorInfoCache,
     },
     serde::Serialize,
     solana_clock::{DEFAULT_MS_PER_SLOT, Epoch, Slot},
@@ -125,7 +125,9 @@ pub struct Peer {
     pub shred_version: Option<u16>,
     pub version: Option<String>,
     pub has_rpc: bool,
-    pub info: Option<ValidatorInfo>,
+    /// Display name only. The rest of the on-chain validator info runs to
+    /// hundreds of bytes per peer and nothing renders it.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -780,7 +782,7 @@ impl Collector {
                     shred_version,
                     version,
                     has_rpc: rpc_identities.contains(&identity),
-                    info: info_cache.get(&identity).cloned(),
+                    name: info_cache.get(&identity).and_then(|info| info.name.clone()),
                 },
             );
         }
@@ -799,7 +801,7 @@ impl Collector {
                 shred_version,
                 version,
                 has_rpc: rpc_identities.contains(&identity),
-                info: info_cache.get(&identity).cloned(),
+                name: info_cache.get(&identity).and_then(|info| info.name.clone()),
             });
         }
         drop(info_cache);

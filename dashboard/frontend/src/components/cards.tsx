@@ -1,4 +1,4 @@
-import { count, decimal, duration, percent } from "../format";
+import { count, decimal, duration, percent, solCompact } from "../format";
 import type {
   EpochInfo,
   Health,
@@ -111,12 +111,12 @@ export function ValidatorsCard() {
         <Stat
           label="Delinquent"
           value={count(counts.delinquent)}
-          sub={`${(counts.delinquent_stake / 1e9 / 1e3).toFixed(1)}K SOL`}
+          sub={`${solCompact(counts.delinquent_stake)} SOL`}
           tone={counts.delinquent > 0 ? "bad" : undefined}
         />
         <Stat
           label="Active Stake"
-          value={`${(counts.non_delinquent_stake / 1e9 / 1e6).toFixed(1)}M`}
+          value={solCompact(counts.non_delinquent_stake)}
           sub="SOL"
         />
         <Stat label="RPC Nodes" value={count(counts.rpc_nodes)} />

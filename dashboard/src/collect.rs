@@ -139,9 +139,9 @@ pub struct Health {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipRate {
     pub epoch: Epoch,
-    /// Fraction of this validator's leader slots in the epoch so far that
-    /// produced no block, in `[0, 1]`. `None` until the root has passed at
-    /// least one of them.
+    /// Fraction of this validator's leader slots that produced no block, over
+    /// the part of the epoch the blockstore covers, in `[0, 1]`. `None` until
+    /// the root has passed at least one such slot.
     pub rate: Option<f64>,
 }
 
@@ -986,19 +986,27 @@ impl Collector {
             self.skip_elapsed = 0;
         }
 
-        // Only slots the root has passed have a settled outcome.
+        // Only slots the root has passed have a settled outcome, and only
+        // slots the blockstore actually covers say anything about production.
+        // After a restart from a snapshot the ledger begins partway through the
+        // epoch, and counting the earlier leader slots as skipped reported a
+        // rate of seventy percent against an actual zero.
         let root = root_bank.slot();
+        let floor = self.ctx.blockstore.lowest_slot();
         let leader_slots = self.my_leader_slots.clone();
         while self.skip_next_index < leader_slots.len() {
             let slot = leader_slots[self.skip_next_index];
             if slot > root {
                 break;
             }
+            self.skip_next_index += 1;
+            if slot < floor {
+                continue;
+            }
             if self.ctx.blockstore.is_full(slot) {
                 self.skip_produced += 1;
             }
             self.skip_elapsed += 1;
-            self.skip_next_index += 1;
         }
 
         let rate = (self.skip_elapsed > 0).then(|| {

@@ -44,7 +44,10 @@ export function Header() {
         />
         <HeaderStat label="Identity Balance" value={`${sol(identityBalance)} SOL`} />
         <HeaderStat label="Uptime" value={duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6)} />
-        <HeaderStat label="Validators" value={count(counts?.total)} />
+        <HeaderStat
+          label="Validators"
+          value={count(counts && counts.total - counts.delinquent)}
+        />
       </div>
 
       <div className={`connection connection-${connection}`} title={`websocket ${connection}`}>

@@ -9,7 +9,7 @@
 //! config accounts written in that slot.
 
 use {
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
@@ -25,7 +25,7 @@ const VALIDATOR_INFO_PROGRAM: Pubkey =
 /// config accounts without deserializing them.
 const MAX_VALIDATOR_INFO_LEN: usize = 576 + 1 + (32 + 1) * 2;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     pub name: Option<String>,
     pub website: Option<String>,

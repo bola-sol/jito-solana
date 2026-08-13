@@ -133,8 +133,8 @@ impl SlotRing {
         let candidates: Vec<Slot> = self
             .entries
             .iter()
-            .filter(|(&slot, entry)| {
-                slot <= up_to
+            .filter(|(slot, entry)| {
+                **slot <= up_to
                     && entry.level < level
                     // A slot that was never produced does not become rooted.
                     && entry.level != SlotLevel::Incomplete
@@ -154,7 +154,7 @@ impl SlotRing {
         let stale: Vec<Slot> = self
             .entries
             .iter()
-            .filter(|(&slot, entry)| slot < up_to && entry.level == SlotLevel::Incomplete)
+            .filter(|(slot, entry)| **slot < up_to && entry.level == SlotLevel::Incomplete)
             .map(|(&slot, _)| slot)
             .collect();
         stale

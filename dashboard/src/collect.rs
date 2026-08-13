@@ -716,7 +716,7 @@ impl Collector {
             gossip.insert(
                 *contact_info.pubkey(),
                 (
-                    contact_info.gossip().ok().map(|addr| addr.to_string()),
+                    contact_info.gossip().map(|addr| addr.to_string()),
                     Some(contact_info.shred_version()),
                     Some(contact_info.version().to_string()),
                 ),

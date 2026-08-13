@@ -191,7 +191,9 @@ async fn serve_websocket(
     path: &str,
 ) -> Result<(), ConnectionError> {
     let mut server = Server::new(socket.compat());
-    let request = server.receive_request().await?;
+    // The request borrows the server, so the key is copied out and the borrow
+    // dropped before the response goes back over that same server.
+    let key = server.receive_request().await?.key();
 
     if path != WEBSOCKET_PATH {
         server
@@ -201,7 +203,7 @@ async fn serve_websocket(
     }
     server
         .send_response(&server::Response::Accept {
-            key: request.key(),
+            key,
             protocol: None,
         })
         .await?;

@@ -12,7 +12,7 @@ use {
     std::{io, sync::Arc},
     thiserror::Error,
     tokio::{
-        io::AsyncWriteExt,
+        io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
         pin, select,
         sync::broadcast::error::{RecvError, TryRecvError},
@@ -70,8 +70,8 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>) {
     }
 }
 
-async fn handle(socket: TcpStream, publisher: Arc<Publisher>) -> Result<(), ConnectionError> {
-    let head = timeout(REQUEST_TIMEOUT, peek_request_head(&socket))
+async fn handle(mut socket: TcpStream, publisher: Arc<Publisher>) -> Result<(), ConnectionError> {
+    let (head, head_len) = timeout(REQUEST_TIMEOUT, peek_request_head(&socket))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "request head"))??;
 
@@ -79,13 +79,20 @@ async fn handle(socket: TcpStream, publisher: Arc<Publisher>) -> Result<(), Conn
         let path = request_path(&head).to_string();
         serve_websocket(socket, publisher, &path).await
     } else {
+        // Consume the bytes that were only peeked at. Closing a socket that
+        // still has unread data makes the kernel send RST rather than FIN,
+        // which discards anything left in the send buffer and truncates the
+        // response. Small files survive that; a large asset does not.
+        let mut consumed = vec![0u8; head_len];
+        socket.read_exact(&mut consumed).await?;
         serve_http(socket, &head).await.map_err(ConnectionError::from)
     }
 }
 
 /// Reads the request head without consuming it, so that a websocket connection
-/// can still be handed to soketto for its own handshake.
-async fn peek_request_head(socket: &TcpStream) -> io::Result<String> {
+/// can still be handed to soketto for its own handshake. Returns the head and
+/// its exact length in bytes, which the HTTP path needs in order to drain it.
+async fn peek_request_head(socket: &TcpStream) -> io::Result<(String, usize)> {
     let mut buffer = vec![0u8; MAX_REQUEST_HEAD];
     loop {
         socket.readable().await?;
@@ -95,9 +102,11 @@ async fn peek_request_head(socket: &TcpStream) -> io::Result<String> {
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
             Err(err) => return Err(err),
         };
+        // `from_utf8_lossy` can change the byte count, so the length comes from
+        // what was actually peeked rather than from the string.
         let head = String::from_utf8_lossy(&buffer[..peeked]);
         if head.contains("\r\n\r\n") || peeked == MAX_REQUEST_HEAD {
-            return Ok(head.into_owned());
+            return Ok((head.into_owned(), peeked));
         }
     }
 }
@@ -147,7 +156,10 @@ async fn serve_http(mut socket: TcpStream, head: &str) -> io::Result<()> {
     };
 
     socket.write_all(&response).await?;
-    socket.flush().await
+    socket.flush().await?;
+    // Shut the write half down explicitly so the peer sees a clean FIN after
+    // the whole body, instead of whatever dropping the socket produces.
+    socket.shutdown().await
 }
 
 fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {

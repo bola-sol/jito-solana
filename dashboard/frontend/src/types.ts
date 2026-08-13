@@ -52,6 +52,7 @@ export interface ProgramCacheSummary {
   evictions: number;
   insertions: number;
   reloads: number;
+  /** Entries counted at the last eviction, not live occupancy. */
   water_level: number;
 }
 
@@ -60,8 +61,6 @@ export interface EpochInfo {
   start_slot: number;
   end_slot: number;
   slots_in_epoch: number;
-  start_time_nanos: number;
-  end_time_nanos: number;
   my_leader_slots: number[];
 }
 

@@ -1,4 +1,4 @@
-import { bytes, count, decimal, duration, percent } from "../format";
+import { count, decimal, duration, percent } from "../format";
 import type {
   EpochInfo,
   Health,
@@ -16,15 +16,19 @@ export function EpochCard() {
   const store = useStore();
   const epoch = store.get<EpochInfo>("epoch", "new");
   const slot = store.get<number>("summary", "completed_slot");
+  const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
 
   const elapsed = Math.max(0, (slot ?? epoch.start_slot) - epoch.start_slot);
   const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
-  const remainingMs = Math.max(0, epoch.end_time_nanos / 1e6 - Date.now());
+  // Derived here rather than sent by the server: an absolute end time would
+  // change every tick and force the whole epoch message to be republished.
+  const slotMs = (slotDurationNanos ?? 400_000_000) / 1e6;
+  const remainingMs = Math.max(0, (epoch.end_slot - (slot ?? epoch.start_slot)) * slotMs);
 
   return (
-    <Card title="Epoch">
+    <Card title="Epoch" className="epoch-body">
       <Stat label="Current Epoch" value={count(epoch.epoch)} />
       <Stat label="Time to Next Epoch" value={duration(remainingMs)} />
       <Meter fraction={progress} />
@@ -97,7 +101,7 @@ export function ValidatorsCard() {
   const healthy = total === 0 ? 0 : counts.non_delinquent_stake / total;
 
   return (
-    <Card title="Validators" className="validators-card">
+    <Card title="Validators" className="validators-body">
       <div className="stat-grid">
         <Stat label="Total Validators" value={count(counts.total)} />
         <Stat
@@ -139,7 +143,11 @@ export function ProgramCacheCard() {
           sub={`${count(cache.hits)} hits · ${count(cache.misses)} misses`}
           tone={hitRate !== null && hitRate > 0.95 ? "good" : "warn"}
         />
-        <Stat label="Water Level" value={bytes(cache.water_level)} />
+        <Stat
+          label="Entries at last eviction"
+          value={count(cache.water_level)}
+          sub={cache.water_level === 0 ? "eviction has not run" : undefined}
+        />
         <Stat label="Insertions" value={count(cache.insertions)} />
         <Stat label="Evictions" value={count(cache.evictions)} />
         <Stat label="Reloads" value={count(cache.reloads)} />
@@ -154,7 +162,7 @@ export function TransactionsCard() {
   const samples = store.getTps();
 
   return (
-    <Card title="Transactions" className="transactions-card">
+    <Card title="Transactions" className="transactions-body">
       <div className="transactions-figures">
         <Stat label="Total TPS" value={decimal(tps?.total)} />
         <div className="stat-grid stat-grid-tight">

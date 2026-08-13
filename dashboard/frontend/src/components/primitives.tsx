@@ -9,10 +9,12 @@ export function Card({
   children: ReactNode;
   className?: string;
 }) {
+  // The body is a separate element so that a card can lay its content out as a
+  // grid without the heading becoming one of the cells.
   return (
-    <section className={`card${className ? ` ${className}` : ""}`}>
+    <section className="card">
       {title && <h2 className="card-title">{title}</h2>}
-      {children}
+      <div className={`card-body${className ? ` ${className}` : ""}`}>{children}</div>
     </section>
   );
 }

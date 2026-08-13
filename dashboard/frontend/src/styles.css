@@ -173,13 +173,22 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
+/* Always the first row of the card, never a cell in the body's own layout. */
 .card-title {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
 }
 
 .card-footnote {
@@ -194,14 +203,24 @@ body {
   gap: var(--gap);
 }
 
+/* Two even columns rather than auto-fit: in a wide card, auto-fit spread the
+   stats across the full width and left large gaps between them. */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 14px 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+  align-content: start;
 }
 
 .stat-grid-tight {
   gap: 8px 16px;
+}
+
+/* Stacked stats need explicit spacing; on their own they sit flush. */
+.epoch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .stat-label {
@@ -251,17 +270,17 @@ body {
 
 /* ---- donut ---- */
 
-.validators-card {
+.validators-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
   align-items: center;
 }
 
 .donut {
   position: relative;
-  width: 120px;
-  height: 120px;
+  width: 104px;
+  height: 104px;
 }
 
 .donut svg {
@@ -340,7 +359,6 @@ body {
   align-items: flex-end;
   gap: 2px;
   height: 110px;
-  margin-top: 12px;
 }
 
 .slot-bar {
@@ -469,10 +487,10 @@ body {
 
 /* ---- transactions ---- */
 
-.transactions-card {
+.transactions-body {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 24px;
   align-items: center;
 }
 
@@ -531,8 +549,8 @@ body {
     display: none;
   }
 
-  .transactions-card,
-  .validators-card {
+  .transactions-body,
+  .validators-body {
     grid-template-columns: 1fr;
   }
 }

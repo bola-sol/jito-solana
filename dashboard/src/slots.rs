@@ -190,6 +190,20 @@ impl SlotRing {
         Some(skipped as f64 / resolved.len() as f64)
     }
 
+    /// Slots that know their leader but have no name for it yet, as
+    /// `(slot, leader)` pairs.
+    pub fn leaders_without_names(&self) -> Vec<(Slot, String)> {
+        self.entries
+            .values()
+            .filter(|entry| entry.leader_name.is_none())
+            .filter_map(|entry| entry.leader.clone().map(|leader| (entry.slot, leader)))
+            .collect()
+    }
+
+    pub fn set_leader_name(&mut self, slot: Slot, name: String) -> Option<SlotEntry> {
+        self.update(slot, |entry| entry.leader_name = Some(name))
+    }
+
     pub fn set_leader(
         &mut self,
         slot: Slot,

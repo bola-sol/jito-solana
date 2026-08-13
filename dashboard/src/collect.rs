@@ -48,9 +48,12 @@ const SLOT_OVERVIEW_LEN: usize = 512;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
-/// Smoothing applied to the measured slot duration. Individual slots vary far
-/// too much to display raw.
-const SLOT_DURATION_SMOOTHING: f64 = 0.1;
+/// Slots that must elapse before the duration average is trusted.
+const DURATION_MIN_SLOTS: u64 = 32;
+
+/// Slots after which the duration average re-anchors, so it tracks the cluster
+/// rather than averaging over the whole session.
+const DURATION_WINDOW_SLOTS: u64 = 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Tps {
@@ -80,7 +83,11 @@ pub struct StakeSummary {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ValidatorCounts {
+    /// Vote accounts holding stake this epoch. Unstaked vote accounts are
+    /// excluded; the bank keeps every one ever created and there are tens of
+    /// thousands of them.
     pub total: usize,
+    /// Staked validators whose last vote is too far behind the root.
     pub delinquent: usize,
     pub rpc_nodes: usize,
     pub non_delinquent_stake: u64,
@@ -94,7 +101,10 @@ pub struct ProgramCacheSummary {
     pub evictions: u64,
     pub insertions: u64,
     pub reloads: u64,
-    /// Water level of loaded entries currently cached, as the cache reports it.
+    /// Number of cached entries counted the last time eviction ran. The cache
+    /// only writes this during `evict_using_random_selection`, so it stays at
+    /// zero until the cache first exceeds its eviction threshold, and is not a
+    /// live measure of cache occupancy.
     pub water_level: u64,
 }
 
@@ -104,9 +114,6 @@ pub struct EpochInfo {
     pub start_slot: Slot,
     pub end_slot: Slot,
     pub slots_in_epoch: u64,
-    /// Estimated wall-clock bounds, derived from the measured slot duration.
-    pub start_time_nanos: u64,
-    pub end_time_nanos: u64,
     /// Slots in this epoch where this validator is the leader.
     pub my_leader_slots: Vec<Slot>,
 }
@@ -213,6 +220,8 @@ pub struct Collector {
     first_observed_slot: Option<Slot>,
     last_counters: Option<TxnCounters>,
     slot_duration_nanos: f64,
+    /// Slot and time the duration average is measured from.
+    duration_anchor: Option<(Slot, Instant)>,
     last_completed_slot: Slot,
     last_completed_at: Instant,
     last_vote_advance: Instant,
@@ -242,6 +251,7 @@ impl Collector {
             info_scanned_to: 0,
             first_observed_slot: None,
             last_counters: None,
+            duration_anchor: None,
             slot_duration_nanos: DEFAULT_MS_PER_SLOT as f64 * 1_000_000.0,
             last_completed_slot: 0,
             last_completed_at: now,
@@ -298,6 +308,7 @@ impl Collector {
         if now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
             self.collect_validator_info();
+            self.backfill_leader_names();
             self.collect_peers(&root_bank);
             self.collect_program_cache(&root_bank);
             self.collect_health();
@@ -365,29 +376,43 @@ impl Collector {
 
     /// Maintains a smoothed estimate of how long a slot is taking, which the
     /// epoch countdown is derived from.
+    /// Averages slot duration over a long window rather than smoothing single
+    /// samples.
+    ///
+    /// An epoch has hundreds of thousands of slots, so the countdown multiplies
+    /// this figure by a very large number. A per-sample average wobbles by tens
+    /// of milliseconds, which moved the displayed countdown by twenty minutes.
     fn observe_slot_duration(&mut self, completed: Slot) {
         if completed <= self.last_completed_slot {
             return;
         }
-        let elapsed = self.last_completed_at.elapsed();
-        let advanced = completed - self.last_completed_slot;
         self.last_completed_slot = completed;
         self.last_completed_at = Instant::now();
 
-        // A jump of many slots means we were catching up rather than observing
-        // steady state. Those samples would badly skew the estimate.
-        if advanced > 4 {
+        let Some((anchor_slot, anchor_at)) = self.duration_anchor else {
+            self.duration_anchor = Some((completed, Instant::now()));
+            return;
+        };
+        let advanced = completed.saturating_sub(anchor_slot);
+        if advanced < DURATION_MIN_SLOTS {
             return;
         }
-        let observed = elapsed.as_nanos() as f64 / advanced as f64;
-        self.slot_duration_nanos = self.slot_duration_nanos * (1.0 - SLOT_DURATION_SMOOTHING)
-            + observed * SLOT_DURATION_SMOOTHING;
+        self.slot_duration_nanos = anchor_at.elapsed().as_nanos() as f64 / advanced as f64;
 
+        // Re-anchor once the window is long enough, so the average keeps up
+        // with the cluster instead of averaging over all of history.
+        if advanced >= DURATION_WINDOW_SLOTS {
+            self.duration_anchor = Some((completed, Instant::now()));
+        }
+
+        // Rounded to the millisecond: publishing raw nanoseconds would emit a
+        // new value on every tick for no visible difference.
+        let millis = (self.slot_duration_nanos / 1_000_000.0).round() as u64;
         self.debounces.slot_duration_nanos.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "estimated_slot_duration_nanos",
-            self.slot_duration_nanos as u64,
+            millis.saturating_mul(1_000_000),
         );
     }
 
@@ -615,9 +640,10 @@ impl Collector {
         let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
         let end_slot = start_slot + slots_in_epoch.saturating_sub(1);
 
-        let now_nanos = system_time_nanos(SystemTime::now());
-        let elapsed = slot.saturating_sub(start_slot) as f64 * self.slot_duration_nanos;
-        let remaining = end_slot.saturating_sub(slot) as f64 * self.slot_duration_nanos;
+        // No wall-clock estimate here. It would change on every tick, so the
+        // debounce could never suppress it and this message, which carries every
+        // leader slot in the epoch, would go out five times a second. The client
+        // derives the countdown from the current slot and the slot duration.
 
         // `get_leader_upcoming_slots` yields an endlessly repeating schedule, so
         // the `take_while` is what bounds it to this epoch.
@@ -644,8 +670,6 @@ impl Collector {
                 start_slot,
                 end_slot,
                 slots_in_epoch,
-                start_time_nanos: now_nanos.saturating_sub(elapsed as u64),
-                end_time_nanos: now_nanos.saturating_add(remaining as u64),
                 my_leader_slots,
             },
         );
@@ -742,11 +766,21 @@ impl Collector {
         let rpc_nodes = rpc_identities.len();
 
         let mut current: HashMap<String, Peer> = HashMap::new();
+        let mut staked = 0usize;
         let mut delinquent = 0usize;
         let mut delinquent_stake = 0u64;
         let mut non_delinquent_stake = 0u64;
 
         for (vote_pubkey, (stake, account)) in vote_accounts.iter() {
+            // The bank holds every vote account ever created, most with no
+            // stake. Counting those puts the validator total in the tens of
+            // thousands; a validator is one with stake this epoch, which is
+            // what every other tool reports and who the leader schedule draws
+            // from.
+            if *stake == 0 {
+                continue;
+            }
+            staked += 1;
             let view = account.vote_state_view();
             let identity = *account.node_pubkey();
             let last_vote = view.last_voted_slot();
@@ -805,7 +839,7 @@ impl Collector {
             TOPIC_SUMMARY,
             "validator_counts",
             ValidatorCounts {
-                total: vote_accounts.len(),
+                total: staked,
                 delinquent,
                 rpc_nodes,
                 non_delinquent_stake,
@@ -818,6 +852,34 @@ impl Collector {
         // cluster, and nothing in the client renders it: names travel on the
         // slots that need them, and the counts travel in `validator_counts`.
         self.peers = current;
+    }
+
+    /// Fills in leader names that were unknown when the slot was first labelled.
+    ///
+    /// The name scan takes minutes, so every slot seen before it finishes has no
+    /// name, and a slot is only labelled once. Without this they would stay as
+    /// raw pubkeys for as long as they remain in the ring.
+    fn backfill_leader_names(&mut self) {
+        let missing = self.slots.leaders_without_names();
+        if missing.is_empty() {
+            return;
+        }
+        let resolved: Vec<(Slot, String)> = {
+            let cache = self.info_cache.read().unwrap();
+            missing
+                .into_iter()
+                .filter_map(|(slot, leader)| {
+                    let identity = leader.parse().ok()?;
+                    let name = cache.get(&identity)?.name.clone()?;
+                    Some((slot, name))
+                })
+                .collect()
+        };
+        for (slot, name) in resolved {
+            if let Some(entry) = self.slots.set_leader_name(slot, name) {
+                self.publish_slot(&entry);
+            }
+        }
     }
 
     /// Display name for an identity, from the on-chain validator info.

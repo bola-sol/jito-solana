@@ -24,7 +24,7 @@ impl Default for DashboardConfig {
             // Loopback by default. The dashboard exposes validator internals
             // and has no authentication, so opening it to the network should
             // take a deliberate act.
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8910),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 10999),
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             slot_history: DEFAULT_SLOT_HISTORY,
             tps_history: DEFAULT_TPS_HISTORY,

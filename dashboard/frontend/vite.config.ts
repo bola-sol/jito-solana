@@ -25,7 +25,7 @@ export default defineConfig({
     // `npm run dev` against a validator running the dashboard elsewhere.
     proxy: {
       "/websocket": {
-        target: "ws://127.0.0.1:8910",
+        target: "ws://127.0.0.1:10999",
         ws: true,
       },
     },

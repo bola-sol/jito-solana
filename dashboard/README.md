@@ -3,10 +3,10 @@
 A web dashboard served by `agave-validator` itself.
 
 ```bash
-agave-validator --dashboard-port 8910
+agave-validator --dashboard-port 10999
 ```
 
-Then open <http://127.0.0.1:8910>. There is nothing else to configure and no
+Then open <http://127.0.0.1:10999>. There is nothing else to configure and no
 second process to run. The SPA is embedded in the validator binary, and the data
 comes from handles the validator already holds.
 
@@ -76,7 +76,7 @@ server serves a page explaining how to produce the bundle rather than returning
 a 404.
 
 `npm run dev` serves the UI on Vite's dev server and proxies `/websocket` to a
-validator on `127.0.0.1:8910`. This is the fast loop for UI work, since it needs
+validator on `127.0.0.1:10999`. This is the fast loop for UI work, since it needs
 no Rust rebuild.
 
 ## Not yet implemented

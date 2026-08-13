@@ -86,7 +86,7 @@ pub struct ValidatorCounts {
     /// there are tens of thousands of them, and identities rather than vote
     /// accounts are counted so one validator counts once.
     pub total: usize,
-    /// Staked validators whose last vote is too far behind the root.
+    /// Staked validators whose last vote is too far behind the chain tip.
     pub delinquent: usize,
     pub rpc_nodes: usize,
     pub non_delinquent_stake: u64,
@@ -304,8 +304,11 @@ impl Collector {
         self.collect_slot_positions(&root_bank, highest_slot);
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank);
-        self.collect_identity_and_vote(&root_bank);
-        self.collect_epoch(&root_bank);
+        // Balances, vote state and the epoch index come from the working bank.
+        // The root trails the tip by the 32 slots it takes to root, so reading
+        // them from the root bank showed everything about thirteen seconds late.
+        self.collect_identity_and_vote(&working_bank);
+        self.collect_epoch(&working_bank);
         self.collect_startup_progress();
 
         if now.duration_since(self.last_second_tick) >= SECOND_TICK {
@@ -318,7 +321,7 @@ impl Collector {
             self.last_slow_tick = now;
             self.collect_validator_info();
             self.backfill_leader_names();
-            self.collect_peers(&root_bank);
+            self.collect_peers(&working_bank);
             self.collect_program_cache(&root_bank);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
@@ -543,7 +546,7 @@ impl Collector {
 
     // ---- identity, vote account, stake ----------------------------------
 
-    fn collect_identity_and_vote(&mut self, root_bank: &Bank) {
+    fn collect_identity_and_vote(&mut self, bank: &Bank) {
         let identity = self.ctx.identity();
         self.debounces.identity_key.publish(
             &self.publisher,
@@ -568,16 +571,16 @@ impl Collector {
             &self.publisher,
             TOPIC_SUMMARY,
             "identity_balance",
-            root_bank.get_balance(&identity),
+            bank.get_balance(&identity),
         );
         self.debounces.vote_balance.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "vote_balance",
-            root_bank.get_balance(&self.ctx.vote_account),
+            bank.get_balance(&self.ctx.vote_account),
         );
 
-        let vote_accounts = root_bank.vote_accounts();
+        let vote_accounts = bank.vote_accounts();
         let mine = vote_accounts.get(&self.ctx.vote_account);
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
 
@@ -617,7 +620,10 @@ impl Collector {
             .vote_slot
             .publish(&self.publisher, TOPIC_SUMMARY, "vote_slot", last_vote);
 
-        let distance = last_vote.map(|vote| root_bank.slot().saturating_sub(vote));
+        // Measured against this validator's own tip rather than the bank being
+        // read, so the figure means "how far behind the chain is our vote".
+        let tip = self.last_completed_slot.max(bank.slot());
+        let distance = last_vote.map(|vote| tip.saturating_sub(vote));
         self.debounces.vote_distance.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -628,9 +634,9 @@ impl Collector {
 
     // ---- epoch ----------------------------------------------------------
 
-    fn collect_epoch(&mut self, root_bank: &Bank) {
-        let epoch_schedule = root_bank.epoch_schedule();
-        let slot = root_bank.slot();
+    fn collect_epoch(&mut self, bank: &Bank) {
+        let epoch_schedule = bank.epoch_schedule();
+        let slot = bank.slot();
         let epoch = epoch_schedule.get_epoch(slot);
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
         let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
@@ -743,9 +749,9 @@ impl Collector {
 
     // ---- peers ----------------------------------------------------------
 
-    fn collect_peers(&mut self, root_bank: &Bank) {
-        let vote_accounts = root_bank.vote_accounts();
-        let root_slot = root_bank.slot();
+    fn collect_peers(&mut self, bank: &Bank) {
+        let vote_accounts = bank.vote_accounts();
+        let tip = bank.slot();
         let info_cache = self.info_cache.read().unwrap();
 
         // Gossip says who is reachable and vote accounts say who has stake. A
@@ -790,7 +796,7 @@ impl Collector {
             let identity = *account.node_pubkey();
             let last_vote = view.last_voted_slot();
             let is_delinquent = last_vote
-                .map(|vote| root_slot.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
+                .map(|vote| tip.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
                 .unwrap_or(true);
             if is_delinquent {
                 delinquent += 1;

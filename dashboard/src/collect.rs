@@ -29,7 +29,6 @@ use {
 
 const TOPIC_SUMMARY: &str = "summary";
 const TOPIC_EPOCH: &str = "epoch";
-const TOPIC_PEERS: &str = "peers";
 const TOPIC_SLOT: &str = "slot";
 
 /// A validator whose last vote is further behind than this is reported as
@@ -131,19 +130,6 @@ pub struct Peer {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PeerDelta {
-    pub add: Vec<Peer>,
-    pub update: Vec<Peer>,
-    pub remove: Vec<String>,
-}
-
-impl PeerDelta {
-    fn is_empty(&self) -> bool {
-        self.add.is_empty() && self.update.is_empty() && self.remove.is_empty()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Health {
     pub replay: &'static str,
     pub vote: &'static str,
@@ -183,6 +169,7 @@ impl TxnCounters {
 #[derive(Default)]
 struct Debounces {
     identity_key: Debounced<String>,
+    identity_name: Debounced<Option<String>>,
     vote_key: Debounced<String>,
     startup_progress: Debounced<crate::context::StartupProgress>,
     root_slot: Debounced<Slot>,
@@ -435,7 +422,8 @@ impl Collector {
                 self.leaders_resolved_to = slot;
                 return;
             };
-            if let Some(entry) = self.slots.set_leader(slot, &leader.id, leader.id == me) {
+            let name = self.peer_name(&leader.id);
+            if let Some(entry) = self.slots.set_leader(slot, &leader.id, name, leader.id == me) {
                 self.publish_slot(&entry);
             }
             self.leaders_resolved_to = slot + 1;
@@ -548,6 +536,12 @@ impl Collector {
             TOPIC_SUMMARY,
             "vote_key",
             self.ctx.vote_account.to_string(),
+        );
+        self.debounces.identity_name.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "identity_name",
+            self.peer_name(&identity),
         );
         self.debounces.identity_balance.publish(
             &self.publisher,
@@ -819,33 +813,20 @@ impl Collector {
             },
         );
 
-        let mut delta = PeerDelta {
-            add: Vec::new(),
-            update: Vec::new(),
-            remove: Vec::new(),
-        };
-        for (identity, peer) in &current {
-            match self.peers.get(identity) {
-                None => delta.add.push(peer.clone()),
-                Some(existing) if existing != peer => delta.update.push(peer.clone()),
-                Some(_) => {}
-            }
-        }
-        for identity in self.peers.keys() {
-            if !current.contains_key(identity) {
-                delta.remove.push(identity.clone());
-            }
-        }
-
-        if delta.is_empty() {
-            return;
-        }
+        // The peer table is kept for the counts above and for leader names, but
+        // it is not published. Serialized whole it runs to megabytes on a real
+        // cluster, and nothing in the client renders it: names travel on the
+        // slots that need them, and the counts travel in `validator_counts`.
         self.peers = current;
-        self.publisher.publish_ephemeral(TOPIC_PEERS, "update", &delta);
+    }
 
-        let mut all: Vec<&Peer> = self.peers.values().collect();
-        all.sort_by(|a, b| b.stake.cmp(&a.stake).then_with(|| a.identity.cmp(&b.identity)));
-        self.publisher.retain_only(TOPIC_PEERS, "all", &all);
+    /// Display name for an identity, from the on-chain validator info.
+    fn peer_name(&self, identity: &Pubkey) -> Option<String> {
+        self.info_cache
+            .read()
+            .unwrap()
+            .get(identity)
+            .and_then(|info| info.name.clone())
     }
 
     /// Picks up validator names published since the last sweep.

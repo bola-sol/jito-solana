@@ -1,5 +1,5 @@
 import { count, percent, shortKey, sol, solCompact, duration } from "../format";
-import type { StakeSummary } from "../types";
+import type { StakeSummary, ValidatorCounts } from "../types";
 import { useStore } from "../useStore";
 
 export function Header() {
@@ -11,10 +11,10 @@ export function Header() {
   const uptimeNanos = store.get<number>("summary", "uptime_nanos");
   const cluster = store.get<string>("summary", "cluster");
   const version = store.get<string>("summary", "version");
+  const counts = store.get<ValidatorCounts>("summary", "validator_counts");
   const connection = store.getConnection();
 
-  const me = store.getPeer(identity);
-  const name = me?.name ?? "Private";
+  const name = store.get<string | null>("summary", "identity_name") ?? "Private";
 
   return (
     <header className="header">
@@ -39,7 +39,7 @@ export function Header() {
         />
         <HeaderStat label="Identity Balance" value={`${sol(identityBalance)} SOL`} />
         <HeaderStat label="Uptime" value={duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6)} />
-        <HeaderStat label="Validators" value={count(store.getPeers().length)} />
+        <HeaderStat label="Validators" value={count(counts?.total)} />
       </div>
 
       <div className={`connection connection-${connection}`} title={`websocket ${connection}`}>

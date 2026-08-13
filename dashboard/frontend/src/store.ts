@@ -7,7 +7,7 @@
  * re-render the tree several hundred times a second to no visible effect.
  */
 
-import type { Envelope, Peer, PeerDelta, SlotEntry, TpsSample } from "./types";
+import type { Envelope, SlotEntry, TpsSample } from "./types";
 
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
 const MAX_SLOTS = 512;
@@ -21,7 +21,6 @@ export class Store {
   /** Latest value for each `topic.key`, exactly as published. */
   private values = new Map<string, unknown>();
   private slots = new Map<number, SlotEntry>();
-  private peers = new Map<string, Peer>();
   private tps: TpsSample[] = [];
   private connection: ConnectionState = "connecting";
 
@@ -59,15 +58,6 @@ export class Store {
     return this.slots.get(slot);
   }
 
-  /** Peers sorted by stake, descending. */
-  getPeers(): Peer[] {
-    return [...this.peers.values()].sort((a, b) => b.stake - a.stake);
-  }
-
-  getPeer(identity: string | null | undefined): Peer | undefined {
-    return identity ? this.peers.get(identity) : undefined;
-  }
-
   getTps(): TpsSample[] {
     return this.tps;
   }
@@ -86,15 +76,6 @@ export class Store {
       const entry = value as SlotEntry;
       this.slots.set(entry.slot, entry);
       this.trimSlots();
-    } else if (topic === "peers" && key === "all") {
-      this.peers.clear();
-      for (const peer of value as Peer[]) this.peers.set(peer.identity, peer);
-    } else if (topic === "peers" && key === "update") {
-      const delta = value as PeerDelta;
-      for (const peer of [...delta.add, ...delta.update]) {
-        this.peers.set(peer.identity, peer);
-      }
-      for (const identity of delta.remove) this.peers.delete(identity);
     } else if (topic === "summary" && key === "tps_history") {
       this.tps = (value as TpsSample[]).slice(-MAX_TPS_SAMPLES);
     } else if (topic === "summary" && key === "tps_sample") {

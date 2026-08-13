@@ -12,6 +12,7 @@ export interface SlotEntry {
   slot: number;
   level: SlotLevel;
   leader: string | null;
+  leader_name: string | null;
   mine: boolean;
   transactions: number | null;
   non_vote_transactions: number | null;
@@ -77,12 +78,6 @@ export interface Peer {
   version: string | null;
   has_rpc: boolean;
   name: string | null;
-}
-
-export interface PeerDelta {
-  add: Peer[];
-  update: Peer[];
-  remove: string[];
 }
 
 export interface StartupProgress {

@@ -32,6 +32,9 @@ pub struct SlotEntry {
     pub level: SlotLevel,
     /// Base58 identity of the scheduled leader, when the schedule is known.
     pub leader: Option<String>,
+    /// The leader's display name, carried here so the client needs no copy of
+    /// the cluster's peer table just to label a row.
+    pub leader_name: Option<String>,
     /// True when this validator was the scheduled leader.
     pub mine: bool,
     /// Transactions in the block, once replayed.
@@ -48,6 +51,7 @@ impl SlotEntry {
             slot,
             level: SlotLevel::Incomplete,
             leader: None,
+            leader_name: None,
             mine: false,
             transactions: None,
             non_vote_transactions: None,
@@ -186,10 +190,17 @@ impl SlotRing {
         Some(skipped as f64 / resolved.len() as f64)
     }
 
-    pub fn set_leader(&mut self, slot: Slot, leader: &Pubkey, mine: bool) -> Option<SlotEntry> {
+    pub fn set_leader(
+        &mut self,
+        slot: Slot,
+        leader: &Pubkey,
+        name: Option<String>,
+        mine: bool,
+    ) -> Option<SlotEntry> {
         let leader = leader.to_string();
         self.update(slot, |entry| {
             entry.leader = Some(leader);
+            entry.leader_name = name;
             entry.mine = mine;
         })
     }
@@ -230,7 +241,7 @@ mod tests {
         let mut ring = SlotRing::new(16);
         let me = Pubkey::new_unique();
         for slot in 0..4 {
-            ring.set_leader(slot, &me, true);
+            ring.set_leader(slot, &me, None, true);
         }
         assert_eq!(ring.my_skip_rate(), None);
 

@@ -17,7 +17,7 @@ use {
         validator_info::ValidatorInfoCache,
     },
     serde::Serialize,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch, Slot},
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{
@@ -48,13 +48,6 @@ const SLOT_OVERVIEW_LEN: usize = 512;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
-/// Slots that must elapse before the duration average is trusted.
-const DURATION_MIN_SLOTS: u64 = 32;
-
-/// Slots after which the duration average re-anchors, so it tracks the cluster
-/// rather than averaging over the whole session.
-const DURATION_WINDOW_SLOTS: u64 = 1024;
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Tps {
     pub total: f64,
@@ -83,9 +76,10 @@ pub struct StakeSummary {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ValidatorCounts {
-    /// Vote accounts holding stake this epoch. Unstaked vote accounts are
-    /// excluded; the bank keeps every one ever created and there are tens of
-    /// thousands of them.
+    /// Distinct node identities holding stake this epoch. Unstaked vote
+    /// accounts are excluded, since the bank keeps every one ever created and
+    /// there are tens of thousands of them, and identities rather than vote
+    /// accounts are counted so one validator counts once.
     pub total: usize,
     /// Staked validators whose last vote is too far behind the root.
     pub delinquent: usize,
@@ -219,9 +213,6 @@ pub struct Collector {
     /// watched, so they are neither tracked nor counted as skipped.
     first_observed_slot: Option<Slot>,
     last_counters: Option<TxnCounters>,
-    slot_duration_nanos: f64,
-    /// Slot and time the duration average is measured from.
-    duration_anchor: Option<(Slot, Instant)>,
     last_completed_slot: Slot,
     last_completed_at: Instant,
     last_vote_advance: Instant,
@@ -251,8 +242,6 @@ impl Collector {
             info_scanned_to: 0,
             first_observed_slot: None,
             last_counters: None,
-            duration_anchor: None,
-            slot_duration_nanos: DEFAULT_MS_PER_SLOT as f64 * 1_000_000.0,
             last_completed_slot: 0,
             last_completed_at: now,
             last_vote_advance: now,
@@ -360,7 +349,7 @@ impl Collector {
             "completed_slot",
             completed,
         );
-        self.observe_slot_duration(completed);
+        self.observe_slot_duration(root_bank, completed);
     }
 
     fn highest_frozen_slot(&self) -> Slot {
@@ -376,43 +365,26 @@ impl Collector {
 
     /// Maintains a smoothed estimate of how long a slot is taking, which the
     /// epoch countdown is derived from.
-    /// Averages slot duration over a long window rather than smoothing single
-    /// samples.
+    /// Records replay progress and publishes the cluster's slot duration.
     ///
-    /// An epoch has hundreds of thousands of slots, so the countdown multiplies
-    /// this figure by a very large number. A per-sample average wobbles by tens
-    /// of milliseconds, which moved the displayed countdown by twenty minutes.
-    fn observe_slot_duration(&mut self, completed: Slot) {
-        if completed <= self.last_completed_slot {
-            return;
-        }
-        self.last_completed_slot = completed;
-        self.last_completed_at = Instant::now();
-
-        let Some((anchor_slot, anchor_at)) = self.duration_anchor else {
-            self.duration_anchor = Some((completed, Instant::now()));
-            return;
-        };
-        let advanced = completed.saturating_sub(anchor_slot);
-        if advanced < DURATION_MIN_SLOTS {
-            return;
-        }
-        self.slot_duration_nanos = anchor_at.elapsed().as_nanos() as f64 / advanced as f64;
-
-        // Re-anchor once the window is long enough, so the average keeps up
-        // with the cluster instead of averaging over all of history.
-        if advanced >= DURATION_WINDOW_SLOTS {
-            self.duration_anchor = Some((completed, Instant::now()));
+    /// The duration is the bank's configured `ns_per_slot`, not a measurement.
+    /// Measuring it was unstable: the sample window gets anchored during a
+    /// catch-up burst, when slots arrive far faster than the cluster produces
+    /// them, and then drifts for minutes as real time accumulates. That moved
+    /// the epoch countdown by ten minutes between refreshes. The configured
+    /// value only changes at an epoch boundary, so the countdown is steady.
+    fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
+        if completed > self.last_completed_slot {
+            self.last_completed_slot = completed;
+            self.last_completed_at = Instant::now();
         }
 
-        // Rounded to the millisecond: publishing raw nanoseconds would emit a
-        // new value on every tick for no visible difference.
-        let millis = (self.slot_duration_nanos / 1_000_000.0).round() as u64;
+        let ns_per_slot = root_bank.ns_per_slot_at_slot(completed) as u64;
         self.debounces.slot_duration_nanos.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "estimated_slot_duration_nanos",
-            millis.saturating_mul(1_000_000),
+            ns_per_slot,
         );
     }
 
@@ -766,7 +738,6 @@ impl Collector {
         let rpc_nodes = rpc_identities.len();
 
         let mut current: HashMap<String, Peer> = HashMap::new();
-        let mut staked = 0usize;
         let mut delinquent = 0usize;
         let mut delinquent_stake = 0u64;
         let mut non_delinquent_stake = 0u64;
@@ -780,7 +751,6 @@ impl Collector {
             if *stake == 0 {
                 continue;
             }
-            staked += 1;
             let view = account.vote_state_view();
             let identity = *account.node_pubkey();
             let last_vote = view.last_voted_slot();
@@ -814,6 +784,11 @@ impl Collector {
                 },
             );
         }
+
+        // Counted before gossip-only nodes are folded in, and keyed by identity
+        // rather than vote account, so a validator running more than one staked
+        // vote account counts once.
+        let staked = current.len();
 
         // Unstaked gossip nodes (RPC nodes, mostly) round out the list.
         for (identity, (gossip_addr, shred_version, version)) in gossip {

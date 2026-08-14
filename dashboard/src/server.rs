@@ -257,7 +257,7 @@ async fn serve_websocket(
             log::warn!(
                 "dashboard: snapshot send failed on message {} of {} ({} bytes, {total} bytes \
                  total, starts {:.120}): {err}",
-                index + 1,
+                index.saturating_add(1),
                 snapshot.len(),
                 message.len(),
                 message,

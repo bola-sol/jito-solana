@@ -166,7 +166,7 @@ mod tests {
     fn ignores_malformed_data() {
         assert!(parse(&[]).is_none());
         assert!(parse(&[0xff; 32]).is_none());
-        assert!(parse(&vec![0u8; MAX_VALIDATOR_INFO_LEN + 1]).is_none());
+        assert!(parse(&vec![0u8; MAX_VALIDATOR_INFO_LEN.saturating_add(1)]).is_none());
     }
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
         let identity = Pubkey::new_unique();
         let info = ValidatorInfo {
             name: Some("Lantern".into()),
-            ..Default::default()
+            ..ValidatorInfo::default()
         };
         assert!(cache.insert(identity, info.clone()));
         assert!(!cache.insert(identity, info));

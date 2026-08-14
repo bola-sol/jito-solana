@@ -282,8 +282,8 @@ impl Collector {
             last_completed_slot: 0,
             last_completed_at: now,
             last_vote_advance: now,
-            last_second_tick: now - SECOND_TICK,
-            last_slow_tick: now - SLOW_TICK,
+            last_second_tick: now.checked_sub(SECOND_TICK).unwrap_or(now),
+            last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
         }
     }
 
@@ -466,7 +466,7 @@ impl Collector {
             {
                 self.publish_slot(&entry);
             }
-            self.leaders_resolved_to = slot + 1;
+            self.leaders_resolved_to = slot.saturating_add(1);
         }
 
         // The cache's own lookahead skips slots we already have shreds for. A
@@ -666,7 +666,7 @@ impl Collector {
         let epoch = epoch_schedule.get_epoch(slot);
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
         let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-        let end_slot = start_slot + slots_in_epoch.saturating_sub(1);
+        let end_slot = start_slot.saturating_add(slots_in_epoch.saturating_sub(1));
 
         // No wall-clock estimate here. It would change on every tick, so the
         // debounce could never suppress it and this message, which carries every
@@ -683,7 +683,7 @@ impl Collector {
             .map(|leaders| {
                 leaders
                     .get_leader_upcoming_slots(&me, 0)
-                    .map(|index| start_slot + index as Slot)
+                    .map(|index| start_slot.saturating_add(index as Slot))
                     .take_while(|slot| *slot <= end_slot)
                     .collect()
             })
@@ -740,12 +740,12 @@ impl Collector {
         // by one second reports tens of thousands of TPS. That is replay
         // throughput, not network throughput, and one such sample pins the
         // chart's scale for as long as it stays in view.
-        let slots_per_second = (current.slot - previous.slot) as f64 / seconds;
+        let slots_per_second = current.slot.saturating_sub(previous.slot) as f64 / seconds;
         if slots_per_second > CATCH_UP_SLOTS_PER_SECOND {
             return;
         }
 
-        let total = (current.total - previous.total) as f64 / seconds;
+        let total = current.total.saturating_sub(previous.total) as f64 / seconds;
         let non_vote = current.non_vote.saturating_sub(previous.non_vote) as f64 / seconds;
         // Bank counters do not split errors by vote/non-vote. Votes that fail
         // are rare enough that attributing all failures to non-vote traffic is
@@ -770,7 +770,10 @@ impl Collector {
 
         self.tps_history.push(sample);
         if self.tps_history.len() > self.config.tps_history {
-            let excess = self.tps_history.len() - self.config.tps_history;
+            let excess = self
+                .tps_history
+                .len()
+                .saturating_sub(self.config.tps_history);
             self.tps_history.drain(..excess);
         }
         self.publisher
@@ -826,7 +829,10 @@ impl Collector {
 
         self.net_history.push(sample);
         if self.net_history.len() > self.config.tps_history {
-            let excess = self.net_history.len() - self.config.tps_history;
+            let excess = self
+                .net_history
+                .len()
+                .saturating_sub(self.config.tps_history);
             self.net_history.drain(..excess);
         }
         self.publisher
@@ -885,10 +891,10 @@ impl Collector {
                 .map(|vote| tip.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
                 .unwrap_or(true);
             if is_delinquent {
-                delinquent += 1;
-                delinquent_stake += *stake;
+                delinquent = delinquent.saturating_add(1);
+                delinquent_stake = delinquent_stake.saturating_add(*stake);
             } else {
-                non_delinquent_stake += *stake;
+                non_delinquent_stake = non_delinquent_stake.saturating_add(*stake);
             }
 
             let (gossip_addr, shred_version, version) =
@@ -1017,7 +1023,7 @@ impl Collector {
         let mut cache = self.info_cache.write().unwrap();
         for bank in banks {
             self.info_scanned_to = self.info_scanned_to.max(bank.slot());
-            changed += cache.update_from_slot(&bank).len();
+            changed = changed.saturating_add(cache.update_from_slot(&bank).len());
         }
         drop(cache);
 
@@ -1085,18 +1091,19 @@ impl Collector {
             if slot > root {
                 break;
             }
-            self.skip_next_index += 1;
+            self.skip_next_index = self.skip_next_index.saturating_add(1);
             if slot < floor {
                 continue;
             }
             if self.ctx.blockstore.is_full(slot) {
-                self.skip_produced += 1;
+                self.skip_produced = self.skip_produced.saturating_add(1);
             }
-            self.skip_elapsed += 1;
+            self.skip_elapsed = self.skip_elapsed.saturating_add(1);
         }
 
-        let rate = (self.skip_elapsed > 0)
-            .then(|| (self.skip_elapsed - self.skip_produced) as f64 / self.skip_elapsed as f64);
+        let rate = (self.skip_elapsed > 0).then(|| {
+            self.skip_elapsed.saturating_sub(self.skip_produced) as f64 / self.skip_elapsed as f64
+        });
         self.debounces.skip_rate.publish(
             &self.publisher,
             TOPIC_SUMMARY,

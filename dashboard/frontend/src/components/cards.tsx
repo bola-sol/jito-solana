@@ -71,15 +71,7 @@ export function StatusCard() {
       <div className="stat-grid">
         <Stat label="Slot" value={count(slot)} />
         <Stat label="Time until leader" value={duration(untilLeaderMs)} />
-        <Stat
-          label="Block height"
-          value={count(blockHeight)}
-          sub={
-            blockHeight !== undefined && slot !== undefined
-              ? `${count(slot - blockHeight)} skipped since genesis`
-              : undefined
-          }
-        />
+        <Stat label="Block height" value={count(blockHeight)} />
         <Stat
           label="Vote Status"
           value={health?.vote ?? "—"}

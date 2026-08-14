@@ -514,6 +514,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: 7px;
+  /* Six rows at 36px plus their gaps. The grid sizes every card in a row to
+     the tallest, so without a ceiling here a cluster mid-upgrade stretches
+     Epoch, Status and Validators to match and leaves them mostly empty. */
+  max-height: 252px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Keeps the percentage column clear of the scrollbar when one appears. */
+.versions:hover {
+  scrollbar-color: var(--text-faint) transparent;
 }
 
 .version-row {

@@ -48,7 +48,7 @@ const SECOND_TICK: Duration = Duration::from_secs(1);
 const SLOT_OVERVIEW_LEN: usize = 512;
 
 /// Distinct client versions reported before the tail is folded into one row.
-const MAX_VERSIONS_REPORTED: usize = 8;
+const MAX_VERSIONS_REPORTED: usize = 5;
 
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;

@@ -53,16 +53,6 @@ const MAX_VERSIONS_REPORTED: usize = 5;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
-/// Weight given to each new slot-duration sample. At a 200ms poll the samples
-/// arrive about twice a second, so this settles within a few seconds while
-/// still riding out a single slow slot.
-const SLOT_DURATION_SMOOTHING: f64 = 0.1;
-
-/// Observed slot duration is rounded to this before publishing. The smoothed
-/// value changes on every sample and would otherwise defeat the debounce and
-/// republish several times a second to no visible effect.
-const SLOT_DURATION_QUANTUM_NANOS: f64 = 1_000_000.0;
-
 /// Above this rate of slots replayed per second the validator is catching up
 /// rather than following the cluster, so throughput samples are discarded. A
 /// healthy cluster produces about two and a half slots a second.
@@ -235,7 +225,6 @@ struct Debounces {
     versions: Debounced<Vec<VersionShare>>,
     block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
-    observed_slot_duration_nanos: Debounced<Option<u64>>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
     health: Debounced<Health>,
@@ -282,9 +271,6 @@ pub struct Collector {
     skip_elapsed: usize,
     last_completed_slot: Slot,
     last_completed_at: Instant,
-    /// Smoothed wall-clock nanoseconds per slot, as actually observed. `None`
-    /// until enough slots have passed at a believable rate to measure it.
-    observed_slot_nanos: Option<f64>,
     last_vote_advance: Instant,
 
     last_second_tick: Instant,
@@ -325,7 +311,6 @@ impl Collector {
             skip_elapsed: 0,
             last_completed_slot: 0,
             last_completed_at: now,
-            observed_slot_nanos: None,
             last_vote_advance: now,
             last_second_tick: now.checked_sub(SECOND_TICK).unwrap_or(now),
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
@@ -467,20 +452,10 @@ impl Collector {
     /// value only changes at an epoch boundary, so the countdown is steady.
     fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
         if completed > self.last_completed_slot {
-            // Read before the reset: `collect_health` also watches this to spot
-            // a replay that has stopped.
-            let elapsed = self.last_completed_at.elapsed();
-            let advanced = completed.saturating_sub(self.last_completed_slot);
-            let first_observation = self.last_completed_slot == 0;
             self.last_completed_slot = completed;
             self.last_completed_at = Instant::now();
-            if !first_observation {
-                self.observe_slot_rate(advanced, elapsed);
-            }
         }
 
-        // What the cluster is configured for. A constant, and the fallback for
-        // the client's countdowns until a real measurement exists.
         let ns_per_slot = root_bank.ns_per_slot_at_slot(completed) as u64;
         self.debounces.slot_duration_nanos.publish(
             &self.publisher,
@@ -488,40 +463,6 @@ impl Collector {
             "estimated_slot_duration_nanos",
             ns_per_slot,
         );
-
-        let observed = self.observed_slot_nanos.map(|nanos| {
-            ((nanos / SLOT_DURATION_QUANTUM_NANOS).round() * SLOT_DURATION_QUANTUM_NANOS) as u64
-        });
-        self.debounces.observed_slot_duration_nanos.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "observed_slot_duration_nanos",
-            observed,
-        );
-    }
-
-    /// Folds one measurement into the smoothed slot duration.
-    ///
-    /// Samples taken while replay is outrunning the cluster are dropped rather
-    /// than smoothed. During catch-up slots arrive an order of magnitude faster
-    /// than they are produced, and an earlier version of this anchored on those
-    /// and then took minutes to drift back to the truth.
-    fn observe_slot_rate(&mut self, advanced: u64, elapsed: Duration) {
-        let seconds = elapsed.as_secs_f64();
-        if advanced == 0 || seconds <= 0.0 {
-            return;
-        }
-        if advanced as f64 / seconds > CATCH_UP_SLOTS_PER_SECOND {
-            return;
-        }
-
-        let sample = elapsed.as_nanos() as f64 / advanced as f64;
-        self.observed_slot_nanos = Some(match self.observed_slot_nanos {
-            None => sample,
-            Some(previous) => {
-                previous * (1.0 - SLOT_DURATION_SMOOTHING) + sample * SLOT_DURATION_SMOOTHING
-            }
-        });
     }
 
     // ---- slot history ---------------------------------------------------
@@ -1311,57 +1252,6 @@ fn system_time_nanos(time: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The smoothing and the catch-up guard, exercised without a validator.
-    fn fold(previous: Option<f64>, advanced: u64, elapsed: Duration) -> Option<f64> {
-        let seconds = elapsed.as_secs_f64();
-        if advanced == 0 || seconds <= 0.0 || advanced as f64 / seconds > CATCH_UP_SLOTS_PER_SECOND
-        {
-            return previous;
-        }
-        let sample = elapsed.as_nanos() as f64 / advanced as f64;
-        Some(match previous {
-            None => sample,
-            Some(prev) => prev * (1.0 - SLOT_DURATION_SMOOTHING) + sample * SLOT_DURATION_SMOOTHING,
-        })
-    }
-
-    #[test]
-    fn the_first_sample_is_taken_whole() {
-        let observed = fold(None, 1, Duration::from_millis(400));
-        assert_eq!(observed, Some(400_000_000.0));
-    }
-
-    #[test]
-    fn later_samples_are_smoothed_towards() {
-        // One slow slot must move the reading a little, not all the way.
-        let observed = fold(Some(400_000_000.0), 1, Duration::from_millis(800)).unwrap();
-        assert!(
-            (440_000_000.0 - observed).abs() < 1.0,
-            "expected a tenth of the way, got {observed}"
-        );
-    }
-
-    #[test]
-    fn catch_up_samples_are_discarded_rather_than_smoothed() {
-        // Replay covering 100 slots in a second is not the cluster's rate.
-        let observed = fold(Some(400_000_000.0), 100, Duration::from_secs(1));
-        assert_eq!(observed, Some(400_000_000.0), "catch-up must not move it");
-        // And it must not seed the reading either.
-        assert_eq!(fold(None, 100, Duration::from_secs(1)), None);
-    }
-
-    #[test]
-    fn a_stalled_or_empty_interval_leaves_the_reading_alone() {
-        assert_eq!(
-            fold(Some(400_000_000.0), 0, Duration::from_secs(1)),
-            Some(400_000_000.0)
-        );
-        assert_eq!(
-            fold(Some(400_000_000.0), 1, Duration::ZERO),
-            Some(400_000_000.0)
-        );
-    }
 
     #[test]
     fn releases_fold_their_prerelease_tags() {

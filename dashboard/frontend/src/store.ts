@@ -45,6 +45,15 @@ export class Store {
     return this.connection;
   }
 
+  /**
+   * True once enough has arrived for the dashboard to be worth looking at.
+   * The identity comes from the static publish on connect and the slots from
+   * the retained overview, so both land in the first burst of messages.
+   */
+  isReady(): boolean {
+    return this.values.has("summary.identity_key") && this.slots.size > 0;
+  }
+
   setConnection(state: ConnectionState): void {
     this.connection = state;
     this.touch();

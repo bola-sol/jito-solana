@@ -1,14 +1,18 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { connect } from "./connection";
+import { dismissSplashWhenReady } from "./splash";
 import { Store } from "./store";
 import { StoreContext } from "./useStore";
 import "./styles.css";
 
+// Module scope rather than component state: the splash is removed from outside
+// React, and there is exactly one dashboard per page.
+const store = new Store();
+
 function Root() {
-  const [store] = useState(() => new Store());
-  useEffect(() => connect(store), [store]);
+  useEffect(() => connect(store), []);
   return (
     <StoreContext.Provider value={store}>
       <App />
@@ -24,3 +28,5 @@ createRoot(container).render(
     <Root />
   </StrictMode>,
 );
+
+dismissSplashWhenReady(store);

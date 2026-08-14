@@ -16,7 +16,7 @@ export function EpochCard() {
   const store = useStore();
   const epoch = store.get<EpochInfo>("epoch", "new");
   const slot = store.get<number>("summary", "completed_slot");
-  const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
+  const slotMs = useSlotMs();
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
 
@@ -24,7 +24,6 @@ export function EpochCard() {
   const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
   // Derived here rather than sent by the server: an absolute end time would
   // change every tick and force the whole epoch message to be republished.
-  const slotMs = (slotDurationNanos ?? 400_000_000) / 1e6;
   const remainingMs = Math.max(0, (epoch.end_slot - (slot ?? epoch.start_slot)) * slotMs);
 
   return (
@@ -47,7 +46,8 @@ export function StatusCard() {
   const nextLeader = store.get<number | null>("summary", "next_leader_slot");
   const health = store.get<Health>("summary", "health");
   const voteDistance = store.get<number | null>("summary", "vote_distance");
-  const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
+  const observedSlotNanos = store.get<number | null>("summary", "observed_slot_duration_nanos");
+  const slotMs = useSlotMs();
   const startup = store.get<StartupProgress>("summary", "startup_progress");
   const skip = store.get<SkipRate>("summary", "skip_rate");
 
@@ -62,8 +62,8 @@ export function StatusCard() {
   }
 
   const untilLeaderMs =
-    nextLeader !== null && nextLeader !== undefined && slot !== undefined && slotDurationNanos
-      ? Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6))
+    nextLeader !== null && nextLeader !== undefined && slot !== undefined
+      ? Math.max(0, (nextLeader - slot) * slotMs)
       : undefined;
 
   return (
@@ -72,6 +72,14 @@ export function StatusCard() {
         <Stat label="Slot" value={count(slot)} />
         <Stat label="Time until leader" value={duration(untilLeaderMs)} />
         <Stat label="Block height" value={count(blockHeight)} />
+        <Stat
+          label="Slot time"
+          value={
+            observedSlotNanos === null || observedSlotNanos === undefined
+              ? "—"
+              : `${Math.round(observedSlotNanos / 1e6)} ms`
+          }
+        />
         <Stat
           label="Vote Status"
           value={health?.vote ?? "—"}
@@ -149,6 +157,20 @@ export function TransactionsCard() {
       <TpsChart samples={samples} />
     </Card>
   );
+}
+
+/**
+ * Milliseconds per slot for the countdowns.
+ *
+ * Prefers what the cluster is actually doing over what it is configured for.
+ * A cluster running slow makes every nominal countdown read short, and the
+ * epoch one is hours long, so the error is measured in minutes.
+ */
+function useSlotMs(): number {
+  const store = useStore();
+  const observed = store.get<number | null>("summary", "observed_slot_duration_nanos");
+  const configured = store.get<number>("summary", "estimated_slot_duration_nanos");
+  return (observed ?? configured ?? 400_000_000) / 1e6;
 }
 
 const waiting = <div className="card-footnote">waiting for data…</div>;

@@ -30,6 +30,10 @@ export function SlotStrip() {
   const store = useStore();
   const processed = store.get<number>("summary", "completed_slot");
   const slots = store.getSlots().slice(-STRIP_LENGTH);
+  // Bars are drawn against what the cluster is configured for, so a nominal
+  // slot lands at half height and anything at twice nominal fills the bar.
+  const nominalMs =
+    (store.get<number>("summary", "estimated_slot_duration_nanos") ?? 400_000_000) / 1e6;
 
   // Ordered from most settled to least, so the deltas read monotonically from
   // left to right. Deltas are relative to Processed, this validator's own tip.
@@ -81,7 +85,7 @@ export function SlotStrip() {
 
       <div className="slot-bars">
         {slots.map((entry) => (
-          <SlotBar key={entry.slot} entry={entry} />
+          <SlotBar key={entry.slot} entry={entry} nominalMs={nominalMs} />
         ))}
       </div>
 
@@ -101,14 +105,24 @@ export function SlotStrip() {
   );
 }
 
-function SlotBar({ entry }: { entry: SlotEntry }) {
-  // Bar height carries transaction volume and colour carries consensus level.
-  // A slot that has not been replayed yet has no count, so it shows as a stub.
-  const transactions = entry.transactions ?? 0;
-  const height = transactions === 0 ? 6 : Math.min(100, 12 + Math.log10(1 + transactions) * 28);
+function SlotBar({ entry, nominalMs }: { entry: SlotEntry; nominalMs: number }) {
+  // Height carries how long the slot took and colour carries consensus level.
+  // The duration comes from when the blockstore first saw a shred for the
+  // slot, so a slot with none yet — or one that was skipped, which never gets
+  // any — shows as a stub.
+  const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
+  // Scaled by ratio to nominal rather than linearly: a nominal slot sits at
+  // half height, each doubling adds a quarter, and each halving takes one
+  // away. A linear scale saturated at twice nominal, which made a one-slot
+  // gap and a three-slot gap the same bar.
+  const height =
+    durationMs === null || durationMs <= 0
+      ? 6
+      : Math.max(8, Math.min(100, 50 + 25 * Math.log2(durationMs / nominalMs)));
   const title = [
     `slot ${entry.slot}`,
     LEVEL_NAMES.get(entry.level) ?? entry.level,
+    durationMs === null ? null : `${Math.round(durationMs)} ms`,
     entry.transactions === null ? null : `${count(entry.transactions)} txns`,
     entry.mine ? "our leader slot" : null,
   ]

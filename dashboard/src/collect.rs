@@ -23,7 +23,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{HashMap, HashSet, VecDeque},
         sync::{Arc, RwLock},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
@@ -53,15 +53,13 @@ const MAX_VERSIONS_REPORTED: usize = 5;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
-/// Weight given to each new slot-duration sample. At a 200ms poll the samples
-/// arrive about twice a second, so this settles within a few seconds while
-/// still riding out a single slow slot.
-const SLOT_DURATION_SMOOTHING: f64 = 0.1;
+/// Window the reported slot time averages over. Short enough to follow the
+/// cluster, long enough that a single slow slot does not move the reading.
+const SLOT_TIME_WINDOW_MS: u64 = 60_000;
 
-/// Observed slot duration is rounded to this before publishing. The smoothed
-/// value changes on every sample and would otherwise defeat the debounce and
-/// republish several times a second to no visible effect.
-const SLOT_DURATION_QUANTUM_NANOS: f64 = 1_000_000.0;
+/// Slots timed in one tick. Bounds the blockstore lookups after a stall, when
+/// the cursor could otherwise be thousands of slots behind.
+const MAX_SLOTS_TIMED_PER_TICK: u64 = 512;
 
 /// Above this rate of slots replayed per second the validator is catching up
 /// rather than following the cluster, so throughput samples are discarded. A
@@ -282,9 +280,14 @@ pub struct Collector {
     skip_elapsed: usize,
     last_completed_slot: Slot,
     last_completed_at: Instant,
-    /// Smoothed wall-clock nanoseconds per slot, as actually observed. `None`
-    /// until enough slots have passed at a believable rate to measure it.
-    observed_slot_nanos: Option<f64>,
+    /// Highest slot examined for a shred timestamp, whether or not it had one.
+    /// Skipped slots never do, so this advances past them independently.
+    slot_timed_to: Option<Slot>,
+    /// The last slot that did carry a timestamp, and that timestamp in
+    /// milliseconds. The next slot's duration is measured from here.
+    last_shred_time: Option<(Slot, u64)>,
+    /// `(slot, arrival)` pairs spanning the averaging window, oldest first.
+    slot_time_window: VecDeque<(Slot, u64)>,
     last_vote_advance: Instant,
 
     last_second_tick: Instant,
@@ -325,7 +328,9 @@ impl Collector {
             skip_elapsed: 0,
             last_completed_slot: 0,
             last_completed_at: now,
-            observed_slot_nanos: None,
+            slot_timed_to: None,
+            last_shred_time: None,
+            slot_time_window: VecDeque::new(),
             last_vote_advance: now,
             last_second_tick: now.checked_sub(SECOND_TICK).unwrap_or(now),
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
@@ -441,6 +446,7 @@ impl Collector {
             "completed_slot",
             completed,
         );
+        self.collect_slot_durations(completed);
         self.observe_slot_duration(root_bank, completed);
     }
 
@@ -467,20 +473,13 @@ impl Collector {
     /// value only changes at an epoch boundary, so the countdown is steady.
     fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
         if completed > self.last_completed_slot {
-            // Read before the reset: `collect_health` also watches this to spot
-            // a replay that has stopped.
-            let elapsed = self.last_completed_at.elapsed();
-            let advanced = completed.saturating_sub(self.last_completed_slot);
-            let first_observation = self.last_completed_slot == 0;
             self.last_completed_slot = completed;
             self.last_completed_at = Instant::now();
-            if !first_observation {
-                self.observe_slot_rate(advanced, elapsed);
-            }
         }
 
-        // What the cluster is configured for. A constant, and the fallback for
-        // the client's countdowns until a real measurement exists.
+        // What the cluster is configured for. Constant, and what the client's
+        // countdowns run on: multiplied by an epoch's worth of slots, a moving
+        // average never lets them settle.
         let ns_per_slot = root_bank.ns_per_slot_at_slot(completed) as u64;
         self.debounces.slot_duration_nanos.publish(
             &self.publisher,
@@ -489,45 +488,97 @@ impl Collector {
             ns_per_slot,
         );
 
-        let observed = self.observed_slot_nanos.map(|nanos| {
-            ((nanos / SLOT_DURATION_QUANTUM_NANOS).round() * SLOT_DURATION_QUANTUM_NANOS) as u64
-        });
         self.debounces.observed_slot_duration_nanos.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "observed_slot_duration_nanos",
-            observed,
+            self.windowed_slot_nanos(),
         );
     }
 
-    /// Folds one measurement into the smoothed slot duration.
+    /// Times each newly arrived slot from the blockstore's own record of when
+    /// its first shred landed.
     ///
-    /// Samples taken while replay is outrunning the cluster are dropped rather
-    /// than smoothed. During catch-up slots arrive an order of magnitude faster
-    /// than they are produced, and an earlier version of this anchored on those
-    /// and then took minutes to drift back to the truth.
-    fn observe_slot_rate(&mut self, advanced: u64, elapsed: Duration) {
-        let seconds = elapsed.as_secs_f64();
-        if advanced == 0 || seconds <= 0.0 {
-            return;
-        }
-        if advanced as f64 / seconds > CATCH_UP_SLOTS_PER_SECOND {
-            return;
+    /// That timestamp is written at receive time in milliseconds, so this
+    /// measures what the node actually saw rather than what the collector
+    /// happened to catch on a 200ms poll, which could be half a slot out.
+    fn collect_slot_durations(&mut self, up_to: Slot) {
+        // Nothing before the collector started was watched, so the first tick
+        // establishes a baseline rather than walking the whole ledger.
+        let from = match self.slot_timed_to {
+            None => up_to,
+            Some(timed_to) => timed_to.saturating_add(1),
+        };
+        let from = from.max(up_to.saturating_sub(MAX_SLOTS_TIMED_PER_TICK));
+
+        let mut changed = Vec::new();
+        for slot in from..=up_to {
+            self.slot_timed_to = Some(slot);
+            // A skipped slot has no shreds and so no timestamp. The next slot
+            // that does is then measured from the last one that did, which is
+            // why the gap shows up as one long interval rather than vanishing.
+            let Some(arrived) = self.first_shred_time(slot) else {
+                continue;
+            };
+
+            if let Some((previous_slot, previous_arrival)) = self.last_shred_time
+                && slot > previous_slot
+            {
+                let elapsed = arrived.saturating_sub(previous_arrival);
+                if let Some(entry) = self.slots.update(slot, |entry| {
+                    entry.duration_nanos = Some(elapsed.saturating_mul(1_000_000));
+                }) {
+                    changed.push(entry);
+                }
+            }
+
+            self.last_shred_time = Some((slot, arrived));
+            self.slot_time_window.push_back((slot, arrived));
+            while let Some((_, oldest)) = self.slot_time_window.front() {
+                if arrived.saturating_sub(*oldest) > SLOT_TIME_WINDOW_MS {
+                    self.slot_time_window.pop_front();
+                } else {
+                    break;
+                }
+            }
         }
 
-        let sample = elapsed.as_nanos() as f64 / advanced as f64;
-        self.observed_slot_nanos = Some(match self.observed_slot_nanos {
-            None => sample,
-            Some(previous) => {
-                previous * (1.0 - SLOT_DURATION_SMOOTHING) + sample * SLOT_DURATION_SMOOTHING
-            }
-        });
+        for entry in &changed {
+            self.publish_slot(entry);
+        }
     }
 
-    // ---- slot history ---------------------------------------------------
+    fn first_shred_time(&self, slot: Slot) -> Option<u64> {
+        match self.ctx.blockstore.meta(slot) {
+            Ok(Some(meta)) if meta.first_shred_timestamp > 0 => Some(meta.first_shred_timestamp),
+            _ => None,
+        }
+    }
 
-    /// Walks the leader schedule forwards, labelling slots as they come into
-    /// view so the strip and sidebar can show who is producing each one.
+    /// Mean milliseconds per slot across the window, in nanoseconds.
+    ///
+    /// A true mean between the ends of the window rather than a decaying
+    /// average, so it does not drift and does not need to be seeded.
+    fn windowed_slot_nanos(&self) -> Option<u64> {
+        let (first_slot, first_arrival) = self.slot_time_window.front().copied()?;
+        let (last_slot, last_arrival) = self.slot_time_window.back().copied()?;
+        let slots = last_slot
+            .checked_sub(first_slot)
+            .filter(|slots| *slots > 0)?;
+        let millis = last_arrival.checked_sub(first_arrival)?;
+
+        // Repair delivers shreds for many old slots at once, so their arrival
+        // times bunch up and the mean collapses. That is a record of the
+        // download, not of the cluster, so it is not reported.
+        let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
+        if per_second > CATCH_UP_SLOTS_PER_SECOND {
+            return None;
+        }
+
+        let nanos = (millis as f64 / slots as f64) * 1_000_000.0;
+        Some(nanos as u64)
+    }
+
     fn collect_leaders(&mut self, root_bank: &Bank, highest_slot: Slot) {
         let me = self.ctx.identity();
         // On the first tick the ring starts at the current tip. Filling it with
@@ -1312,55 +1363,46 @@ fn system_time_nanos(time: SystemTime) -> u64 {
 mod tests {
     use super::*;
 
-    /// The smoothing and the catch-up guard, exercised without a validator.
-    fn fold(previous: Option<f64>, advanced: u64, elapsed: Duration) -> Option<f64> {
-        let seconds = elapsed.as_secs_f64();
-        if advanced == 0 || seconds <= 0.0 || advanced as f64 / seconds > CATCH_UP_SLOTS_PER_SECOND
-        {
-            return previous;
+    /// The window mean and its catch-up guard, without a validator behind it.
+    fn window_nanos(samples: &[(Slot, u64)]) -> Option<u64> {
+        let (first_slot, first_arrival) = *samples.first()?;
+        let (last_slot, last_arrival) = *samples.last()?;
+        let slots = last_slot.checked_sub(first_slot).filter(|s| *s > 0)?;
+        let millis = last_arrival.checked_sub(first_arrival)?;
+        let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
+        if per_second > CATCH_UP_SLOTS_PER_SECOND {
+            return None;
         }
-        let sample = elapsed.as_nanos() as f64 / advanced as f64;
-        Some(match previous {
-            None => sample,
-            Some(prev) => prev * (1.0 - SLOT_DURATION_SMOOTHING) + sample * SLOT_DURATION_SMOOTHING,
-        })
+        Some(((millis as f64 / slots as f64) * 1_000_000.0) as u64)
     }
 
     #[test]
-    fn the_first_sample_is_taken_whole() {
-        let observed = fold(None, 1, Duration::from_millis(400));
-        assert_eq!(observed, Some(400_000_000.0));
+    fn the_mean_spans_the_ends_of_the_window() {
+        // Ten slots over four seconds is 400ms each, however the middle fell.
+        let samples = [(100, 1_000_u64), (105, 3_100), (110, 5_000)];
+        assert_eq!(window_nanos(&samples), Some(400_000_000));
     }
 
     #[test]
-    fn later_samples_are_smoothed_towards() {
-        // One slow slot must move the reading a little, not all the way.
-        let observed = fold(Some(400_000_000.0), 1, Duration::from_millis(800)).unwrap();
-        assert!(
-            (440_000_000.0 - observed).abs() < 1.0,
-            "expected a tenth of the way, got {observed}"
-        );
-    }
-
-    #[test]
-    fn catch_up_samples_are_discarded_rather_than_smoothed() {
-        // Replay covering 100 slots in a second is not the cluster's rate.
-        let observed = fold(Some(400_000_000.0), 100, Duration::from_secs(1));
-        assert_eq!(observed, Some(400_000_000.0), "catch-up must not move it");
-        // And it must not seed the reading either.
-        assert_eq!(fold(None, 100, Duration::from_secs(1)), None);
-    }
-
-    #[test]
-    fn a_stalled_or_empty_interval_leaves_the_reading_alone() {
+    fn one_slow_slot_barely_moves_the_mean() {
+        // 150 slots at 400ms with a single two-second slot among them.
+        let steady = 150_u64 * 400;
         assert_eq!(
-            fold(Some(400_000_000.0), 0, Duration::from_secs(1)),
-            Some(400_000_000.0)
+            window_nanos(&[(0, 0), (150, steady + 1_600)]),
+            Some(410_666_666)
         );
-        assert_eq!(
-            fold(Some(400_000_000.0), 1, Duration::ZERO),
-            Some(400_000_000.0)
-        );
+    }
+
+    #[test]
+    fn a_repair_burst_is_not_reported_as_the_cluster_rate() {
+        // A thousand slots arriving in two seconds is a download, not a cluster.
+        assert_eq!(window_nanos(&[(0, 0), (1_000, 2_000)]), None);
+    }
+
+    #[test]
+    fn a_window_that_cannot_span_two_slots_reports_nothing() {
+        assert_eq!(window_nanos(&[]), None);
+        assert_eq!(window_nanos(&[(100, 1_000)]), None);
     }
 
     #[test]

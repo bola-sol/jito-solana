@@ -464,6 +464,36 @@ body {
   align-items: flex-end;
   gap: 2px;
   height: 110px;
+  position: relative;
+}
+
+/* Marks the tallest bar on screen, so the heights read as durations rather
+   than as an unlabelled quantity. */
+.slot-bars-peak {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--text-faint);
+  pointer-events: none;
+}
+
+.slot-bars-peak span {
+  position: absolute;
+  right: 0;
+  bottom: 3px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  /* Punches through whichever bar it lands over. */
+  background: var(--panel);
+  padding: 0 4px;
+}
+
+/* Near the top of the strip there is no room above the line for the label. */
+.slot-bars-peak.label-below span {
+  bottom: auto;
+  top: 3px;
 }
 
 .slot-bar {

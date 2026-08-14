@@ -48,6 +48,7 @@ export function StatusCard() {
   const health = store.get<Health>("summary", "health");
   const voteDistance = store.get<number | null>("summary", "vote_distance");
   const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
+  const observedSlotNanos = store.get<number | null>("summary", "observed_slot_duration_nanos");
   const startup = store.get<StartupProgress>("summary", "startup_progress");
   const skip = store.get<SkipRate>("summary", "skip_rate");
 
@@ -72,6 +73,16 @@ export function StatusCard() {
         <Stat label="Slot" value={count(slot)} />
         <Stat label="Time until leader" value={duration(untilLeaderMs)} />
         <Stat label="Block height" value={count(blockHeight)} />
+        {/* Reported, but not fed into the countdowns above. Multiplied by the
+            slots left in an epoch, a moving average never lets them settle. */}
+        <Stat
+          label="Slot time"
+          value={
+            observedSlotNanos === null || observedSlotNanos === undefined
+              ? "—"
+              : `${Math.round(observedSlotNanos / 1e6)} ms`
+          }
+        />
         <Stat
           label="Vote Status"
           value={health?.vote ?? "—"}

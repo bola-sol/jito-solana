@@ -480,27 +480,63 @@ body {
   outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
+/* A level maps to a colour once, here. The bars and the key below the strip
+   both read `--level`, so the two can never drift apart. */
+.level-incomplete {
+  --level: var(--level-incomplete);
+}
+.level-completed {
+  --level: var(--level-completed);
+}
+.level-optimistically_confirmed {
+  --level: var(--level-optimistically_confirmed);
+}
+.level-rooted {
+  --level: var(--level-rooted);
+}
+.level-finalized {
+  --level: var(--level-finalized);
+}
+.level-skipped {
+  --level: var(--level-skipped);
+}
+
 .slot-bar-fill {
   width: 100%;
   border-radius: 2px;
-  background: var(--level-incomplete);
+  background: var(--level, var(--level-incomplete));
   transition: height 0.2s ease;
 }
 
-.level-completed .slot-bar-fill {
-  background: var(--level-completed);
+.slot-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
 }
-.level-optimistically_confirmed .slot-bar-fill {
-  background: var(--level-optimistically_confirmed);
+
+.slot-key-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  cursor: help;
 }
-.level-rooted .slot-bar-fill {
-  background: var(--level-rooted);
+
+.slot-key-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--level, var(--level-incomplete));
 }
-.level-finalized .slot-bar-fill {
-  background: var(--level-finalized);
-}
-.level-skipped .slot-bar-fill {
-  background: var(--level-skipped);
+
+.slot-key-mine {
+  background: transparent;
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -1px;
 }
 
 /* ---- sidebar ---- */

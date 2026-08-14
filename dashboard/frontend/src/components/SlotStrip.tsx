@@ -1,9 +1,30 @@
 import { count, slotDelta } from "../format";
-import type { SlotEntry } from "../types";
+import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
 
 /** Slots shown in the strip. Beyond this the bars are too thin to read. */
 const STRIP_LENGTH = 64;
+
+/**
+ * What each bar colour means, in the order a slot passes through them.
+ *
+ * The names deliberately match the position readouts above the strip, so that
+ * "Confirmed" in the header and a confirmed-coloured bar are recognisably the
+ * same thing. Pending and Skipped have no position equivalent: a position is
+ * one slot number, whereas these are states many slots can be in.
+ */
+const LEVELS: Array<[SlotLevel, string, string]> = [
+  ["incomplete", "Pending", "Received but not yet replayed, or still arriving"],
+  ["completed", "Processed", "Replayed and frozen by this validator"],
+  ["optimistically_confirmed", "Confirmed", "Two thirds of stake has voted for it"],
+  ["rooted", "Rooted", "This validator has rooted it"],
+  ["finalized", "Finalized", "Rooted by a supermajority of stake"],
+  ["skipped", "Skipped", "The leader produced no block, or it did not arrive in time"],
+];
+
+const LEVEL_NAMES = new Map<SlotLevel, string>(
+  LEVELS.map(([level, label]) => [level, label]),
+);
 
 export function SlotStrip() {
   const store = useStore();
@@ -63,6 +84,19 @@ export function SlotStrip() {
           <SlotBar key={entry.slot} entry={entry} />
         ))}
       </div>
+
+      <div className="slot-key">
+        {LEVELS.map(([level, label, explanation]) => (
+          <span className="slot-key-item" key={level} title={explanation}>
+            <i className={`slot-key-swatch level-${level}`} />
+            {label}
+          </span>
+        ))}
+        <span className="slot-key-item" title="A slot this validator was scheduled to lead">
+          <i className="slot-key-swatch slot-key-mine" />
+          Ours
+        </span>
+      </div>
     </section>
   );
 }
@@ -74,7 +108,7 @@ function SlotBar({ entry }: { entry: SlotEntry }) {
   const height = transactions === 0 ? 6 : Math.min(100, 12 + Math.log10(1 + transactions) * 28);
   const title = [
     `slot ${entry.slot}`,
-    entry.level.replace(/_/g, " "),
+    LEVEL_NAMES.get(entry.level) ?? entry.level,
     entry.transactions === null ? null : `${count(entry.transactions)} txns`,
     entry.mine ? "our leader slot" : null,
   ]

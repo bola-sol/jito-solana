@@ -152,6 +152,18 @@ pub struct SkipRate {
     pub rate: Option<f64>,
 }
 
+/// What gossip knows about a peer, as opposed to what the vote accounts do.
+///
+/// Named fields rather than a tuple: two of the three are `Option<String>` and
+/// sit next to each other, so transposing them would compile and then quietly
+/// report a client version where an address belongs.
+#[derive(Clone, Default)]
+struct GossipPeer {
+    addr: Option<String>,
+    shred_version: Option<u16>,
+    version: Option<String>,
+}
+
 /// Cumulative transaction counters read off a bank, used to derive per-slot
 /// deltas. Bank counters are cumulative along a fork, so the difference between
 /// two banks on the same fork is the work done between them.
@@ -849,16 +861,15 @@ impl Collector {
         // Gossip says who is reachable and vote accounts say who has stake. A
         // validator can appear in one and not the other, so the peer list is
         // the union of both, keyed by identity.
-        let mut gossip: HashMap<Pubkey, (Option<String>, Option<u16>, Option<String>)> =
-            HashMap::new();
+        let mut gossip: HashMap<Pubkey, GossipPeer> = HashMap::new();
         for (contact_info, _) in self.ctx.cluster_info.all_peers() {
             gossip.insert(
                 *contact_info.pubkey(),
-                (
-                    contact_info.gossip().map(|addr| addr.to_string()),
-                    Some(contact_info.shred_version()),
-                    Some(contact_info.version().to_string()),
-                ),
+                GossipPeer {
+                    addr: contact_info.gossip().map(|addr| addr.to_string()),
+                    shred_version: Some(contact_info.shred_version()),
+                    version: Some(contact_info.version().to_string()),
+                },
             );
         }
         let rpc_identities: HashSet<Pubkey> = self
@@ -897,8 +908,11 @@ impl Collector {
                 non_delinquent_stake = non_delinquent_stake.saturating_add(*stake);
             }
 
-            let (gossip_addr, shred_version, version) =
-                gossip.get(&identity).cloned().unwrap_or_default();
+            let GossipPeer {
+                addr: gossip_addr,
+                shred_version,
+                version,
+            } = gossip.get(&identity).cloned().unwrap_or_default();
             current.insert(
                 identity.to_string(),
                 Peer {
@@ -924,7 +938,15 @@ impl Collector {
         let staked = current.len();
 
         // Unstaked gossip nodes (RPC nodes, mostly) round out the list.
-        for (identity, (gossip_addr, shred_version, version)) in gossip {
+        for (
+            identity,
+            GossipPeer {
+                addr: gossip_addr,
+                shred_version,
+                version,
+            },
+        ) in gossip
+        {
             current.entry(identity.to_string()).or_insert_with(|| Peer {
                 identity: identity.to_string(),
                 vote_account: None,

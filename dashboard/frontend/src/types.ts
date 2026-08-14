@@ -83,6 +83,8 @@ export interface StartupProgress {
   phase: string;
   detail: string | null;
   running: boolean;
+  /** Ledger replay progress from 0 to 1, on the phases that can measure it. */
+  fraction: number | null;
 }
 
 export interface Health {

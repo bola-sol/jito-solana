@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { useStore } from "../useStore";
 import { Card, Donut, Meter, Stat } from "./primitives";
+import { StartupPhases } from "./StartupPhases";
 import { TpsChart } from "./TpsChart";
 
 export function EpochCard() {
@@ -54,8 +55,7 @@ export function StatusCard() {
   if (startup && !startup.running) {
     return (
       <Card title="Status">
-        <Stat label="Starting up" value={startup.phase.replace(/_/g, " ")} tone="warn" />
-        {startup.detail && <div className="card-footnote">{startup.detail}</div>}
+        <StartupPhases startup={startup} />
       </Card>
     );
   }

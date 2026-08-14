@@ -508,6 +508,77 @@ body {
   transition: height 0.2s ease;
 }
 
+/* ---- startup ---- */
+
+.startup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.startup-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.startup-phase {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.startup-marker {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+  /* Baselines align the text; the dot needs nudging onto the same line. */
+  transform: translateY(-1px);
+}
+
+.startup-phase.is-done {
+  color: var(--text-dim);
+}
+
+.startup-phase.is-done .startup-marker {
+  background: var(--good);
+}
+
+.startup-phase.is-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.startup-phase.is-current .startup-marker {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent);
+}
+
+.startup-detail {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .startup-phase.is-current .startup-marker {
+    animation: startup-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes startup-pulse {
+    50% {
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 10%, transparent);
+    }
+  }
+}
+
 .slot-key {
   display: flex;
   flex-wrap: wrap;

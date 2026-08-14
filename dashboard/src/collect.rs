@@ -11,10 +11,11 @@
 use {
     crate::{
         config::DashboardConfig,
-        context::DashboardContext,
+        context::{DashboardContext, StartupProgressFn},
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
+        startup::StartupPublisher,
         validator_info::ValidatorInfoCache,
     },
     serde::Serialize,
@@ -181,7 +182,6 @@ struct Debounces {
     identity_name: Debounced<Option<String>>,
     identity_icon: Debounced<Option<String>>,
     vote_key: Debounced<String>,
-    startup_progress: Debounced<crate::context::StartupProgress>,
     root_slot: Debounced<Slot>,
     optimistically_confirmed_slot: Debounced<Slot>,
     finalized_slot: Debounced<Slot>,
@@ -205,12 +205,18 @@ pub struct Collector {
     ctx: DashboardContext,
     publisher: Arc<Publisher>,
     config: DashboardConfig,
+    /// Supplied by the service rather than the context, since the boot
+    /// thread reports progress long before a context can be built.
+    startup_progress: StartupProgressFn,
 
     debounces: Debounces,
     slots: SlotRing,
     tps_history: Vec<TpsSample>,
     peers: HashMap<String, Peer>,
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
+    /// Shared with the boot thread's implementation so the handover from it
+    /// to the collector is invisible to a connected client.
+    startup: StartupPublisher,
 
     /// Highest slot for which leaders have been resolved, so the schedule is
     /// only walked forwards.
@@ -247,6 +253,7 @@ impl Collector {
         publisher: Arc<Publisher>,
         config: DashboardConfig,
         info_cache: Arc<RwLock<ValidatorInfoCache>>,
+        startup_progress: StartupProgressFn,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -255,9 +262,11 @@ impl Collector {
             ctx,
             publisher,
             config,
+            startup_progress,
             debounces: Debounces::default(),
             peers: HashMap::new(),
             info_cache,
+            startup: StartupPublisher::default(),
             leaders_resolved_to: 0,
             info_scanned_to: 0,
             first_observed_slot: None,
@@ -1097,13 +1106,8 @@ impl Collector {
     }
 
     fn collect_startup_progress(&mut self) {
-        let progress = (self.ctx.startup_progress)();
-        self.debounces.startup_progress.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "startup_progress",
-            progress,
-        );
+        let progress = (self.startup_progress)();
+        self.startup.publish(&self.publisher, progress);
     }
 }
 

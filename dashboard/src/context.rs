@@ -8,6 +8,7 @@
 
 use {
     serde::Serialize,
+    solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -22,7 +23,7 @@ use {
 /// A coarse description of where the validator is in its boot sequence,
 /// mirroring `solana_core::validator::ValidatorStartProgress` without depending
 /// on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StartupProgress {
     /// Machine-readable phase name, e.g. `"loading_ledger"`.
     pub phase: String,
@@ -30,6 +31,14 @@ pub struct StartupProgress {
     pub detail: Option<String>,
     /// True once the validator is fully running.
     pub running: bool,
+    /// How far ledger replay has got, from 0 to 1, once enough has been seen to
+    /// measure it. Filled in by the dashboard rather than the validator, which
+    /// reports absolute slots and does not record where replay began.
+    pub fraction: Option<f64>,
+    /// The absolute `(current, target)` replay slots `fraction` is derived
+    /// from. Internal to the crate; the client is sent the fraction.
+    #[serde(skip)]
+    pub replay_slots: Option<(Slot, Slot)>,
 }
 
 /// Supplies the current startup phase on demand.
@@ -50,7 +59,6 @@ pub struct DashboardContext {
     pub cluster_type: ClusterType,
     /// When the validator process started, for the uptime readout.
     pub start_time: SystemTime,
-    pub startup_progress: StartupProgressFn,
 }
 
 impl DashboardContext {

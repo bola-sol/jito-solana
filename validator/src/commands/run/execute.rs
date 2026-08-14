@@ -7,7 +7,7 @@ use {
         ledger_lockfile, lock_ledger,
         shred_receiver_addresses::parse_shred_receiver_addresses,
     },
-    agave_dashboard::DashboardConfig,
+    agave_dashboard::{DashboardConfig, DashboardService, StartupProgress, StartupProgressFn},
     agave_snapshots::{
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
         paths::BANK_SNAPSHOTS_DIR,
@@ -870,7 +870,6 @@ pub fn execute(
             )
         }),
         pubsub_config: run_args.pub_sub_config,
-        dashboard_config,
         voting_disabled,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
@@ -1112,6 +1111,24 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
+    // Started before the bootstrap below, which is where the RPC search and the
+    // snapshot download happen. Those run long before a `Validator` exists, so
+    // starting the dashboard any later leaves the port refusing connections
+    // through the slowest part of a cold start. The collector attaches inside
+    // `Validator::new_with_exit`, once there is state to read.
+    let dashboard_service = match dashboard_config {
+        None => None,
+        Some(dashboard_config) => {
+            let listen_addr = dashboard_config.listen_addr;
+            let progress = startup_progress_fn(start_progress.clone());
+            Some(
+                DashboardService::start(dashboard_config, progress, exit.clone()).map_err(
+                    |err| format!("failed to start the dashboard on {listen_addr}: {err}"),
+                )?,
+            )
+        }
+    };
+
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1221,6 +1238,7 @@ pub fn execute(
         admin_service_post_init,
         xdp_transmit_setup,
         exit,
+        dashboard_service,
     )
     .map_err(|err| format!("{err:?}"))?;
 
@@ -1233,6 +1251,59 @@ pub fn execute(
     info!("Validator exiting...");
 
     Ok(())
+}
+
+/// Adapts the validator's startup phase to the shape the dashboard publishes.
+///
+/// This lives here rather than in `solana-core` so that the dashboard's types
+/// stay out of that crate's public API. It is only needed by the binary that
+/// owns `start_progress` in the first place.
+fn startup_progress_fn(progress: Arc<RwLock<ValidatorStartProgress>>) -> StartupProgressFn {
+    Arc::new(move || {
+        // Read once: two reads could straddle a phase change and report a
+        // phase that disagrees with its own `running` flag.
+        let current = *progress.read().unwrap();
+        let (phase, detail, replay_slots) = match current {
+            ValidatorStartProgress::Initializing => ("initializing", None, None),
+            ValidatorStartProgress::SearchingForRpcService => {
+                ("searching_for_rpc_service", None, None)
+            }
+            ValidatorStartProgress::DownloadingSnapshot { slot, rpc_addr } => (
+                "downloading_snapshot",
+                Some(format!("slot {slot} from {rpc_addr}")),
+                None,
+            ),
+            ValidatorStartProgress::CleaningBlockStore => ("cleaning_blockstore", None, None),
+            ValidatorStartProgress::CleaningAccounts => ("cleaning_accounts", None, None),
+            ValidatorStartProgress::LoadingLedger => ("loading_ledger", None, None),
+            ValidatorStartProgress::ProcessingLedger { slot, max_slot } => (
+                "processing_ledger",
+                Some(format!("slot {slot} of {max_slot}")),
+                Some((slot, max_slot)),
+            ),
+            ValidatorStartProgress::StartingServices => ("starting_services", None, None),
+            ValidatorStartProgress::Halted => ("halted", None, None),
+            ValidatorStartProgress::WaitingForSupermajority {
+                slot,
+                gossip_stake_percent,
+            } => (
+                "waiting_for_supermajority",
+                Some(format!(
+                    "slot {slot}, {gossip_stake_percent}% of stake in gossip"
+                )),
+                None,
+            ),
+            ValidatorStartProgress::Running => ("running", None, None),
+        };
+        StartupProgress {
+            phase: phase.to_string(),
+            detail,
+            running: matches!(current, ValidatorStartProgress::Running),
+            // Derived by the dashboard, which tracks where replay began.
+            fraction: None,
+            replay_slots,
+        }
+    })
 }
 
 // This function is duplicated in ledger-tool/src/main.rs...

@@ -51,6 +51,14 @@ export class Store {
    * the retained overview, so both land in the first burst of messages.
    */
   isReady(): boolean {
+    // A validator that is still booting has no slots and no identity to report,
+    // but the boot sequence is exactly what should be on screen then, so the
+    // splash has nothing left to wait for.
+    const startup = this.values.get("summary.startup_progress") as
+      | { running: boolean }
+      | undefined;
+    if (startup && !startup.running) return true;
+
     return this.values.has("summary.identity_key") && this.slots.size > 0;
   }
 

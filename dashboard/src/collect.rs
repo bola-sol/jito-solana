@@ -1029,7 +1029,11 @@ impl Collector {
     fn publish_versions(&mut self, peers: &HashMap<String, Peer>) {
         let mut totals: HashMap<Option<String>, (usize, u64)> = HashMap::new();
         for peer in peers.values() {
-            let entry = totals.entry(peer.version.clone()).or_insert((0, 0));
+            let release = peer
+                .version
+                .as_deref()
+                .map(|version| release_of(version).to_string());
+            let entry = totals.entry(release).or_insert((0, 0));
             entry.0 = entry.0.saturating_add(1);
             entry.1 = entry.1.saturating_add(peer.stake);
         }
@@ -1225,8 +1229,44 @@ impl Collector {
     }
 }
 
+/// Folds a gossip version string to its release, dropping any pre-release or
+/// build metadata.
+///
+/// A cluster mid-upgrade reports `4.2.0`, `4.2.0-rc.0` and `4.2.0-rc.1` as
+/// three separate strings. They are one release, and counting them apart
+/// understates how much stake has actually moved to it, which is the only
+/// reason to read this panel.
+fn release_of(version: &str) -> &str {
+    match version.find(['-', '+']) {
+        Some(at) => &version[..at],
+        None => version,
+    }
+}
+
 fn system_time_nanos(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn releases_fold_their_prerelease_tags() {
+        assert_eq!(release_of("4.2.0-rc.1"), "4.2.0");
+        assert_eq!(release_of("0.1102.0-beta.40201"), "0.1102.0");
+        assert_eq!(release_of("4.2.0"), "4.2.0");
+        assert_eq!(release_of("1.18.23+build7"), "1.18.23");
+    }
+
+    #[test]
+    fn folding_leaves_strings_that_are_not_semver_alone() {
+        // Gossip is not obliged to send semver, and a version that cannot be
+        // parsed is better reported verbatim than dropped.
+        assert_eq!(release_of(""), "");
+        assert_eq!(release_of("unknown"), "unknown");
+        assert_eq!(release_of("-leading"), "");
+    }
 }

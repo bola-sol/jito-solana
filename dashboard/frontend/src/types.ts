@@ -47,6 +47,15 @@ export interface ValidatorCounts {
   delinquent_stake: number;
 }
 
+export interface VersionShare {
+  /** Null for peers reporting no version, and for the folded tail. */
+  version: string | null;
+  validators: number;
+  stake: number;
+  /** True only for the row the tail was folded into. */
+  other: boolean;
+}
+
 export interface EpochInfo {
   epoch: number;
   start_slot: number;

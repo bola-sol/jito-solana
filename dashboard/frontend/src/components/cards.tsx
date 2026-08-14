@@ -43,6 +43,7 @@ export function EpochCard() {
 export function StatusCard() {
   const store = useStore();
   const slot = store.get<number>("summary", "completed_slot");
+  const blockHeight = store.get<number>("summary", "block_height");
   const nextLeader = store.get<number | null>("summary", "next_leader_slot");
   const health = store.get<Health>("summary", "health");
   const voteDistance = store.get<number | null>("summary", "vote_distance");
@@ -70,6 +71,15 @@ export function StatusCard() {
       <div className="stat-grid">
         <Stat label="Slot" value={count(slot)} />
         <Stat label="Time until leader" value={duration(untilLeaderMs)} />
+        <Stat
+          label="Block height"
+          value={count(blockHeight)}
+          sub={
+            blockHeight !== undefined && slot !== undefined
+              ? `${count(slot - blockHeight)} skipped since genesis`
+              : undefined
+          }
+        />
         <Stat
           label="Vote Status"
           value={health?.vote ?? "—"}

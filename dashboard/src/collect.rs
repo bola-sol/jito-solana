@@ -47,6 +47,9 @@ const SECOND_TICK: Duration = Duration::from_secs(1);
 /// Slots to include in the strip and sidebar snapshot sent on connect.
 const SLOT_OVERVIEW_LEN: usize = 512;
 
+/// Distinct client versions reported before the tail is folded into one row.
+const MAX_VERSIONS_REPORTED: usize = 8;
+
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
@@ -93,6 +96,19 @@ pub struct ValidatorCounts {
     pub rpc_nodes: usize,
     pub non_delinquent_stake: u64,
     pub delinquent_stake: u64,
+}
+
+/// How the cluster's stake is spread across client versions.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VersionShare {
+    /// Semver as gossip reports it, or `null` for peers reporting none.
+    pub version: Option<String>,
+    pub validators: usize,
+    pub stake: u64,
+    /// True for the single row the tail is folded into. A genuine
+    /// no-version-reported group also has no version but is not this, and the
+    /// two sort together, so position cannot tell them apart.
+    pub other: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -206,6 +222,8 @@ struct Debounces {
     vote_commission: Debounced<Option<u8>>,
     stake: Debounced<StakeSummary>,
     validator_counts: Debounced<ValidatorCounts>,
+    versions: Debounced<Vec<VersionShare>>,
+    block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
@@ -311,6 +329,13 @@ impl Collector {
         );
         self.publisher
             .publish(TOPIC_SUMMARY, "cluster", &self.ctx.cluster_name());
+        // Fixed once the node has joined, and the first thing to check when a
+        // validator will not gossip.
+        self.publisher.publish(
+            TOPIC_SUMMARY,
+            "shred_version",
+            &self.ctx.cluster_info.my_shred_version(),
+        );
         self.publisher.publish(
             TOPIC_SUMMARY,
             "startup_time_nanos",
@@ -673,6 +698,15 @@ impl Collector {
     // ---- epoch ----------------------------------------------------------
 
     fn collect_epoch(&mut self, bank: &Bank) {
+        // Blocks, not slots. A skipped slot advances one and not the other, so
+        // the gap between the two is how much the cluster has dropped.
+        self.debounces.block_height.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "block_height",
+            bank.block_height(),
+        );
+
         let epoch_schedule = bank.epoch_schedule();
         let slot = bank.slot();
         let epoch = epoch_schedule.get_epoch(slot);
@@ -977,11 +1011,62 @@ impl Collector {
             },
         );
 
+        self.publish_versions(&current);
+
         // The peer table is kept for the counts above and for leader names, but
         // it is not published. Serialized whole it runs to megabytes on a real
         // cluster, and nothing in the client renders it: names travel on the
         // slots that need them, and the counts travel in `validator_counts`.
         self.peers = current;
+    }
+
+    /// Publishes how the cluster's stake divides across client versions.
+    ///
+    /// Derived from the peer table that is rebuilt anyway, so this costs one
+    /// pass over a map that already exists. During an upgrade it answers the
+    /// question operators actually ask: how much stake has moved, and is this
+    /// validator in the minority.
+    fn publish_versions(&mut self, peers: &HashMap<String, Peer>) {
+        let mut totals: HashMap<Option<String>, (usize, u64)> = HashMap::new();
+        for peer in peers.values() {
+            let entry = totals.entry(peer.version.clone()).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = entry.1.saturating_add(peer.stake);
+        }
+
+        let mut shares: Vec<VersionShare> = totals
+            .into_iter()
+            .map(|(version, (validators, stake))| VersionShare {
+                version,
+                validators,
+                stake,
+                other: false,
+            })
+            .collect();
+        // Stake first: a version running on a crowd of unstaked nodes matters
+        // far less than one carrying a slice of the vote.
+        shares.sort_by(|a, b| {
+            b.stake
+                .cmp(&a.stake)
+                .then_with(|| b.validators.cmp(&a.validators))
+        });
+
+        // Version strings arrive over gossip, so how many distinct values show
+        // up is not ours to bound. Keeping the leaders and folding the tail
+        // into one row keeps this message a fixed size whatever turns up.
+        if shares.len() > MAX_VERSIONS_REPORTED {
+            let tail = shares.split_off(MAX_VERSIONS_REPORTED);
+            shares.push(VersionShare {
+                version: None,
+                validators: tail.iter().map(|share| share.validators).sum(),
+                stake: tail.iter().map(|share| share.stake).sum(),
+                other: true,
+            });
+        }
+
+        self.debounces
+            .versions
+            .publish(&self.publisher, TOPIC_SUMMARY, "versions", shares);
     }
 
     /// Fills in leader names that were unknown when the slot was first labelled.

@@ -7,6 +7,7 @@ import {
 import { Header } from "./components/Header";
 import { NetworkCard } from "./components/NetworkCard";
 import { Sidebar } from "./components/Sidebar";
+import { VersionsCard } from "./components/VersionsCard";
 import { SlotStrip } from "./components/SlotStrip";
 import { useStore } from "./useStore";
 
@@ -29,6 +30,7 @@ export function App() {
           <EpochCard />
           <StatusCard />
           <ValidatorsCard />
+          <VersionsCard />
         </div>
         <TransactionsCard />
         <NetworkCard />

@@ -14,6 +14,7 @@ export function Header() {
   const uptimeNanos = store.get<number>("summary", "uptime_nanos");
   const cluster = store.get<string>("summary", "cluster");
   const version = store.get<string>("summary", "version");
+  const shredVersion = store.get<number>("summary", "shred_version");
   const counts = store.get<ValidatorCounts>("summary", "validator_counts");
   const connection = store.getConnection();
 
@@ -25,6 +26,11 @@ export function Header() {
       <div className="header-brand">
         <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
         <span className="version">{version ? `v${version}` : ""}</span>
+        {shredVersion !== undefined && (
+          <span className="version" title="Shred version. Nodes only gossip with matching versions.">
+            shred {shredVersion}
+          </span>
+        )}
       </div>
 
       <div className="header-identity">

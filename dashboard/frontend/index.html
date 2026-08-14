@@ -3,9 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Agave Dashboard</title>
+    <!--
+      Stamped before anything renders. Left to the bundle, a dashboard set to
+      light would paint dark for as long as the JavaScript took to arrive, and
+      flash on every reload. Kept in step with src/theme.ts.
+    -->
+    <script>
+      try {
+        if (localStorage.getItem("agave-dashboard-theme") === "light") {
+          document.documentElement.dataset.theme = "light";
+        }
+      } catch (e) {
+        /* storage unavailable; dark is the default anyway */
+      }
+    </script>
     <!--
       The splash lives here rather than in the React tree so that it paints on
       the first frame, before the bundle has been parsed. src/splash.ts removes

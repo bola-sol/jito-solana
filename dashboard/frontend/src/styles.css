@@ -1,30 +1,64 @@
-/* Dark only by design. This is an operations console meant to be left open on a
-   screen for hours. */
+/* Every colour in the frontend resolves through the two blocks below. Nothing
+   else in this file, and nothing in the components, names a colour directly,
+   which is what keeps a second theme to a block of values rather than a sweep
+   through the tree.
+
+   Dark is the default because this is an operations console meant to be left
+   open on a screen for hours. The OS preference is deliberately not consulted:
+   a dashboard on a wall should not change with the laptop that happens to be
+   driving it. The header toggle sets `data-theme` and the choice is remembered
+   per host.
+
+   Greens and sages are Anza's; the semantic colours keep their hues so that
+   green still reads as running, red as delinquent and amber as caution. */
 
 :root {
-  --bg: #0b0e14;
-  --panel: #141922;
-  --panel-raised: #1b212c;
-  --border: #242c39;
-  --text: #d5dbe5;
-  --text-dim: #8a94a6;
-  --text-faint: #5c6676;
+  --bg: #0b1004;
+  --panel: #151d0b;
+  --panel-raised: #1e2811;
+  --border: #2c3a1b;
+  --text: #e3e8d6;
+  --text-dim: #a4ae8f;
+  --text-faint: #6e7a5b;
 
-  --accent: #4f8cff;
-  --good: #3fb950;
-  --warn: #d29922;
-  --bad: #f85149;
-  --vote: #3b5bdb;
+  --accent: #c9d4ae;
+  --good: #6fcf3f;
+  --warn: #e0a422;
+  --bad: #f2564a;
+  --vote: #8ba362;
 
-  --level-incomplete: #39414f;
-  --level-completed: #4f8cff;
-  --level-optimistically_confirmed: #23a2a2;
-  --level-rooted: #3fb950;
-  --level-finalized: #2d7a3e;
-  --level-skipped: #f85149;
+  --level-incomplete: #38412a;
+  --level-completed: #7fa5e8;
+  --level-optimistically_confirmed: #3fb9a4;
+  --level-rooted: #6fcf3f;
+  --level-finalized: #3c7a2c;
+  --level-skipped: #f2564a;
 
   --radius: 8px;
   --gap: 12px;
+}
+
+:root[data-theme="light"] {
+  --bg: #ecefe1;
+  --panel: #f7f8f2;
+  --panel-raised: #dce2cf;
+  --border: #c9d2b6;
+  --text: #162101;
+  --text-dim: #586446;
+  --text-faint: #879273;
+
+  --accent: #55742f;
+  --good: #3f7d1f;
+  --warn: #8a5a06;
+  --bad: #c0392b;
+  --vote: #7d9b53;
+
+  --level-incomplete: #c4cdb0;
+  --level-completed: #4a6fa8;
+  --level-optimistically_confirmed: #2a8a78;
+  --level-rooted: #4f8f2a;
+  --level-finalized: #2c5a1a;
+  --level-skipped: #c0392b;
 }
 
 * {
@@ -186,6 +220,30 @@ body {
   height: 7px;
   border-radius: 50%;
   background: var(--text-faint);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .connection-open .connection-dot {

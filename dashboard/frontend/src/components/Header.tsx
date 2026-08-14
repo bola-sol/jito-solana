@@ -3,6 +3,7 @@ import type { StakeSummary, ValidatorCounts } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function Header() {
   const store = useStore();
@@ -57,6 +58,8 @@ export function Header() {
         <span className="connection-dot" />
         {connection}
       </div>
+
+      <ThemeToggle />
     </header>
   );
 }

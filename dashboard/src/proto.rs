@@ -58,12 +58,7 @@ pub fn encode<T: Serialize>(topic: &str, key: &str, value: &T) -> Message {
     encode_with_id(topic, key, None, value)
 }
 
-pub fn encode_with_id<T: Serialize>(
-    topic: &str,
-    key: &str,
-    id: Option<u64>,
-    value: &T,
-) -> Message {
+pub fn encode_with_id<T: Serialize>(topic: &str, key: &str, id: Option<u64>, value: &T) -> Message {
     let envelope = Envelope {
         topic,
         key,

@@ -2,12 +2,8 @@
 
 use {
     crate::{
-        collect::Collector,
-        config::DashboardConfig,
-        context::DashboardContext,
-        proto::Publisher,
-        server,
-        validator_info::ValidatorInfoCache,
+        collect::Collector, config::DashboardConfig, context::DashboardContext, proto::Publisher,
+        server, validator_info::ValidatorInfoCache,
     },
     std::{
         io,

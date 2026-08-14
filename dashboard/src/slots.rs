@@ -93,11 +93,7 @@ impl SlotRing {
     /// Applies `update` to the entry for `slot`, creating it if needed, and
     /// returns the entry if anything actually changed. Callers publish only on
     /// a `Some` so that idle polling produces no traffic.
-    pub fn update(
-        &mut self,
-        slot: Slot,
-        update: impl FnOnce(&mut SlotEntry),
-    ) -> Option<SlotEntry> {
+    pub fn update(&mut self, slot: Slot, update: impl FnOnce(&mut SlotEntry)) -> Option<SlotEntry> {
         let before = self.entries.get(&slot).cloned();
         let entry = match self.entries.entry(slot) {
             Entry::Occupied(occupied) => occupied.into_mut(),
@@ -218,15 +214,24 @@ mod tests {
     fn level_never_regresses() {
         let mut ring = SlotRing::new(16);
         ring.update(10, |entry| entry.level = SlotLevel::Rooted);
-        assert!(ring.update(10, |entry| entry.level = SlotLevel::Completed).is_none());
+        assert!(
+            ring.update(10, |entry| entry.level = SlotLevel::Completed)
+                .is_none()
+        );
         assert_eq!(ring.get(10).unwrap().level, SlotLevel::Rooted);
     }
 
     #[test]
     fn update_reports_only_real_changes() {
         let mut ring = SlotRing::new(16);
-        assert!(ring.update(1, |entry| entry.level = SlotLevel::Completed).is_some());
-        assert!(ring.update(1, |entry| entry.level = SlotLevel::Completed).is_none());
+        assert!(
+            ring.update(1, |entry| entry.level = SlotLevel::Completed)
+                .is_some()
+        );
+        assert!(
+            ring.update(1, |entry| entry.level = SlotLevel::Completed)
+                .is_none()
+        );
     }
 
     #[test]

@@ -245,10 +245,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(port_validator)
             .help(
-                "Serve the web dashboard on this port. The dashboard exposes validator \
-                 internals and is unauthenticated, so it binds to localhost unless \
-                 --dashboard-bind-address is also given. Choose a port outside \
-                 --dynamic-port-range",
+                "Serve the web dashboard on this port. The dashboard exposes validator internals \
+                 and is unauthenticated, so it binds to localhost unless --dashboard-bind-address \
+                 is also given. Choose a port outside --dynamic-port-range",
             ),
     )
     .arg(
@@ -259,8 +258,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(solana_net_utils::is_host)
             .requires("dashboard_port")
             .help(
-                "Address the web dashboard listens on [default: 127.0.0.1]. Binding to a \
-                 public address exposes validator internals to anyone who can reach it",
+                "Address the web dashboard listens on [default: 127.0.0.1]. Binding to a public \
+                 address exposes validator internals to anyone who can reach it",
             ),
     )
     .arg(

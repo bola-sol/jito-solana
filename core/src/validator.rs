@@ -602,7 +602,9 @@ impl ValidatorStartProgress {
                 gossip_stake_percent,
             } => (
                 "waiting_for_supermajority",
-                Some(format!("slot {slot}, {gossip_stake_percent}% of stake in gossip")),
+                Some(format!(
+                    "slot {slot}, {gossip_stake_percent}% of stake in gossip"
+                )),
             ),
             Self::Running => ("running", None),
         };

@@ -91,7 +91,9 @@ async fn handle(mut socket: TcpStream, publisher: Arc<Publisher>) -> Result<(), 
         // response. Small files survive that; a large asset does not.
         let mut consumed = vec![0u8; head_len];
         socket.read_exact(&mut consumed).await?;
-        serve_http(socket, &head).await.map_err(ConnectionError::from)
+        serve_http(socket, &head)
+            .await
+            .map_err(ConnectionError::from)
     }
 }
 
@@ -140,11 +142,21 @@ async fn serve_http(mut socket: TcpStream, head: &str) -> io::Result<()> {
     let is_read = head.starts_with("GET ") || head.starts_with("HEAD ");
 
     let response = if !is_read {
-        response(405, "text/plain; charset=utf-8", b"method not allowed", false)
+        response(
+            405,
+            "text/plain; charset=utf-8",
+            b"method not allowed",
+            false,
+        )
     } else if assets::ASSETS.is_empty() {
         // Built without a frontend. Saying so beats a 404, which would read as
         // the server being broken.
-        response(200, "text/html; charset=utf-8", MISSING_FRONTEND.as_bytes(), false)
+        response(
+            200,
+            "text/html; charset=utf-8",
+            MISSING_FRONTEND.as_bytes(),
+            false,
+        )
     } else {
         match lookup(path) {
             // Hashed asset filenames are safe to cache forever. The entry
@@ -188,12 +200,8 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
         "no-cache"
     };
     let mut out = format!(
-        "HTTP/1.1 {status} {reason}\r\n\
-         content-type: {content_type}\r\n\
-         content-length: {}\r\n\
-         cache-control: {cache}\r\n\
-         connection: close\r\n\
-         \r\n",
+        "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: \
+         {}\r\ncache-control: {cache}\r\nconnection: close\r\n\r\n",
         body.len()
     )
     .into_bytes();

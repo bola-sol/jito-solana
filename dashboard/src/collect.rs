@@ -12,9 +12,9 @@ use {
     crate::{
         config::DashboardConfig,
         context::DashboardContext,
+        net_stats::{self, NetCounters},
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
-        net_stats::{self, NetCounters},
         validator_info::ValidatorInfoCache,
     },
     serde::Serialize,
@@ -540,7 +540,10 @@ impl Collector {
         // forks, so their levels advance from the roots directly.
         changed.extend(self.slots.promote(finalized, SlotLevel::Finalized));
         changed.extend(self.slots.promote(root, SlotLevel::Rooted));
-        changed.extend(self.slots.promote(confirmed, SlotLevel::OptimisticallyConfirmed));
+        changed.extend(
+            self.slots
+                .promote(confirmed, SlotLevel::OptimisticallyConfirmed),
+        );
 
         // Anything still unstarted below the root will never be produced.
         changed.extend(self.slots.mark_skipped_below(root));
@@ -585,12 +588,18 @@ impl Collector {
             self.ctx.vote_account.to_string(),
         );
         let (my_name, my_icon) = self.peer_display(&identity);
-        self.debounces
-            .identity_name
-            .publish(&self.publisher, TOPIC_SUMMARY, "identity_name", my_name);
-        self.debounces
-            .identity_icon
-            .publish(&self.publisher, TOPIC_SUMMARY, "identity_icon", my_icon);
+        self.debounces.identity_name.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "identity_name",
+            my_name,
+        );
+        self.debounces.identity_icon.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "identity_icon",
+            my_icon,
+        );
         self.debounces.identity_balance.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -712,7 +721,8 @@ impl Collector {
             .duration_since(self.ctx.start_time)
             .unwrap_or_default()
             .as_nanos() as u64;
-        self.publisher.publish(TOPIC_SUMMARY, "uptime_nanos", &uptime);
+        self.publisher
+            .publish(TOPIC_SUMMARY, "uptime_nanos", &uptime);
     }
 
     fn collect_tps(&mut self, working_bank: &Bank) {
@@ -724,7 +734,10 @@ impl Collector {
         if current.slot <= previous.slot || current.total < previous.total {
             return;
         }
-        let seconds = current.sampled_at.duration_since(previous.sampled_at).as_secs_f64();
+        let seconds = current
+            .sampled_at
+            .duration_since(previous.sampled_at)
+            .as_secs_f64();
         if seconds <= 0.0 {
             return;
         }
@@ -968,9 +981,9 @@ impl Collector {
                     let identity = leader.parse().ok()?;
                     let info = cache.get(&identity)?;
                     // Only worth republishing the slot if something resolved.
-                    info.name.is_some().then(|| {
-                        (slot, info.name.clone(), info.icon_url.clone())
-                    })
+                    info.name
+                        .is_some()
+                        .then(|| (slot, info.name.clone(), info.icon_url.clone()))
                 })
                 .collect()
         };
@@ -1064,9 +1077,12 @@ impl Collector {
             _ => "voting",
         };
 
-        self.debounces
-            .health
-            .publish(&self.publisher, TOPIC_SUMMARY, "health", Health { replay, vote });
+        self.debounces.health.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "health",
+            Health { replay, vote },
+        );
     }
 
     /// Skip rate across this validator's leader slots for the whole epoch.
@@ -1110,12 +1126,14 @@ impl Collector {
             self.skip_elapsed += 1;
         }
 
-        let rate = (self.skip_elapsed > 0).then(|| {
-            (self.skip_elapsed - self.skip_produced) as f64 / self.skip_elapsed as f64
-        });
-        self.debounces
-            .skip_rate
-            .publish(&self.publisher, TOPIC_SUMMARY, "skip_rate", SkipRate { epoch, rate });
+        let rate = (self.skip_elapsed > 0)
+            .then(|| (self.skip_elapsed - self.skip_produced) as f64 / self.skip_elapsed as f64);
+        self.debounces.skip_rate.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "skip_rate",
+            SkipRate { epoch, rate },
+        );
     }
 
     fn collect_startup_progress(&mut self) {

@@ -1,0 +1,69 @@
+import { decimal } from "../format";
+import type { TpsSample } from "../types";
+import { useNow, windowed } from "../useNow";
+
+const WIDTH = 600;
+const HEIGHT = 120;
+
+/** How much history the chart shows. Older samples scroll off the left. */
+const WINDOW_SECONDS = 60;
+
+/**
+ * A stacked area chart of vote and non-vote throughput over a fixed window.
+ *
+ * Points are placed by timestamp rather than by index, so the series scrolls
+ * leftward at a constant rate. Plotting by index spread whatever history
+ * existed across the full width, which made the line compress as it grew and
+ * kept old spikes on screen setting the vertical scale.
+ *
+ * The window carries one sample past its left edge and the viewBox clips it, so
+ * the series slides out of view rather than the leftmost segment vanishing when
+ * its older end expires.
+ *
+ * Hand-rolled rather than pulled from a charting library: the built bundle is
+ * embedded in the validator binary, and a chart library would roughly triple
+ * its size for the sake of one chart.
+ */
+export function TpsChart({ samples }: { samples: TpsSample[] }) {
+  const now = useNow();
+  const windowMs = WINDOW_SECONDS * 1000;
+  const visible = windowed(samples, now, windowMs, (sample) => sample.timestamp_nanos);
+
+  if (visible.length < 2) {
+    return <div className="chart-empty">collecting samples…</div>;
+  }
+
+  const peak = Math.max(...visible.map((sample) => sample.total), 1);
+  const x = (sample: TpsSample) =>
+    WIDTH * (1 - (now - sample.timestamp_nanos / 1e6) / windowMs);
+  const y = (value: number) => HEIGHT - (value / peak) * HEIGHT;
+
+  // Vote traffic sits underneath and non-vote stacks on top, so the upper edge
+  // is total throughput.
+  const votePath = area(visible.map((s) => [x(s), y(s.vote)]));
+  const totalPath = area(visible.map((s) => [x(s), y(s.total)]));
+
+  return (
+    <div className="chart">
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img">
+        <path className="chart-total" d={totalPath} />
+        <path className="chart-vote" d={votePath} />
+      </svg>
+      <div className="chart-axis">
+        <span>{WINDOW_SECONDS}s ago</span>
+        <span className="chart-peak">peak {decimal(peak, 0)} TPS</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
+/** Turns a point series into a filled area path down to the baseline. */
+function area(points: Array<[number, number]>): string {
+  const line = points
+    .map(([px, py], index) => `${index === 0 ? "M" : "L"}${px.toFixed(1)},${py.toFixed(1)}`)
+    .join(" ");
+  const firstX = points[0][0].toFixed(1);
+  const lastX = points[points.length - 1][0].toFixed(1);
+  return `${line} L${lastX},${HEIGHT} L${firstX},${HEIGHT} Z`;
+}

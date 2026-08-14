@@ -1019,7 +1019,7 @@ impl Collector {
                 .collect()
         };
 
-        let mut changed = 0;
+        let mut changed: usize = 0;
         let mut cache = self.info_cache.write().unwrap();
         for bank in banks {
             self.info_scanned_to = self.info_scanned_to.max(bank.slot());

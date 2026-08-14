@@ -15,7 +15,10 @@ use {
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
         pin, select,
-        sync::broadcast::error::{RecvError, TryRecvError},
+        sync::{
+            Semaphore,
+            broadcast::error::{RecvError, TryRecvError},
+        },
         time::{Duration, timeout},
     },
     tokio_util::compat::TokioAsyncReadCompatExt,
@@ -36,6 +39,18 @@ const MAX_CLIENT_MESSAGE: usize = 4096;
 /// Ceiling for messages the server sends. The full peer list is the largest,
 /// and grows with the size of the cluster.
 const MAX_SERVER_MESSAGE: usize = 32 * 1024 * 1024;
+
+/// Websocket clients served at once.
+///
+/// Only websockets are capped. They are the long-lived resource: each holds a
+/// task, a socket and a broadcast receiver for as long as the viewer keeps the
+/// page open, and nothing else bounds how many a caller may open. HTTP requests
+/// are short and deliberately uncapped, since refusing those would stop the
+/// page loading at all under exactly the conditions where a cap matters.
+///
+/// The dashboard is meant for a handful of operators, so this is generous
+/// enough that a legitimate viewer with several tabs never notices it.
+const MAX_WEBSOCKET_CLIENTS: usize = 64;
 
 /// Served when the crate was built without `frontend/dist` present.
 const MISSING_FRONTEND: &str = include_str!("missing_frontend.html");
@@ -59,6 +74,7 @@ enum ConnectionError {
 }
 
 pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>) {
+    let clients = Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS));
     loop {
         let (socket, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -68,20 +84,34 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>) {
             }
         };
         let publisher = publisher.clone();
+        let clients = clients.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(socket, publisher).await {
+            if let Err(err) = handle(socket, publisher, clients).await {
                 log::debug!("dashboard: connection from {peer} ended: {err}");
             }
         });
     }
 }
 
-async fn handle(mut socket: TcpStream, publisher: Arc<Publisher>) -> Result<(), ConnectionError> {
+async fn handle(
+    mut socket: TcpStream,
+    publisher: Arc<Publisher>,
+    clients: Arc<Semaphore>,
+) -> Result<(), ConnectionError> {
     let (head, head_len) = timeout(REQUEST_TIMEOUT, peek_request_head(&socket))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "request head"))??;
 
     if is_websocket_upgrade(&head) {
+        // Held for the lifetime of the websocket below, and released when this
+        // function returns.
+        let Ok(_permit) = clients.try_acquire_owned() else {
+            log::info!(
+                "dashboard: refusing a websocket, {MAX_WEBSOCKET_CLIENTS} clients already \
+                 connected"
+            );
+            return refuse_websocket(socket, head_len).await;
+        };
         let path = request_path(&head).to_string();
         serve_websocket(socket, publisher, &path).await
     } else {
@@ -95,6 +125,28 @@ async fn handle(mut socket: TcpStream, publisher: Arc<Publisher>) -> Result<(), 
             .await
             .map_err(ConnectionError::from)
     }
+}
+
+/// Turns away a websocket that would exceed the client cap.
+///
+/// Refused before the upgrade, so the caller is still speaking HTTP and gets a
+/// status it can act on rather than a socket that closes for no stated reason.
+async fn refuse_websocket(mut socket: TcpStream, head_len: usize) -> Result<(), ConnectionError> {
+    // Same reason the HTTP path drains here: closing a socket with unread data
+    // makes the kernel send RST, which discards the response we just wrote.
+    let mut consumed = vec![0u8; head_len];
+    socket.read_exact(&mut consumed).await?;
+    socket
+        .write_all(&response(
+            503,
+            "text/plain; charset=utf-8",
+            b"too many dashboard clients",
+            false,
+        ))
+        .await?;
+    socket.flush().await?;
+    socket.shutdown().await?;
+    Ok(())
 }
 
 /// Reads the request head without consuming it, so that a websocket connection
@@ -192,6 +244,7 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
     let reason = match status {
         404 => "Not Found",
         405 => "Method Not Allowed",
+        503 => "Service Unavailable",
         _ => "OK",
     };
     let cache = if immutable {
@@ -370,6 +423,57 @@ mod tests {
         );
         assert_eq!(request_path("GET /?x=1 HTTP/1.1\r\n"), "/");
         assert_eq!(request_path("garbage"), "/");
+    }
+
+    /// Drives `handle` against a real socket with the cap already taken, which
+    /// is the state a 65th viewer would arrive in.
+    async fn request_with_no_permits_left(request: &[u8]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let clients = Arc::new(Semaphore::new(1));
+        // Stands in for a viewer already holding the only slot.
+        let _held = clients.clone().try_acquire_owned().unwrap();
+
+        let publisher = Arc::new(Publisher::new());
+        let server = tokio::spawn({
+            let clients = clients.clone();
+            async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                handle(socket, publisher, clients).await
+            }
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        reply
+    }
+
+    #[tokio::test]
+    async fn a_websocket_over_the_cap_is_refused_with_a_status() {
+        let reply = request_with_no_permits_left(
+            b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n",
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 503 Service Unavailable"),
+            "expected a refusal, got {reply:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_is_still_served_when_the_websocket_cap_is_full() {
+        // The point of capping websockets alone: a full pool must not stop the
+        // page itself from loading.
+        let reply = request_with_no_permits_left(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(
+            reply.starts_with("HTTP/1.1 200 OK"),
+            "expected the page, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
     }
 
     #[test]

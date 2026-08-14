@@ -23,7 +23,7 @@ use {
     solana_runtime::bank::Bank,
     std::{
         collections::{HashMap, HashSet},
-        sync::{Arc, RwLock, atomic::Ordering},
+        sync::{Arc, RwLock},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
@@ -92,20 +92,6 @@ pub struct ValidatorCounts {
     pub rpc_nodes: usize,
     pub non_delinquent_stake: u64,
     pub delinquent_stake: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ProgramCacheSummary {
-    pub hits: u64,
-    pub misses: u64,
-    pub evictions: u64,
-    pub insertions: u64,
-    pub reloads: u64,
-    /// Number of cached entries counted the last time eviction ran. The cache
-    /// only writes this during `evict_using_random_selection`, so it stays at
-    /// zero until the cache first exceeds its eviction threshold, and is not a
-    /// live measure of cache occupancy.
-    pub water_level: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -208,7 +194,6 @@ struct Debounces {
     vote_commission: Debounced<Option<u8>>,
     stake: Debounced<StakeSummary>,
     validator_counts: Debounced<ValidatorCounts>,
-    program_cache: Debounced<ProgramCacheSummary>,
     slot_duration_nanos: Debounced<u64>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
@@ -346,7 +331,6 @@ impl Collector {
             self.collect_validator_info();
             self.backfill_leader_names();
             self.collect_peers(&working_bank);
-            self.collect_program_cache(&root_bank);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
         }
@@ -1033,31 +1017,7 @@ impl Collector {
         }
     }
 
-    // ---- program cache, health, skip rate -------------------------------
-
-    fn collect_program_cache(&mut self, root_bank: &Bank) {
-        // The lock is held only long enough to read counters. Enumerating cache
-        // entries would be far too expensive on a timer, so the summary comes
-        // entirely from stats the cache already maintains.
-        let summary = {
-            let cache = root_bank.program_cache().read().unwrap();
-            let stats = &cache.stats;
-            ProgramCacheSummary {
-                hits: stats.hits.load(Ordering::Relaxed),
-                misses: stats.misses.load(Ordering::Relaxed),
-                evictions: stats.evictions.values().sum(),
-                insertions: stats.insertions.load(Ordering::Relaxed),
-                reloads: stats.reloads.load(Ordering::Relaxed),
-                water_level: stats.water_level.load(Ordering::Relaxed),
-            }
-        };
-        self.debounces.program_cache.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "live_program_cache",
-            summary,
-        );
-    }
+    // ---- health, skip rate ----------------------------------------------
 
     fn collect_health(&mut self) {
         let replay = if self.last_completed_at.elapsed() > Duration::from_secs(12) {

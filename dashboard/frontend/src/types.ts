@@ -47,16 +47,6 @@ export interface ValidatorCounts {
   delinquent_stake: number;
 }
 
-export interface ProgramCacheSummary {
-  hits: number;
-  misses: number;
-  evictions: number;
-  insertions: number;
-  reloads: number;
-  /** Entries counted at the last eviction, not live occupancy. */
-  water_level: number;
-}
-
 export interface EpochInfo {
   epoch: number;
   start_slot: number;

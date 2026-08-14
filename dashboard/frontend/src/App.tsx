@@ -1,6 +1,5 @@
 import {
   EpochCard,
-  ProgramCacheCard,
   StatusCard,
   TransactionsCard,
   ValidatorsCard,
@@ -30,7 +29,6 @@ export function App() {
           <EpochCard />
           <StatusCard />
           <ValidatorsCard />
-          <ProgramCacheCard />
         </div>
         <TransactionsCard />
         <NetworkCard />

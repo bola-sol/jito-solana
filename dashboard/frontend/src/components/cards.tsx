@@ -2,7 +2,6 @@ import { count, decimal, duration, percent, solCompact } from "../format";
 import type {
   EpochInfo,
   Health,
-  ProgramCacheSummary,
   SkipRate,
   StartupProgress,
   Tps,
@@ -126,36 +125,6 @@ export function ValidatorsCard() {
         label={percent(healthy)}
         sublabel={percent(1 - healthy)}
       />
-    </Card>
-  );
-}
-
-export function ProgramCacheCard() {
-  const store = useStore();
-  const cache = store.get<ProgramCacheSummary>("summary", "live_program_cache");
-  if (!cache) return <Card title="Program Cache">{waiting}</Card>;
-
-  const lookups = cache.hits + cache.misses;
-  const hitRate = lookups === 0 ? null : cache.hits / lookups;
-
-  return (
-    <Card title="Program Cache">
-      <div className="stat-grid">
-        <Stat
-          label="Hit Rate"
-          value={percent(hitRate)}
-          sub={`${count(cache.hits)} hits · ${count(cache.misses)} misses`}
-          tone={hitRate !== null && hitRate > 0.95 ? "good" : "warn"}
-        />
-        <Stat
-          label="Entries at last eviction"
-          value={count(cache.water_level)}
-          sub={cache.water_level === 0 ? "eviction has not run" : undefined}
-        />
-        <Stat label="Insertions" value={count(cache.insertions)} />
-        <Stat label="Evictions" value={count(cache.evictions)} />
-        <Stat label="Reloads" value={count(cache.reloads)} />
-      </div>
     </Card>
   );
 }

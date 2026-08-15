@@ -510,6 +510,23 @@ body {
   outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
+/* The strip is one tab stop; the arrows move within it. */
+.slot-bars:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+/* The bar the pointer or the arrow keys are on. Deliberately not an outline:
+   `.mine` is already one, and a leader slot can be the pointed-at slot. */
+.slot-bar.is-active {
+  background: color-mix(in srgb, var(--text-faint) 35%, transparent);
+}
+
+.slot-bar.is-active .slot-bar-fill {
+  filter: brightness(1.35);
+}
+
 /* A level maps to a colour once, here. The bars and the key below the strip
    both read `--level`, so the two can never drift apart. */
 .level-incomplete {
@@ -663,8 +680,10 @@ body {
   color: var(--accent);
 }
 
-/* The strip is held still while the pointer is on it, so say so. */
-.slot-bars:hover .slot-bars-peak {
+/* The strip is held still while the pointer or the keyboard is on it, so say
+   so. */
+.slot-bars:hover .slot-bars-peak,
+.slot-bars:focus-within .slot-bars-peak {
   border-top-style: solid;
 }
 

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent, type MouseEvent } from "react";
 import { count, shortKey, slotDelta } from "../format";
+import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
 import { Logo } from "./Logo";
@@ -36,9 +37,12 @@ export function SlotStrip() {
   // one it is aimed at. Entering the strip pins what is on screen; leaving
   // releases it and the view jumps forward to live.
   const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
-  const [hovered, setHovered] = useState<SlotEntry | null>(null);
+  // An index rather than the entry itself, so the pointer and the arrow keys
+  // drive the same thing and only one of them can be in charge at a time.
+  const [cursor, setCursor] = useState<number | null>(null);
   const live = store.getSlots().slice(-STRIP_LENGTH);
   const slots = pinned ?? live;
+  const active = cursor === null ? null : (slots[cursor] ?? null);
   // Bars are drawn against what the cluster is configured for, so a nominal
   // slot lands at half height and anything at twice nominal fills the bar.
   const nominalMs =
@@ -83,6 +87,50 @@ export function SlotStrip() {
     ],
   ];
 
+  const release = () => {
+    setPinned(null);
+    setCursor(null);
+  };
+
+  // The pointer leaving must not release a strip the keyboard is still holding,
+  // which is what happens when a click both focuses the strip and moves the
+  // pointer off it.
+  const onMouseLeave = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(document.activeElement)) return;
+    release();
+  };
+
+  // One tab stop for the whole strip, with the arrows moving within it. Sixty
+  // four focusable bars would be sixty four tab stops between the strip and
+  // whatever follows it.
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const last = slots.length - 1;
+    if (last < 0) return;
+    let next: number;
+    switch (event.key) {
+      case "ArrowLeft":
+        next = (cursor ?? last) - 1;
+        break;
+      case "ArrowRight":
+        next = (cursor ?? last) + 1;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = last;
+        break;
+      case "Escape":
+        event.currentTarget.blur();
+        return;
+      default:
+        return;
+    }
+    // Otherwise the arrows scroll the page out from under the strip.
+    event.preventDefault();
+    setCursor(Math.min(last, Math.max(0, next)));
+  };
+
   return (
     <section className="card slot-strip">
       <div className="slot-strip-head">
@@ -102,11 +150,19 @@ export function SlotStrip() {
 
       <div
         className="slot-bars"
+        tabIndex={0}
+        role="group"
+        aria-label="Recent slots. Use the arrow keys to inspect them."
         onMouseEnter={() => setPinned(live)}
-        onMouseLeave={() => {
-          setPinned(null);
-          setHovered(null);
+        onMouseLeave={onMouseLeave}
+        onFocus={() => {
+          setPinned((current) => current ?? live);
+          // Only when nothing is chosen yet. A click focuses the strip as well
+          // as hovering a bar, and the hovered bar is the one that was meant.
+          setCursor((current) => current ?? slots.length - 1);
         }}
+        onBlur={release}
+        onKeyDown={onKeyDown}
       >
         {peakMs !== null && (
           <div
@@ -116,12 +172,14 @@ export function SlotStrip() {
             <span>{Math.round(peakMs)} ms peak</span>
           </div>
         )}
-        {slots.map((entry) => (
+        {slots.map((entry, index) => (
           <SlotBar
             key={entry.slot}
             entry={entry}
+            index={index}
+            active={index === cursor}
             nominalMs={nominalMs}
-            onHover={setHovered}
+            onPoint={setCursor}
           />
         ))}
       </div>
@@ -137,7 +195,7 @@ export function SlotStrip() {
           <i className="slot-key-swatch slot-key-mine" />
           Ours
         </span>
-        {pinned !== null && <SlotDetail entry={hovered} />}
+        {pinned !== null && <SlotDetail entry={active} />}
       </div>
     </section>
   );
@@ -149,15 +207,22 @@ export function SlotStrip() {
  * A tooltip over a bar is clipped at the ends of the strip, waits on the
  * browser's hover delay, and covers the very bars it describes. This appears
  * at once and always in the same spot.
+ *
+ * `role="status"` so that arrowing along the strip is announced. The bars
+ * themselves are not focusable, so their labels would otherwise never be read.
  */
 function SlotDetail({ entry }: { entry: SlotEntry | null }) {
   if (!entry) {
-    return <span className="slot-detail is-idle">paused · hover a slot</span>;
+    return (
+      <span className="slot-detail is-idle" role="status">
+        paused · hover or arrow to a slot
+      </span>
+    );
   }
   const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
   const leader = entry.leader_name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : null);
   return (
-    <span className="slot-detail">
+    <span className="slot-detail" role="status">
       <b>{count(entry.slot)}</b>
       <span>{LEVEL_NAMES.get(entry.level) ?? entry.level}</span>
       {durationMs !== null && <span>{Math.round(durationMs)} ms</span>}
@@ -173,27 +238,18 @@ function SlotDetail({ entry }: { entry: SlotEntry | null }) {
   );
 }
 
-/**
- * Bar height for a slot duration, as a percentage.
- *
- * Scaled by ratio to nominal rather than linearly: a nominal slot sits at half
- * height, each doubling adds a quarter, each halving takes one away. A linear
- * scale saturated at twice nominal, which made a one-slot gap and a three-slot
- * gap the same bar.
- */
-function barHeight(durationMs: number | null, nominalMs: number): number {
-  if (durationMs === null || durationMs <= 0) return 6;
-  return Math.max(8, Math.min(100, 50 + 25 * Math.log2(durationMs / nominalMs)));
-}
-
 function SlotBar({
   entry,
+  index,
+  active,
   nominalMs,
-  onHover,
+  onPoint,
 }: {
   entry: SlotEntry;
+  index: number;
+  active: boolean;
   nominalMs: number;
-  onHover: (entry: SlotEntry) => void;
+  onPoint: (index: number) => void;
 }) {
   // Height carries how long the slot took and colour carries consensus level.
   // The duration comes from when the blockstore first saw a shred for the
@@ -219,9 +275,11 @@ function SlotBar({
     // Labelled rather than titled: the detail row carries this visually, and a
     // native tooltip on top of it would only repeat itself over the bars.
     <div
-      className={`slot-bar level-${entry.level}${entry.mine ? " mine" : ""}`}
+      className={`slot-bar level-${entry.level}${entry.mine ? " mine" : ""}${
+        active ? " is-active" : ""
+      }`}
       aria-label={title}
-      onMouseEnter={() => onHover(entry)}
+      onMouseEnter={() => onPoint(index)}
     >
       <div className="slot-bar-fill" style={{ height: `${height}%` }} />
     </div>

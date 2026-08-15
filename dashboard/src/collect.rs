@@ -292,6 +292,9 @@ pub struct Collector {
 
     last_second_tick: Instant,
     last_slow_tick: Instant,
+    /// Viewers attached as of the last tick, kept only so that pausing and
+    /// resuming are logged once rather than on every tick.
+    subscribers: usize,
 }
 
 impl Collector {
@@ -334,6 +337,7 @@ impl Collector {
             last_vote_advance: now,
             last_second_tick: now.checked_sub(SECOND_TICK).unwrap_or(now),
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
+            subscribers: 0,
         }
     }
 
@@ -392,7 +396,34 @@ impl Collector {
             self.collect_network();
         }
 
-        if now.duration_since(self.last_slow_tick) >= SLOW_TICK {
+        // The five-second tier is where the cost is: it clones the cluster's
+        // whole vote-account map out from under a lock the bank writes to, and
+        // scans every account written in each new slot. None of that is worth
+        // doing while nobody is connected to see the result.
+        //
+        // Only this tier is gated. The tiers above feed the slot ring, the
+        // duration cursor and the chart histories, and a gap in those would
+        // leave the collector walking forward over slots it never watched —
+        // which is how skipped slots were once invented out of nothing.
+        let subscribers = self.publisher.subscriber_count();
+        if subscribers != self.subscribers {
+            log::debug!(
+                "dashboard: {subscribers} viewers attached, cluster sampling {}",
+                if subscribers == 0 {
+                    "paused"
+                } else {
+                    "running"
+                }
+            );
+            self.subscribers = subscribers;
+        }
+
+        // `last_slow_tick` only moves when the tier actually runs, so while it
+        // is paused the interval keeps growing and the first tick after someone
+        // connects is already due. That is the immediate refresh — no separate
+        // trigger — while a brief disconnection still waits out the remainder
+        // of its interval instead of resampling for nothing.
+        if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
             self.collect_validator_info();
             self.backfill_leader_names();

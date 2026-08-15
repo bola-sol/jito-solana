@@ -148,6 +148,15 @@ impl Publisher {
     pub fn subscribe(&self) -> broadcast::Receiver<Message> {
         self.sender.subscribe()
     }
+
+    /// Websocket clients currently attached.
+    ///
+    /// Each connection holds one receiver for its lifetime, so this is the
+    /// number of people looking. Collection that only exists to be looked at
+    /// can be skipped when it is zero.
+    pub fn subscriber_count(&self) -> usize {
+        self.sender.receiver_count()
+    }
 }
 
 /// Tracks the last published value of a key so collectors can publish only on
@@ -212,6 +221,19 @@ mod tests {
         publisher.retain_only("peers", "all", &[1u64, 2]);
         assert_eq!(publisher.snapshot().len(), 1);
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn subscribers_are_counted_while_they_are_attached() {
+        let publisher = Publisher::new();
+        assert_eq!(publisher.subscriber_count(), 0);
+        let first = publisher.subscribe();
+        let second = publisher.subscribe();
+        assert_eq!(publisher.subscriber_count(), 2);
+        drop(first);
+        assert_eq!(publisher.subscriber_count(), 1);
+        drop(second);
+        assert_eq!(publisher.subscriber_count(), 0);
     }
 
     #[test]

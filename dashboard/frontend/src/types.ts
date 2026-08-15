@@ -91,9 +91,14 @@ export interface NetworkSample extends Network {
 export interface IngestPath {
   name: string;
   port: number;
-  drops_per_second: number;
+  drops_recent: number;
   drops_total: number;
   queued_bytes: number;
+}
+
+export interface IngestSummary {
+  window_seconds: number;
+  paths: IngestPath[];
 }
 
 export interface StartupProgress {

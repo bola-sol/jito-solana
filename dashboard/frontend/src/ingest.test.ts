@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { dropRate } from "./components/IngestCard";
+import { windowLabel } from "./components/IngestCard";
 
-describe("dropRate", () => {
-  it("never rounds a real loss down to zero", () => {
-    // The whole point of the row. A packet lost every twenty seconds is a
-    // fault, and `0/s` beside a total that keeps climbing reads as health.
-    expect(dropRate(0.05)).toBe("<1/s");
-    expect(dropRate(0.999)).toBe("<1/s");
+describe("windowLabel", () => {
+  it("names the period actually watched while the window fills", () => {
+    // The point of the heading: for the first minute the card must not claim a
+    // minute it has not watched, because "0 drops in the last minute" read off
+    // a five-second window is a reassurance nobody measured.
+    expect(windowLabel(0)).toBe("Last 5s");
+    expect(windowLabel(12)).toBe("Last 10s");
+    expect(windowLabel(38)).toBe("Last 40s");
   });
 
-  it("rounds rates of one or more", () => {
-    expect(dropRate(1)).toBe("1/s");
-    expect(dropRate(12.4)).toBe("12/s");
-    expect(dropRate(12.6)).toBe("13/s");
+  it("settles once the window is full", () => {
+    expect(windowLabel(55)).toBe("Last min");
+    expect(windowLabel(60)).toBe("Last min");
   });
 
-  it("groups large rates", () => {
-    expect(dropRate(4820)).toBe("4,820/s");
+  it("rounds so the heading does not redraw every tick", () => {
+    expect(windowLabel(31)).toBe(windowLabel(32));
   });
 });

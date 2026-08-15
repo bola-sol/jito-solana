@@ -14,7 +14,11 @@
 //! service is the caller's job, and it is a heuristic: this file describes every
 //! UDP socket in the network namespace, not just the validator's.
 
-use std::{collections::HashMap, io};
+use std::{
+    collections::{HashMap, VecDeque},
+    io,
+    time::{Duration, Instant},
+};
 
 /// Kernel receive counters for every socket bound to one port.
 ///
@@ -34,6 +38,72 @@ pub struct PortCounters {
 }
 
 pub type PortMap = HashMap<u16, PortCounters>;
+
+/// Drops over a trailing window, alongside the cumulative total.
+///
+/// The total on its own cannot answer the question the panel is opened to ask,
+/// which is whether packets are being lost *now*. A validator that dropped a
+/// quarter of a million while gossip pulled its first view of the cluster, and
+/// none in the hour since, reads identically to one still dropping them. This
+/// lets that burst age out.
+#[derive(Debug)]
+pub struct DropWindow {
+    span: Duration,
+    /// Oldest first, each entry one tick's cumulative totals per port.
+    samples: VecDeque<(Instant, HashMap<u16, u64>)>,
+}
+
+impl DropWindow {
+    pub fn new(span: Duration) -> Self {
+        Self {
+            span,
+            samples: VecDeque::new(),
+        }
+    }
+
+    /// Records a tick and forgets what has fallen out of the window.
+    ///
+    /// The oldest sample kept is the newest one that is still at least a span
+    /// old, so the window covers slightly more than the span rather than less.
+    /// Discarding it as soon as it aged out would measure from the sample after
+    /// it and under-report by a tick — and under-reporting drops is the one
+    /// direction this must not err in.
+    pub fn push(&mut self, now: Instant, totals: HashMap<u16, u64>) {
+        self.samples.push_back((now, totals));
+        while let Some((next, _)) = self.samples.get(1) {
+            if now.duration_since(*next) < self.span {
+                break;
+            }
+            self.samples.pop_front();
+        }
+    }
+
+    /// Time the window actually covers, which is short until it has filled.
+    ///
+    /// Reported so the panel can name the span it is showing instead of
+    /// claiming a full minute it has not yet watched.
+    pub fn covers(&self, now: Instant) -> Duration {
+        self.samples
+            .front()
+            .map(|(at, _)| now.duration_since(*at))
+            .unwrap_or_default()
+    }
+
+    /// Drops on `port` since the start of the window.
+    ///
+    /// Zero for a port with no reading yet at the window's start, which needs a
+    /// port to have appeared part-way through — the caller writes every port it
+    /// reports on every tick, so that means a socket bound after startup.
+    pub fn since(&self, port: u16, current: u64) -> u64 {
+        self.samples
+            .front()
+            .and_then(|(_, totals)| totals.get(&port))
+            // A socket closed and reopened restarts at zero, so a total below
+            // the remembered one is read as no drops rather than as a wrap.
+            .and_then(|earlier| current.checked_sub(*earlier))
+            .unwrap_or(0)
+    }
+}
 
 /// Reads both address families and merges them by port.
 ///
@@ -195,6 +265,62 @@ mod tests {
         let ports = parse(&text);
         assert_eq!(ports[&8001].drops, 42);
         assert_eq!(ports.len(), 2);
+    }
+
+    /// One tick's totals for a single port.
+    fn totals(port: u16, drops: u64) -> HashMap<u16, u64> {
+        HashMap::from([(port, drops)])
+    }
+
+    #[test]
+    fn a_burst_ages_out_of_the_window() {
+        let base = Instant::now();
+        let mut window = DropWindow::new(Duration::from_secs(60));
+
+        // A hundred dropped at startup, then nothing for two minutes.
+        window.push(base, totals(8001, 0));
+        window.push(base + Duration::from_secs(1), totals(8001, 100));
+        assert_eq!(window.since(8001, 100), 100);
+
+        for second in 2..=120 {
+            window.push(base + Duration::from_secs(second), totals(8001, 100));
+        }
+        // The total still says a hundred; the window says the validator is fine.
+        assert_eq!(window.since(8001, 100), 0);
+    }
+
+    #[test]
+    fn the_window_covers_at_least_its_span_once_filled() {
+        let base = Instant::now();
+        let mut window = DropWindow::new(Duration::from_secs(60));
+        for second in 0..=120 {
+            window.push(base + Duration::from_secs(second), totals(8001, 0));
+        }
+        let covered = window.covers(base + Duration::from_secs(120));
+        assert!(covered >= Duration::from_secs(60), "covered {covered:?}");
+        // Never wildly more, or a burst would linger well past its minute.
+        assert!(covered <= Duration::from_secs(61), "covered {covered:?}");
+    }
+
+    #[test]
+    fn a_short_window_reports_the_span_it_has_actually_watched() {
+        let base = Instant::now();
+        let mut window = DropWindow::new(Duration::from_secs(60));
+        window.push(base, totals(8001, 0));
+        window.push(base + Duration::from_secs(5), totals(8001, 3));
+        assert_eq!(
+            window.covers(base + Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(window.since(8001, 3), 3);
+    }
+
+    #[test]
+    fn a_counter_reset_reads_as_no_drops_rather_than_a_wrap() {
+        let base = Instant::now();
+        let mut window = DropWindow::new(Duration::from_secs(60));
+        window.push(base, totals(8001, 900));
+        assert_eq!(window.since(8001, 12), 0);
     }
 
     #[test]

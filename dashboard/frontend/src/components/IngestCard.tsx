@@ -1,5 +1,5 @@
 import { bytes, count } from "../format";
-import type { IngestPath } from "../types";
+import type { IngestPath, IngestSummary } from "../types";
 import { useStore } from "../useStore";
 import { Card } from "./primitives";
 
@@ -20,35 +20,38 @@ import { Card } from "./primitives";
  */
 export function IngestCard() {
   const store = useStore();
-  const paths = store.get<IngestPath[]>("summary", "ingest_paths");
-  if (!paths || paths.length === 0) return null;
+  const summary = store.get<IngestSummary>("summary", "ingest_paths");
+  if (!summary || summary.paths.length === 0) return null;
 
   return (
     <Card title="Socket Ingest" className="ingest-body">
       <div className="ingest">
         <div className="ingest-row is-head">
           <span>Socket</span>
-          <span title="Bytes waiting unread. A queue that stays deep is a reader falling behind, which is the state that precedes dropping.">
+          <span title="Bytes waiting unread at the moment of the sample. Usually empty: a healthy validator drains a socket in microseconds, so a reading here means a reader falling behind.">
             Queued
           </span>
-          <span title="Datagrams the kernel discarded, almost always because the receive buffer was full when one arrived.">
-            Dropped
+          <span title="Drops within the window, which is what says whether packets are being lost now.">
+            {windowLabel(summary.window_seconds)}
+          </span>
+          <span title="Drops since the sockets were opened. A burst during startup stays in this figure for the life of the process.">
+            Total
           </span>
         </div>
-        {paths.map((path) => (
+        {summary.paths.map((path) => (
           <IngestRow key={path.name} path={path} />
         ))}
       </div>
       <div className="card-footnote">
-        Totals since start, by UDP port. Drops happen in the kernel, before the
-        validator sees the packet.
+        By UDP port. Drops happen in the kernel, before the validator sees the
+        packet.
       </div>
     </Card>
   );
 }
 
 function IngestRow({ path }: { path: IngestPath }) {
-  const dropping = path.drops_per_second > 0;
+  const dropping = path.drops_recent > 0;
   return (
     <div className={`ingest-row${dropping ? " is-dropping" : ""}`}>
       <span className="ingest-name" title={`udp/${path.port}`}>
@@ -57,20 +60,20 @@ function IngestRow({ path }: { path: IngestPath }) {
       <span className="ingest-queued">
         {path.queued_bytes > 0 ? bytes(path.queued_bytes) : "—"}
       </span>
-      <span className="ingest-drops">
-        {count(path.drops_total)}
-        {dropping && <b>{dropRate(path.drops_per_second)}</b>}
-      </span>
+      <span className="ingest-recent">{count(path.drops_recent)}</span>
+      <span className="ingest-total">{count(path.drops_total)}</span>
     </div>
   );
 }
 
 /**
- * A rate below one per second still rounds to a visible figure rather than to
- * zero. Losing a packet every few seconds is a fault, and printing it as `0/s`
- * next to a rising total would contradict itself on the same row.
+ * Names the period the recent column actually covers.
+ *
+ * The window starts empty and fills over a minute, so for that first minute the
+ * heading counts up rather than claiming a minute nobody watched. Rounded to
+ * five seconds so the heading is not redrawn on every tick.
  */
-export function dropRate(perSecond: number): string {
-  if (perSecond < 1) return "<1/s";
-  return `${Math.round(perSecond).toLocaleString()}/s`;
+export function windowLabel(seconds: number): string {
+  if (seconds >= 55) return "Last min";
+  return `Last ${Math.max(5, Math.round(seconds / 5) * 5)}s`;
 }

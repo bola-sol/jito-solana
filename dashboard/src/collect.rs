@@ -16,7 +16,7 @@ use {
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
-        udp_drops::{self, PortMap},
+        udp_drops::{self, DropWindow},
         validator_info::{self, ValidatorInfoCache},
     },
     serde::Serialize,
@@ -54,6 +54,10 @@ const MAX_VERSIONS_REPORTED: usize = 5;
 
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
+
+/// Window the reported socket drops accumulate over. Long enough that a burst
+/// stays visible for a while after it stops, short enough that it clears.
+const DROPS_WINDOW: Duration = Duration::from_secs(60);
 
 /// Window the reported slot time averages over. Short enough to follow the
 /// cluster, long enough that a single slow slot does not move the reading.
@@ -169,15 +173,24 @@ pub struct IngestPath {
     /// Which service the port belongs to, used as the row's label and key.
     pub name: &'static str,
     pub port: u16,
-    /// Datagrams the kernel discarded over the last sample, as a rate. Kept
-    /// fractional because a validator dropping one packet every few seconds is
-    /// still a validator dropping packets, and rounding that to zero would
-    /// report the fault as health.
-    pub drops_per_second: f64,
+    /// Drops over the trailing window, which is what says whether the loss is
+    /// happening now. Always sent, including as zero: a figure that appeared
+    /// only when something was wrong would leave a healthy row and an
+    /// unmeasured one looking the same.
+    pub drops_recent: u64,
     /// Drops since the sockets were opened, which for these is validator start.
     pub drops_total: u64,
     /// Bytes waiting unread at the instant of the sample.
     pub queued_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IngestSummary {
+    /// What `drops_recent` actually spans, which is short until the window has
+    /// filled. Sent so the panel can name the period it is showing rather than
+    /// claim a minute it has not yet watched.
+    pub window_seconds: f64,
+    pub paths: Vec<IngestPath>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -250,7 +263,7 @@ struct Debounces {
     stake: Debounced<StakeSummary>,
     validator_counts: Debounced<ValidatorCounts>,
     versions: Debounced<Vec<VersionShare>>,
-    ingest_paths: Debounced<Vec<IngestPath>>,
+    ingest_paths: Debounced<IngestSummary>,
     block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
@@ -291,8 +304,8 @@ pub struct Collector {
     /// Set once the counters prove unreadable, so the failure is logged once
     /// rather than every second.
     net_unavailable: bool,
-    /// Per-port socket counters as of the last sample, for differencing.
-    last_drops: Option<(PortMap, Instant)>,
+    /// Trailing history of per-port drop totals, so a startup burst ages out.
+    drops_window: DropWindow,
     /// As `net_unavailable`, for `/proc/net/udp`. The two files fail
     /// independently: a container can expose one and not the other.
     drops_unavailable: bool,
@@ -353,7 +366,7 @@ impl Collector {
             last_net: None,
             net_history: Vec::new(),
             net_unavailable: false,
-            last_drops: None,
+            drops_window: DropWindow::new(DROPS_WINDOW),
             drops_unavailable: false,
             skip_leader_slots: Vec::new(),
             skip_epoch: None,
@@ -1127,51 +1140,52 @@ impl Collector {
         let now = Instant::now();
         let ports = self.ingest_ports();
 
-        let paths: Vec<IngestPath> = self
-            .last_drops
-            .as_ref()
-            .and_then(|(previous, sampled_at)| {
-                let seconds = now.duration_since(*sampled_at).as_secs_f64();
-                if seconds <= 0.0 {
-                    return None;
-                }
-                let rows = ports
-                    .iter()
-                    .filter_map(|&(name, port)| {
-                        let counters = current.get(&port)?;
-                        // A socket closed and reopened restarts at zero, so a
-                        // decrease is read as no drops rather than as a rate
-                        // wrapping round through a very large number.
-                        let since = previous
-                            .get(&port)
-                            .and_then(|prev| counters.drops.checked_sub(prev.drops))
-                            .unwrap_or(0);
-                        Some(IngestPath {
-                            name,
-                            port,
-                            drops_per_second: since as f64 / seconds,
-                            drops_total: counters.drops,
-                            queued_bytes: counters.queued,
-                        })
-                    })
-                    .collect();
-                Some(rows)
+        // Only the reported ports are remembered. The window would otherwise
+        // hold a minute of every UDP socket on the host to answer six rows.
+        let totals: HashMap<u16, u64> = ports
+            .iter()
+            .filter_map(|&(_, port)| Some((port, current.get(&port)?.drops)))
+            .collect();
+        self.drops_window.push(now, totals);
+
+        let paths: Vec<IngestPath> = ports
+            .iter()
+            .filter_map(|&(name, port)| {
+                let counters = current.get(&port)?;
+                Some(IngestPath {
+                    name,
+                    port,
+                    drops_recent: self.drops_window.since(port, counters.drops),
+                    drops_total: counters.drops,
+                    queued_bytes: counters.queued,
+                })
             })
-            .unwrap_or_default();
+            .collect();
 
-        self.last_drops = Some((current, now));
-
-        // Empty means either the first sample, which has nothing to difference
-        // against, or that none of the advertised ports is actually bound here.
-        // Publishing zeroed rows in the second case would report a validator as
-        // healthy on the strength of a lookup that failed, so publish nothing
+        // Empty means none of the advertised ports is bound here, which happens
+        // behind a port forward. Publishing zeroed rows would report a validator
+        // as healthy on the strength of a lookup that failed, so publish nothing
         // and let the panel stay absent.
         if paths.is_empty() {
             return;
         }
-        self.debounces
-            .ingest_paths
-            .publish(&self.publisher, TOPIC_SUMMARY, "ingest_paths", paths);
+        let summary = IngestSummary {
+            // Capped at the span. Coverage runs a tick over it by design, and
+            // letting that show would leave the figure alternating between two
+            // values every second for no reader's benefit.
+            window_seconds: self
+                .drops_window
+                .covers(now)
+                .min(DROPS_WINDOW)
+                .as_secs_f64(),
+            paths,
+        };
+        self.debounces.ingest_paths.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "ingest_paths",
+            summary,
+        );
     }
 
     // ---- peers ----------------------------------------------------------

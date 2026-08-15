@@ -1002,7 +1002,7 @@ body {
   display: grid;
   /* The two figure columns are fixed so they share one right edge down the
      card and can be compared without reading the labels. */
-  grid-template-columns: minmax(0, 1fr) 5.5em 8.5em;
+  grid-template-columns: minmax(0, 1fr) 5.5em 5.5em 6em;
   align-items: baseline;
   gap: 8px;
   font-size: 11.5px;
@@ -1032,32 +1032,40 @@ body {
   cursor: help;
 }
 
-.ingest-queued {
+.ingest-queued,
+.ingest-recent,
+.ingest-total {
   text-align: right;
+}
+
+.ingest-queued {
   color: var(--text-faint);
 }
 
-.ingest-drops {
-  display: flex;
-  justify-content: flex-end;
-  align-items: baseline;
-  gap: 8px;
+.ingest-recent {
   color: var(--text-dim);
 }
 
-/* A row earns colour only while it is actively losing packets. A validator
-   that dropped a handful during startup and none since is not a fault, and
-   colouring that total would teach the operator to ignore the colour. */
-.ingest-row.is-dropping .ingest-name {
+/* Dimmer than the window figure beside it. The total is context — how bad it
+   has ever been — where the window is the live signal, and a column of large
+   startup totals should not out-shout a column of zeroes that is the thing
+   actually worth reading. */
+.ingest-total {
+  color: var(--text-faint);
+}
+
+/* A row earns colour only while it is losing packets inside the window. A
+   validator that dropped a quarter of a million during gossip's first pull and
+   none in the hour since is not a fault, and colouring that total would teach
+   the operator to ignore the colour. The total is never red for the same
+   reason: two red numbers on one row read as one long number. */
+.ingest-row.is-dropping .ingest-name,
+.ingest-row.is-dropping .ingest-recent {
   color: var(--bad);
 }
 
-/* The rate alone is red, never the total beside it. Two red numbers on one
-   row read as one long number, and these two mean quite different things:
-   what has ever been lost, and what is being lost now. */
-.ingest-drops b {
+.ingest-row.is-dropping .ingest-recent {
   font-weight: 600;
-  color: var(--bad);
 }
 
 @media (max-width: 900px) {

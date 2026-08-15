@@ -210,6 +210,38 @@ impl SlotRing {
 mod tests {
     use super::*;
 
+    /// The slot overview is the largest message the server sends, and the
+    /// websocket ceiling is sized from it. If a field is added here, or the
+    /// overview grows, this is what notices before a client is cut off
+    /// mid-snapshot in production.
+    #[test]
+    fn the_largest_overview_fits_the_message_ceiling() {
+        // Worst case throughout: a full ring, every slot with a leader, and a
+        // name and icon as long as a validator-info account can carry.
+        let long = "x".repeat(300);
+        let entries: Vec<SlotEntry> = (0..512)
+            .map(|index| SlotEntry {
+                slot: 428_804_675 + index,
+                level: SlotLevel::OptimisticallyConfirmed,
+                leader: Some("J7v9KQ8s3XjLpQmR4tVnW2yZ6bC1dE5fG8hJ3kL7mN9p".to_string()),
+                leader_name: Some(long.clone()),
+                leader_icon: Some(long.clone()),
+                mine: true,
+                transactions: Some(u64::MAX),
+                non_vote_transactions: Some(u64::MAX),
+                duration_nanos: Some(u64::MAX),
+            })
+            .collect();
+
+        let encoded = crate::proto::encode("slot", "overview", &entries);
+        assert!(
+            encoded.len() < crate::proto::MAX_MESSAGE,
+            "worst-case overview is {} bytes against a {} byte ceiling",
+            encoded.len(),
+            crate::proto::MAX_MESSAGE
+        );
+    }
+
     #[test]
     fn level_never_regresses() {
         let mut ring = SlotRing::new(16);

@@ -7,7 +7,7 @@
 //! nothing consumed.
 
 use {
-    crate::proto::{Message, Publisher, Request, encode_with_id},
+    crate::proto::{MAX_MESSAGE, Message, Publisher, Request, encode_with_id},
     soketto::handshake::{Server, server},
     std::{io, sync::Arc},
     thiserror::Error,
@@ -36,9 +36,16 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// bug or an attempt to make the server allocate, so the connection is closed.
 const MAX_CLIENT_MESSAGE: usize = 4096;
 
-/// Ceiling for messages the server sends. The full peer list is the largest,
-/// and grows with the size of the cluster.
-const MAX_SERVER_MESSAGE: usize = 32 * 1024 * 1024;
+/// How long one send may block before the client is treated as gone.
+///
+/// A viewer that stops reading — a closed laptop, a dropped link, or a caller
+/// that never meant to read — leaves the server parked on a write while still
+/// holding one of the limited connection slots. TCP alone takes minutes to
+/// notice, and sixty-four such connections deny the dashboard to real viewers.
+///
+/// This is deliberately not an inbound-idle timeout: the client never sends
+/// anything, so idleness on that side is what a healthy viewer looks like.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Websocket clients served at once.
 ///
@@ -264,6 +271,19 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
 
 // ---- websocket ----------------------------------------------------------
 
+/// Fails the connection if a send cannot complete promptly.
+///
+/// Cancelling a partially written frame leaves the stream in an indeterminate
+/// state, so every caller treats a timeout as fatal and drops the connection
+/// rather than sending anything further over it.
+macro_rules! send_or_timeout {
+    ($expr:expr) => {
+        timeout(WRITE_TIMEOUT, $expr)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket send"))??
+    };
+}
+
 async fn serve_websocket(
     socket: TcpStream,
     publisher: Arc<Publisher>,
@@ -292,18 +312,20 @@ async fn serve_websocket(
     let mut updates = publisher.subscribe();
     let snapshot = publisher.snapshot();
 
-    // These limits apply to the connection in both directions, so they have to
-    // accommodate the largest message the server sends. The full peer list runs
-    // to hundreds of kilobytes on a real cluster. Client messages are bounded
-    // separately, on receipt.
+    // One limit, both directions. It has to clear the largest message the
+    // server sends, and every byte above that is buffering a caller can make
+    // the validator do.
     let mut builder = server.into_builder();
-    builder.set_max_message_size(MAX_SERVER_MESSAGE);
-    builder.set_max_frame_size(MAX_SERVER_MESSAGE);
+    builder.set_max_message_size(MAX_MESSAGE);
+    builder.set_max_frame_size(MAX_MESSAGE);
     let (mut sender, mut receiver) = builder.finish();
 
     let total: usize = snapshot.iter().map(|message| message.len()).sum();
     for (index, message) in snapshot.iter().enumerate() {
-        if let Err(err) = sender.send_text(&**message).await {
+        let sent = timeout(WRITE_TIMEOUT, sender.send_text(&**message))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "snapshot send"))?;
+        if let Err(err) = sent {
             // Losing the snapshot leaves the client with a blank dashboard, so
             // report exactly where it stopped rather than letting it look like
             // missing data.
@@ -319,7 +341,7 @@ async fn serve_websocket(
         }
         // Flushing per message keeps one oversized entry from taking the whole
         // snapshot down with it.
-        sender.flush().await?;
+        send_or_timeout!(sender.flush());
     }
 
     let mut incoming = Vec::new();
@@ -343,13 +365,15 @@ async fn serve_websocket(
 
                     update = updates.recv() => match update {
                         Ok(message) => {
-                            sender.send_text(&*message).await?;
+                            send_or_timeout!(sender.send_text(&*message));
                             // Drain whatever else is already queued before
                             // flushing, so a burst costs one write, not one per
                             // message.
                             loop {
                                 match updates.try_recv() {
-                                    Ok(message) => sender.send_text(&*message).await?,
+                                    Ok(message) => {
+                                        send_or_timeout!(sender.send_text(&*message))
+                                    }
                                     Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
                                     // A client that cannot keep up gets
                                     // dropped. The server never slows down to
@@ -359,7 +383,7 @@ async fn serve_websocket(
                                     }
                                 }
                             }
-                            sender.flush().await?;
+                            send_or_timeout!(sender.flush());
                         }
                         Err(RecvError::Lagged(_)) => return Err(ConnectionError::Lagged),
                         Err(RecvError::Closed) => return Ok(()),
@@ -374,8 +398,8 @@ async fn serve_websocket(
             return Err(ConnectionError::Oversized(incoming.len()));
         }
         if let Some(reply) = respond(&incoming) {
-            sender.send_text(&*reply).await?;
-            sender.flush().await?;
+            send_or_timeout!(sender.send_text(&*reply));
+            send_or_timeout!(sender.flush());
         }
         incoming.clear();
     }

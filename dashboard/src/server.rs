@@ -342,6 +342,28 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
         .map(|(_, content_type, body)| (*content_type, *body))
 }
 
+/// Sent with every response.
+///
+/// `img-src` is deliberately open to any https host: validator icons come
+/// from URLs their operators publish on chain, and there is no list to allow.
+/// What it does buy is that a plaintext icon cannot be fetched, which an https
+/// deployment already enforces as mixed content and a loopback one does not.
+///
+/// Scripts and styles permit inline because index.html carries both: a theme
+/// stamp that has to run before the first paint, and the splash styling that
+/// paints with it. Moving either to its own file would trade a round trip for
+/// the protection, and there is no dynamic HTML here for it to guard — every
+/// value the client renders goes through React, which escapes. The directives
+/// that cost nothing are set strictly.
+///
+/// `connect-src 'self'` covers the websocket: for an https page, `'self'`
+/// matches wss on the same host too.
+const SECURITY_HEADERS: &str =
+    "content-security-policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src \
+     'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self'; \
+     base-uri 'none'; form-action 'none'; frame-ancestors 'self'\r\nx-content-type-options: \
+     nosniff\r\nreferrer-policy: no-referrer\r\n";
+
 fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Vec<u8> {
     let reason = match status {
         403 => "Forbidden",
@@ -358,7 +380,7 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
     };
     let mut out = format!(
         "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: \
-         {}\r\ncache-control: {cache}\r\nconnection: close\r\n\r\n",
+         {}\r\ncache-control: {cache}\r\n{SECURITY_HEADERS}connection: close\r\n\r\n",
         body.len()
     )
     .into_bytes();
@@ -761,6 +783,35 @@ mod tests {
             "expected the page, got {:?}",
             &reply[..reply.len().min(80)]
         );
+    }
+
+    #[test]
+    fn responses_carry_the_security_headers() {
+        let out = String::from_utf8(response(200, "text/html", b"<html>", false)).unwrap();
+        assert!(out.contains("content-security-policy:"));
+        assert!(out.contains("x-content-type-options: nosniff"));
+        assert!(out.contains("referrer-policy: no-referrer"));
+    }
+
+    #[test]
+    fn the_policy_still_permits_validator_icons() {
+        // Icons are third-party by nature: operators publish the URLs on chain,
+        // so there is no list to allow and blocking them would empty the
+        // sidebar. Only plaintext is refused.
+        assert!(SECURITY_HEADERS.contains("img-src 'self' data: https:"));
+        assert!(!SECURITY_HEADERS.contains("img-src 'self'\r\n"));
+    }
+
+    #[test]
+    fn the_header_block_is_well_formed() {
+        let out = String::from_utf8(response(200, "text/plain", b"body", false)).unwrap();
+        // Exactly one blank line, and it separates headers from body.
+        let (head, body) = out.split_once("\r\n\r\n").expect("no header terminator");
+        assert_eq!(body, "body");
+        assert!(!head.contains("\r\n\r\n"), "blank line inside the headers");
+        for line in head.split("\r\n").skip(1) {
+            assert!(line.contains(':'), "malformed header line: {line:?}");
+        }
     }
 
     #[test]

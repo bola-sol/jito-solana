@@ -24,15 +24,20 @@ export function Stat({
   value,
   sub,
   tone,
+  explain,
 }: {
   label: ReactNode;
   value: ReactNode;
   sub?: ReactNode;
   tone?: "good" | "warn" | "bad" | "muted";
+  /** Hover text for a figure whose label cannot say enough on its own. */
+  explain?: string;
 }) {
   return (
     <div className="stat">
-      <div className="stat-label">{label}</div>
+      <div className={`stat-label${explain ? " has-explain" : ""}`} title={explain}>
+        {label}
+      </div>
       <div className={`stat-value${tone ? ` tone-${tone}` : ""}`}>{value}</div>
       {sub !== undefined && <div className="stat-sub">{sub}</div>}
     </div>

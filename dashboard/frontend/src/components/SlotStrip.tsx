@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { count, shortKey, slotDelta } from "../format";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
+import { Logo } from "./Logo";
 
 /** Slots shown in the strip. Beyond this the bars are too thin to read. */
 const STRIP_LENGTH = 64;
@@ -29,7 +31,14 @@ const LEVEL_NAMES = new Map<SlotLevel, string>(
 export function SlotStrip() {
   const store = useStore();
   const processed = store.get<number>("summary", "completed_slot");
-  const slots = store.getSlots().slice(-STRIP_LENGTH);
+
+  // The strip advances a whole bar every slot, so a pointer cannot stay on the
+  // one it is aimed at. Entering the strip pins what is on screen; leaving
+  // releases it and the view jumps forward to live.
+  const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
+  const [hovered, setHovered] = useState<SlotEntry | null>(null);
+  const live = store.getSlots().slice(-STRIP_LENGTH);
+  const slots = pinned ?? live;
   // Bars are drawn against what the cluster is configured for, so a nominal
   // slot lands at half height and anything at twice nominal fills the bar.
   const nominalMs =
@@ -91,7 +100,14 @@ export function SlotStrip() {
         </div>
       </div>
 
-      <div className="slot-bars">
+      <div
+        className="slot-bars"
+        onMouseEnter={() => setPinned(live)}
+        onMouseLeave={() => {
+          setPinned(null);
+          setHovered(null);
+        }}
+      >
         {peakMs !== null && (
           <div
             className={`slot-bars-peak${barHeight(peakMs, nominalMs) > 88 ? " label-below" : ""}`}
@@ -101,7 +117,12 @@ export function SlotStrip() {
           </div>
         )}
         {slots.map((entry) => (
-          <SlotBar key={entry.slot} entry={entry} nominalMs={nominalMs} />
+          <SlotBar
+            key={entry.slot}
+            entry={entry}
+            nominalMs={nominalMs}
+            onHover={setHovered}
+          />
         ))}
       </div>
 
@@ -116,8 +137,39 @@ export function SlotStrip() {
           <i className="slot-key-swatch slot-key-mine" />
           Ours
         </span>
+        {pinned !== null && <SlotDetail entry={hovered} />}
       </div>
     </section>
+  );
+}
+
+/**
+ * The hovered slot, shown in a fixed place rather than in a tooltip.
+ *
+ * A tooltip over a bar is clipped at the ends of the strip, waits on the
+ * browser's hover delay, and covers the very bars it describes. This appears
+ * at once and always in the same spot.
+ */
+function SlotDetail({ entry }: { entry: SlotEntry | null }) {
+  if (!entry) {
+    return <span className="slot-detail is-idle">paused · hover a slot</span>;
+  }
+  const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
+  const leader = entry.leader_name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : null);
+  return (
+    <span className="slot-detail">
+      <b>{count(entry.slot)}</b>
+      <span>{LEVEL_NAMES.get(entry.level) ?? entry.level}</span>
+      {durationMs !== null && <span>{Math.round(durationMs)} ms</span>}
+      {leader && (
+        <span className="slot-detail-leader">
+          <Logo url={entry.leader_icon} size={12} />
+          {leader}
+        </span>
+      )}
+      {entry.transactions !== null && <span>{count(entry.transactions)} txns</span>}
+      {entry.mine && <span className="slot-detail-mine">ours</span>}
+    </span>
   );
 }
 
@@ -134,7 +186,15 @@ function barHeight(durationMs: number | null, nominalMs: number): number {
   return Math.max(8, Math.min(100, 50 + 25 * Math.log2(durationMs / nominalMs)));
 }
 
-function SlotBar({ entry, nominalMs }: { entry: SlotEntry; nominalMs: number }) {
+function SlotBar({
+  entry,
+  nominalMs,
+  onHover,
+}: {
+  entry: SlotEntry;
+  nominalMs: number;
+  onHover: (entry: SlotEntry) => void;
+}) {
   // Height carries how long the slot took and colour carries consensus level.
   // The duration comes from when the blockstore first saw a shred for the
   // slot, so a slot with none yet — or one that was skipped, which never gets
@@ -156,7 +216,13 @@ function SlotBar({ entry, nominalMs }: { entry: SlotEntry; nominalMs: number }) 
     .join(" · ");
 
   return (
-    <div className={`slot-bar level-${entry.level}${entry.mine ? " mine" : ""}`} title={title}>
+    // Labelled rather than titled: the detail row carries this visually, and a
+    // native tooltip on top of it would only repeat itself over the bars.
+    <div
+      className={`slot-bar level-${entry.level}${entry.mine ? " mine" : ""}`}
+      aria-label={title}
+      onMouseEnter={() => onHover(entry)}
+    >
       <div className="slot-bar-fill" style={{ height: `${height}%` }} />
     </div>
   );

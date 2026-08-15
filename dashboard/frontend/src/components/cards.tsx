@@ -76,7 +76,12 @@ export function StatusCard() {
         {/* Reported, but not fed into the countdowns above. Multiplied by the
             slots left in an epoch, a moving average never lets them settle. */}
         <Stat
-          label="Slot time"
+          label="Slot time (1 min avg)"
+          explain={
+            "Mean time between slots arriving at this validator over the last minute. " +
+            "Slots come from every leader in turn, so this measures the cluster's rate " +
+            "as seen from here, not this validator's own block production."
+          }
           value={
             observedSlotNanos === null || observedSlotNanos === undefined
               ? "—"

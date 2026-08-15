@@ -64,21 +64,6 @@ export interface EpochInfo {
   my_leader_slots: number[];
 }
 
-export interface Peer {
-  identity: string;
-  vote_account: string | null;
-  stake: number;
-  commission: number | null;
-  last_vote: number | null;
-  root_slot: number | null;
-  delinquent: boolean;
-  gossip: string | null;
-  shred_version: number | null;
-  version: string | null;
-  has_rpc: boolean;
-  name: string | null;
-}
-
 export interface Network {
   received_per_second: number;
   sent_per_second: number;

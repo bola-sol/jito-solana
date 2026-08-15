@@ -135,24 +135,6 @@ pub struct EpochInfo {
     pub my_leader_slots: Vec<Slot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Peer {
-    pub identity: String,
-    pub vote_account: Option<String>,
-    pub stake: u64,
-    pub commission: Option<u8>,
-    pub last_vote: Option<Slot>,
-    pub root_slot: Option<Slot>,
-    pub delinquent: bool,
-    pub gossip: Option<String>,
-    pub shred_version: Option<u16>,
-    pub version: Option<String>,
-    pub has_rpc: bool,
-    /// Display name only. The rest of the on-chain validator info runs to
-    /// hundreds of bytes per peer and nothing renders it.
-    pub name: Option<String>,
-}
-
 /// Host interface throughput, in bytes per second.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Network {
@@ -206,18 +188,6 @@ pub struct SkipRate {
     /// the part of the epoch the blockstore covers, in `[0, 1]`. `None` until
     /// the root has passed at least one such slot.
     pub rate: Option<f64>,
-}
-
-/// What gossip knows about a peer, as opposed to what the vote accounts do.
-///
-/// Named fields rather than a tuple: two of the three are `Option<String>` and
-/// sit next to each other, so transposing them would compile and then quietly
-/// report a client version where an address belongs.
-#[derive(Clone, Default)]
-struct GossipPeer {
-    addr: Option<String>,
-    shred_version: Option<u16>,
-    version: Option<String>,
 }
 
 /// Cumulative transaction counters read off a bank, used to derive per-slot
@@ -284,7 +254,6 @@ pub struct Collector {
     debounces: Debounces,
     slots: SlotRing,
     tps_history: Vec<TpsSample>,
-    peers: HashMap<String, Peer>,
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
     /// Shared with the boot thread's implementation so the handover from it
     /// to the collector is invisible to a connected client.
@@ -356,7 +325,6 @@ impl Collector {
             config,
             startup_progress,
             debounces: Debounces::default(),
-            peers: HashMap::new(),
             info_cache,
             startup: StartupPublisher::default(),
             leaders_resolved_to: 0,
@@ -1207,40 +1175,44 @@ impl Collector {
 
     // ---- peers ----------------------------------------------------------
 
+    /// Counts the cluster: who holds stake, who is behind, and what they run.
+    ///
+    /// Nothing per-peer is retained. Only five counters and a version histogram
+    /// leave this function, so it accumulates straight into those rather than
+    /// building a record per validator first. On a real cluster that record was
+    /// five thousand structs and five heap allocations apiece, every five
+    /// seconds, to answer six numbers.
     fn collect_peers(&mut self, bank: &Bank) {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
-        let info_cache = self.info_cache.read().unwrap();
 
-        // Gossip says who is reachable and vote accounts say who has stake. A
-        // validator can appear in one and not the other, so the peer list is
-        // the union of both, keyed by identity.
-        let mut gossip: HashMap<Pubkey, GossipPeer> = HashMap::new();
-        for (contact_info, _) in self.ctx.cluster_info.all_peers() {
-            gossip.insert(
-                *contact_info.pubkey(),
-                GossipPeer {
-                    addr: contact_info.gossip().map(|addr| addr.to_string()),
-                    shred_version: Some(contact_info.shred_version()),
-                    version: Some(contact_info.version().to_string()),
-                },
-            );
-        }
-        let rpc_identities: HashSet<Pubkey> = self
+        // Gossip reports a client version; vote accounts report stake. A
+        // validator can appear in one and not the other, so both are walked.
+        let versions: HashMap<Pubkey, String> = self
+            .ctx
+            .cluster_info
+            .all_peers()
+            .into_iter()
+            .map(|(contact_info, _)| (*contact_info.pubkey(), contact_info.version().to_string()))
+            .collect();
+
+        let rpc_nodes = self
             .ctx
             .cluster_info
             .rpc_peers()
             .iter()
             .map(|contact_info| *contact_info.pubkey())
-            .collect();
-        let rpc_nodes = rpc_identities.len();
+            .collect::<HashSet<_>>()
+            .len();
 
-        let mut current: HashMap<String, Peer> = HashMap::new();
-        let mut delinquent = 0usize;
+        // Keyed by identity, not by vote account: a validator running more than
+        // one staked vote account is one validator, and its stake is the sum.
+        let mut staked: HashMap<Pubkey, u64> = HashMap::new();
+        let mut delinquent: HashSet<Pubkey> = HashSet::new();
         let mut delinquent_stake = 0u64;
         let mut non_delinquent_stake = 0u64;
 
-        for (vote_pubkey, (stake, account)) in vote_accounts.iter() {
+        for (_vote_pubkey, (stake, account)) in vote_accounts.iter() {
             // The bank holds every vote account ever created, most with no
             // stake. Counting those puts the validator total in the tens of
             // thousands; a validator is one with stake this epoch, which is
@@ -1249,119 +1221,79 @@ impl Collector {
             if *stake == 0 {
                 continue;
             }
-            let view = account.vote_state_view();
             let identity = *account.node_pubkey();
-            let last_vote = view.last_voted_slot();
-            let is_delinquent = last_vote
+            let is_delinquent = account
+                .vote_state_view()
+                .last_voted_slot()
                 .map(|vote| tip.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
                 .unwrap_or(true);
             if is_delinquent {
-                delinquent = delinquent.saturating_add(1);
+                delinquent.insert(identity);
                 delinquent_stake = delinquent_stake.saturating_add(*stake);
             } else {
                 non_delinquent_stake = non_delinquent_stake.saturating_add(*stake);
             }
-
-            let GossipPeer {
-                addr: gossip_addr,
-                shred_version,
-                version,
-            } = gossip.get(&identity).cloned().unwrap_or_default();
-            current.insert(
-                identity.to_string(),
-                Peer {
-                    identity: identity.to_string(),
-                    vote_account: Some(vote_pubkey.to_string()),
-                    stake: *stake,
-                    commission: Some(view.commission()),
-                    last_vote,
-                    root_slot: view.root_slot(),
-                    delinquent: is_delinquent,
-                    gossip: gossip_addr,
-                    shred_version,
-                    version,
-                    has_rpc: rpc_identities.contains(&identity),
-                    name: info_cache.get(&identity).and_then(|info| info.name.clone()),
-                },
-            );
+            let total = staked.entry(identity).or_insert(0);
+            *total = total.saturating_add(*stake);
         }
-
-        // Counted before gossip-only nodes are folded in, and keyed by identity
-        // rather than vote account, so a validator running more than one staked
-        // vote account counts once.
-        let staked = current.len();
-
-        // Unstaked gossip nodes (RPC nodes, mostly) round out the list.
-        for (
-            identity,
-            GossipPeer {
-                addr: gossip_addr,
-                shred_version,
-                version,
-            },
-        ) in gossip
-        {
-            current.entry(identity.to_string()).or_insert_with(|| Peer {
-                identity: identity.to_string(),
-                vote_account: None,
-                stake: 0,
-                commission: None,
-                last_vote: None,
-                root_slot: None,
-                delinquent: false,
-                gossip: gossip_addr,
-                shred_version,
-                version,
-                has_rpc: rpc_identities.contains(&identity),
-                name: info_cache.get(&identity).and_then(|info| info.name.clone()),
-            });
-        }
-        drop(info_cache);
 
         self.debounces.validator_counts.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "validator_counts",
             ValidatorCounts {
-                total: staked,
-                delinquent,
+                // Both by identity, so that `total - delinquent` — which the
+                // page renders as active validators — cannot go negative for a
+                // validator whose several vote accounts are all behind.
+                total: staked.len(),
+                delinquent: delinquent.len(),
                 rpc_nodes,
                 non_delinquent_stake,
                 delinquent_stake,
             },
         );
 
-        self.publish_versions(&current);
-
-        // The peer table is kept for the counts above and for leader names, but
-        // it is not published. Serialized whole it runs to megabytes on a real
-        // cluster, and nothing in the client renders it: names travel on the
-        // slots that need them, and the counts travel in `validator_counts`.
-        self.peers = current;
+        self.publish_versions(&staked, &versions);
     }
 
     /// Publishes how the cluster's stake divides across client versions.
     ///
-    /// Derived from the peer table that is rebuilt anyway, so this costs one
-    /// pass over a map that already exists. During an upgrade it answers the
-    /// question operators actually ask: how much stake has moved, and is this
-    /// validator in the minority.
-    fn publish_versions(&mut self, peers: &HashMap<String, Peer>) {
-        let mut totals: HashMap<Option<String>, (usize, u64)> = HashMap::new();
-        for peer in peers.values() {
-            let release = peer
-                .version
-                .as_deref()
-                .map(|version| release_of(version).to_string());
-            let entry = totals.entry(release).or_insert((0, 0));
+    /// Every identity counts once, staked or not: unstaked nodes are most of
+    /// the cluster by number and say something about how far an upgrade has
+    /// spread, even though they carry none of the vote. During an upgrade this
+    /// answers the question operators actually ask — how much stake has moved,
+    /// and is this validator in the minority.
+    ///
+    /// Releases are borrowed from the gossip strings rather than copied. There
+    /// are a few thousand peers and at most six rows, so only the rows that
+    /// survive the fold are allocated.
+    fn publish_versions(
+        &mut self,
+        staked: &HashMap<Pubkey, u64>,
+        versions: &HashMap<Pubkey, String>,
+    ) {
+        let mut totals: HashMap<Option<&str>, (usize, u64)> = HashMap::new();
+        for (identity, version) in versions {
+            let stake = staked.get(identity).copied().unwrap_or(0);
+            let entry = totals.entry(Some(release_of(version))).or_insert((0, 0));
             entry.0 = entry.0.saturating_add(1);
-            entry.1 = entry.1.saturating_add(peer.stake);
+            entry.1 = entry.1.saturating_add(stake);
+        }
+        // Staked validators gossip is not currently hearing from. They report
+        // no version, which is not the same as the folded tail below.
+        for (identity, stake) in staked {
+            if versions.contains_key(identity) {
+                continue;
+            }
+            let entry = totals.entry(None).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = entry.1.saturating_add(*stake);
         }
 
         let mut shares: Vec<VersionShare> = totals
             .into_iter()
             .map(|(version, (validators, stake))| VersionShare {
-                version,
+                version: version.map(str::to_string),
                 validators,
                 stake,
                 other: false,
@@ -1439,9 +1371,13 @@ impl Collector {
     /// Each bank is asked only for the config accounts written in its own slot,
     /// which is cheap. Sweeping every bank frozen since the last tick is what
     /// makes the result complete: bank forks drops banks once they are rooted,
-    /// so a sweep that skipped a tick would miss those slots for good. The peer
-    /// sweep that follows compares whole `Peer` values, so a changed name
-    /// propagates with no extra bookkeeping.
+    /// so a sweep that skipped a tick would miss those slots for good.
+    ///
+    /// What the cache feeds is `peer_display`, for slots labelled from here on,
+    /// and `backfill_leader_names`, for slots that were labelled before a name
+    /// was known. A name that changes after a slot already carries one does not
+    /// propagate to that slot, which is the right trade for a strip covering
+    /// the last few minutes.
     ///
     /// Nothing here holds the cache lock. The scans run first and the lock is
     /// taken only to merge, and only when a scan actually found something,

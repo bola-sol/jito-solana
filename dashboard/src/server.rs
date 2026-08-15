@@ -114,7 +114,7 @@ async fn handle(
     // Checked before anything is served, so a rebound name cannot reach the
     // page either. Serving the document to an attacker's origin would make
     // their page same-origin with the dashboard and undo the origin check.
-    if !host_is_allowed(&head, &allowed_hosts) {
+    if !host_is_allowed(&head, allowed_hosts) {
         log::debug!(
             "dashboard: refusing host {:?}; add it with --dashboard-allowed-host",
             header(&head, "host").unwrap_or("(absent)")

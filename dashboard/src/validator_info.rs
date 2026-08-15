@@ -4,9 +4,11 @@
 //! accounts owned by the config program, keyed by the validator's identity.
 //!
 //! Enumerating them is a full accounts scan, which is far too expensive to do
-//! on a timer, so it happens exactly once on a background thread at startup.
-//! After that the cache is kept current from the much cheaper per-slot list of
-//! config accounts written in that slot.
+//! on a timer, so it happens exactly once, on a background thread, and only
+//! once the validator has caught up — a full scan during the replay burst that
+//! follows startup is the worst possible overlap. After that the cache is kept
+//! current from the much cheaper per-slot list of config accounts written in
+//! that slot.
 
 use {
     serde::{Deserialize, Serialize},
@@ -34,12 +36,6 @@ pub struct ValidatorInfo {
     pub icon_url: Option<String>,
     #[serde(rename = "keybaseUsername")]
     pub keybase_username: Option<String>,
-}
-
-impl ValidatorInfo {
-    fn is_empty(&self) -> bool {
-        self == &Self::default()
-    }
 }
 
 #[derive(Debug, Default)]
@@ -77,17 +73,20 @@ impl ValidatorInfoCache {
             .filter(|(identity, info)| self.insert(*identity, info.clone()))
             .count()
     }
+}
 
-    /// Cheap incremental refresh from the config accounts written in `bank`'s
-    /// own slot. Returns the identities whose info changed.
-    pub fn update_from_slot(&mut self, bank: &Bank) -> Vec<Pubkey> {
-        bank.get_program_accounts_modified_since_parent(&solana_sdk_ids::config::id())
-            .into_iter()
-            .filter_map(|(_pubkey, account)| parse(account.data()))
-            .filter(|(identity, info)| self.insert(*identity, info.clone()) && !info.is_empty())
-            .map(|(identity, _)| identity)
-            .collect()
-    }
+/// Validator info written in `bank`'s own slot.
+///
+/// Cheap next to [`scan_all`]: it reads one slot's write set rather than the
+/// whole accounts database. Like `scan_all` it returns rather than merges, so
+/// that a caller sweeping several banks can take the cache lock once, at the
+/// end, and only if anything turned up — config accounts are written perhaps
+/// once a day across the whole cluster, so almost every sweep finds nothing.
+pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
+    bank.get_program_accounts_modified_since_parent(&solana_sdk_ids::config::id())
+        .into_iter()
+        .filter_map(|(_pubkey, account)| parse(account.data()))
+        .collect()
 }
 
 /// Walks every config account and returns the validator info it finds.

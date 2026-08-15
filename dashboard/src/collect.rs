@@ -16,7 +16,7 @@ use {
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
-        validator_info::ValidatorInfoCache,
+        validator_info::{self, ValidatorInfoCache},
     },
     serde::Serialize,
     solana_clock::{Epoch, Slot},
@@ -400,10 +400,10 @@ impl Collector {
             self.collect_network();
         }
 
-        // The five-second tier is where the cost is: it clones the cluster's
-        // whole vote-account map out from under a lock the bank writes to, and
-        // scans every account written in each new slot. None of that is worth
-        // doing while nobody is connected to see the result.
+        // The five-second tier is where the cost is: it walks every vote account
+        // in the cluster and reads the write set of each slot frozen since the
+        // last sweep. None of that is worth doing while nobody is connected to
+        // see the result.
         //
         // Only this tier is gated. The tiers above feed the slot ring, the
         // duration cursor and the chart histories, and a gap in those would
@@ -1287,8 +1287,14 @@ impl Collector {
     ///
     /// Each bank is asked only for the config accounts written in its own slot,
     /// which is cheap. Sweeping every bank frozen since the last tick is what
-    /// makes the result complete. The peer sweep that follows compares whole
-    /// `Peer` values, so a changed name propagates with no extra bookkeeping.
+    /// makes the result complete: bank forks drops banks once they are rooted,
+    /// so a sweep that skipped a tick would miss those slots for good. The peer
+    /// sweep that follows compares whole `Peer` values, so a changed name
+    /// propagates with no extra bookkeeping.
+    ///
+    /// Nothing here holds the cache lock. The scans run first and the lock is
+    /// taken only to merge, and only when a scan actually found something,
+    /// which on most sweeps it does not.
     fn collect_validator_info(&mut self) {
         let banks: Vec<Arc<Bank>> = {
             let bank_forks = self.ctx.bank_forks.read().unwrap();
@@ -1299,14 +1305,16 @@ impl Collector {
                 .collect()
         };
 
-        let mut changed: usize = 0;
-        let mut cache = self.info_cache.write().unwrap();
+        let mut found = Vec::new();
         for bank in banks {
             self.info_scanned_to = self.info_scanned_to.max(bank.slot());
-            changed = changed.saturating_add(cache.update_from_slot(&bank).len());
+            found.extend(validator_info::scan_slot(&bank));
         }
-        drop(cache);
+        if found.is_empty() {
+            return;
+        }
 
+        let changed = self.info_cache.write().unwrap().merge(found);
         if changed > 0 {
             log::debug!("dashboard: {changed} validator info entries updated");
         }

@@ -718,22 +718,37 @@ impl Collector {
         drop(commitment);
         let root = root_bank.slot();
 
-        let frozen: Vec<(Slot, u64, u64)> = {
+        // Bank transaction counters are cumulative along a fork, so a block's
+        // own work is its difference from its parent. Taking the raw counter
+        // reported the whole chain's history against every slot.
+        //
+        // Differenced here rather than through `Bank::executed_transaction_count`
+        // because that treats a missing parent as a count of zero, which yields
+        // the running total again — the very thing being fixed — and because the
+        // non-vote counter has no equivalent helper. A bank whose parent has
+        // been pruned reports `None` and leaves the figure alone: by the time a
+        // bank is rooted it was frozen many ticks earlier and already carries a
+        // correct count.
+        let frozen: Vec<(Slot, Option<(u64, u64)>)> = {
             let bank_forks = self.ctx.bank_forks.read().unwrap();
             bank_forks
                 .frozen_banks()
                 .map(|(slot, bank)| {
-                    (
-                        slot,
-                        bank.transaction_count(),
-                        bank.non_vote_transaction_count_since_restart(),
-                    )
+                    let counts = bank.parent().map(|parent| {
+                        (
+                            bank.transaction_count()
+                                .saturating_sub(parent.transaction_count()),
+                            bank.non_vote_transaction_count_since_restart()
+                                .saturating_sub(parent.non_vote_transaction_count_since_restart()),
+                        )
+                    });
+                    (slot, counts)
                 })
                 .collect()
         };
 
         let mut changed = Vec::new();
-        for (slot, total, non_vote) in frozen {
+        for (slot, counts) in frozen {
             let level = if slot <= finalized {
                 SlotLevel::Finalized
             } else if slot <= root {
@@ -745,8 +760,10 @@ impl Collector {
             };
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.level = level;
-                entry.transactions = Some(total);
-                entry.non_vote_transactions = Some(non_vote);
+                if let Some((total, non_vote)) = counts {
+                    entry.transactions = Some(total);
+                    entry.non_vote_transactions = Some(non_vote);
+                }
             }) {
                 changed.push(entry);
             }

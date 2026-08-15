@@ -27,17 +27,12 @@ solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-config-interface = { workspace = true }
-solana-epoch-schedule = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
-solana-native-token = { workspace = true }
-solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-time-utils = { workspace = true }
 solana-version = { workspace = true }
-solana-vote = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["compat"] }

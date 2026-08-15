@@ -29,7 +29,7 @@ export function Stat({
   label: ReactNode;
   value: ReactNode;
   sub?: ReactNode;
-  tone?: "good" | "warn" | "bad" | "muted";
+  tone?: "good" | "bad" | "muted";
   /** Hover text for a figure whose label cannot say enough on its own. */
   explain?: string;
 }) {
@@ -45,11 +45,11 @@ export function Stat({
 }
 
 /** A labelled horizontal progress bar, as used by the epoch countdown. */
-export function Meter({ fraction, tone }: { fraction: number; tone?: string }) {
+export function Meter({ fraction }: { fraction: number }) {
   const clamped = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
   return (
     <div className="meter" role="progressbar" aria-valuenow={Math.round(clamped * 100)}>
-      <div className={`meter-fill${tone ? ` tone-${tone}` : ""}`} style={{ width: `${clamped * 100}%` }} />
+      <div className="meter-fill" style={{ width: `${clamped * 100}%` }} />
     </div>
   );
 }

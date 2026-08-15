@@ -52,15 +52,14 @@ struct Envelope<'a, T> {
     value: T,
 }
 
-/// A request sent by a client.
+/// A request sent by a client. Unknown fields are ignored, so a client may send
+/// arguments alongside these once a request exists that takes any.
 #[derive(Deserialize)]
 pub struct Request {
     pub topic: String,
     pub key: String,
     #[serde(default)]
     pub id: Option<u64>,
-    #[serde(default)]
-    pub params: serde_json::Value,
 }
 
 /// A serialized, ready-to-send message. Serialization happens once, on the
@@ -176,10 +175,6 @@ impl<T> Debounced<T> {
     /// The value most recently published, if any.
     pub fn last(&self) -> Option<&T> {
         self.last.as_ref()
-    }
-
-    pub fn is_unset(&self) -> bool {
-        self.last.is_none()
     }
 }
 

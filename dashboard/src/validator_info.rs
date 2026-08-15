@@ -11,7 +11,7 @@
 //! that slot.
 
 use {
-    serde::{Deserialize, Serialize},
+    serde::Deserialize,
     solana_account::ReadableAccount,
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
@@ -27,15 +27,17 @@ const VALIDATOR_INFO_PROGRAM: Pubkey =
 /// config accounts without deserializing them.
 const MAX_VALIDATOR_INFO_LEN: usize = 576 + 1 + (32 + 1) * 2;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The two fields the dashboard renders.
+///
+/// A validator info account also carries a website, a free-text description and
+/// a keybase username. Serde ignores what it is not asked for, and caching
+/// those for every validator on the cluster would hold hundreds of bytes each
+/// for text nothing displays.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct ValidatorInfo {
     pub name: Option<String>,
-    pub website: Option<String>,
-    pub details: Option<String>,
     #[serde(rename = "iconUrl")]
     pub icon_url: Option<String>,
-    #[serde(rename = "keybaseUsername")]
-    pub keybase_username: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -144,12 +146,27 @@ mod tests {
         let identity = Pubkey::new_unique();
         let data = encode(
             vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],
-            r#"{"name":"Lantern","website":"https://example.com"}"#,
+            r#"{"name":"Lantern","iconUrl":"https://example.com/i.png"}"#,
         );
         let (parsed_identity, info) = parse(&data).unwrap();
         assert_eq!(parsed_identity, identity);
         assert_eq!(info.name.as_deref(), Some("Lantern"));
-        assert_eq!(info.details, None);
+        assert_eq!(info.icon_url.as_deref(), Some("https://example.com/i.png"));
+    }
+
+    #[test]
+    fn fields_the_dashboard_does_not_render_are_ignored() {
+        // The account carries more than this struct asks for. An unknown field
+        // must be skipped rather than failing the whole parse, or a validator
+        // publishing a website would lose its name too.
+        let identity = Pubkey::new_unique();
+        let data = encode(
+            vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],
+            r#"{"name":"Lantern","website":"https://example.com","details":"hi",
+                "keybaseUsername":"lantern"}"#,
+        );
+        let (_, info) = parse(&data).unwrap();
+        assert_eq!(info.name.as_deref(), Some("Lantern"));
     }
 
     #[test]

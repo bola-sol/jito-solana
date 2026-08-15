@@ -349,9 +349,6 @@ body {
 .tone-good {
   color: var(--good);
 }
-.tone-warn {
-  color: var(--warn);
-}
 .tone-bad {
   color: var(--bad);
 }

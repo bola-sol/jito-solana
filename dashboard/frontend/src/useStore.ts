@@ -21,7 +21,3 @@ export function useStore(): Store {
   useSyncExternalStore(store.subscribe, store.getRevision, store.getRevision);
   return store;
 }
-
-export function useValue<T>(topic: string, key: string): T | undefined {
-  return useStore().get<T>(topic, key);
-}

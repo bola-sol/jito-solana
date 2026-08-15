@@ -49,10 +49,6 @@ export function duration(millis: number | undefined): string {
   return `${seconds}s`;
 }
 
-export function nanosToMillis(nanos: number | undefined): number | undefined {
-  return nanos === undefined ? undefined : nanos / 1_000_000;
-}
-
 /** Shortened pubkey, e.g. `J5e4xh…c8FF1`. */
 export function shortKey(key: string | null | undefined, lead = 6, tail = 5): string {
   if (!key) return "—";

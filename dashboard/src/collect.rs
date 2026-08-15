@@ -271,9 +271,13 @@ pub struct Collector {
     /// Set once the counters prove unreadable, so the failure is logged once
     /// rather than every second.
     net_unavailable: bool,
-    /// This validator's leader slots for the current epoch, kept so the skip
-    /// rate can walk them as the root passes each one.
-    my_leader_slots: Vec<Slot>,
+    /// This validator's leader slots for the epoch the *root* is in, kept so
+    /// the skip rate can walk them as the root passes each one.
+    ///
+    /// Rebuilt only when the root crosses an epoch boundary, which is what ties
+    /// it to `skip_next_index`: the two must describe the same epoch, or the
+    /// index points into the wrong schedule.
+    skip_leader_slots: Vec<Slot>,
     skip_epoch: Option<Epoch>,
     skip_next_index: usize,
     skip_produced: usize,
@@ -324,7 +328,7 @@ impl Collector {
             last_net: None,
             net_history: Vec::new(),
             net_unavailable: false,
-            my_leader_slots: Vec::new(),
+            skip_leader_slots: Vec::new(),
             skip_epoch: None,
             skip_next_index: 0,
             skip_produced: 0,
@@ -860,22 +864,9 @@ impl Collector {
         // leader slot in the epoch, would go out five times a second. The client
         // derives the countdown from the current slot and the slot duration.
 
-        // `get_leader_upcoming_slots` yields an endlessly repeating schedule, so
-        // the `take_while` is what bounds it to this epoch.
-        let me = self.ctx.identity();
-        let my_leader_slots: Vec<Slot> = self
-            .ctx
-            .leader_schedule_cache
-            .get_epoch_leader_schedule(epoch)
-            .map(|leaders| {
-                leaders
-                    .get_leader_upcoming_slots(&me, 0)
-                    .map(|index| start_slot.saturating_add(index as Slot))
-                    .take_while(|slot| *slot <= end_slot)
-                    .collect()
-            })
-            .unwrap_or_default();
-        self.my_leader_slots = my_leader_slots.clone();
+        // An unknown schedule is published as no leader slots. The panel counts
+        // them, and a count is better absent-as-zero than withheld.
+        let my_leader_slots = self.leader_slots_in_epoch(bank, epoch).unwrap_or_default();
 
         self.debounces.epoch.publish(
             &self.publisher,
@@ -889,6 +880,43 @@ impl Collector {
                 my_leader_slots,
             },
         );
+    }
+
+    /// This validator's leader slots in `epoch`, ascending.
+    ///
+    /// The epoch is passed in rather than taken from the bank, because the two
+    /// callers want different ones: the panel shows the epoch the cluster is
+    /// in, and the skip rate counts the epoch the root has reached. Between a
+    /// rollover and the root catching up those differ, and conflating them is
+    /// what made the skip rate wrong at every epoch boundary.
+    ///
+    /// `None` means the schedule for that epoch is not known yet, which is not
+    /// the same as an empty list. An unstaked validator has no leader slots and
+    /// the answer is genuinely empty; a schedule that has not been computed
+    /// says nothing at all, and a caller that caches the result needs to ask
+    /// again rather than record a zero.
+    ///
+    /// The bank is only read for its epoch schedule, which comes from genesis
+    /// and so is the same on any bank.
+    fn leader_slots_in_epoch(&self, bank: &Bank, epoch: Epoch) -> Option<Vec<Slot>> {
+        let epoch_schedule = bank.epoch_schedule();
+        let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
+        let end_slot =
+            start_slot.saturating_add(epoch_schedule.get_slots_in_epoch(epoch).saturating_sub(1));
+
+        // `get_leader_upcoming_slots` yields an endlessly repeating schedule, so
+        // the `take_while` is what bounds it to the epoch asked for.
+        let me = self.ctx.identity();
+        self.ctx
+            .leader_schedule_cache
+            .get_epoch_leader_schedule(epoch)
+            .map(|leaders| {
+                leaders
+                    .get_leader_upcoming_slots(&me, 0)
+                    .map(|index| start_slot.saturating_add(index as Slot))
+                    .take_while(|slot| *slot <= end_slot)
+                    .collect()
+            })
     }
 
     // ---- clock, TPS -----------------------------------------------------
@@ -1322,9 +1350,20 @@ impl Collector {
     /// Each leader slot is checked once, as the root passes it, which comes to
     /// a few hundred point lookups spread over the epoch.
     fn collect_skip_rate(&mut self, root_bank: &Bank) {
+        // The root's epoch, not the working bank's. They differ for the half a
+        // minute after a rollover during which the root is still finishing the
+        // old epoch, and the schedule has to match the slots being counted.
         let epoch = root_bank.epoch();
         if self.skip_epoch != Some(epoch) {
+            // The epoch is latched only once its schedule is in hand. Taking an
+            // unknown schedule as an empty one would record a permanent zero:
+            // the list is built once per epoch, so there would be no second
+            // attempt until the next boundary.
+            let Some(leader_slots) = self.leader_slots_in_epoch(root_bank, epoch) else {
+                return;
+            };
             self.skip_epoch = Some(epoch);
+            self.skip_leader_slots = leader_slots;
             self.skip_next_index = 0;
             self.skip_produced = 0;
             self.skip_elapsed = 0;
@@ -1337,9 +1376,7 @@ impl Collector {
         // rate of seventy percent against an actual zero.
         let root = root_bank.slot();
         let floor = self.ctx.blockstore.lowest_slot();
-        let leader_slots = self.my_leader_slots.clone();
-        while self.skip_next_index < leader_slots.len() {
-            let slot = leader_slots[self.skip_next_index];
+        while let Some(slot) = self.skip_leader_slots.get(self.skip_next_index).copied() {
             if slot > root {
                 break;
             }

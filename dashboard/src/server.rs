@@ -117,7 +117,7 @@ async fn handle(
     if !host_is_allowed(&head, allowed_hosts) {
         log::debug!(
             "dashboard: refusing host {:?}; add it with --dashboard-allowed-host",
-            header(&head, "host").unwrap_or("(absent)")
+            for_logging(header(&head, "host").unwrap_or("(absent)"))
         );
         return refuse(socket, head_len, 421, b"unrecognised host").await;
     }
@@ -126,7 +126,7 @@ async fn handle(
         if !origin_is_allowed(&head) {
             log::debug!(
                 "dashboard: refusing websocket from origin {:?}",
-                header(&head, "origin").unwrap_or("(absent)")
+                for_logging(header(&head, "origin").unwrap_or("(absent)"))
             );
             return refuse(socket, head_len, 403, b"origin not allowed").await;
         }
@@ -358,11 +358,24 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
 ///
 /// `connect-src 'self'` covers the websocket: for an https page, `'self'`
 /// matches wss on the same host too.
-const SECURITY_HEADERS: &str =
-    "content-security-policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src \
-     'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self'; \
-     base-uri 'none'; form-action 'none'; frame-ancestors 'self'\r\nx-content-type-options: \
-     nosniff\r\nreferrer-policy: no-referrer\r\n";
+///
+/// Written one directive to a line. A single long literal has to be broken to
+/// fit, and where it breaks depends on which rustfmt features are enabled, so
+/// this form is also the one that formats the same everywhere.
+const SECURITY_HEADERS: &str = concat!(
+    "content-security-policy:",
+    " default-src 'none';",
+    " script-src 'self' 'unsafe-inline';",
+    " style-src 'self' 'unsafe-inline';",
+    " img-src 'self' data: https:;",
+    " connect-src 'self';",
+    " font-src 'self';",
+    " base-uri 'none';",
+    " form-action 'none';",
+    " frame-ancestors 'self'\r\n",
+    "x-content-type-options: nosniff\r\n",
+    "referrer-policy: no-referrer\r\n",
+);
 
 fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Vec<u8> {
     let reason = match status {
@@ -524,6 +537,31 @@ async fn serve_websocket(
     }
 }
 
+/// Bounds and flattens a caller-supplied string before it reaches the log.
+///
+/// Request topics and keys, and the `Host` and `Origin` headers, are whatever
+/// the caller chose to send. A log is a shared artefact that operators read and
+/// tools parse: a newline forges a second entry, an escape sequence drives the
+/// terminal of whoever tails the file, and a right-to-left override reverses
+/// the text around it. Anything outside printable ASCII becomes `?`, and the
+/// result is short, so an 8 KB header cannot write an 8 KB line.
+fn for_logging(value: &str) -> String {
+    const LIMIT: usize = 48;
+    let mut out: String = value
+        .chars()
+        .take(LIMIT)
+        .map(|c| match c {
+            // Printable ASCII, space through tilde.
+            ' '..='~' => c,
+            _ => '?',
+        })
+        .collect();
+    if value.chars().nth(LIMIT).is_some() {
+        out.push_str("...");
+    }
+    out
+}
+
 /// Handles a client request. Even unknown requests get an answer, so a client
 /// is never left waiting on an id that will never come back.
 fn respond(payload: &[u8]) -> Option<Message> {
@@ -532,7 +570,11 @@ fn respond(payload: &[u8]) -> Option<Message> {
     match (request.topic.as_str(), request.key.as_str()) {
         ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
         (topic, key) => {
-            log::debug!("dashboard: unhandled request {topic}.{key}");
+            log::debug!(
+                "dashboard: unhandled request {:?}.{:?}",
+                for_logging(topic),
+                for_logging(key)
+            );
             Some(encode_with_id(
                 topic,
                 key,
@@ -829,6 +871,36 @@ mod tests {
     #[test]
     fn malformed_requests_are_ignored() {
         assert!(respond(b"not json").is_none());
+    }
+
+    #[test]
+    fn log_text_cannot_forge_a_second_line() {
+        // A newline would end the entry and let the rest pose as one the
+        // validator wrote itself.
+        assert_eq!(
+            for_logging("summary\n[INFO] dashboard: all good"),
+            "summary?[INFO] dashboard: all good"
+        );
+        // An escape sequence would reach the terminal of whoever tails the log,
+        // and an override would reverse the text printed after it.
+        assert_eq!(for_logging("\u{1b}[2Jwiped"), "?[2Jwiped");
+        assert_eq!(for_logging("nice\u{202e}gnp.exe"), "nice?gnp.exe");
+    }
+
+    #[test]
+    fn log_text_is_bounded() {
+        let logged = for_logging(&"a".repeat(4096));
+        assert!(
+            logged.len() < 64,
+            "unbounded log line: {} bytes",
+            logged.len()
+        );
+        assert!(
+            logged.ends_with("..."),
+            "truncation is not visible: {logged:?}"
+        );
+        // Anything short enough is passed through whole, with no marker.
+        assert_eq!(for_logging("summary"), "summary");
     }
 
     #[test]

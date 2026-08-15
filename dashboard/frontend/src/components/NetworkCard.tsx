@@ -11,7 +11,13 @@ const HEIGHT = 90;
 const WINDOW_SECONDS = 60;
 
 /**
- * Host interface throughput.
+ * Whole-host interface throughput, summed over every non-loopback interface.
+ *
+ * Titled and labelled as the host's, not the validator's, because that is what
+ * it measures: Linux attributes bytes to an interface and not to a process, so
+ * anything else running on the box is counted too. On a dedicated validator the
+ * two are near enough the same, which is exactly why the distinction has to be
+ * on the card rather than left to the reader to guess.
  *
  * The card renders nothing at all when the validator could not read the
  * counters, rather than showing zeros that would look like an idle network.
@@ -21,16 +27,22 @@ export function NetworkCard() {
   const rates = store.get<Network>("summary", "network");
   if (!rates) return null;
 
+  const scope =
+    "Every non-loopback interface on this host, not the validator's own traffic: " +
+    "Linux counts bytes per interface, not per process.";
+
   return (
-    <Card title="Network" className="network-body">
+    <Card title="Host Network" className="network-body">
       <div className="stat-grid stat-grid-tight">
         <Stat
           label={<><span className="swatch swatch-ingress" />Ingress</>}
           value={`${bytes(rates.received_per_second)}/s`}
+          explain={scope}
         />
         <Stat
           label={<><span className="swatch swatch-egress" />Egress</>}
           value={`${bytes(rates.sent_per_second)}/s`}
+          explain={scope}
         />
       </div>
       <NetworkChart samples={store.getNetwork()} />

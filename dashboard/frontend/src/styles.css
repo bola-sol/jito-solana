@@ -749,8 +749,13 @@ body {
 .slot-key {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px 16px;
   margin-top: 10px;
+  /* Pinned so the card cannot change height when the hover detail appears.
+     The detail's slot number is a size larger than the key labels, and a flex
+     row sized by its contents grew by a pixel and a half the moment it showed. */
+  min-height: 16px;
 }
 
 .slot-key-item {

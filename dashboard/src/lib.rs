@@ -14,6 +14,7 @@ pub mod server;
 pub mod service;
 pub mod slots;
 pub mod startup;
+pub mod udp_drops;
 pub mod validator_info;
 
 pub use {

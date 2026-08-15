@@ -5,6 +5,7 @@ import {
   ValidatorsCard,
 } from "./components/cards";
 import { Header } from "./components/Header";
+import { IngestCard } from "./components/IngestCard";
 import { NetworkCard } from "./components/NetworkCard";
 import { Sidebar } from "./components/Sidebar";
 import { VersionsCard } from "./components/VersionsCard";
@@ -33,7 +34,12 @@ export function App() {
           <VersionsCard />
         </div>
         <TransactionsCard />
-        <NetworkCard />
+        {/* Both read the same traffic from opposite ends: bytes on the wire,
+            and what the sockets failed to take off it. */}
+        <div className="grid">
+          <NetworkCard />
+          <IngestCard />
+        </div>
       </main>
     </div>
   );

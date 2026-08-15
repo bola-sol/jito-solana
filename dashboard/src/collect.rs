@@ -16,10 +16,12 @@ use {
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
+        udp_drops::{self, PortMap},
         validator_info::{self, ValidatorInfoCache},
     },
     serde::Serialize,
     solana_clock::{Epoch, Slot},
+    solana_gossip::contact_info::Protocol,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{
@@ -161,6 +163,23 @@ pub struct NetworkSample {
     pub rates: Network,
 }
 
+/// Kernel-side receive health for one of this validator's UDP ports.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IngestPath {
+    /// Which service the port belongs to, used as the row's label and key.
+    pub name: &'static str,
+    pub port: u16,
+    /// Datagrams the kernel discarded over the last sample, as a rate. Kept
+    /// fractional because a validator dropping one packet every few seconds is
+    /// still a validator dropping packets, and rounding that to zero would
+    /// report the fault as health.
+    pub drops_per_second: f64,
+    /// Drops since the sockets were opened, which for these is validator start.
+    pub drops_total: u64,
+    /// Bytes waiting unread at the instant of the sample.
+    pub queued_bytes: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Health {
     pub replay: &'static str,
@@ -231,6 +250,7 @@ struct Debounces {
     stake: Debounced<StakeSummary>,
     validator_counts: Debounced<ValidatorCounts>,
     versions: Debounced<Vec<VersionShare>>,
+    ingest_paths: Debounced<Vec<IngestPath>>,
     block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
@@ -271,6 +291,11 @@ pub struct Collector {
     /// Set once the counters prove unreadable, so the failure is logged once
     /// rather than every second.
     net_unavailable: bool,
+    /// Per-port socket counters as of the last sample, for differencing.
+    last_drops: Option<(PortMap, Instant)>,
+    /// As `net_unavailable`, for `/proc/net/udp`. The two files fail
+    /// independently: a container can expose one and not the other.
+    drops_unavailable: bool,
     /// This validator's leader slots for the epoch the *root* is in, kept so
     /// the skip rate can walk them as the root passes each one.
     ///
@@ -328,6 +353,8 @@ impl Collector {
             last_net: None,
             net_history: Vec::new(),
             net_unavailable: false,
+            last_drops: None,
+            drops_unavailable: false,
             skip_leader_slots: Vec::new(),
             skip_epoch: None,
             skip_next_index: 0,
@@ -398,6 +425,7 @@ impl Collector {
             self.collect_clock();
             self.collect_tps(&working_bank);
             self.collect_network();
+            self.collect_ingest_paths();
         }
 
         // The five-second tier is where the cost is: it walks every vote account
@@ -1052,6 +1080,98 @@ impl Collector {
         }
         self.publisher
             .retain_only(TOPIC_SUMMARY, "network_history", &self.net_history);
+    }
+
+    /// This validator's own UDP ports, in the order the panel lists them.
+    ///
+    /// Taken from what the node advertises in gossip, which is the only place
+    /// the dashboard can see them from without the validator handing it the
+    /// socket set. That has a consequence worth knowing: an operator running
+    /// behind a port forward advertises a port it is not bound to, and the
+    /// match below simply finds nothing.
+    ///
+    /// A fixed order rather than sorting by traffic or by drops, so a row does
+    /// not move to a different line between samples.
+    fn ingest_ports(&self) -> Vec<(&'static str, u16)> {
+        let info = self.ctx.cluster_info.my_contact_info();
+        [
+            ("turbine", info.tvu(Protocol::UDP)),
+            ("tpu", info.tpu(Protocol::QUIC)),
+            ("tpu forwards", info.tpu_forwards(Protocol::QUIC)),
+            ("tpu vote", info.tpu_vote(Protocol::UDP)),
+            ("gossip", info.gossip()),
+            ("serve repair", info.serve_repair(Protocol::UDP)),
+        ]
+        .into_iter()
+        .filter_map(|(name, addr)| addr.map(|addr| (name, addr.port())))
+        .collect()
+    }
+
+    /// Packets lost in the kernel before the validator could read them.
+    ///
+    /// Distinct from the drop counters inside the validator, which count
+    /// packets discarded once already in userspace. These are the ones that
+    /// never got that far, and they are the usual way shreds go missing.
+    fn collect_ingest_paths(&mut self) {
+        if self.drops_unavailable {
+            return;
+        }
+        let current = match udp_drops::read() {
+            Ok(ports) => ports,
+            Err(err) => {
+                self.drops_unavailable = true;
+                log::info!("dashboard: socket counters unavailable, panel disabled: {err}");
+                return;
+            }
+        };
+        let now = Instant::now();
+        let ports = self.ingest_ports();
+
+        let paths: Vec<IngestPath> = self
+            .last_drops
+            .as_ref()
+            .and_then(|(previous, sampled_at)| {
+                let seconds = now.duration_since(*sampled_at).as_secs_f64();
+                if seconds <= 0.0 {
+                    return None;
+                }
+                let rows = ports
+                    .iter()
+                    .filter_map(|&(name, port)| {
+                        let counters = current.get(&port)?;
+                        // A socket closed and reopened restarts at zero, so a
+                        // decrease is read as no drops rather than as a rate
+                        // wrapping round through a very large number.
+                        let since = previous
+                            .get(&port)
+                            .and_then(|prev| counters.drops.checked_sub(prev.drops))
+                            .unwrap_or(0);
+                        Some(IngestPath {
+                            name,
+                            port,
+                            drops_per_second: since as f64 / seconds,
+                            drops_total: counters.drops,
+                            queued_bytes: counters.queued,
+                        })
+                    })
+                    .collect();
+                Some(rows)
+            })
+            .unwrap_or_default();
+
+        self.last_drops = Some((current, now));
+
+        // Empty means either the first sample, which has nothing to difference
+        // against, or that none of the advertised ports is actually bound here.
+        // Publishing zeroed rows in the second case would report a validator as
+        // healthy on the strength of a lookup that failed, so publish nothing
+        // and let the panel stay absent.
+        if paths.is_empty() {
+            return;
+        }
+        self.debounces
+            .ingest_paths
+            .publish(&self.publisher, TOPIC_SUMMARY, "ingest_paths", paths);
     }
 
     // ---- peers ----------------------------------------------------------

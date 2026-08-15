@@ -88,6 +88,14 @@ export interface NetworkSample extends Network {
   timestamp_nanos: number;
 }
 
+export interface IngestPath {
+  name: string;
+  port: number;
+  drops_per_second: number;
+  drops_total: number;
+  queued_bytes: number;
+}
+
 export interface StartupProgress {
   phase: string;
   detail: string | null;

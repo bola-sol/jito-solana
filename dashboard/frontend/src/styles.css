@@ -985,6 +985,81 @@ body {
   text-align: center;
 }
 
+/* ---- socket ingest ---- */
+
+.ingest-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ingest {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ingest-row {
+  display: grid;
+  /* The two figure columns are fixed so they share one right edge down the
+     card and can be compared without reading the labels. */
+  grid-template-columns: minmax(0, 1fr) 5.5em 8.5em;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.ingest-row.is-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  padding-bottom: 3px;
+  margin-bottom: 1px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ingest-row.is-head span:not(:first-child) {
+  text-align: right;
+  cursor: help;
+}
+
+.ingest-name {
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.ingest-queued {
+  text-align: right;
+  color: var(--text-faint);
+}
+
+.ingest-drops {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+/* A row earns colour only while it is actively losing packets. A validator
+   that dropped a handful during startup and none since is not a fault, and
+   colouring that total would teach the operator to ignore the colour. */
+.ingest-row.is-dropping .ingest-name {
+  color: var(--bad);
+}
+
+/* The rate alone is red, never the total beside it. Two red numbers on one
+   row read as one long number, and these two mean quite different things:
+   what has ever been lost, and what is being lost now. */
+.ingest-drops b {
+  font-weight: 600;
+  color: var(--bad);
+}
+
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 1fr;

@@ -387,18 +387,30 @@ impl Collector {
     pub fn tick(&mut self) {
         let now = Instant::now();
 
-        let (root_bank, working_bank, highest_slot) = {
+        // One acquisition for the whole tick. Bank forks is the lock replay
+        // holds to advance, so a reader that takes it three times a tick is
+        // three chances to be in the way rather than one. Nothing is computed
+        // under it: the guard lives only long enough to clone the handles out.
+        let (root_bank, working_bank, highest_slot, frozen) = {
             let bank_forks = self.ctx.bank_forks.read().unwrap();
             (
                 bank_forks.root_bank(),
                 bank_forks.working_bank(),
                 bank_forks.highest_slot(),
+                bank_forks.frozen_banks().collect::<Vec<_>>(),
             )
         };
+        // The highest slot this validator has replayed, as opposed to the
+        // highest it holds a bank for.
+        let completed = frozen
+            .iter()
+            .map(|(slot, _)| *slot)
+            .max()
+            .unwrap_or_default();
 
-        self.collect_slot_positions(&root_bank, highest_slot);
+        self.collect_slot_positions(&root_bank, highest_slot, completed);
         self.collect_leaders(&root_bank, highest_slot);
-        self.collect_slot_levels(&root_bank);
+        self.collect_slot_levels(&root_bank, &frozen);
         // Balances, vote state and the epoch index come from the working bank.
         // The root trails the tip by the 32 slots it takes to root, so reading
         // them from the root bank showed everything about thirteen seconds late.
@@ -443,7 +455,7 @@ impl Collector {
         // of its interval instead of resampling for nothing.
         if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
-            self.collect_validator_info();
+            self.collect_validator_info(&frozen);
             self.backfill_leader_names();
             self.collect_peers(&working_bank);
             self.collect_health();
@@ -453,7 +465,7 @@ impl Collector {
 
     // ---- slot positions -------------------------------------------------
 
-    fn collect_slot_positions(&mut self, root_bank: &Bank, highest_slot: Slot) {
+    fn collect_slot_positions(&mut self, root_bank: &Bank, highest_slot: Slot, completed: Slot) {
         let commitment = self.ctx.block_commitment_cache.read().unwrap();
         let (root, confirmed, finalized) = (
             commitment.root(),
@@ -488,7 +500,6 @@ impl Collector {
             highest_slot,
         );
 
-        let completed = self.highest_frozen_slot();
         self.debounces.completed_slot.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -497,17 +508,6 @@ impl Collector {
         );
         self.collect_slot_durations(completed);
         self.observe_slot_duration(root_bank, completed);
-    }
-
-    fn highest_frozen_slot(&self) -> Slot {
-        self.ctx
-            .bank_forks
-            .read()
-            .unwrap()
-            .frozen_banks()
-            .map(|(slot, _)| slot)
-            .max()
-            .unwrap_or_default()
     }
 
     /// Maintains a smoothed estimate of how long a slot is taking, which the
@@ -682,7 +682,7 @@ impl Collector {
         );
     }
 
-    fn collect_slot_levels(&mut self, root_bank: &Bank) {
+    fn collect_slot_levels(&mut self, root_bank: &Bank, frozen: &[(Slot, Arc<Bank>)]) {
         let commitment = self.ctx.block_commitment_cache.read().unwrap();
         let (confirmed, finalized) = (
             commitment.highest_confirmed_slot(),
@@ -691,37 +691,30 @@ impl Collector {
         drop(commitment);
         let root = root_bank.slot();
 
-        // Bank transaction counters are cumulative along a fork, so a block's
-        // own work is its difference from its parent. Taking the raw counter
-        // reported the whole chain's history against every slot.
-        //
-        // Differenced here rather than through `Bank::executed_transaction_count`
-        // because that treats a missing parent as a count of zero, which yields
-        // the running total again — the very thing being fixed — and because the
-        // non-vote counter has no equivalent helper. A bank whose parent has
-        // been pruned reports `None` and leaves the figure alone: by the time a
-        // bank is rooted it was frozen many ticks earlier and already carries a
-        // correct count.
-        let frozen: Vec<(Slot, Option<(u64, u64)>)> = {
-            let bank_forks = self.ctx.bank_forks.read().unwrap();
-            bank_forks
-                .frozen_banks()
-                .map(|(slot, bank)| {
-                    let counts = bank.parent().map(|parent| {
-                        (
-                            bank.transaction_count()
-                                .saturating_sub(parent.transaction_count()),
-                            bank.non_vote_transaction_count_since_restart()
-                                .saturating_sub(parent.non_vote_transaction_count_since_restart()),
-                        )
-                    });
-                    (slot, counts)
-                })
-                .collect()
-        };
-
         let mut changed = Vec::new();
-        for (slot, counts) in frozen {
+        for (slot, bank) in frozen {
+            let slot = *slot;
+            // Bank transaction counters are cumulative along a fork, so a
+            // block's own work is its difference from its parent. Taking the
+            // raw counter reported the whole chain's history against every
+            // slot.
+            //
+            // Differenced here rather than through
+            // `Bank::executed_transaction_count` because that treats a missing
+            // parent as a count of zero, which yields the running total again —
+            // the very thing being fixed — and because the non-vote counter has
+            // no equivalent helper. A bank whose parent has been pruned reports
+            // `None` and leaves the figure alone: by the time a bank is rooted
+            // it was frozen many ticks earlier and already carries a correct
+            // count.
+            let counts = bank.parent().map(|parent| {
+                (
+                    bank.transaction_count()
+                        .saturating_sub(parent.transaction_count()),
+                    bank.non_vote_transaction_count_since_restart()
+                        .saturating_sub(parent.non_vote_transaction_count_since_restart()),
+                )
+            });
             let level = if slot <= finalized {
                 SlotLevel::Finalized
             } else if slot <= root {
@@ -1379,20 +1372,14 @@ impl Collector {
     /// Nothing here holds the cache lock. The scans run first and the lock is
     /// taken only to merge, and only when a scan actually found something,
     /// which on most sweeps it does not.
-    fn collect_validator_info(&mut self) {
-        let banks: Vec<Arc<Bank>> = {
-            let bank_forks = self.ctx.bank_forks.read().unwrap();
-            bank_forks
-                .frozen_banks()
-                .filter(|(slot, _)| *slot > self.info_scanned_to)
-                .map(|(_, bank)| bank)
-                .collect()
-        };
-
+    fn collect_validator_info(&mut self, frozen: &[(Slot, Arc<Bank>)]) {
         let mut found = Vec::new();
-        for bank in banks {
-            self.info_scanned_to = self.info_scanned_to.max(bank.slot());
-            found.extend(validator_info::scan_slot(&bank));
+        for (slot, bank) in frozen {
+            if *slot <= self.info_scanned_to {
+                continue;
+            }
+            self.info_scanned_to = self.info_scanned_to.max(*slot);
+            found.extend(validator_info::scan_slot(bank));
         }
         if found.is_empty() {
             return;

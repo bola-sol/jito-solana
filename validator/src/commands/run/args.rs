@@ -251,6 +251,21 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("dashboard_allowed_host")
+            .long("dashboard-allowed-host")
+            .value_name("HOST")
+            .takes_value(true)
+            .multiple(true)
+            .number_of_values(1)
+            .requires("dashboard_port")
+            .help(
+                "Additional host name the dashboard answers to. Repeat the flag for more than \
+                 one. Required when serving the dashboard through a reverse proxy, which forwards \
+                 the name the visitor typed. IP addresses and 'localhost' are always accepted and \
+                 need no configuration",
+            ),
+    )
+    .arg(
         Arg::with_name("dashboard_bind_address")
             .long("dashboard-bind-address")
             .value_name("HOST")

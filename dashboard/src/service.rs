@@ -78,6 +78,9 @@ impl DashboardService {
             config.listen_addr
         );
 
+        let allowed_hosts: Arc<[String]> = config.allowed_hosts.clone().into();
+        log::info!("dashboard: answering to hosts {:?}", config.allowed_hosts);
+
         let server = {
             let publisher = publisher.clone();
             let exit = exit.clone();
@@ -87,7 +90,7 @@ impl DashboardService {
                 .spawn(move || {
                     runtime.block_on(async move {
                         tokio::select! {
-                            _ = server::serve(listener, publisher) => {}
+                            _ = server::serve(listener, publisher, allowed_hosts) => {}
                             _ = wait_for_exit(exit, validator_exit) => {}
                         }
                     });

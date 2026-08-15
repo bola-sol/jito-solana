@@ -13,6 +13,19 @@ pub const DEFAULT_TPS_HISTORY: usize = 1500;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardConfig {
     pub listen_addr: SocketAddr,
+    /// Host names this dashboard will answer to.
+    ///
+    /// A browser can be steered at a service on the machine it is running on by
+    /// resolving a name the attacker controls to a loopback address — the page
+    /// then counts as same-origin and the origin check below cannot tell the
+    /// difference. Pinning the acceptable `Host` is what stops that.
+    ///
+    /// Address literals are always accepted and are not listed here — they
+    /// cannot be rebound, so testing on `127.0.0.1:10999` or on a public IP
+    /// needs no configuration. Only names need naming, and an operator serving
+    /// the dashboard through a reverse proxy must add the public one, because
+    /// the proxy forwards the name the visitor typed.
+    pub allowed_hosts: Vec<String>,
     pub poll_interval_ms: u64,
     pub slot_history: usize,
     pub tps_history: usize,
@@ -25,6 +38,7 @@ impl Default for DashboardConfig {
             // and has no authentication, so opening it to the network should
             // take a deliberate act.
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 10999),
+            allowed_hosts: vec!["localhost".to_string()],
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             slot_history: DEFAULT_SLOT_HISTORY,
             tps_history: DEFAULT_TPS_HISTORY,

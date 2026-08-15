@@ -9,7 +9,7 @@
 use {
     crate::proto::{MAX_MESSAGE, Message, Publisher, Request, encode_with_id},
     soketto::handshake::{Server, server},
-    std::{io, sync::Arc},
+    std::{io, net::IpAddr, sync::Arc},
     thiserror::Error,
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -80,7 +80,7 @@ enum ConnectionError {
     Oversized(usize),
 }
 
-pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>) {
+pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hosts: Arc<[String]>) {
     let clients = Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS));
     loop {
         let (socket, peer) = match listener.accept().await {
@@ -92,8 +92,9 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>) {
         };
         let publisher = publisher.clone();
         let clients = clients.clone();
+        let allowed_hosts = allowed_hosts.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(socket, publisher, clients).await {
+            if let Err(err) = handle(socket, publisher, clients, &allowed_hosts).await {
                 log::debug!("dashboard: connection from {peer} ended: {err}");
             }
         });
@@ -104,12 +105,31 @@ async fn handle(
     mut socket: TcpStream,
     publisher: Arc<Publisher>,
     clients: Arc<Semaphore>,
+    allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
     let (head, head_len) = timeout(REQUEST_TIMEOUT, peek_request_head(&socket))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "request head"))??;
 
+    // Checked before anything is served, so a rebound name cannot reach the
+    // page either. Serving the document to an attacker's origin would make
+    // their page same-origin with the dashboard and undo the origin check.
+    if !host_is_allowed(&head, &allowed_hosts) {
+        log::debug!(
+            "dashboard: refusing host {:?}; add it with --dashboard-allowed-host",
+            header(&head, "host").unwrap_or("(absent)")
+        );
+        return refuse(socket, head_len, 421, b"unrecognised host").await;
+    }
+
     if is_websocket_upgrade(&head) {
+        if !origin_is_allowed(&head) {
+            log::debug!(
+                "dashboard: refusing websocket from origin {:?}",
+                header(&head, "origin").unwrap_or("(absent)")
+            );
+            return refuse(socket, head_len, 403, b"origin not allowed").await;
+        }
         // Held for the lifetime of the websocket below, and released when this
         // function returns.
         let Ok(_permit) = clients.try_acquire_owned() else {
@@ -117,7 +137,7 @@ async fn handle(
                 "dashboard: refusing a websocket, {MAX_WEBSOCKET_CLIENTS} clients already \
                  connected"
             );
-            return refuse_websocket(socket, head_len).await;
+            return refuse(socket, head_len, 503, b"too many dashboard clients").await;
         };
         let path = request_path(&head).to_string();
         serve_websocket(socket, publisher, &path).await
@@ -134,22 +154,22 @@ async fn handle(
     }
 }
 
-/// Turns away a websocket that would exceed the client cap.
+/// Turns a request away with a status rather than a silent close.
 ///
-/// Refused before the upgrade, so the caller is still speaking HTTP and gets a
-/// status it can act on rather than a socket that closes for no stated reason.
-async fn refuse_websocket(mut socket: TcpStream, head_len: usize) -> Result<(), ConnectionError> {
+/// Every refusal happens before any upgrade, so the caller is still speaking
+/// HTTP and gets something it can act on.
+async fn refuse(
+    mut socket: TcpStream,
+    head_len: usize,
+    status: u16,
+    body: &[u8],
+) -> Result<(), ConnectionError> {
     // Same reason the HTTP path drains here: closing a socket with unread data
     // makes the kernel send RST, which discards the response we just wrote.
     let mut consumed = vec![0u8; head_len];
     socket.read_exact(&mut consumed).await?;
     socket
-        .write_all(&response(
-            503,
-            "text/plain; charset=utf-8",
-            b"too many dashboard clients",
-            false,
-        ))
+        .write_all(&response(status, "text/plain; charset=utf-8", body, false))
         .await?;
     socket.flush().await?;
     socket.shutdown().await?;
@@ -175,6 +195,81 @@ async fn peek_request_head(socket: &TcpStream) -> io::Result<(String, usize)> {
         if head.contains("\r\n\r\n") || peeked == MAX_REQUEST_HEAD {
             return Ok((head.into_owned(), peeked));
         }
+    }
+}
+
+/// Reads a request header, case-insensitively.
+fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines()
+        .skip(1) // the request line is not a header
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.trim())
+}
+
+/// The host part of an authority or origin, without scheme, port or brackets.
+///
+/// Ports are dropped deliberately. A dashboard reached on one port and proxied
+/// on another is the same machine, and refusing that would break more real
+/// deployments than the distinction protects.
+fn host_of(value: &str) -> &str {
+    let value = value
+        .rsplit_once("//")
+        .map(|(_, rest)| rest)
+        .unwrap_or(value);
+    // IPv6 authorities are bracketed, so the port colon is the one outside.
+    if let Some(rest) = value.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    value.split(':').next().unwrap_or(value)
+}
+
+/// Whether the request names a host this dashboard answers to.
+///
+/// A request with no `Host` at all is rejected: every HTTP/1.1 client sends
+/// one, so its absence says more about the caller than about the deployment.
+fn host_is_allowed(head: &str, allowed: &[String]) -> bool {
+    let Some(host) = header(head, "host") else {
+        return false;
+    };
+    let host = host_of(host);
+
+    // An address literal is always accepted, and costs nothing to accept.
+    // Rebinding works by resolving a name the attacker owns to this machine,
+    // so the browser sends that name — never a bare address. Requiring one to
+    // be configured would only mean an operator testing on an IP is turned
+    // away by a defence that was never protecting them.
+    if host.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+
+    allowed
+        .iter()
+        .any(|candidate| host_of(candidate).eq_ignore_ascii_case(host))
+}
+
+/// Whether a websocket upgrade comes from a page served by this dashboard.
+///
+/// Websockets are exempt from the same-origin policy, so without this any page
+/// a browser visits could open a socket here and read the whole feed —
+/// including against a dashboard bound to loopback, which is otherwise assumed
+/// to be private.
+///
+/// A missing `Origin` is allowed: browsers always send one on a websocket
+/// handshake, so its absence means the caller is not a browser and is not
+/// acting on some other page's behalf. A literal `null`, which is what a
+/// sandboxed frame sends, is refused.
+fn origin_is_allowed(head: &str) -> bool {
+    let Some(origin) = header(head, "origin") else {
+        return true;
+    };
+    if origin.eq_ignore_ascii_case("null") {
+        return false;
+    }
+    match header(head, "host") {
+        Some(host) => host_of(origin).eq_ignore_ascii_case(host_of(host)),
+        None => false,
     }
 }
 
@@ -249,8 +344,10 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
 
 fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Vec<u8> {
     let reason = match status {
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        421 => "Misdirected Request",
         503 => "Service Unavailable",
         _ => "OK",
     };
@@ -437,6 +534,120 @@ mod tests {
             "GET / HTTP/1.1\r\nupgrade:  WebSocket \r\n\r\n"
         ));
         assert!(!is_websocket_upgrade("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+    }
+
+    fn req(headers: &str) -> String {
+        format!("GET /websocket HTTP/1.1\r\n{headers}\r\n\r\n")
+    }
+
+    fn allowed() -> Vec<String> {
+        vec![
+            "localhost".into(),
+            "127.0.0.1".into(),
+            "dash.example.com".into(),
+        ]
+    }
+
+    #[test]
+    fn a_page_this_dashboard_served_may_open_a_socket() {
+        assert!(origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: https://dash.example.com"
+        )));
+        // Behind a proxy the visitor's port and the dashboard's differ.
+        assert!(origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: https://dash.example.com:443"
+        )));
+    }
+
+    #[test]
+    fn another_site_may_not() {
+        // The whole point: a websocket is exempt from the same-origin policy,
+        // so without this any page a browser visits could read the feed.
+        assert!(!origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: https://evil.example"
+        )));
+        // Including against a dashboard assumed private for being on loopback.
+        assert!(!origin_is_allowed(&req(
+            "Host: 127.0.0.1:10999\r\nOrigin: https://evil.example"
+        )));
+    }
+
+    #[test]
+    fn a_sandboxed_frame_is_refused() {
+        assert!(!origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: null"
+        )));
+    }
+
+    #[test]
+    fn a_client_that_is_not_a_browser_is_allowed() {
+        // curl and monitoring send no Origin, and cannot be acting for a page.
+        assert!(origin_is_allowed(&req("Host: dash.example.com")));
+    }
+
+    #[test]
+    fn only_known_hosts_are_answered() {
+        assert!(host_is_allowed(&req("Host: localhost:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: DASH.EXAMPLE.COM"), &allowed()));
+        assert!(!host_is_allowed(&req("Host: rebind.evil"), &allowed()));
+        assert!(!host_is_allowed(&req("Origin: x"), &allowed()));
+    }
+
+    #[test]
+    fn an_address_literal_needs_no_configuration() {
+        // Testing on a public IP before any domain exists must just work: an
+        // address cannot be rebound, so nothing is being relaxed here.
+        assert!(host_is_allowed(&req("Host: 111.1.1.1:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: 127.0.0.1:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: [::1]:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: [2001:db8::1]"), &allowed()));
+        // With an empty allowlist too, since the defaults name only localhost.
+        assert!(host_is_allowed(&req("Host: 111.1.1.1"), &[]));
+    }
+
+    #[test]
+    fn a_name_still_has_to_be_named() {
+        // The rebinding defence survives the concession above: what an
+        // attacker controls is a name, and a name is still checked.
+        assert!(!host_is_allowed(&req("Host: rebind.evil"), &[]));
+        assert!(!host_is_allowed(
+            &req("Host: 111.1.1.1.evil.com"),
+            &allowed()
+        ));
+        assert!(!host_is_allowed(&req("Host: 999.999.999.999"), &allowed()));
+    }
+
+    #[test]
+    fn more_than_one_name_can_be_allowed() {
+        let hosts = vec!["a.example.com".to_string(), "b.example.com".to_string()];
+        assert!(host_is_allowed(&req("Host: a.example.com"), &hosts));
+        assert!(host_is_allowed(&req("Host: b.example.com"), &hosts));
+        assert!(!host_is_allowed(&req("Host: c.example.com"), &hosts));
+    }
+
+    #[test]
+    fn rebinding_defeats_the_origin_check_and_is_caught_by_the_host_check() {
+        let rebound = req("Host: rebind.evil:10999\r\nOrigin: http://rebind.evil");
+        assert!(
+            origin_is_allowed(&rebound),
+            "origin matches host under rebinding, which is why the host check exists"
+        );
+        assert!(!host_is_allowed(&rebound, &allowed()));
+    }
+
+    #[test]
+    fn hosts_are_compared_without_scheme_or_port() {
+        assert_eq!(host_of("https://dash.example.com:443"), "dash.example.com");
+        assert_eq!(host_of("dash.example.com:10999"), "dash.example.com");
+        assert_eq!(host_of("[::1]:10999"), "::1");
+        assert_eq!(host_of("http://[::1]"), "::1");
+    }
+
+    #[test]
+    fn headers_are_read_case_insensitively_and_stop_at_the_body() {
+        let head = "GET / HTTP/1.1\r\nHOST: x\r\n\r\nHost: injected\r\n";
+        assert_eq!(header(head, "host"), Some("x"));
+        assert_eq!(header(head, "missing"), None);
     }
 
     #[test]

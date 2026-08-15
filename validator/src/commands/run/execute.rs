@@ -541,10 +541,16 @@ pub fn execute(
                 solana_net_utils::parse_host(address).expect("invalid dashboard_bind_address")
             })
             .unwrap_or_else(|| solana_net_utils::parse_host("127.0.0.1").unwrap());
-        DashboardConfig {
+        let mut config = DashboardConfig {
             listen_addr: SocketAddr::new(bind_address, port),
             ..DashboardConfig::default()
-        }
+        };
+        // Added to the loopback defaults rather than replacing them, so a
+        // proxied dashboard stays reachable on the box it runs on.
+        config
+            .allowed_hosts
+            .extend(values_t!(matches, "dashboard_allowed_host", String).unwrap_or_default());
+        config
     });
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);

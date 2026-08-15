@@ -6,6 +6,11 @@ import { useEffect, useState } from "react";
  * A button rather than a styled span so it is reachable by keyboard, and it
  * shrinks with an ellipsis rather than forcing its container wider, so a long
  * value shows in full when there is room and truncates when there is not.
+ *
+ * The confirmation is drawn over the value rather than replacing it. Swapping a
+ * forty-four character address for the word "copied" collapsed the button's
+ * width, and in a header that wraps, that relaid out everything after it — so
+ * the act of copying an address made the page jump under the pointer.
  */
 export function Copyable({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
@@ -25,9 +30,15 @@ export function Copyable({ text, className }: { text: string; className?: string
       type="button"
       className={`copyable${copied ? " copied" : ""}${className ? ` ${className}` : ""}`}
       onClick={copy}
+      // Named explicitly because the value is hidden while the confirmation
+      // shows, which would otherwise leave the button briefly nameless.
+      aria-label={text}
       title={copied ? "Copied" : `${text}\nClick to copy`}
     >
-      {copied ? "copied" : text}
+      <span className="copyable-text">{text}</span>
+      <span className="copyable-flash" aria-hidden="true">
+        copied
+      </span>
     </button>
   );
 }

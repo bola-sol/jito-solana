@@ -161,6 +161,7 @@ body {
    clipped rather than wrapping when it does not. */
 .copyable {
   display: block;
+  position: relative;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -184,8 +185,24 @@ body {
   outline-offset: 2px;
 }
 
-.copyable.copied {
+/* The value keeps its space while the confirmation is up, so the button's width
+   never changes and nothing around it reflows. Hidden rather than removed for
+   the same reason; the button carries its own aria-label so it stays named. */
+.copyable.copied .copyable-text {
+  visibility: hidden;
+}
+
+.copyable-flash {
+  position: absolute;
+  left: 0;
+  top: 0;
   color: var(--good);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.copyable.copied .copyable-flash {
+  opacity: 1;
 }
 
 .header-stats {

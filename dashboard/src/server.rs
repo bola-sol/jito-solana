@@ -663,6 +663,9 @@ mod tests {
     /// Drives `handle` against a real socket with the cap already taken, which
     /// is the state a 65th viewer would arrive in.
     async fn request_with_no_permits_left(request: &[u8]) -> String {
+        // These fixtures use `Host: x`, so the host policy is widened to match.
+        // The cap is what is under test here, not which hosts are answered.
+        let allowed_hosts = vec!["x".to_string()];
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -675,7 +678,7 @@ mod tests {
             let clients = clients.clone();
             async move {
                 let (socket, _) = listener.accept().await.unwrap();
-                handle(socket, publisher, clients).await
+                handle(socket, publisher, clients, &allowed_hosts).await
             }
         });
 
@@ -685,6 +688,55 @@ mod tests {
         client.read_to_string(&mut reply).await.unwrap();
         server.await.unwrap().unwrap();
         reply
+    }
+
+    /// Drives `handle` end to end with a named host that is not allowed, which
+    /// is what a rebinding attempt looks like on the wire.
+    async fn request_with_hosts(request: &[u8], allowed_hosts: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let publisher = Arc::new(Publisher::new());
+        let clients = Arc::new(Semaphore::new(1));
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            handle(socket, publisher, clients, &allowed_hosts).await
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        reply
+    }
+
+    #[tokio::test]
+    async fn an_unrecognised_host_is_turned_away_before_anything_is_served() {
+        let reply = request_with_hosts(
+            b"GET / HTTP/1.1\r\nHost: rebind.evil\r\n\r\n",
+            vec!["dash.example.com".to_string()],
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 421 Misdirected Request"),
+            "expected a refusal, got {reply:?}"
+        );
+        // The page itself must not have gone out: serving it would make the
+        // attacker's origin same-origin with the dashboard.
+        assert!(!reply.contains("<!doctype"), "document was served anyway");
+    }
+
+    #[tokio::test]
+    async fn a_websocket_from_another_origin_is_refused() {
+        let reply = request_with_hosts(
+            b"GET /websocket HTTP/1.1\r\nHost: dash.example.com\r\nUpgrade: websocket\r\nOrigin: https://evil.example\r\n\r\n",
+            vec!["dash.example.com".to_string()],
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 403 Forbidden"),
+            "expected a refusal, got {reply:?}"
+        );
     }
 
     #[tokio::test]

@@ -1,14 +1,9 @@
+//! What an operator can set. Everything else the dashboard needs to know is a
+//! constant next to the code that reads it: sampling rates in `collect`, buffer
+//! sizes in `server`. Only these two reach a command-line flag, so only these
+//! two travel as configuration.
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-
-/// How often validator state is sampled and diffed for publication.
-pub const DEFAULT_POLL_INTERVAL_MS: u64 = 200;
-
-/// Number of recent slots kept in memory for the slot strip and sidebar.
-pub const DEFAULT_SLOT_HISTORY: usize = 4096;
-
-/// Number of TPS samples retained for the transactions chart. At one sample per
-/// slot this is a little over ten minutes of history.
-pub const DEFAULT_TPS_HISTORY: usize = 1500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardConfig {
@@ -26,9 +21,6 @@ pub struct DashboardConfig {
     /// the dashboard through a reverse proxy must add the public one, because
     /// the proxy forwards the name the visitor typed.
     pub allowed_hosts: Vec<String>,
-    pub poll_interval_ms: u64,
-    pub slot_history: usize,
-    pub tps_history: usize,
 }
 
 impl Default for DashboardConfig {
@@ -39,9 +31,6 @@ impl Default for DashboardConfig {
             // take a deliberate act.
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 10999),
             allowed_hosts: vec!["localhost".to_string()],
-            poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            slot_history: DEFAULT_SLOT_HISTORY,
-            tps_history: DEFAULT_TPS_HISTORY,
         }
     }
 }

@@ -33,6 +33,13 @@ use {
 /// resolution.
 const BOOT_POLL: Duration = Duration::from_millis(250);
 
+/// How often the collector samples validator state.
+///
+/// The base rate the tiers in `collect` are multiples of. Five times a second
+/// is fast enough that a slot never passes between two samples unobserved,
+/// which is what the slot ring depends on.
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 /// How far behind this validator's own last vote may be for the accounts scan
 /// to consider it caught up. The same threshold the RPC layer calls delinquent.
 const CAUGHT_UP_SLOTS: u64 = 128;
@@ -60,7 +67,6 @@ pub struct DashboardService {
     /// Stops the boot thread once the collector has taken over reporting.
     attached: Arc<AtomicBool>,
     publisher: Arc<Publisher>,
-    config: DashboardConfig,
     /// Retained from `start` and handed to the collector at `attach`, so the
     /// caller supplies it once. The validator cannot supply it a second time
     /// anyway: translating its startup enum lives in the binary that owns it.
@@ -138,7 +144,6 @@ impl DashboardService {
             exit,
             attached,
             publisher,
-            config,
             startup_progress,
             server: Some(server),
             boot: Some(boot),
@@ -209,18 +214,16 @@ impl DashboardService {
         self.collector = Some({
             let exit = self.exit.clone();
             let publisher = self.publisher.clone();
-            let config = self.config.clone();
             let startup_progress = self.startup_progress.clone();
-            let interval = Duration::from_millis(config.poll_interval_ms.max(20));
             thread::Builder::new()
                 .name("solDashColl".to_string())
                 .spawn(move || {
                     let mut collector =
-                        Collector::new(context, publisher, config, info_cache, startup_progress);
+                        Collector::new(context, publisher, info_cache, startup_progress);
                     collector.publish_static();
                     while !exit.load(Ordering::Relaxed) && !validator_exit.load(Ordering::Relaxed) {
                         collector.tick();
-                        thread::sleep(interval);
+                        thread::sleep(POLL_INTERVAL);
                     }
                 })?
         });

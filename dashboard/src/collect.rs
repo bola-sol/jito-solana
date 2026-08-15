@@ -10,7 +10,6 @@
 
 use {
     crate::{
-        config::DashboardConfig,
         context::{DashboardContext, StartupProgressFn},
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher},
@@ -48,6 +47,15 @@ const SECOND_TICK: Duration = Duration::from_secs(1);
 
 /// Slots to include in the strip and sidebar snapshot sent on connect.
 const SLOT_OVERVIEW_LEN: usize = 512;
+
+/// Recent slots kept in memory for the slot strip and sidebar. Larger than the
+/// overview above, which is what a client is sent; the rest is what a slot
+/// arriving late can still be matched against.
+const SLOT_HISTORY: usize = 4096;
+
+/// Samples retained for the transaction and network charts. At one a second
+/// this is twenty-five minutes, against a chart that shows one.
+const CHART_HISTORY: usize = 1500;
 
 /// Distinct client versions reported before the tail is folded into one row.
 const MAX_VERSIONS_REPORTED: usize = 5;
@@ -246,7 +254,6 @@ struct Debounces {
 pub struct Collector {
     ctx: DashboardContext,
     publisher: Arc<Publisher>,
-    config: DashboardConfig,
     /// Supplied by the service rather than the context, since the boot
     /// thread reports progress long before a context can be built.
     startup_progress: StartupProgressFn,
@@ -312,17 +319,15 @@ impl Collector {
     pub fn new(
         ctx: DashboardContext,
         publisher: Arc<Publisher>,
-        config: DashboardConfig,
         info_cache: Arc<RwLock<ValidatorInfoCache>>,
         startup_progress: StartupProgressFn,
     ) -> Self {
         let now = Instant::now();
         Self {
-            slots: SlotRing::new(config.slot_history),
-            tps_history: Vec::with_capacity(config.tps_history),
+            slots: SlotRing::new(SLOT_HISTORY),
+            tps_history: Vec::with_capacity(CHART_HISTORY),
             ctx,
             publisher,
-            config,
             startup_progress,
             debounces: Debounces::default(),
             info_cache,
@@ -636,7 +641,7 @@ impl Collector {
             }
             Some(_) => self
                 .leaders_resolved_to
-                .max(highest_slot.saturating_sub(self.config.slot_history as u64)),
+                .max(highest_slot.saturating_sub(SLOT_HISTORY as u64)),
         };
 
         for slot in from..=highest_slot {
@@ -1009,16 +1014,12 @@ impl Collector {
         self.publisher
             .publish_ephemeral(TOPIC_SUMMARY, "tps_sample", &sample);
 
-        self.tps_history.push(sample);
-        if self.tps_history.len() > self.config.tps_history {
-            let excess = self
-                .tps_history
-                .len()
-                .saturating_sub(self.config.tps_history);
-            self.tps_history.drain(..excess);
-        }
-        self.publisher
-            .retain_only(TOPIC_SUMMARY, "tps_history", &self.tps_history);
+        push_history(
+            &mut self.tps_history,
+            sample,
+            &self.publisher,
+            "tps_history",
+        );
     }
 
     /// Host interface throughput, derived from cumulative counters.
@@ -1068,16 +1069,12 @@ impl Collector {
         self.publisher
             .publish_ephemeral(TOPIC_SUMMARY, "network_sample", &sample);
 
-        self.net_history.push(sample);
-        if self.net_history.len() > self.config.tps_history {
-            let excess = self
-                .net_history
-                .len()
-                .saturating_sub(self.config.tps_history);
-            self.net_history.drain(..excess);
-        }
-        self.publisher
-            .retain_only(TOPIC_SUMMARY, "network_history", &self.net_history);
+        push_history(
+            &mut self.net_history,
+            sample,
+            &self.publisher,
+            "network_history",
+        );
     }
 
     /// This validator's own UDP ports, in the order the panel lists them.
@@ -1514,6 +1511,20 @@ fn release_of(version: &str) -> &str {
         Some(at) => &version[..at],
         None => version,
     }
+}
+
+/// Appends a sample to a bounded chart history and refreshes the snapshot a
+/// late-connecting client is caught up with.
+///
+/// Retained rather than broadcast: clients already following the live samples
+/// hold every point, so sending the series again would repeat what they have.
+fn push_history<T: Serialize>(history: &mut Vec<T>, sample: T, publisher: &Publisher, key: &str) {
+    history.push(sample);
+    if history.len() > CHART_HISTORY {
+        let excess = history.len().saturating_sub(CHART_HISTORY);
+        history.drain(..excess);
+    }
+    publisher.retain_only(TOPIC_SUMMARY, key, history);
 }
 
 fn system_time_nanos(time: SystemTime) -> u64 {

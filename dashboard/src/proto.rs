@@ -25,6 +25,19 @@ use {
     tokio::sync::broadcast,
 };
 
+/// Ceiling on a single websocket message, applied in both directions.
+///
+/// soketto takes one limit per connection, so this bounds what a client may
+/// send as much as what the server does — and the client's frame is buffered
+/// whole before any smaller limit can be applied to it. Sixty-four clients at
+/// the previous 32MB was two gigabytes of caller-controlled buffering.
+///
+/// The largest message the server sends is the 512-slot overview. Its entries
+/// carry a base58 identity and, at worst, a name and icon URL bounded together
+/// by the 642-byte validator-info account, which puts the message near 430KB.
+/// A megabyte leaves headroom without leaving room to abuse.
+pub const MAX_MESSAGE: usize = 1024 * 1024;
+
 /// Messages buffered per client before it counts as too slow and gets
 /// disconnected. The server drops laggards rather than slowing itself down for
 /// them.

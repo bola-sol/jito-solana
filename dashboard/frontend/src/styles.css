@@ -456,6 +456,13 @@ body {
   flex-wrap: wrap;
 }
 
+/* Sits with the title rather than in the run of positions on the right. Those
+   are all slot numbers on one scale and read as a set; this is a duration and
+   does not belong in it. */
+.slot-head-stat {
+  margin-left: 4px;
+}
+
 .slot-position-label {
   color: var(--text-faint);
   font-size: 10px;

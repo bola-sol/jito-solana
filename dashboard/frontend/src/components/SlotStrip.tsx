@@ -33,6 +33,10 @@ const LEVEL_NAMES = new Map<SlotLevel, string>(
 export function SlotStrip() {
   const store = useStore();
   const processed = store.get<number>("summary", "completed_slot");
+  const observedSlotNanos = store.get<number | null>(
+    "summary",
+    "observed_slot_duration_nanos",
+  );
 
   // The strip advances a whole bar every slot, so a pointer cannot stay on the
   // one it is aimed at. Entering the strip pins what is on screen; leaving
@@ -136,6 +140,22 @@ export function SlotStrip() {
     <section className="card slot-strip">
       <div className="slot-strip-head">
         <h2 className="card-title">Slots</h2>
+        {/* Shaped like a slot position rather than given a mark on the strip.
+            The peak line describes the bars on screen, whereas a minute covers
+            more slots than the strip holds, so drawn across them it would claim
+            to be their level and would not be. */}
+        <div className="slot-position slot-head-stat">
+          <div className="slot-position-label">
+            <Explain text="Mean time between slots arriving at this validator over the last minute. Slots come from every leader in turn, so this measures the cluster's rate as seen from here, not this validator's own block production. The minute covers more slots than the strip shows.">
+              Slot time (1 min avg)
+            </Explain>
+          </div>
+          <div className="slot-position-value">
+            {observedSlotNanos === null || observedSlotNanos === undefined
+              ? "—"
+              : `${Math.round(observedSlotNanos / 1e6)} ms`}
+          </div>
+        </div>
         <div className="slot-positions">
           {positions.map(([label, slot, explanation]) => (
             <div className="slot-position" key={label}>

@@ -851,7 +851,7 @@ impl Collector {
         self.publisher.retain_only(
             TOPIC_SLOT,
             "overview",
-            &self.slots.recent(SLOT_OVERVIEW_LEN),
+            &self.slots.overview(SLOT_OVERVIEW_LEN),
         );
     }
 

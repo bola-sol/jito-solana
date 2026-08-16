@@ -63,8 +63,19 @@ impl SlotEntry {
     }
 }
 
+/// This validator's own leader slots kept past the window.
+///
+/// A validator leads roughly one slot in eight hundred, so a window sized for
+/// the live strip holds none of its own. Kept separately, a client that
+/// reconnects still receives them; pruned with everything else, the sidebar's
+/// own-slots view would be empty on every reload.
+///
+/// Matches the browser's own retention, so a reload restores what was on screen
+/// rather than some other depth.
+const OWN_SLOTS_KEPT: usize = 64;
+
 /// A bounded, slot-keyed history. Slots more than `capacity` behind the highest
-/// one seen are dropped.
+/// one seen are dropped, except for this validator's own.
 pub struct SlotRing {
     entries: BTreeMap<Slot, SlotEntry>,
     capacity: usize,
@@ -88,6 +99,24 @@ impl SlotRing {
     pub fn recent(&self, count: usize) -> Vec<SlotEntry> {
         let skip = self.entries.len().saturating_sub(count);
         self.entries.values().skip(skip).cloned().collect()
+    }
+
+    /// What a newly connected client is sent: the most recent `count` slots,
+    /// preceded by this validator's own from further back.
+    ///
+    /// Without the second part a reload lost every leader slot on screen, since
+    /// the recent window almost never contains one.
+    pub fn overview(&self, count: usize) -> Vec<SlotEntry> {
+        let recent = self.recent(count);
+        let floor = recent.first().map_or(Slot::MAX, |entry| entry.slot);
+        let mut overview: Vec<SlotEntry> = self
+            .entries
+            .values()
+            .filter(|entry| entry.mine && entry.slot < floor)
+            .cloned()
+            .collect();
+        overview.extend(recent);
+        overview
     }
 
     /// Applies `update` to the entry for `slot`, creating it if needed, and
@@ -119,11 +148,25 @@ impl SlotRing {
     }
 
     fn prune(&mut self) {
-        while self.entries.len() > self.capacity {
-            let Some((&oldest, _)) = self.entries.iter().next() else {
-                break;
-            };
-            self.entries.remove(&oldest);
+        if self.entries.len() <= self.capacity {
+            return;
+        }
+        // Split by ownership rather than walked oldest-first and skipping ours,
+        // which would delete newer slots to make room for the ones it skipped.
+        // The map is ordered by slot, so both lists come out oldest first.
+        let mut own = Vec::new();
+        let mut rest = Vec::new();
+        for (&slot, entry) in &self.entries {
+            if entry.mine { &mut own } else { &mut rest }.push(slot);
+        }
+        let drop_own = own.len().saturating_sub(OWN_SLOTS_KEPT);
+        let drop_rest = rest.len().saturating_sub(self.capacity);
+        for slot in own
+            .into_iter()
+            .take(drop_own)
+            .chain(rest.into_iter().take(drop_rest))
+        {
+            self.entries.remove(&slot);
         }
     }
 
@@ -218,8 +261,12 @@ mod tests {
     fn the_largest_overview_fits_the_message_ceiling() {
         // Worst case throughout: a full ring, every slot with a leader, and a
         // name and icon as long as a validator-info account can carry.
+        //
+        // The 512 mirrors `SLOT_OVERVIEW_LEN` in `collect`, which this module
+        // cannot see. The overview carries our own slots ahead of that window,
+        // so the largest it can be is the two added together.
         let long = "x".repeat(300);
-        let entries: Vec<SlotEntry> = (0..512)
+        let entries: Vec<SlotEntry> = (0..512 + OWN_SLOTS_KEPT as u64)
             .map(|index| SlotEntry {
                 slot: 428_804_675 + index,
                 level: SlotLevel::OptimisticallyConfirmed,
@@ -240,6 +287,85 @@ mod tests {
             encoded.len(),
             crate::proto::MAX_MESSAGE
         );
+    }
+
+    /// Every slot this validator led, oldest first.
+    fn ours(ring: &SlotRing) -> Vec<Slot> {
+        ring.entries
+            .values()
+            .filter(|entry| entry.mine)
+            .map(|entry| entry.slot)
+            .collect()
+    }
+
+    #[test]
+    fn our_own_slots_outlive_the_window() {
+        // Without this a client that reconnects is sent a window that almost
+        // never contains one of its own slots, and the sidebar's own-slots view
+        // comes back empty on every reload.
+        let mut ring = SlotRing::new(8);
+        for slot in 1..=4 {
+            ring.update(slot, |entry| entry.mine = true);
+        }
+        for slot in 5..=200 {
+            ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
+        }
+        assert_eq!(ours(&ring), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn own_retention_is_bounded() {
+        let mut ring = SlotRing::new(8);
+        for slot in 1..=100 {
+            ring.update(slot, |entry| entry.mine = true);
+        }
+        for slot in 101..=300 {
+            ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
+        }
+        let kept = ours(&ring);
+        assert_eq!(kept.len(), OWN_SLOTS_KEPT);
+        // The newest of ours, not the first we ever led.
+        assert_eq!(kept.last(), Some(&100));
+    }
+
+    #[test]
+    fn keeping_our_own_does_not_displace_the_recent_window() {
+        let mut ring = SlotRing::new(8);
+        ring.update(1, |entry| entry.mine = true);
+        for slot in 2..=100 {
+            ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
+        }
+        let recent: Vec<Slot> = ring.recent(8).iter().map(|entry| entry.slot).collect();
+        assert_eq!(recent, vec![93, 94, 95, 96, 97, 98, 99, 100]);
+    }
+
+    #[test]
+    fn the_overview_carries_our_own_slots_from_before_it() {
+        let mut ring = SlotRing::new(512);
+        for slot in [1, 2] {
+            ring.update(slot, |entry| entry.mine = true);
+        }
+        for slot in 3..=100 {
+            ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
+        }
+        let slots: Vec<Slot> = ring.overview(10).iter().map(|entry| entry.slot).collect();
+        assert_eq!(&slots[..2], &[1, 2]);
+        assert_eq!(slots.last(), Some(&100));
+        assert!(
+            slots.windows(2).all(|pair| pair[0] < pair[1]),
+            "the overview must stay ordered and hold no duplicates: {slots:?}"
+        );
+    }
+
+    #[test]
+    fn an_own_slot_inside_the_window_is_not_sent_twice() {
+        let mut ring = SlotRing::new(512);
+        for slot in 1..=20 {
+            ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
+        }
+        ring.update(18, |entry| entry.mine = true);
+        let slots: Vec<Slot> = ring.overview(5).iter().map(|entry| entry.slot).collect();
+        assert_eq!(slots, vec![16, 17, 18, 19, 20]);
     }
 
     #[test]

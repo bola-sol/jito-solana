@@ -214,7 +214,7 @@ function SlotDetail({ entry }: { entry: SlotEntry | null }) {
   if (!entry) {
     return (
       <span className="slot-detail is-idle" role="status">
-        paused · hover or arrow to a slot
+        paused · tap or arrow to a slot
       </span>
     );
   }

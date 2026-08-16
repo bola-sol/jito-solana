@@ -20,8 +20,11 @@ use {serde::Serialize, solana_clock::Slot};
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProducedBlock {
     pub slot: Slot,
-    /// When the dashboard saw the block freeze, not the block's own timestamp.
-    pub captured_at_nanos: u64,
+    /// When the blockstore recorded the first shred of this slot, in
+    /// milliseconds. For a block this validator produced that is its own
+    /// first shred, so it is when the block started rather than when anything
+    /// observed it. `None` for a slot the blockstore holds no timing for.
+    pub slot_time_millis: Option<u64>,
     pub blockhash: String,
     /// Time from the previous slot, when the blockstore recorded one.
     pub duration_nanos: Option<u64>,
@@ -104,7 +107,7 @@ mod tests {
     fn block(slot: Slot) -> ProducedBlock {
         ProducedBlock {
             slot,
-            captured_at_nanos: 0,
+            slot_time_millis: None,
             blockhash: format!("hash{slot}"),
             duration_nanos: None,
             transactions: 0,

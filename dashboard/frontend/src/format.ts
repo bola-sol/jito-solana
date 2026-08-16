@@ -49,6 +49,22 @@ export function duration(millis: number | undefined): string {
   return `${seconds}s`;
 }
 
+/**
+ * Wall-clock time of a block, to the millisecond, in the viewer's own zone.
+ *
+ * Milliseconds are appended rather than asked of `toLocaleTimeString`, which
+ * has no option for them. Two blocks in a row can be under two hundred
+ * milliseconds apart, so seconds alone would show them as the same instant.
+ */
+export function blockTime(millis: number | null | undefined): string {
+  if (millis === null || millis === undefined) return "—";
+  const at = new Date(millis);
+  if (Number.isNaN(at.getTime())) return "—";
+  const day = at.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const time = at.toLocaleTimeString(undefined, { hour12: false });
+  return `${day} ${time}.${String(at.getMilliseconds()).padStart(3, "0")}`;
+}
+
 /** Shortened pubkey, e.g. `J5e4xh…c8FF1`. */
 export function shortKey(key: string | null | undefined, lead = 6, tail = 5): string {
   if (!key) return "—";

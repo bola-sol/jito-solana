@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { count, percent, shortKey, sol } from "../format";
+import { blockTime, count, percent, sol } from "../format";
 import type { ProducedBlock } from "../types";
 import { useStore } from "../useStore";
+import { Copyable } from "./Copyable";
 import { Card, Meter } from "./primitives";
 
 /**
@@ -83,8 +84,12 @@ function BlockRow({
             <Figure label="Base fees" value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`} />
             <Figure label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
           </div>
-          <div className="produced-hash" title={block.blockhash}>
-            {shortKey(block.blockhash, 8, 8)}
+          <div className="produced-foot">
+            <span className="produced-time">{blockTime(block.slot_time_millis)}</span>
+            {/* The blockhash, which is the hash of the block's last entry and
+                not a transaction signature. Copyable because reading forty-four
+                base58 characters off a screen is nobody's idea of a good time. */}
+            <Copyable text={block.blockhash} className="produced-hash" />
           </div>
         </div>
       )}

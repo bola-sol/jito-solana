@@ -83,7 +83,7 @@ export interface IngestPath {
 
 export interface ProducedBlock {
   slot: number;
-  captured_at_nanos: number;
+  slot_time_millis: number | null;
   blockhash: string;
   duration_nanos: number | null;
   transactions: number;

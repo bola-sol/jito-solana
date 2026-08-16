@@ -826,7 +826,7 @@ impl Collector {
 
         ProducedBlock {
             slot,
-            captured_at_nanos: system_time_nanos(SystemTime::now()),
+            slot_time_millis: self.first_shred_time(slot),
             blockhash: bank.last_blockhash().to_string(),
             duration_nanos: self.slots.get(slot).and_then(|entry| entry.duration_nanos),
             transactions,

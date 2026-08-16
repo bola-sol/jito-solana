@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  blockTime,
   bytes,
   count,
   decimal,
@@ -63,6 +64,26 @@ describe("percent", () => {
     expect(percent(0.0123)).toBe("1.23%");
     expect(percent(1)).toBe("100.00%");
     expect(percent(0.5, 0)).toBe("50%");
+  });
+});
+
+describe("blockTime", () => {
+  it("has nothing to show without a timestamp", () => {
+    expect(blockTime(null)).toBe("—");
+    expect(blockTime(undefined)).toBe("—");
+    expect(blockTime(Number.NaN)).toBe("—");
+  });
+
+  it("keeps milliseconds, zero padded", () => {
+    // Two blocks can be under two hundred milliseconds apart, so seconds alone
+    // would show consecutive slots as the same instant.
+    expect(blockTime(Date.UTC(2026, 7, 16, 9, 55, 10, 7))).toMatch(/\.007$/);
+    expect(blockTime(Date.UTC(2026, 7, 16, 9, 55, 10, 626))).toMatch(/\.626$/);
+  });
+
+  it("distinguishes two blocks in the same second", () => {
+    const first = Date.UTC(2026, 7, 16, 9, 55, 10, 120);
+    expect(blockTime(first)).not.toBe(blockTime(first + 185));
   });
 });
 

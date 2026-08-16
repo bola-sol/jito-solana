@@ -1261,11 +1261,23 @@ body {
   font-size: 13px;
 }
 
-.produced-hash {
-  font-family: ui-monospace, monospace;
+.produced-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-faint);
-  cursor: help;
+}
+
+.produced-time {
+  flex: none;
+}
+
+.produced-hash {
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  color: var(--text-faint);
 }
 
 /* On a narrow screen the three figure columns leave too little for the slot

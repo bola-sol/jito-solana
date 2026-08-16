@@ -873,10 +873,15 @@ impl Collector {
             .vote_slot
             .publish(&self.publisher, TOPIC_SUMMARY, "vote_slot", last_vote);
 
-        // Measured against this validator's own tip rather than the bank being
-        // read, so the figure means "how far behind the chain is our vote".
-        let tip = self.last_completed_slot.max(bank.slot());
-        let distance = last_vote.map(|vote| tip.saturating_sub(vote));
+        // Measured against the completed slot, which is the same value the
+        // strip's Voted delta is taken from, so the two figures always agree.
+        //
+        // Deliberately not the working bank, which sits a slot ahead: a
+        // validator votes on frozen banks, so counting a slot it could not yet
+        // have voted on made a caught-up validator read as one behind.
+        // `collect_slot_positions` runs earlier in the same tick, so this is
+        // already current.
+        let distance = last_vote.map(|vote| self.last_completed_slot.saturating_sub(vote));
         self.debounces.vote_distance.publish(
             &self.publisher,
             TOPIC_SUMMARY,

@@ -15,7 +15,7 @@ use {
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
-        udp_drops::{self, DropWindow},
+        udp_drops::{self, DropWindow, PortCounters},
         validator_info::{self, ValidatorInfoCache},
     },
     serde::Serialize,
@@ -282,6 +282,14 @@ pub struct Collector {
     net_unavailable: bool,
     /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: DropWindow,
+    /// Last counters seen for each reported port.
+    ///
+    /// `/proc/net/udp` is not read atomically. The kernel formats it lazily as
+    /// it is read, and a validator opens and closes UDP sockets constantly, so
+    /// a table that shifts between one buffer fill and the next can leave a
+    /// socket out of the snapshot even though it is still bound. Reading only
+    /// the current snapshot made rows vanish for a tick and the panel jump.
+    known_sockets: HashMap<u16, PortCounters>,
     /// As `net_unavailable`, for `/proc/net/udp`. The two files fail
     /// independently: a container can expose one and not the other.
     drops_unavailable: bool,
@@ -340,6 +348,7 @@ impl Collector {
             net_history: Vec::new(),
             net_unavailable: false,
             drops_window: DropWindow::new(DROPS_WINDOW),
+            known_sockets: HashMap::new(),
             drops_unavailable: false,
             skip_leader_slots: Vec::new(),
             skip_epoch: None,
@@ -1115,18 +1124,30 @@ impl Collector {
         let now = Instant::now();
         let ports = self.ingest_ports();
 
-        // Only the reported ports are remembered. The window would otherwise
-        // hold a minute of every UDP socket on the host to answer six rows.
+        // A port absent from this snapshot keeps the counters it had. The read
+        // is not atomic, so a socket can drop out of one sample and return in
+        // the next while staying bound the whole time; taking the snapshot at
+        // its word deleted the row and shrank the panel for a tick. The figures
+        // are then a sample stale, which is the cheaper of the two errors.
+        //
+        // Only the reported ports are remembered. Keeping every UDP socket on
+        // the host would hold a minute of history to answer six rows.
+        for &(_, port) in &ports {
+            if let Some(counters) = current.get(&port) {
+                self.known_sockets.insert(port, *counters);
+            }
+        }
+
         let totals: HashMap<u16, u64> = ports
             .iter()
-            .filter_map(|&(_, port)| Some((port, current.get(&port)?.drops)))
+            .filter_map(|&(_, port)| Some((port, self.known_sockets.get(&port)?.drops)))
             .collect();
         self.drops_window.push(now, totals);
 
         let paths: Vec<IngestPath> = ports
             .iter()
             .filter_map(|&(name, port)| {
-                let counters = current.get(&port)?;
+                let counters = self.known_sockets.get(&port)?;
                 Some(IngestPath {
                     name,
                     port,

@@ -316,6 +316,17 @@ mod tests {
     }
 
     #[test]
+    fn a_port_with_no_baseline_in_the_window_reports_no_drops() {
+        // Rather than the whole cumulative total, which would show a socket
+        // bound part-way through the window as having dropped everything it
+        // has ever dropped inside it.
+        let base = Instant::now();
+        let mut window = DropWindow::new(Duration::from_secs(60));
+        window.push(base, totals(8001, 0));
+        assert_eq!(window.since(8899, 4_000), 0);
+    }
+
+    #[test]
     fn a_counter_reset_reads_as_no_drops_rather_than_a_wrap() {
         let base = Instant::now();
         let mut window = DropWindow::new(Duration::from_secs(60));

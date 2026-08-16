@@ -3,6 +3,7 @@ import type { StakeSummary, ValidatorCounts } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
+import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function Header() {
@@ -27,9 +28,9 @@ export function Header() {
         <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
         <span className="version">{version ? `v${version}` : ""}</span>
         {shredVersion !== undefined && (
-          <span className="version" title="Shred version. Nodes only gossip with matching versions.">
+          <Explain className="version" text="Shred version. Nodes only gossip with matching versions.">
             shred {shredVersion}
-          </span>
+          </Explain>
         )}
       </div>
 

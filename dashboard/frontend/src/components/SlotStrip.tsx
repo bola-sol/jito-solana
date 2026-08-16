@@ -4,6 +4,7 @@ import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
 import { Logo } from "./Logo";
+import { Explain } from "./primitives";
 
 /** Slots shown in the strip. Beyond this the bars are too thin to read. */
 const STRIP_LENGTH = 64;
@@ -137,9 +138,9 @@ export function SlotStrip() {
         <h2 className="card-title">Slots</h2>
         <div className="slot-positions">
           {positions.map(([label, slot, explanation]) => (
-            <div className="slot-position" key={label} title={explanation}>
+            <div className="slot-position" key={label}>
               <div className="slot-position-label">
-                {label}
+                <Explain text={explanation}>{label}</Explain>
                 <span className="slot-position-delta">{slotDelta(slot, processed)}</span>
               </div>
               <div className="slot-position-value">{count(slot)}</div>
@@ -186,15 +187,15 @@ export function SlotStrip() {
 
       <div className="slot-key">
         {LEVELS.map(([level, label, explanation]) => (
-          <span className="slot-key-item" key={level} title={explanation}>
+          <Explain className="slot-key-item" text={explanation} key={level}>
             <i className={`slot-key-swatch level-${level}`} />
             {label}
-          </span>
+          </Explain>
         ))}
-        <span className="slot-key-item" title="A slot this validator was scheduled to lead">
+        <Explain className="slot-key-item" text="A slot this validator was scheduled to lead">
           <i className="slot-key-swatch slot-key-mine" />
           Ours
-        </span>
+        </Explain>
         {pinned !== null && <SlotDetail entry={active} />}
       </div>
     </section>

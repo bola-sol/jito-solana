@@ -1,7 +1,7 @@
 import { bytes, count } from "../format";
 import type { IngestPath, IngestSummary } from "../types";
 import { useStore } from "../useStore";
-import { Card } from "./primitives";
+import { Card, Explain } from "./primitives";
 
 /**
  * Packets the kernel discarded before the validator could read them, per port.
@@ -28,23 +28,27 @@ export function IngestCard() {
       <div className="ingest">
         <div className="ingest-row is-head">
           <span>Socket</span>
-          <span title="Bytes waiting unread at the moment of the sample. Usually empty: a healthy validator drains a socket in microseconds, so a reading here means a reader falling behind.">
+          <Explain text="Bytes waiting unread at the moment of the sample. Usually empty, because a healthy validator drains a socket in microseconds. A reading here means the reader is falling behind.">
             Queued
-          </span>
-          <span title="Drops within the window, which is what says whether packets are being lost now.">
+          </Explain>
+          <Explain text="Drops inside the window. This is the figure that says whether packets are being lost now. The heading names the period actually watched, so it reads shorter than a minute until the window fills.">
             {windowLabel(summary.window_seconds)}
-          </span>
-          <span title="Drops since the sockets were opened. A burst during startup stays in this figure for the life of the process.">
+          </Explain>
+          <Explain text="Drops since the sockets were opened. A burst during startup stays in this figure for the life of the process, so read the window beside it to see what is happening now.">
             Total
-          </span>
+          </Explain>
         </div>
         {summary.paths.map((path) => (
           <IngestRow key={path.name} path={path} />
         ))}
       </div>
       <div className="card-footnote">
-        By UDP port. Drops happen in the kernel, before the validator sees the
-        packet.
+        Dropped packets only, counted per UDP port. The kernel counts what it
+        discarded but not what it delivered, so there is no received total to
+        measure these against.{" "}
+        <Explain text="The counts come from /proc/net/udp, which has a drop counter for every socket but no received counter. Counting what arrived would need the validator's own per-service counters, and those cannot be reached without a change to solana-streamer. So a figure here tells you packets were lost, not what share of the traffic was lost.">
+          Why?
+        </Explain>
       </div>
     </Card>
   );

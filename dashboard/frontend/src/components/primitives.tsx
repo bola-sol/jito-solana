@@ -1,4 +1,89 @@
-import type { ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+
+/** Gap kept between an open explanation and the edge of the window. */
+const EDGE_MARGIN = 12;
+
+/**
+ * How far to slide an open explanation so it sits inside the window.
+ *
+ * Negative pulls it left off the right edge, positive pushes it right off the
+ * left. Overflow on the right wins when a bubble is somehow wider than the
+ * window, since the left edge is where reading starts.
+ */
+export function edgeShift(left: number, right: number, viewportWidth: number): number {
+  const past = right - (viewportWidth - EDGE_MARGIN);
+  const before = EDGE_MARGIN - left;
+  if (past > 0) return -past;
+  if (before > 0) return before;
+  return 0;
+}
+
+/**
+ * Wraps a label with an explanation that opens on tap as well as on hover.
+ *
+ * The explanations used to be `title` attributes, which a browser only reveals
+ * on hover — so on a touch screen there was no way to reach any of them. The
+ * trigger is a real button rather than a styled span because that is what
+ * reliably takes focus from a tap on iOS, and focus is what holds it open.
+ *
+ * Hover and focus are tracked separately rather than leaning on CSS. A tap
+ * fires both enter and focus, and moving away fires only leave, so a single
+ * `:hover`-or-`:focus-within` rule would strand the bubble open on touch.
+ */
+export function Explain({
+  text,
+  children,
+  className,
+}: {
+  text: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  const id = useId();
+  const bubble = useRef<HTMLSpanElement>(null);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [shift, setShift] = useState(0);
+  const open = hovered || focused;
+
+  // A bubble anchored to its label runs off the side of the window when the
+  // label sits near an edge — the right-hand column of a card pushed it two
+  // hundred pixels past the viewport and gave the whole page a horizontal
+  // scrollbar. Measured on open and slid back inside.
+  useLayoutEffect(() => {
+    if (!open || !bubble.current) {
+      setShift(0);
+      return;
+    }
+    const box = bubble.current.getBoundingClientRect();
+    setShift(edgeShift(box.left, box.right, document.documentElement.clientWidth));
+  }, [open]);
+
+  return (
+    <span
+      className={`explain${className ? ` ${className}` : ""}`}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+    >
+      <button type="button" className="explain-trigger" aria-describedby={id}>
+        {children}
+      </button>
+      {/* Outside the button so its text does not become part of the button's
+          own name, and tied back to it by id instead. */}
+      <span
+        ref={bubble}
+        className={`explain-bubble${open ? " is-open" : ""}`}
+        role="tooltip"
+        id={id}
+        style={shift ? { transform: `translateX(${shift}px)` } : undefined}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
 
 export function Card({
   title,
@@ -30,13 +115,13 @@ export function Stat({
   value: ReactNode;
   sub?: ReactNode;
   tone?: "good" | "bad" | "muted";
-  /** Hover text for a figure whose label cannot say enough on its own. */
+  /** Explanation for a figure whose label cannot say enough on its own. */
   explain?: string;
 }) {
   return (
     <div className="stat">
-      <div className={`stat-label${explain ? " has-explain" : ""}`} title={explain}>
-        {label}
+      <div className={`stat-label${explain ? " has-explain" : ""}`}>
+        {explain ? <Explain text={explain}>{label}</Explain> : label}
       </div>
       <div className={`stat-value${tone ? ` tone-${tone}` : ""}`}>{value}</div>
       {sub !== undefined && <div className="stat-sub">{sub}</div>}

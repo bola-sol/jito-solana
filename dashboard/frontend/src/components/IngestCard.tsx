@@ -34,7 +34,7 @@ export function IngestCard() {
           <Explain text="Drops inside the window. This is the figure that says whether packets are being lost now. The heading names the period actually watched, so it reads shorter than a minute until the window fills.">
             {windowLabel(summary.window_seconds)}
           </Explain>
-          <Explain text="Drops since the sockets were opened. A burst during startup stays in this figure for the life of the process, so read the window beside it to see what is happening now.">
+          <Explain text="Drops since the validator finished starting. Counted from there rather than from when the sockets opened, because most of a validator's drops happen during startup, when gossip's first view of the cluster arrives faster than it can be read. That burst says nothing about how the validator is running now.">
             Total
           </Explain>
         </div>

@@ -168,7 +168,7 @@ pub struct IngestPath {
     /// only when something was wrong would leave a healthy row and an
     /// unmeasured one looking the same.
     pub drops_recent: u64,
-    /// Drops since the sockets were opened, which for these is validator start.
+    /// Drops since the validator finished starting.
     pub drops_total: u64,
     /// Bytes waiting unread at the instant of the sample.
     pub queued_bytes: u64,
@@ -282,6 +282,16 @@ pub struct Collector {
     net_unavailable: bool,
     /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: DropWindow,
+    /// Whether the validator has finished starting, as of the last tick.
+    running: bool,
+    /// Per-port drops as of the moment the validator finished starting.
+    ///
+    /// Reported totals are counted from here. Most of a validator's drops
+    /// happen during startup, when gossip's first view of the cluster arrives
+    /// faster than it can be read, and carrying that burst for the life of the
+    /// process left a figure that said nothing about how the validator is
+    /// running now.
+    drops_baseline: Option<HashMap<u16, u64>>,
     /// Last counters seen for each reported port.
     ///
     /// `/proc/net/udp` is not read atomically. The kernel formats it lazily as
@@ -348,6 +358,8 @@ impl Collector {
             net_history: Vec::new(),
             net_unavailable: false,
             drops_window: DropWindow::new(DROPS_WINDOW),
+            running: false,
+            drops_baseline: None,
             known_sockets: HashMap::new(),
             drops_unavailable: false,
             skip_leader_slots: Vec::new(),
@@ -1142,17 +1154,32 @@ impl Collector {
             .iter()
             .filter_map(|&(_, port)| Some((port, self.known_sockets.get(&port)?.drops)))
             .collect();
+
+        // Taken the first tick the validator reports itself running, which is
+        // where the startup burst ends. Before that the raw counters stand, so
+        // the burst is visible while it is happening rather than hidden.
+        if self.drops_baseline.is_none() && self.running {
+            self.drops_baseline = Some(totals.clone());
+        }
         self.drops_window.push(now, totals);
 
         let paths: Vec<IngestPath> = ports
             .iter()
             .filter_map(|&(name, port)| {
                 let counters = self.known_sockets.get(&port)?;
+                let baseline = self
+                    .drops_baseline
+                    .as_ref()
+                    .and_then(|baseline| baseline.get(&port))
+                    .copied()
+                    .unwrap_or(0);
                 Some(IngestPath {
                     name,
                     port,
                     drops_recent: self.drops_window.since(port, counters.drops),
-                    drops_total: counters.drops,
+                    // Saturating rather than wrapping: a socket rebound after
+                    // the baseline was taken restarts below it.
+                    drops_total: counters.drops.saturating_sub(baseline),
                     queued_bytes: counters.queued,
                 })
             })
@@ -1503,6 +1530,7 @@ impl Collector {
 
     fn collect_startup_progress(&mut self) {
         let progress = (self.startup_progress)();
+        self.running = progress.running;
         self.startup.publish(&self.publisher, progress);
     }
 }

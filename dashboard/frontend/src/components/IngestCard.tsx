@@ -54,10 +54,19 @@ export function IngestCard() {
   );
 }
 
+/**
+ * Deliberately uncoloured.
+ *
+ * Marking a row the moment it drops anything says a fault has occurred, and
+ * nothing here can support that: without a count of what arrived there is no
+ * denominator, so an absolute figure cannot be judged, and the paths differ too
+ * much in consequence for one threshold to serve them. Gossip is redundant and
+ * re-requests what it loses; a dropped vote is not. A healthy validator drops
+ * packets steadily, so a figure that is simply non-zero is the honest signal.
+ */
 function IngestRow({ path }: { path: IngestPath }) {
-  const dropping = path.drops_recent > 0;
   return (
-    <div className={`ingest-row${dropping ? " is-dropping" : ""}`}>
+    <div className="ingest-row">
       <span className="ingest-name" title={`udp/${path.port}`}>
         {path.name}
       </span>

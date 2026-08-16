@@ -1210,20 +1210,6 @@ body {
   color: var(--text-faint);
 }
 
-/* A row earns colour only while it is losing packets inside the window. A
-   validator that dropped a quarter of a million during gossip's first pull and
-   none in the hour since is not a fault, and colouring that total would teach
-   the operator to ignore the colour. The total is never red for the same
-   reason: two red numbers on one row read as one long number. */
-.ingest-row.is-dropping .ingest-name,
-.ingest-row.is-dropping .ingest-recent {
-  color: var(--bad);
-}
-
-.ingest-row.is-dropping .ingest-recent {
-  font-weight: 600;
-}
-
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 1fr;

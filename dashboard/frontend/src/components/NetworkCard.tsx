@@ -2,7 +2,7 @@ import { bytes } from "../format";
 import type { Network, NetworkSample } from "../types";
 import { useNow, windowed } from "../useNow";
 import { useStore } from "../useStore";
-import { Card, Stat } from "./primitives";
+import { Card, chartY, PEAK_HEADROOM, PeakLine, Stat } from "./primitives";
 
 const WIDTH = 600;
 const HEIGHT = 90;
@@ -66,17 +66,19 @@ function NetworkChart({ samples }: { samples: NetworkSample[] }) {
   );
   const x = (sample: NetworkSample) =>
     WIDTH * (1 - (now - sample.timestamp_nanos / 1e6) / windowMs);
-  const y = (value: number) => HEIGHT - (value / peak) * HEIGHT;
+  const y = (value: number) => chartY(value, peak, HEIGHT);
 
   return (
     <div className="chart">
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img">
-        <path className="chart-ingress" d={line(visible.map((s) => [x(s), y(s.received_per_second)]))} />
-        <path className="chart-egress" d={line(visible.map((s) => [x(s), y(s.sent_per_second)]))} />
-      </svg>
+      <div className="chart-plot">
+        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img">
+          <path className="chart-ingress" d={line(visible.map((s) => [x(s), y(s.received_per_second)]))} />
+          <path className="chart-egress" d={line(visible.map((s) => [x(s), y(s.sent_per_second)]))} />
+        </svg>
+        <PeakLine fraction={PEAK_HEADROOM} label={`${bytes(peak)}/s peak`} />
+      </div>
       <div className="chart-axis">
         <span>{WINDOW_SECONDS}s ago</span>
-        <span className="chart-peak">peak {bytes(peak)}/s</span>
         <span>now</span>
       </div>
     </div>

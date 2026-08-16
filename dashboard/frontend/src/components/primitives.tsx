@@ -4,6 +4,48 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 const EDGE_MARGIN = 12;
 
 /**
+ * Where the highest value on screen sits, as a fraction of a chart's height.
+ *
+ * Charts are scaled to leave room above their peak so the peak line has
+ * somewhere to be. Scaled to fill, the line would sit exactly on the top edge
+ * and read as a border.
+ */
+export const PEAK_HEADROOM = 0.85;
+
+/**
+ * Vertical position of `value` in a chart scaled so `peak` lands on the peak
+ * line.
+ *
+ * Shared by both charts so the line and the series it marks cannot drift apart:
+ * they are drawn from opposite ends, the line from the bottom as a percentage
+ * and the series from the top in viewBox units, and nothing but this would keep
+ * them agreeing.
+ */
+export function chartY(value: number, peak: number, height: number): number {
+  return height - (value / (peak / PEAK_HEADROOM)) * height;
+}
+
+/**
+ * The dotted line marking the highest value on screen.
+ *
+ * Shared by the slot strip and both charts so that a peak is drawn and read the
+ * same way wherever it appears.
+ */
+export function PeakLine({ fraction, label }: { fraction: number; label: string }) {
+  const height = Math.max(0, Math.min(100, fraction * 100));
+  return (
+    <div
+      // Too near the top and there is no room above the line for its label, so
+      // it moves underneath.
+      className={`peak-line${height > 88 ? " label-below" : ""}`}
+      style={{ bottom: `${height}%` }}
+    >
+      <span>{label}</span>
+    </div>
+  );
+}
+
+/**
  * How far to slide an open explanation so it sits inside the window.
  *
  * Negative pulls it left off the right edge, positive pushes it right off the

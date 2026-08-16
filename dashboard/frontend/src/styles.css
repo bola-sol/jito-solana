@@ -483,7 +483,7 @@ body {
 
 /* Marks the tallest bar on screen, so the heights read as durations rather
    than as an unlabelled quantity. */
-.slot-bars-peak {
+.peak-line {
   position: absolute;
   left: 0;
   right: 0;
@@ -491,7 +491,7 @@ body {
   pointer-events: none;
 }
 
-.slot-bars-peak span {
+.peak-line span {
   position: absolute;
   right: 0;
   bottom: 3px;
@@ -505,7 +505,7 @@ body {
 }
 
 /* Near the top of the strip there is no room above the line for the label. */
-.slot-bars-peak.label-below span {
+.peak-line.label-below span {
   bottom: auto;
   top: 3px;
 }
@@ -696,8 +696,8 @@ body {
 
 /* The strip is held still while the pointer or the keyboard is on it, so say
    so. */
-.slot-bars:hover .slot-bars-peak,
-.slot-bars:focus-within .slot-bars-peak {
+.slot-bars:hover .peak-line,
+.slot-bars:focus-within .peak-line {
   border-top-style: solid;
 }
 
@@ -1042,6 +1042,12 @@ body {
   min-width: 0;
 }
 
+/* Holds the plot alone, so the peak line's percentage is a share of the drawing
+   and not of the drawing plus its axis labels. */
+.chart-plot {
+  position: relative;
+}
+
 .chart svg {
   width: 100%;
   height: 120px;
@@ -1065,10 +1071,6 @@ body {
   color: var(--text-faint);
   font-size: 10px;
   padding-top: 4px;
-}
-
-.chart-peak {
-  color: var(--text-dim);
 }
 
 .chart-empty {

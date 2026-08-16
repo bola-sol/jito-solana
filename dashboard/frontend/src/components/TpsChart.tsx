@@ -1,6 +1,7 @@
 import { decimal } from "../format";
 import type { TpsSample } from "../types";
 import { useNow, windowed } from "../useNow";
+import { chartY, PEAK_HEADROOM, PeakLine } from "./primitives";
 
 const WIDTH = 600;
 const HEIGHT = 120;
@@ -36,7 +37,7 @@ export function TpsChart({ samples }: { samples: TpsSample[] }) {
   const peak = Math.max(...visible.map((sample) => sample.total), 1);
   const x = (sample: TpsSample) =>
     WIDTH * (1 - (now - sample.timestamp_nanos / 1e6) / windowMs);
-  const y = (value: number) => HEIGHT - (value / peak) * HEIGHT;
+  const y = (value: number) => chartY(value, peak, HEIGHT);
 
   // Vote traffic sits underneath and non-vote stacks on top, so the upper edge
   // is total throughput.
@@ -45,13 +46,15 @@ export function TpsChart({ samples }: { samples: TpsSample[] }) {
 
   return (
     <div className="chart">
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img">
-        <path className="chart-total" d={totalPath} />
-        <path className="chart-vote" d={votePath} />
-      </svg>
+      <div className="chart-plot">
+        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img">
+          <path className="chart-total" d={totalPath} />
+          <path className="chart-vote" d={votePath} />
+        </svg>
+        <PeakLine fraction={PEAK_HEADROOM} label={`${decimal(peak, 0)} tps peak`} />
+      </div>
       <div className="chart-axis">
         <span>{WINDOW_SECONDS}s ago</span>
-        <span className="chart-peak">peak {decimal(peak, 0)} TPS</span>
         <span>now</span>
       </div>
     </div>

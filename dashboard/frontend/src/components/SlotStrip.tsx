@@ -4,7 +4,7 @@ import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
 import { Logo } from "./Logo";
-import { Explain } from "./primitives";
+import { Explain, PeakLine } from "./primitives";
 
 /** Slots shown in the strip. Beyond this the bars are too thin to read. */
 const STRIP_LENGTH = 64;
@@ -166,12 +166,10 @@ export function SlotStrip() {
         onKeyDown={onKeyDown}
       >
         {peakMs !== null && (
-          <div
-            className={`slot-bars-peak${barHeight(peakMs, nominalMs) > 88 ? " label-below" : ""}`}
-            style={{ bottom: `${barHeight(peakMs, nominalMs)}%` }}
-          >
-            <span>{Math.round(peakMs)} ms peak</span>
-          </div>
+          <PeakLine
+            fraction={barHeight(peakMs, nominalMs) / 100}
+            label={`${Math.round(peakMs)} ms peak`}
+          />
         )}
         {slots.map((entry, index) => (
           <SlotBar

@@ -84,7 +84,15 @@ function BlockRow({
             <Figure label="Base fees" value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`} />
             <Figure label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
           </div>
+          {/* The block's identity, together: which slot, when, and its hash.
+              The slot stays in the row above as well, since that is the only
+              thing naming a row while it is shut. */}
           <div className="produced-foot">
+            <Copyable
+              text={String(block.slot)}
+              label={count(block.slot)}
+              className="produced-foot-slot"
+            />
             <span className="produced-time">{blockTime(block.slot_time_millis)}</span>
             {/* The blockhash, which is the hash of the block's last entry and
                 not a transaction signature. Copyable because reading forty-four

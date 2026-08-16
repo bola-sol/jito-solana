@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 /**
  * Text that copies itself to the clipboard when clicked.
@@ -12,7 +12,19 @@ import { useEffect, useState } from "react";
  * width, and in a header that wraps, that relaid out everything after it — so
  * the act of copying an address made the page jump under the pointer.
  */
-export function Copyable({ text, className }: { text: string; className?: string }) {
+export function Copyable({
+  text,
+  label,
+  className,
+}: {
+  text: string;
+  /**
+   * What to show, when that differs from what to copy. A slot number reads
+   * better grouped and pastes better without the separators.
+   */
+  label?: ReactNode;
+  className?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -35,7 +47,7 @@ export function Copyable({ text, className }: { text: string; className?: string
       aria-label={text}
       title={copied ? "Copied" : `${text}\nClick to copy`}
     >
-      <span className="copyable-text">{text}</span>
+      <span className="copyable-text">{label ?? text}</span>
       <span className="copyable-flash" aria-hidden="true">
         copied
       </span>

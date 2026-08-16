@@ -1270,8 +1270,15 @@ body {
   color: var(--text-faint);
 }
 
+.produced-foot-slot,
 .produced-time {
   flex: none;
+}
+
+/* Shown grouped and copied plain: an explorer takes the digits, not the commas. */
+.produced-foot-slot {
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
 }
 
 .produced-hash {

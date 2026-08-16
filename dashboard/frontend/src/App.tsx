@@ -8,6 +8,7 @@ import {
 import { Header } from "./components/Header";
 import { IngestCard } from "./components/IngestCard";
 import { NetworkCard } from "./components/NetworkCard";
+import { ProducedBlocksCard } from "./components/ProducedBlocksCard";
 import { Sidebar } from "./components/Sidebar";
 import { VersionsCard } from "./components/VersionsCard";
 import { SlotStrip } from "./components/SlotStrip";
@@ -55,6 +56,7 @@ export function App() {
           <NetworkCard />
           <IngestCard />
         </div>
+        <ProducedBlocksCard />
       </main>
     </div>
   );

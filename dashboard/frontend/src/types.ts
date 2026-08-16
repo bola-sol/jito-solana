@@ -81,6 +81,21 @@ export interface IngestPath {
   queued_bytes: number;
 }
 
+export interface ProducedBlock {
+  slot: number;
+  captured_at_nanos: number;
+  blockhash: string;
+  duration_nanos: number | null;
+  transactions: number;
+  non_vote_transactions: number;
+  failed_transactions: number;
+  entries: number;
+  block_cost: number;
+  block_cost_limit: number;
+  total_fees: number;
+  priority_fees: number;
+}
+
 export interface IngestSummary {
   window_seconds: number;
   paths: IngestPath[];

@@ -9,6 +9,7 @@ pub mod collect;
 pub mod config;
 pub mod context;
 pub mod net_stats;
+pub mod produced;
 pub mod proto;
 pub mod server;
 pub mod service;

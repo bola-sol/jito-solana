@@ -1136,6 +1136,113 @@ body {
   text-align: center;
 }
 
+/* ---- produced blocks ---- */
+
+.produced-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.produced {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Six rows and a bit, so a long run of leader slots scrolls rather than
+     stretching the card past the others in its row. */
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.produced-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6em 5.5em 5em;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.produced-head:hover {
+  background: var(--panel-raised);
+}
+
+.produced-head:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.produced-block.is-open .produced-head {
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.produced-slot {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.produced-txns,
+.produced-fill,
+.produced-ms {
+  text-align: right;
+  font-size: 11.5px;
+}
+
+.produced-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 6px 12px;
+}
+
+.produced-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px 14px;
+}
+
+.produced-figure-label {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.produced-figure-value {
+  font-size: 13px;
+}
+
+.produced-hash {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: help;
+}
+
+/* On a narrow screen the three figure columns leave too little for the slot
+   number, which is the one thing in the row that must not be cut. The fill
+   percentage goes, since the meter states it whenever the row is open. */
+@media (max-width: 560px) {
+  .produced-head {
+    grid-template-columns: minmax(0, 1fr) 5.5em 4.5em;
+  }
+
+  .produced-fill {
+    display: none;
+  }
+}
+
 /* ---- socket ingest ---- */
 
 .ingest-body {

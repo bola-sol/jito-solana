@@ -12,6 +12,7 @@ use {
     crate::{
         context::{DashboardContext, StartupProgressFn},
         net_stats::{self, NetCounters},
+        produced::{ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher},
         slots::{SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
@@ -62,6 +63,10 @@ const MAX_VERSIONS_REPORTED: usize = 5;
 
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
+
+/// Produced blocks kept for the block detail panel. A validator leads about
+/// four slots in every eight hundred, so this is hours of them.
+const PRODUCED_BLOCKS: usize = 64;
 
 /// Window the reported socket drops accumulate over. Long enough that a burst
 /// stays visible for a while after it stops, short enough that it clears.
@@ -282,6 +287,8 @@ pub struct Collector {
     net_unavailable: bool,
     /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: DropWindow,
+    /// Detail for blocks this validator produced, captured as they froze.
+    produced: ProducedRing,
     /// Whether the validator has finished starting, as of the last tick.
     running: bool,
     /// Per-port drops as of the moment the validator finished starting.
@@ -358,6 +365,7 @@ impl Collector {
             net_history: Vec::new(),
             net_unavailable: false,
             drops_window: DropWindow::new(DROPS_WINDOW),
+            produced: ProducedRing::new(PRODUCED_BLOCKS),
             running: false,
             drops_baseline: None,
             known_sockets: HashMap::new(),
@@ -713,6 +721,7 @@ impl Collector {
         let root = root_bank.slot();
 
         let mut changed = Vec::new();
+        let mut captured = false;
         for (slot, bank) in frozen {
             let slot = *slot;
             // Bank transaction counters are cumulative along a fork, so a
@@ -736,6 +745,20 @@ impl Collector {
                         .saturating_sub(parent.non_vote_transaction_count_since_restart()),
                 )
             });
+            // Our own blocks are read here and nowhere else. The cost tracker
+            // and the collected fees live on the bank, so they go with it when
+            // it is dropped after rooting. A bank stays frozen for many ticks,
+            // and the ring keeps the first sighting only.
+            if let Some((total, non_vote)) = counts
+                && !self.produced.contains(slot)
+                && self.slots.get(slot).is_some_and(|entry| entry.mine)
+            {
+                let block = self.capture_block(slot, bank, total, non_vote);
+                if self.produced.insert(block) {
+                    captured = true;
+                }
+            }
+
             let level = if slot <= finalized {
                 SlotLevel::Finalized
             } else if slot <= root {
@@ -773,6 +796,47 @@ impl Collector {
         }
         if !changed.is_empty() {
             self.retain_slot_overview();
+        }
+        if captured {
+            self.publisher
+                .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
+        }
+    }
+
+    /// Reads a frozen bank's own figures for the block detail panel.
+    ///
+    /// `transactions` and `non_vote` are already differenced against the
+    /// parent by the caller. Everything taken here is the bank's own: the
+    /// error and entry counters are reset for each bank rather than inherited
+    /// from the parent, so differencing them would subtract the wrong thing.
+    fn capture_block(
+        &self,
+        slot: Slot,
+        bank: &Bank,
+        transactions: u64,
+        non_vote: u64,
+    ) -> ProducedBlock {
+        // Poisoned only if a replay thread panicked while holding it, in which
+        // case the validator has more pressing problems than a missing bar.
+        let (block_cost, block_cost_limit) = match bank.read_cost_tracker() {
+            Ok(tracker) => (tracker.block_cost(), tracker.get_block_limit()),
+            Err(_) => (0, 0),
+        };
+        let fees = bank.get_collector_fee_details();
+
+        ProducedBlock {
+            slot,
+            captured_at_nanos: system_time_nanos(SystemTime::now()),
+            blockhash: bank.last_blockhash().to_string(),
+            duration_nanos: self.slots.get(slot).and_then(|entry| entry.duration_nanos),
+            transactions,
+            non_vote_transactions: non_vote,
+            failed_transactions: bank.transaction_error_count(),
+            entries: bank.transaction_entries_count(),
+            block_cost,
+            block_cost_limit,
+            total_fees: fees.total_transaction_fee(),
+            priority_fees: fees.total_priority_fee(),
         }
     }
 

@@ -12,6 +12,16 @@ import type { Envelope, NetworkSample, SlotEntry, TpsSample } from "./types";
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
 const MAX_SLOTS = 512;
 
+/**
+ * This validator's own leader slots kept beyond that window.
+ *
+ * A validator leads about four slots in every eight hundred, so five hundred
+ * slots of history usually contains none of its own. Kept separately, the
+ * sidebar's own-slots view has something to show; pruned with everything else
+ * it would be empty almost all the time.
+ */
+const MAX_OWN_SLOTS = 64;
+
 /** TPS samples kept for the chart. */
 const MAX_TPS_SAMPLES = 300;
 
@@ -124,10 +134,13 @@ export class Store {
 
   private trimSlots(): void {
     if (this.slots.size <= MAX_SLOTS) return;
-    const ordered = [...this.slots.keys()].sort((a, b) => a - b);
-    for (const slot of ordered.slice(0, this.slots.size - MAX_SLOTS)) {
-      this.slots.delete(slot);
-    }
+    const ordered = [...this.slots.values()].sort((a, b) => a.slot - b.slot);
+    // Split rather than walked oldest-first, because our own slots are kept to
+    // a separate depth. Walking one list and skipping ours would have deleted
+    // newer slots to make room for the ones it skipped.
+    const own = ordered.filter((entry) => entry.mine).slice(-MAX_OWN_SLOTS);
+    const rest = ordered.filter((entry) => !entry.mine).slice(-MAX_SLOTS);
+    this.slots = new Map([...rest, ...own].map((entry) => [entry.slot, entry]));
   }
 
   private touch(): void {

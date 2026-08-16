@@ -913,11 +913,52 @@ body {
 }
 
 .sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 12px 12px 8px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-faint);
+}
+
+.sidebar-filter {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.sidebar-filter button {
+  margin: 0;
+  padding: 2px 7px;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.sidebar-filter button + button {
+  border-left: 1px solid var(--border);
+}
+
+.sidebar-filter button:hover {
+  color: var(--text-dim);
+}
+
+.sidebar-filter button[aria-pressed="true"] {
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.sidebar-filter button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .sidebar-rows {

@@ -87,6 +87,48 @@ describe("slots", () => {
     // The oldest went, not the newest.
     expect(slots[0].slot).toBe(89);
   });
+
+  it("keeps our own leader slots long after the window has passed them", () => {
+    // A validator leads about four slots in eight hundred, so a window of five
+    // hundred usually holds none of its own. Without this the sidebar's own
+    // slots view would be empty nearly all the time.
+    const store = new Store();
+    for (const number of [1, 2, 3, 4]) {
+      store.apply(envelope("slot", "update", { ...slot(number), mine: true }));
+    }
+    for (let number = 5; number <= 2000; number += 1) {
+      store.apply(envelope("slot", "update", slot(number)));
+    }
+    const ours = store.getSlots().filter((entry) => entry.mine);
+    expect(ours.map((entry) => entry.slot)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("bounds how many of our own slots it keeps", () => {
+    const store = new Store();
+    for (let number = 1; number <= 200; number += 1) {
+      store.apply(envelope("slot", "update", { ...slot(number), mine: true }));
+    }
+    for (let number = 201; number <= 1000; number += 1) {
+      store.apply(envelope("slot", "update", slot(number)));
+    }
+    const ours = store.getSlots().filter((entry) => entry.mine);
+    expect(ours).toHaveLength(64);
+    // The newest of ours, not the first sixty-four we ever saw.
+    expect(ours[ours.length - 1].slot).toBe(200);
+  });
+
+  it("does not let retained slots displace the recent window", () => {
+    // The strip reads the tail of this list. Holding old slots of ours must
+    // not push newer ones out of it.
+    const store = new Store();
+    store.apply(envelope("slot", "update", { ...slot(1), mine: true }));
+    for (let number = 2; number <= 1000; number += 1) {
+      store.apply(envelope("slot", "update", slot(number)));
+    }
+    const recent = store.getSlots().slice(-64);
+    expect(recent[0].slot).toBe(937);
+    expect(recent[recent.length - 1].slot).toBe(1000);
+  });
 });
 
 describe("tps samples", () => {

@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { readSidebarCollapsed, writeSidebarCollapsed } from "./layout";
 import {
   EpochCard,
   StatusCard,
@@ -23,6 +24,7 @@ export function App() {
   const connection = store.getConnection();
   const name = store.get<string | null>("summary", "identity_name");
   const identity = store.get<string>("summary", "identity_key");
+  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
 
   // Named after the validator so that an operator watching several at once can
   // tell the tabs apart. `Private` matches what the header shows for a node
@@ -33,8 +35,15 @@ export function App() {
   }, [name, identity]);
 
   return (
-    <div className="app">
-      <Sidebar />
+    <div className={`app${collapsed ? " is-collapsed" : ""}`}>
+      <Sidebar
+        collapsed={collapsed}
+        onToggle={() => {
+          const next = !collapsed;
+          setCollapsed(next);
+          writeSidebarCollapsed(next);
+        }}
+      />
       <main className="main">
         <Header />
         {connection === "closed" && (

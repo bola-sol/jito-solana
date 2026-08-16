@@ -85,6 +85,12 @@ body {
   height: 100%;
 }
 
+/* Collapsed to a rail rather than to nothing, so the control that brings the
+   list back is still on screen. */
+.app.is-collapsed {
+  grid-template-columns: 34px minmax(0, 1fr);
+}
+
 .main {
   display: flex;
   flex-direction: column;
@@ -922,7 +928,6 @@ body {
 .sidebar-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 12px 12px 8px;
   font-size: 11px;
@@ -931,7 +936,40 @@ body {
   color: var(--text-faint);
 }
 
+/* Narrower gutters when only the button is left, or it does not fit the rail. */
+.app.is-collapsed .sidebar-head {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.sidebar-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.sidebar-collapse:hover {
+  background: var(--panel-raised);
+  color: var(--text-dim);
+}
+
+.sidebar-collapse:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .sidebar-filter {
+  margin-left: auto;
   display: flex;
   border: 1px solid var(--border);
   border-radius: 5px;

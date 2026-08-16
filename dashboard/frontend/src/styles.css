@@ -762,6 +762,14 @@ body {
   pointer-events: none;
 }
 
+/* Opens upwards when there is no room below. Hanging off the foot of the page
+   makes the document taller and raises a scrollbar that was not there, which
+   moves the layout out from under whoever was reading. */
+.explain-bubble.is-above {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
 /* Closed, it is clipped to a point rather than hidden.
 
    A `visibility: hidden` box still counts toward the page's scroll width, so

@@ -60,6 +60,29 @@ export function edgeShift(left: number, right: number, viewportWidth: number): n
   return 0;
 }
 
+/** Space left between an explanation and the label it belongs to. */
+const ANCHOR_GAP = 6;
+
+/**
+ * Whether an explanation should open above its label instead of below.
+ *
+ * An explanation hanging off the bottom of the page makes the document taller,
+ * which raises a scrollbar on a page that did not have one and shifts the whole
+ * layout. It flips up instead, but only when there is room up there: with no
+ * room either way, below is the lesser problem, since a bubble running off the
+ * top cannot be scrolled to at all.
+ */
+export function shouldFlipAbove(
+  bubbleBottom: number,
+  bubbleHeight: number,
+  anchorTop: number,
+  viewportHeight: number,
+): boolean {
+  const overflowsBelow = bubbleBottom > viewportHeight - EDGE_MARGIN;
+  const fitsAbove = anchorTop - bubbleHeight - ANCHOR_GAP > EDGE_MARGIN;
+  return overflowsBelow && fitsAbove;
+}
+
 /**
  * Wraps a label with an explanation that opens on tap as well as on hover.
  *
@@ -83,9 +106,11 @@ export function Explain({
 }) {
   const id = useId();
   const bubble = useRef<HTMLSpanElement>(null);
+  const anchor = useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [shift, setShift] = useState(0);
+  const [above, setAbove] = useState(false);
   const open = hovered || focused;
 
   // A bubble anchored to its label runs off the side of the window when the
@@ -93,16 +118,28 @@ export function Explain({
   // hundred pixels past the viewport and gave the whole page a horizontal
   // scrollbar. Measured on open and slid back inside.
   useLayoutEffect(() => {
-    if (!open || !bubble.current) {
+    if (!open || !bubble.current || !anchor.current) {
       setShift(0);
+      setAbove(false);
       return;
     }
     const box = bubble.current.getBoundingClientRect();
     setShift(edgeShift(box.left, box.right, document.documentElement.clientWidth));
+    // Measured while still below, which is where the flip is decided from. The
+    // bubble keeps its height when it moves, so one pass settles it.
+    setAbove(
+      shouldFlipAbove(
+        box.bottom,
+        box.height,
+        anchor.current.getBoundingClientRect().top,
+        window.innerHeight,
+      ),
+    );
   }, [open]);
 
   return (
     <span
+      ref={anchor}
       className={`explain${className ? ` ${className}` : ""}`}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
@@ -116,7 +153,7 @@ export function Explain({
           own name, and tied back to it by id instead. */}
       <span
         ref={bubble}
-        className={`explain-bubble${open ? " is-open" : ""}`}
+        className={`explain-bubble${open ? " is-open" : ""}${above ? " is-above" : ""}`}
         role="tooltip"
         id={id}
         style={shift ? { transform: `translateX(${shift}px)` } : undefined}

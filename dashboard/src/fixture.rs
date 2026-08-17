@@ -11,7 +11,12 @@
 //! the collectors all take their empty paths.
 
 use {
-    crate::{context::DashboardContext, proto::Publisher},
+    crate::{
+        collect::Collector,
+        context::{DashboardContext, StartupProgress},
+        proto::Publisher,
+        validator_info::ValidatorInfoCache,
+    },
     solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
@@ -102,6 +107,22 @@ impl Fixture {
             .into_iter()
             .find(|message| message.contains(&needle))
     }
+
+    /// A collector over this fixture, ready to tick.
+    pub fn collector(&self) -> Collector {
+        Collector::new(
+            self.ctx.clone(),
+            self.publisher.clone(),
+            Arc::new(RwLock::new(ValidatorInfoCache::default())),
+            Arc::new(|| StartupProgress {
+                phase: "running".to_string(),
+                detail: None,
+                running: true,
+                fraction: None,
+                replay_slots: None,
+            }),
+        )
+    }
 }
 
 pub fn fixture() -> Fixture {
@@ -183,6 +204,72 @@ mod tests {
             harness.bank_forks.read().unwrap().frozen_banks().count(),
             2,
             "genesis and its child"
+        );
+    }
+
+    #[test]
+    fn test_a_tick_publishes_what_a_client_needs_to_render() {
+        // The end-to-end shape: sample a real validator once and look at the
+        // snapshot a browser connecting afterwards would be sent. Asserts the
+        // keys are present rather than their values, which move; what this
+        // catches is a collector wired to publish nothing, which every unit
+        // test around the edges would miss.
+        let harness = fixture();
+        harness.advance_to(1);
+
+        let mut collector = harness.collector();
+        collector.publish_static();
+        collector.tick();
+
+        for key in [
+            "version",
+            "cluster",
+            "shred_version",
+            "identity_key",
+            "vote_key",
+            "root_slot",
+            "completed_slot",
+            "estimated_slot",
+            "block_height",
+            "identity_balance",
+            "startup_progress",
+        ] {
+            assert!(
+                harness.published_key("summary", key).is_some(),
+                "summary.{key} was not published"
+            );
+        }
+        assert!(
+            harness.published_key("epoch", "new").is_some(),
+            "the epoch panel would have nothing to show"
+        );
+    }
+
+    #[test]
+    fn test_the_cluster_wide_tier_waits_for_a_viewer() {
+        // The expensive sampling is skipped while nobody is connected, which is
+        // the whole reason an idle validator costs nothing. Easy to break by
+        // moving a collector into the wrong tier, and invisible if it is.
+        let harness = fixture();
+        harness.advance_to(1);
+        let mut collector = harness.collector();
+
+        collector.tick();
+        assert!(
+            harness
+                .published_key("summary", "validator_counts")
+                .is_none(),
+            "the cluster walk ran with nobody watching"
+        );
+
+        // Holding a receiver is what counts as a viewer.
+        let _viewer = harness.publisher.subscribe();
+        collector.tick();
+        assert!(
+            harness
+                .published_key("summary", "validator_counts")
+                .is_some(),
+            "a viewer attached and the cluster walk still did not run"
         );
     }
 

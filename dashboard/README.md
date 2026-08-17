@@ -161,17 +161,33 @@ no Rust rebuild.
 
 ## Not yet implemented
 
-Two panels have no equivalent here yet, because the data behind them does not
-exist in Agave:
+Three things Firedancer's dashboard shows have no equivalent here, because the
+data behind them does not exist in Agave.
 
 A shred timeline. `shred_fetch_stage` distinguishes turbine from repair via
-`PacketFlags::REPAIR`, but nothing records per-shred arrival timing. This needs
-new instrumentation on the receive path.
+`PacketFlags::REPAIR`, but nothing records per-shred arrival timing. Recording
+it on the packet is not open to us: `solana-packet` is a published crate rather
+than a workspace member, so `Meta` cannot gain a field. The timing would have to
+be kept alongside and written from `modify_packets`, which handles tens of
+thousands of shreds a second, so it would want aggregating per slot rather than
+per shred.
 
 A TPU waterfall. The per-stage packet counters exist in the streamer, sigverify,
 and `BankingStageStats`, but they are private and only escape the process
-through `datapoint_info!`. Reaching them means either a tee on the metrics
-agent's `MetricsWriter` or plumbing the counters out directly.
+through `datapoint_info!`. A tee on the metrics agent's `MetricsWriter` would
+reach all of them without touching a single producer, and would work on a
+validator with no metrics configured: the agent buffers every point regardless,
+and it is the InfluxDB writer that discards them. What stands in the way is that
+the agent `datapoint_info!` submits to is a `LazyLock` with no setter, so
+installing a writer needs a hook in `solana-metrics`. Plumbing the counters out
+directly instead spans three crates, and each needs a monotonic mirror, since
+`report()` swaps the originals to zero.
 
-Per-slot transaction detail (`slot.query`) is also unimplemented. It needs
-blockstore reads rather than the in-memory slot ring.
+Per-slot transaction detail. The fee, compute units and status of each
+transaction are written by `TransactionStatusService`, which runs only when a
+validator serves RPC with transaction history enabled, or a geyser plugin
+requires it. A voting validator with no RPC records none of it, and turning the
+flag on grows the blockstore substantially, which is not a trade worth making
+for a panel. Without it the blockstore holds the entries and nothing more, so
+the panel would come to a list of signatures beside counts this dashboard
+already publishes.

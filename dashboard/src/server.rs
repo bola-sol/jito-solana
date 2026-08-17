@@ -933,6 +933,71 @@ mod tests {
         );
     }
 
+    /// The status line of a response, as a client would read it.
+    fn status_line(status: u16, immutable: bool) -> String {
+        let out = String::from_utf8(response(status, "text/plain", b"", immutable)).unwrap();
+        out.lines().next().unwrap().to_string()
+    }
+
+    #[test]
+    fn test_every_status_the_server_sends_has_its_reason_phrase() {
+        // Every one of these is reachable: 403 from the origin check, 421 from
+        // the host check, 503 from either cap, 405 from a non-read method, 404
+        // from a missing asset with no index to fall back on. A status paired
+        // with the wrong phrase is the kind of thing a proxy logs and nobody
+        // reads until it matters.
+        assert_eq!(status_line(200, false), "HTTP/1.1 200 OK");
+        assert_eq!(status_line(403, false), "HTTP/1.1 403 Forbidden");
+        assert_eq!(status_line(404, false), "HTTP/1.1 404 Not Found");
+        assert_eq!(status_line(405, false), "HTTP/1.1 405 Method Not Allowed");
+        assert_eq!(status_line(421, false), "HTTP/1.1 421 Misdirected Request");
+        assert_eq!(status_line(503, false), "HTTP/1.1 503 Service Unavailable");
+    }
+
+    #[test]
+    fn test_an_unlisted_status_still_produces_a_usable_line() {
+        // The fallback arm. Sending a status with someone else's phrase would
+        // be worse than a bare number, so this is worth knowing rather than
+        // discovering.
+        assert_eq!(status_line(418, false), "HTTP/1.1 418 OK");
+    }
+
+    #[test]
+    fn test_hashed_assets_are_cached_forever_and_the_document_never_is() {
+        // Asset filenames carry a content hash, so a stale one cannot be served
+        // under a name that means something else. index.html has no hash, and
+        // caching it would leave a redeploy invisible until the browser
+        // happened to revalidate.
+        assert!(
+            String::from_utf8(response(200, "text/javascript", b"x", true))
+                .unwrap()
+                .contains("cache-control: public, max-age=31536000, immutable")
+        );
+        assert!(
+            String::from_utf8(response(200, "text/html", b"x", false))
+                .unwrap()
+                .contains("cache-control: no-cache")
+        );
+    }
+
+    #[test]
+    fn test_the_content_length_counts_the_body_that_follows() {
+        // A length that disagrees with the body leaves the client waiting for
+        // bytes that never come, or reading the next response as this one's
+        // tail.
+        for body in [b"".as_slice(), b"x".as_slice(), b"hello world".as_slice()] {
+            let out = response(200, "text/plain", body, false);
+            let text = String::from_utf8(out.clone()).unwrap();
+            assert!(
+                text.contains(&format!("content-length: {}\r\n", body.len())),
+                "missing or wrong length for {body:?}"
+            );
+            let (head, sent) = text.split_once("\r\n\r\n").expect("no header terminator");
+            assert_eq!(sent.as_bytes(), body);
+            assert_eq!(out.len(), head.len() + 4 + body.len());
+        }
+    }
+
     #[test]
     fn test_responses_carry_the_security_headers() {
         let out = String::from_utf8(response(200, "text/html", b"<html>", false)).unwrap();

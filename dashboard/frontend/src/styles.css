@@ -1375,7 +1375,13 @@ body {
 }
 
 @media (max-width: 900px) {
-  .app {
+  /* The collapsed rail has to be named here too, or its two-column template
+     outranks this one and survives into a width it was never meant for. The
+     sidebar is hidden below this breakpoint, so the main column would then be
+     placed in the rail's track and squeezed to thirty-four pixels, leaving the
+     rest of the row empty. */
+  .app,
+  .app.is-collapsed {
     grid-template-columns: 1fr;
   }
 

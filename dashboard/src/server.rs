@@ -633,7 +633,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_a_websocket_upgrade() {
+    fn test_detects_a_websocket_upgrade() {
         assert!(is_websocket_upgrade(
             "GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n"
         ));
@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn a_page_this_dashboard_served_may_open_a_socket() {
+    fn test_page_this_dashboard_served_may_open_a_socket() {
         assert!(origin_is_allowed(&req(
             "Host: dash.example.com\r\nOrigin: https://dash.example.com"
         )));
@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn another_site_may_not() {
+    fn test_another_site_may_not() {
         // The whole point: a websocket is exempt from the same-origin policy,
         // so without this any page a browser visits could read the feed.
         assert!(!origin_is_allowed(&req(
@@ -680,20 +680,20 @@ mod tests {
     }
 
     #[test]
-    fn a_sandboxed_frame_is_refused() {
+    fn test_sandboxed_frame_is_refused() {
         assert!(!origin_is_allowed(&req(
             "Host: dash.example.com\r\nOrigin: null"
         )));
     }
 
     #[test]
-    fn a_client_that_is_not_a_browser_is_allowed() {
+    fn test_client_that_is_not_a_browser_is_allowed() {
         // curl and monitoring send no Origin, and cannot be acting for a page.
         assert!(origin_is_allowed(&req("Host: dash.example.com")));
     }
 
     #[test]
-    fn only_known_hosts_are_answered() {
+    fn test_only_known_hosts_are_answered() {
         assert!(host_is_allowed(&req("Host: localhost:10999"), &allowed()));
         assert!(host_is_allowed(&req("Host: DASH.EXAMPLE.COM"), &allowed()));
         assert!(!host_is_allowed(&req("Host: rebind.evil"), &allowed()));
@@ -701,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn an_address_literal_needs_no_configuration() {
+    fn test_address_literal_needs_no_configuration() {
         // Testing on a public IP before any domain exists must just work: an
         // address cannot be rebound, so nothing is being relaxed here.
         assert!(host_is_allowed(&req("Host: 111.1.1.1:10999"), &allowed()));
@@ -713,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_still_has_to_be_named() {
+    fn test_name_still_has_to_be_named() {
         // The rebinding defence survives the concession above: what an
         // attacker controls is a name, and a name is still checked.
         assert!(!host_is_allowed(&req("Host: rebind.evil"), &[]));
@@ -725,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn more_than_one_name_can_be_allowed() {
+    fn test_more_than_one_name_can_be_allowed() {
         let hosts = vec!["a.example.com".to_string(), "b.example.com".to_string()];
         assert!(host_is_allowed(&req("Host: a.example.com"), &hosts));
         assert!(host_is_allowed(&req("Host: b.example.com"), &hosts));
@@ -733,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn rebinding_defeats_the_origin_check_and_is_caught_by_the_host_check() {
+    fn test_rebinding_defeats_the_origin_check_and_is_caught_by_the_host_check() {
         let rebound = req("Host: rebind.evil:10999\r\nOrigin: http://rebind.evil");
         assert!(
             origin_is_allowed(&rebound),
@@ -743,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn hosts_are_compared_without_scheme_or_port() {
+    fn test_hosts_are_compared_without_scheme_or_port() {
         assert_eq!(host_of("https://dash.example.com:443"), "dash.example.com");
         assert_eq!(host_of("dash.example.com:10999"), "dash.example.com");
         assert_eq!(host_of("[::1]:10999"), "::1");
@@ -751,14 +751,14 @@ mod tests {
     }
 
     #[test]
-    fn headers_are_read_case_insensitively_and_stop_at_the_body() {
+    fn test_headers_are_read_case_insensitively_and_stop_at_the_body() {
         let head = "GET / HTTP/1.1\r\nHOST: x\r\n\r\nHost: injected\r\n";
         assert_eq!(header(head, "host"), Some("x"));
         assert_eq!(header(head, "missing"), None);
     }
 
     #[test]
-    fn extracts_the_request_path() {
+    fn test_extracts_the_request_path() {
         assert_eq!(
             request_path("GET /assets/app.js HTTP/1.1\r\n"),
             "/assets/app.js"
@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unrecognised_host_is_turned_away_before_anything_is_served() {
+    async fn test_unrecognised_host_is_turned_away_before_anything_is_served() {
         let reply = request_with_hosts(
             b"GET / HTTP/1.1\r\nHost: rebind.evil\r\n\r\n",
             vec!["dash.example.com".to_string()],
@@ -837,7 +837,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_websocket_from_another_origin_is_refused() {
+    async fn test_websocket_from_another_origin_is_refused() {
         let reply = request_with_hosts(
             b"GET /websocket HTTP/1.1\r\nHost: dash.example.com\r\nUpgrade: websocket\r\nOrigin: https://evil.example\r\n\r\n",
             vec!["dash.example.com".to_string()],
@@ -850,7 +850,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_websocket_over_the_cap_is_refused_with_a_status() {
+    async fn test_websocket_over_the_cap_is_refused_with_a_status() {
         let reply = request_with_no_permits_left(
             b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n",
         )
@@ -862,7 +862,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_is_still_served_when_the_websocket_cap_is_full() {
+    async fn test_http_is_still_served_when_the_websocket_cap_is_full() {
         // The point of capping websockets alone: a full pool must not stop the
         // page itself from loading.
         let reply = request_with_no_permits_left(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
@@ -904,7 +904,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_full_connection_cap_refuses_rather_than_serving() {
+    async fn test_full_connection_cap_refuses_rather_than_serving() {
         // The cap exists so that a request flood cannot make the validator hold
         // one copy of the bundle per request in flight. A refusal has to arrive
         // as a complete response, not as a reset, or the caller cannot tell an
@@ -919,7 +919,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_connection_cap_covers_websockets_too() {
+    async fn test_connection_cap_covers_websockets_too() {
         // A websocket is a connection. If it were exempt, the cheapest way past
         // the cap would be to open the long-lived kind.
         let reply = request_with_no_connections_left(
@@ -934,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_carry_the_security_headers() {
+    fn test_responses_carry_the_security_headers() {
         let out = String::from_utf8(response(200, "text/html", b"<html>", false)).unwrap();
         assert!(out.contains("content-security-policy:"));
         assert!(out.contains("x-content-type-options: nosniff"));
@@ -942,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn the_policy_still_permits_validator_icons() {
+    fn test_policy_still_permits_validator_icons() {
         // Icons are third-party by nature: operators publish the URLs on chain,
         // so there is no list to allow and blocking them would empty the
         // sidebar. Only plaintext is refused.
@@ -951,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_block_is_well_formed() {
+    fn test_header_block_is_well_formed() {
         let out = String::from_utf8(response(200, "text/plain", b"body", false)).unwrap();
         // Exactly one blank line, and it separates headers from body.
         let (head, body) = out.split_once("\r\n\r\n").expect("no header terminator");
@@ -963,24 +963,24 @@ mod tests {
     }
 
     #[test]
-    fn ping_is_answered_with_its_id() {
+    fn test_ping_is_answered_with_its_id() {
         let reply = respond(br#"{"topic":"summary","key":"ping","id":7}"#).unwrap();
         assert!(reply.contains(r#""id":7"#));
     }
 
     #[test]
-    fn unknown_requests_still_get_a_reply() {
+    fn test_unknown_requests_still_get_a_reply() {
         let reply = respond(br#"{"topic":"nope","key":"nope","id":1}"#).unwrap();
         assert!(reply.contains("unsupported request"));
     }
 
     #[test]
-    fn malformed_requests_are_ignored() {
+    fn test_malformed_requests_are_ignored() {
         assert!(respond(b"not json").is_none());
     }
 
     #[test]
-    fn log_text_cannot_forge_a_second_line() {
+    fn test_log_text_cannot_forge_a_second_line() {
         // A newline would end the entry and let the rest pose as one the
         // validator wrote itself.
         assert_eq!(
@@ -994,7 +994,7 @@ mod tests {
     }
 
     #[test]
-    fn log_text_is_bounded() {
+    fn test_log_text_is_bounded() {
         let logged = for_logging(&"a".repeat(4096));
         assert!(
             logged.len() < 64,
@@ -1010,7 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn root_serves_the_entry_document() {
+    fn test_root_serves_the_entry_document() {
         // Only meaningful when the frontend was built; otherwise the server
         // serves the placeholder page and there is nothing to look up.
         if !assets::ASSETS.is_empty() {

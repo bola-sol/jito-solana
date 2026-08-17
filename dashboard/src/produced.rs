@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn a_slot_is_recorded_once() {
+    fn test_slot_is_recorded_once() {
         let mut ring = ProducedRing::new(4);
         assert!(ring.insert(block(10)));
         // The same bank is seen frozen on every tick until it is rooted. Only
@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn blocks_are_held_oldest_first_however_they_arrive() {
+    fn test_blocks_are_held_oldest_first_however_they_arrive() {
         let mut ring = ProducedRing::new(8);
         for slot in [12, 10, 13, 11] {
             ring.insert(block(slot));
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn the_oldest_go_first_when_it_is_full() {
+    fn test_oldest_go_first_when_it_is_full() {
         let mut ring = ProducedRing::new(3);
         for slot in 1..=6 {
             ring.insert(block(slot));
@@ -152,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn an_out_of_order_arrival_still_evicts_the_oldest() {
+    fn test_out_of_order_arrival_still_evicts_the_oldest() {
         let mut ring = ProducedRing::new(2);
         ring.insert(block(5));
         ring.insert(block(9));

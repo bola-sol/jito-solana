@@ -202,7 +202,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retained_snapshot_replays_latest_value_only() {
+    fn test_retained_snapshot_replays_latest_value_only() {
         let publisher = Publisher::new();
         publisher.publish("summary", "root_slot", &1u64);
         publisher.publish("summary", "root_slot", &2u64);
@@ -212,14 +212,14 @@ mod tests {
     }
 
     #[test]
-    fn ephemeral_messages_are_not_replayed() {
+    fn test_ephemeral_messages_are_not_replayed() {
         let publisher = Publisher::new();
         publisher.publish_ephemeral("slot", "update", &1u64);
         assert!(publisher.snapshot().is_empty());
     }
 
     #[test]
-    fn retain_only_updates_snapshot_without_broadcasting() {
+    fn test_retain_only_updates_snapshot_without_broadcasting() {
         let publisher = Publisher::new();
         let mut receiver = publisher.subscribe();
         publisher.retain_only("peers", "all", &[1u64, 2]);
@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn subscribers_are_counted_while_they_are_attached() {
+    fn test_subscribers_are_counted_while_they_are_attached() {
         let publisher = Publisher::new();
         assert_eq!(publisher.subscriber_count(), 0);
         let first = publisher.subscribe();
@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn debounce_suppresses_unchanged_values() {
+    fn test_debounce_suppresses_unchanged_values() {
         let publisher = Publisher::new();
         let mut receiver = publisher.subscribe();
         let mut debounced = Debounced::default();
@@ -252,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn envelope_has_topic_key_and_value() {
+    fn test_envelope_has_topic_key_and_value() {
         let message = encode("summary", "cluster", &"testnet");
         assert_eq!(
             &*message,
@@ -261,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn query_responses_carry_the_request_id() {
+    fn test_query_responses_carry_the_request_id() {
         let message = encode_with_id("summary", "ping", Some(42), &());
         assert_eq!(
             &*message,

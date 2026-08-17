@@ -272,7 +272,7 @@ mod tests {
     /// overview grows, this is what notices before a client is cut off
     /// mid-snapshot in production.
     #[test]
-    fn the_largest_overview_fits_the_message_ceiling() {
+    fn test_largest_overview_fits_the_message_ceiling() {
         // Worst case throughout: a full ring, every slot with a leader, and a
         // name and icon as long as a validator-info account can carry.
         //
@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn our_own_slots_outlive_the_window() {
+    fn test_our_own_slots_outlive_the_window() {
         // Without this a client that reconnects is sent a window that almost
         // never contains one of its own slots, and the sidebar's own-slots view
         // comes back empty on every reload.
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn own_retention_is_bounded() {
+    fn test_own_retention_is_bounded() {
         let mut ring = SlotRing::new(8);
         for slot in 1..=100 {
             ring.update(slot, |entry| entry.mine = true);
@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn keeping_our_own_costs_the_oldest_ordinary_slot() {
+    fn test_keeping_our_own_costs_the_oldest_ordinary_slot() {
         let mut ring = SlotRing::new(8);
         ring.update(1, |entry| entry.mine = true);
         for slot in 2..=100 {
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn pruning_settles_where_the_guard_will_leave_it_alone() {
+    fn test_pruning_settles_where_the_guard_will_leave_it_alone() {
         // `prune` returns early at `capacity`, so it has to prune to at most
         // that. When our own slots were kept on top of the capacity instead of
         // within it, the map settled above the threshold and the guard never
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn the_overview_carries_our_own_slots_from_before_it() {
+    fn test_overview_carries_our_own_slots_from_before_it() {
         let mut ring = SlotRing::new(512);
         for slot in [1, 2] {
             ring.update(slot, |entry| entry.mine = true);
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn an_own_slot_inside_the_window_is_not_sent_twice() {
+    fn test_own_slot_inside_the_window_is_not_sent_twice() {
         let mut ring = SlotRing::new(512);
         for slot in 1..=20 {
             ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn level_never_regresses() {
+    fn test_level_never_regresses() {
         let mut ring = SlotRing::new(16);
         ring.update(10, |entry| entry.level = SlotLevel::Rooted);
         assert!(
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn update_reports_only_real_changes() {
+    fn test_update_reports_only_real_changes() {
         let mut ring = SlotRing::new(16);
         assert!(
             ring.update(1, |entry| entry.level = SlotLevel::Completed)
@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn ring_is_bounded() {
+    fn test_ring_is_bounded() {
         let mut ring = SlotRing::new(4);
         for slot in 0..10 {
             ring.update(slot, |entry| entry.level = SlotLevel::Completed);
@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn promote_advances_replayed_slots_only() {
+    fn test_promote_advances_replayed_slots_only() {
         let mut ring = SlotRing::new(16);
         ring.update(1, |entry| entry.level = SlotLevel::Completed);
         ring.update(2, |_| {}); // never replayed
@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn promote_does_not_demote() {
+    fn test_promote_does_not_demote() {
         let mut ring = SlotRing::new(16);
         ring.update(1, |entry| entry.level = SlotLevel::Finalized);
         assert!(ring.promote(1, SlotLevel::Rooted).is_empty());
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn marking_skipped_leaves_completed_slots_alone() {
+    fn test_marking_skipped_leaves_completed_slots_alone() {
         let mut ring = SlotRing::new(16);
         ring.update(1, |entry| entry.level = SlotLevel::Completed);
         ring.update(2, |_| {});

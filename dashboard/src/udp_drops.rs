@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn sums_every_socket_sharing_a_port() {
+    fn test_sums_every_socket_sharing_a_port() {
         let ports = parse(V4);
         let reused = ports[&8001];
         assert_eq!(reused.drops, 42);
@@ -238,13 +238,13 @@ mod tests {
     }
 
     #[test]
-    fn an_idle_socket_reports_zeroes_rather_than_being_absent() {
+    fn test_idle_socket_reports_zeroes_rather_than_being_absent() {
         let ports = parse(V4);
         assert_eq!(ports[&8899], PortCounters::default());
     }
 
     #[test]
-    fn the_two_address_families_merge_into_one_port() {
+    fn test_two_address_families_merge_into_one_port() {
         let mut ports = PortMap::new();
         assert_eq!(parse_into(V4, &mut ports), 3);
         assert_eq!(parse_into(V6, &mut ports), 1);
@@ -254,13 +254,13 @@ mod tests {
     }
 
     #[test]
-    fn headings_alone_yield_nothing() {
+    fn test_headings_alone_yield_nothing() {
         assert_eq!(parse(V4.lines().next().unwrap()).len(), 0);
         assert_eq!(parse("").len(), 0);
     }
 
     #[test]
-    fn a_malformed_row_does_not_poison_the_total() {
+    fn test_malformed_row_does_not_poison_the_total() {
         let text = format!("{V4}  311: garbage\n  312: 00000000:1F41 nonsense here\n");
         let ports = parse(&text);
         assert_eq!(ports[&8001].drops, 42);
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn a_burst_ages_out_of_the_window() {
+    fn test_burst_ages_out_of_the_window() {
         let base = Instant::now();
         let mut window = DropWindow::new(Duration::from_secs(60));
 
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn the_window_covers_at_least_its_span_once_filled() {
+    fn test_window_covers_at_least_its_span_once_filled() {
         let base = Instant::now();
         let mut window = DropWindow::new(Duration::from_secs(60));
         for second in 0..=120 {
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn a_short_window_reports_the_span_it_has_actually_watched() {
+    fn test_short_window_reports_the_span_it_has_actually_watched() {
         let base = Instant::now();
         let mut window = DropWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 0));
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn a_port_with_no_baseline_in_the_window_reports_no_drops() {
+    fn test_port_with_no_baseline_in_the_window_reports_no_drops() {
         // Rather than the whole cumulative total, which would show a socket
         // bound part-way through the window as having dropped everything it
         // has ever dropped inside it.
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn a_counter_reset_reads_as_no_drops_rather_than_a_wrap() {
+    fn test_counter_reset_reads_as_no_drops_rather_than_a_wrap() {
         let base = Instant::now();
         let mut window = DropWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 900));
@@ -335,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn a_row_missing_its_trailing_columns_is_skipped() {
+    fn test_row_missing_its_trailing_columns_is_skipped() {
         // Truncated after `inode`, as a kernel predating the drops column would
         // print it. Reading the last field instead of the thirteenth would take
         // the inode here and report it as millions of drops.

@@ -62,7 +62,7 @@ mod tests {
     }
 
     #[test]
-    fn fraction_is_measured_from_the_first_slot_seen() {
+    fn test_fraction_is_measured_from_the_first_slot_seen() {
         let mut publisher = StartupPublisher::default();
         // Replay resumes from a snapshot at slot 1000 and is heading for 2000.
         assert_eq!(publisher.fraction(Some((1000, 2000))), Some(0.0));
@@ -71,13 +71,13 @@ mod tests {
     }
 
     #[test]
-    fn fraction_is_absent_without_replay_slots() {
+    fn test_fraction_is_absent_without_replay_slots() {
         let mut publisher = StartupPublisher::default();
         assert_eq!(publisher.fraction(None), None);
     }
 
     #[test]
-    fn fraction_never_exceeds_one_or_runs_backwards() {
+    fn test_fraction_never_exceeds_one_or_runs_backwards() {
         let mut publisher = StartupPublisher::default();
         assert_eq!(publisher.fraction(Some((1000, 1100))), Some(0.0));
         // Overshooting the target must not report more than complete.
@@ -87,19 +87,19 @@ mod tests {
     }
 
     #[test]
-    fn a_target_already_reached_reads_as_complete() {
+    fn test_target_already_reached_reads_as_complete() {
         let mut publisher = StartupPublisher::default();
         assert_eq!(publisher.fraction(Some((1000, 1000))), Some(1.0));
     }
 
     #[test]
-    fn a_target_behind_the_origin_reports_nothing() {
+    fn test_target_behind_the_origin_reports_nothing() {
         let mut publisher = StartupPublisher::default();
         assert_eq!(publisher.fraction(Some((1000, 900))), None);
     }
 
     #[test]
-    fn publishing_fills_in_the_fraction() {
+    fn test_publishing_fills_in_the_fraction() {
         let publisher = Publisher::new();
         let mut startup = StartupPublisher::default();
         startup.publish(&publisher, progress(Some((100, 200))));
@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn the_internal_slots_are_not_sent_to_clients() {
+    fn test_internal_slots_are_not_sent_to_clients() {
         let publisher = Publisher::new();
         let mut startup = StartupPublisher::default();
         startup.publish(&publisher, progress(Some((100, 200))));

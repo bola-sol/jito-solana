@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_a_validator_info_account() {
+    fn test_parses_a_validator_info_account() {
         let identity = Pubkey::new_unique();
         let data = encode(
             vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn fields_the_dashboard_does_not_render_are_ignored() {
+    fn test_fields_the_dashboard_does_not_render_are_ignored() {
         // The account carries more than this struct asks for. An unknown field
         // must be skipped rather than failing the whole parse, or a validator
         // publishing a website would lose its name too.
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_other_config_accounts() {
+    fn test_ignores_other_config_accounts() {
         let data = encode(
             vec![(Pubkey::new_unique(), false), (Pubkey::new_unique(), true)],
             r#"{"name":"nope"}"#,
@@ -179,14 +179,14 @@ mod tests {
     }
 
     #[test]
-    fn ignores_malformed_data() {
+    fn test_ignores_malformed_data() {
         assert!(parse(&[]).is_none());
         assert!(parse(&[0xff; 32]).is_none());
         assert!(parse(&vec![0u8; MAX_VALIDATOR_INFO_LEN.saturating_add(1)]).is_none());
     }
 
     #[test]
-    fn insert_reports_only_changes() {
+    fn test_insert_reports_only_changes() {
         let mut cache = ValidatorInfoCache::default();
         let identity = Pubkey::new_unique();
         let info = ValidatorInfo {

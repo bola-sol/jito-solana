@@ -1257,14 +1257,14 @@ mod tests {
     }
 
     #[test]
-    fn the_mean_spans_the_ends_of_the_window() {
+    fn test_mean_spans_the_ends_of_the_window() {
         // Ten slots over four seconds is 400ms each, however the middle fell.
         let samples = window(&[(100, 1_000), (105, 3_100), (110, 5_000)]);
         assert_eq!(windowed_mean_nanos(&samples), Some(400_000_000));
     }
 
     #[test]
-    fn one_slow_slot_barely_moves_the_mean() {
+    fn test_one_slow_slot_barely_moves_the_mean() {
         // 150 slots at 400ms with a single two-second slot among them.
         let steady = 150_u64 * 400;
         assert_eq!(
@@ -1274,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repair_burst_is_not_reported_as_the_cluster_rate() {
+    fn test_repair_burst_is_not_reported_as_the_cluster_rate() {
         // A thousand slots arriving in two seconds is a download, not a cluster.
         assert_eq!(
             windowed_mean_nanos(&window(&[(0, 0), (1_000, 2_000)])),
@@ -1283,13 +1283,13 @@ mod tests {
     }
 
     #[test]
-    fn a_window_that_cannot_span_two_slots_reports_nothing() {
+    fn test_window_that_cannot_span_two_slots_reports_nothing() {
         assert_eq!(windowed_mean_nanos(&window(&[])), None);
         assert_eq!(windowed_mean_nanos(&window(&[(100, 1_000)])), None);
     }
 
     #[test]
-    fn releases_fold_their_prerelease_tags() {
+    fn test_releases_fold_their_prerelease_tags() {
         assert_eq!(release_of("4.2.0-rc.1"), "4.2.0");
         assert_eq!(release_of("0.1102.0-beta.40201"), "0.1102.0");
         assert_eq!(release_of("4.2.0"), "4.2.0");
@@ -1297,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn folding_leaves_strings_that_are_not_semver_alone() {
+    fn test_folding_leaves_strings_that_are_not_semver_alone() {
         // Gossip is not obliged to send semver, and a version that cannot be
         // parsed is better reported verbatim than dropped.
         assert_eq!(release_of(""), "");

@@ -83,21 +83,21 @@ Inter-|   Receive                                                |  Transmit
 ";
 
     #[test]
-    fn sums_interfaces_and_excludes_loopback() {
+    fn test_sums_interfaces_and_excludes_loopback() {
         let counters = parse(SAMPLE).unwrap();
         assert_eq!(counters.received, 5500);
         assert_eq!(counters.sent, 7300);
     }
 
     #[test]
-    fn headings_alone_yield_nothing() {
+    fn test_headings_alone_yield_nothing() {
         let headings = SAMPLE.lines().take(2).collect::<Vec<_>>().join("\n");
         assert!(parse(&headings).is_none());
         assert!(parse("").is_none());
     }
 
     #[test]
-    fn a_malformed_row_does_not_poison_the_total() {
+    fn test_malformed_row_does_not_poison_the_total() {
         let text = format!("{SAMPLE}  eth2: garbage\n");
         // The row parses to zeros rather than being counted as real traffic.
         assert_eq!(parse(&text).unwrap().received, 5500);

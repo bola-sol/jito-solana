@@ -133,12 +133,112 @@ fn parse(data: &[u8]) -> Option<(Pubkey, ValidatorInfo)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::fixture::fixture,
+        solana_account::{Account, AccountSharedData},
+    };
 
     fn encode(keys: Vec<(Pubkey, bool)>, json: &str) -> Vec<u8> {
         let mut data = bincode::serialize(&ConfigKeys { keys }).unwrap();
         data.extend(bincode::serialize(&json.to_string()).unwrap());
         data
+    }
+
+    /// A validator-info account as it sits on chain, owned by the config
+    /// program and signed for by `identity`.
+    fn info_account(identity: Pubkey, json: &str) -> AccountSharedData {
+        AccountSharedData::from(Account {
+            lamports: 1,
+            data: encode(
+                vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],
+                json,
+            ),
+            owner: solana_sdk_ids::config::id(),
+            executable: false,
+            rent_epoch: 0,
+        })
+    }
+
+    #[test]
+    fn test_the_slot_sweep_finds_info_written_in_that_slot() {
+        // The cheap path, run every few seconds against each newly frozen bank.
+        let harness = fixture();
+        let identity = Pubkey::new_unique();
+        let bank = harness.advance_with(
+            1,
+            &[(
+                Pubkey::new_unique(),
+                info_account(identity, r#"{"name":"Lantern"}"#),
+            )],
+        );
+
+        let found = scan_slot(&bank);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, identity);
+        assert_eq!(found[0].1.name.as_deref(), Some("Lantern"));
+    }
+
+    #[test]
+    fn test_the_slot_sweep_ignores_slots_that_wrote_nothing() {
+        // Which is almost every slot: config accounts are written perhaps once
+        // a day across the whole cluster. A sweep that returned the same
+        // entries every tick would take the cache lock for nothing.
+        let harness = fixture();
+        harness.advance_with(
+            1,
+            &[(
+                Pubkey::new_unique(),
+                info_account(Pubkey::new_unique(), r#"{"name":"Lantern"}"#),
+            )],
+        );
+        let later = harness.advance_to(2);
+
+        assert!(
+            scan_slot(&later).is_empty(),
+            "a slot's sweep must cover its own writes only"
+        );
+    }
+
+    #[test]
+    fn test_the_full_scan_finds_info_from_an_earlier_slot() {
+        // The one-shot startup scan, which is what populates the cache at all:
+        // the slot sweep only ever sees writes that happen while it is running.
+        let harness = fixture();
+        let identity = Pubkey::new_unique();
+        harness.advance_with(
+            1,
+            &[(
+                Pubkey::new_unique(),
+                info_account(identity, r#"{"name":"Lantern"}"#),
+            )],
+        );
+        let later = harness.advance_to(2);
+
+        let found = scan_all(&later);
+        assert_eq!(found.len(), 1, "the scan should reach back past this slot");
+        assert_eq!(found[0].0, identity);
+    }
+
+    #[test]
+    fn test_merging_reports_only_what_changed() {
+        // The count drives a debug line, but the filter behind it is what stops
+        // an unchanged name republishing every slot that mentions it.
+        let mut cache = ValidatorInfoCache::default();
+        assert!(cache.is_empty());
+
+        let identity = Pubkey::new_unique();
+        let info = ValidatorInfo {
+            name: Some("Lantern".into()),
+            icon_url: None,
+        };
+        assert_eq!(cache.merge(vec![(identity, info.clone())]), 1);
+        assert_eq!(cache.merge(vec![(identity, info)]), 0, "nothing changed");
+        assert_eq!(cache.len(), 1);
+        assert_eq!(
+            cache.get(&identity).and_then(|info| info.name.as_deref()),
+            Some("Lantern")
+        );
     }
 
     #[test]

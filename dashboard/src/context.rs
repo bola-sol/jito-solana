@@ -77,3 +77,35 @@ impl DashboardContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::fixture::fixture};
+
+    #[test]
+    fn test_the_identity_is_the_one_gossip_announces() {
+        // Read through cluster info rather than held as a field, because an
+        // operator can swap a validator's identity while it runs and the page
+        // has to follow.
+        let harness = fixture();
+        assert_eq!(harness.ctx.identity(), harness.identity);
+    }
+
+    #[test]
+    fn test_every_cluster_reports_a_name() {
+        // The header renders this directly, so an unnamed cluster would show a
+        // blank badge. Genesis only ever yields `development` in a test, so the
+        // rest are set here rather than left unexercised.
+        let harness = fixture();
+        for (cluster_type, name) in [
+            (ClusterType::Testnet, "testnet"),
+            (ClusterType::MainnetBeta, "mainnet-beta"),
+            (ClusterType::Devnet, "devnet"),
+            (ClusterType::Development, "development"),
+        ] {
+            let mut ctx = harness.ctx.clone();
+            ctx.cluster_type = cluster_type;
+            assert_eq!(ctx.cluster_name(), name);
+        }
+    }
+}

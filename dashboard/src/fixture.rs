@@ -18,6 +18,7 @@ use {
         proto::Publisher,
         validator_info::ValidatorInfoCache,
     },
+    solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
@@ -74,6 +75,14 @@ impl Fixture {
     /// durations and the skip rate all need slots to have passed. Both banks
     /// are frozen because the collector only looks at frozen ones.
     pub fn advance_to(&self, slot: Slot) -> Arc<Bank> {
+        self.advance_with(slot, &[])
+    }
+
+    /// As [`Self::advance_to`], with `accounts` written in the new slot.
+    ///
+    /// Written before the child freezes: a bank asserts against stores once
+    /// freezing has started, so there is no adding to it afterwards.
+    pub fn advance_with(&self, slot: Slot, accounts: &[(Pubkey, AccountSharedData)]) -> Arc<Bank> {
         let parent = self.working_bank();
         if !parent.is_frozen() {
             parent.freeze();
@@ -86,6 +95,9 @@ impl Fixture {
             },
             slot,
         );
+        for (pubkey, account) in accounts {
+            bank.store_account(pubkey, account);
+        }
         bank.freeze();
         self.bank_forks.write().unwrap().insert(bank);
         self.bank_forks.read().unwrap().get(slot).unwrap()

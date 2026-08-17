@@ -37,5 +37,13 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["compat"] }
 
+[dev-dependencies]
+# Depends on itself so that the whole crate is not gated out from under its own
+# tests. `lib.rs` is behind `agave-unstable-api`, and without this a bare
+# `cargo test -p agave-dashboard` would compile an empty crate and report zero
+# tests passing rather than failing. The same pattern appears in gossip,
+# ledger and runtime for the same reason.
+agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
+
 [lints]
 workspace = true

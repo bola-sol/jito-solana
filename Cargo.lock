@@ -137,6 +137,7 @@ dependencies = [
 name = "agave-dashboard"
 version = "4.2.1"
 dependencies = [
+ "agave-dashboard",
  "bincode",
  "log",
  "serde",

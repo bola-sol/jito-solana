@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! A web dashboard for the Agave validator.
 //!
 //! The validator serves a single-page app and a websocket feed of its own

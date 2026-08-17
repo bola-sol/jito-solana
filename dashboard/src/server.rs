@@ -633,6 +633,7 @@ mod tests {
     use {
         super::*,
         soketto::handshake::{Client, ServerResponse},
+        tokio_util::compat::Compat,
     };
 
     #[test]
@@ -1125,36 +1126,133 @@ mod tests {
         assert!(reply.starts_with("HTTP/1.1 405 Method Not Allowed"));
     }
 
-    #[tokio::test]
-    async fn test_a_websocket_client_is_sent_the_retained_snapshot() {
-        // The reason the feed works at all: a client connecting at any moment
-        // is caught up in one shot rather than waiting for each value to change
-        // again. Driven with a real soketto client so the handshake, the
-        // per-message flush and the frame encoding are all exercised.
+    /// Serves exactly one connection, and hands back where to reach it.
+    async fn serve_one(
+        publisher: Arc<Publisher>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::task::JoinHandle<Result<(), ConnectionError>>,
+    ) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let allowed_hosts = vec!["x".to_string()];
+            let (socket, _) = listener.accept().await.unwrap();
+            handle(socket, publisher, Limits::new(), &allowed_hosts).await
+        });
+        (addr, server)
+    }
 
-        let publisher = Arc::new(Publisher::new());
-        publisher.publish("summary", "cluster", &"testnet");
-        publisher.publish("summary", "root_slot", &7u64);
-
-        let allowed_hosts = vec!["x".to_string()];
-        let server = {
-            let publisher = publisher.clone();
-            tokio::spawn(async move {
-                let (socket, _) = listener.accept().await.unwrap();
-                handle(socket, publisher, Limits::new(), &allowed_hosts).await
-            })
-        };
-
+    /// Connects a real client and completes the handshake.
+    async fn connect(addr: std::net::SocketAddr) -> Client<'static, Compat<TcpStream>> {
         let stream = TcpStream::connect(addr).await.unwrap();
         let mut client = Client::new(stream.compat(), "x", WEBSOCKET_PATH);
         match client.handshake().await.unwrap() {
             ServerResponse::Accepted { .. } => {}
             _ => panic!("the server refused a well-formed handshake"),
         }
+        client
+    }
 
-        let (mut sender, mut receiver) = client.into_builder().finish();
+    #[tokio::test]
+    async fn test_a_value_changing_reaches_a_connected_client() {
+        // The other half of the feed. The snapshot catches a client up; this is
+        // what keeps it current, and nothing had exercised the update arm of
+        // the select loop — so a server that only ever sent the snapshot would
+        // have passed every test here.
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+
+        // Reading the snapshot first is what orders this: the server subscribes
+        // before it sends, so a frame in hand proves the subscription exists
+        // and the publish below cannot land in the gap.
+        let mut first = Vec::new();
+        receiver.receive_data(&mut first).await.unwrap();
+
+        publisher.publish("summary", "root_slot", &42u64);
+        let mut update = Vec::new();
+        receiver.receive_data(&mut update).await.unwrap();
+        let update = String::from_utf8(update).unwrap();
+        assert!(
+            update.contains(r#""key":"root_slot""#) && update.contains(r#""value":42"#),
+            "expected the update, got {update}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_a_client_request_is_answered_on_the_same_socket() {
+        // Client frames are polled ahead of the update stream, so a request is
+        // answered even while values are moving. One that went unanswered would
+        // leave the caller waiting on an id that never comes back.
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+
+        sender
+            .send_text(r#"{"topic":"summary","key":"ping","id":7}"#)
+            .await
+            .unwrap();
+        sender.flush().await.unwrap();
+
+        let mut reply = Vec::new();
+        receiver.receive_data(&mut reply).await.unwrap();
+        let reply = String::from_utf8(reply).unwrap();
+        assert!(
+            reply.contains(r#""id":7"#),
+            "the reply did not carry the request's id: {reply}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_an_oversized_client_message_ends_the_connection() {
+        // The connection-level limit has to clear the largest message the
+        // server sends, so the much smaller bound on what a client may send is
+        // applied by hand after the frame arrives. Without it a caller could
+        // make the validator buffer a megabyte per connection.
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+
+        let oversized = "x".repeat(MAX_CLIENT_MESSAGE + 1);
+        sender.send_text(&oversized).await.unwrap();
+        sender.flush().await.unwrap();
+
+        match server.await.unwrap() {
+            Err(ConnectionError::Oversized(len)) => {
+                assert!(len > MAX_CLIENT_MESSAGE, "reported {len} bytes")
+            }
+            other => panic!("expected the connection to be dropped, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_websocket_client_is_sent_the_retained_snapshot() {
+        // The reason the feed works at all: a client connecting at any moment
+        // is caught up in one shot rather than waiting for each value to change
+        // again. Driven with a real soketto client so the handshake, the
+        // per-message flush and the frame encoding are all exercised.
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        publisher.publish("summary", "root_slot", &7u64);
+        let (addr, server) = serve_one(publisher.clone()).await;
+
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
         let mut frames = Vec::new();
         for _ in 0..2 {
             let mut data = Vec::new();

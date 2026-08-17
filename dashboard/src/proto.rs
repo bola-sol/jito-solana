@@ -43,6 +43,15 @@ pub const MAX_MESSAGE: usize = 1024 * 1024;
 /// them.
 const BROADCAST_CAPACITY: usize = 8192;
 
+/// The topics a client can receive.
+///
+/// Here rather than beside whichever collector happens to publish them: they
+/// are part of the wire format, three modules send on `summary` alone, and one
+/// of them had grown its own copy of the string.
+pub const TOPIC_SUMMARY: &str = "summary";
+pub const TOPIC_EPOCH: &str = "epoch";
+pub const TOPIC_SLOT: &str = "slot";
+
 #[derive(Serialize)]
 struct Envelope<'a, T> {
     topic: &'a str,

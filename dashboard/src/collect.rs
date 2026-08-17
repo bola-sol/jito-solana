@@ -17,7 +17,7 @@ use {
     crate::{
         context::{DashboardContext, StartupProgressFn},
         produced::{ProducedBlock, ProducedRing},
-        proto::{Debounced, Publisher},
+        proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
         validator_info::{self, ValidatorInfoCache},
@@ -32,10 +32,6 @@ use {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
-
-pub(crate) const TOPIC_SUMMARY: &str = "summary";
-const TOPIC_EPOCH: &str = "epoch";
-const TOPIC_SLOT: &str = "slot";
 
 /// A validator whose last vote is further behind than this is reported as
 /// delinquent, matching the threshold the RPC layer uses.

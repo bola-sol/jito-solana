@@ -8,12 +8,11 @@
 use {
     crate::{
         context::StartupProgress,
-        proto::{Debounced, Publisher},
+        proto::{Debounced, Publisher, TOPIC_SUMMARY},
     },
     solana_clock::Slot,
 };
 
-pub const TOPIC_SUMMARY: &str = "summary";
 pub const KEY_STARTUP_PROGRESS: &str = "startup_progress";
 
 #[derive(Default)]

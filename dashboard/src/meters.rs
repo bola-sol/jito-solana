@@ -14,10 +14,10 @@
 
 use {
     crate::{
-        collect::{CATCH_UP_SLOTS_PER_SECOND, TOPIC_SUMMARY, system_time_nanos},
+        collect::{CATCH_UP_SLOTS_PER_SECOND, system_time_nanos},
         context::{DashboardContext, StartupProgressFn},
         net_stats::{self, NetCounters},
-        proto::{Debounced, Publisher},
+        proto::{Debounced, Publisher, TOPIC_SUMMARY},
         udp_drops::{self, DropWindow, PortCounters},
     },
     serde::Serialize,

@@ -91,6 +91,13 @@ const SLOT_TIME_WINDOW_SLOTS: usize = 750;
 /// measurement that has not settled.
 const SLOT_TIME_MIN_SLOTS: u64 = 150;
 
+/// Slots the catch-up test spans.
+///
+/// A single pair is too noisy, since two slots can legitimately arrive a few
+/// milliseconds apart, while a run this long only looks fast when replay really
+/// is outrunning the cluster.
+const CATCH_UP_SAMPLE_SPAN: usize = 32;
+
 /// Bounds on the sustained figure. A stall can leave two samples hours apart,
 /// and an epoch countdown built on that reads in years.
 const SLOT_TIME_FLOOR_NANOS: u64 = 50_000_000;
@@ -352,9 +359,6 @@ pub struct Collector {
     last_shred_time: Option<(Slot, u64)>,
     /// `(slot, arrival)` pairs spanning the averaging window, oldest first.
     slot_time_window: VecDeque<(Slot, u64)>,
-    /// Where the validator finished starting, so that slots replayed before it
-    /// are kept out of the slot-time window. Set once.
-    caught_up_at: Option<Slot>,
     last_vote_advance: Instant,
 
     last_second_tick: Instant,
@@ -404,7 +408,6 @@ impl Collector {
             slot_timed_to: None,
             last_shred_time: None,
             slot_time_window: VecDeque::new(),
-            caught_up_at: None,
             last_vote_advance: now,
             last_second_tick: now.checked_sub(SECOND_TICK).unwrap_or(now),
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
@@ -646,8 +649,7 @@ impl Collector {
             }
 
             self.last_shred_time = Some((slot, arrived));
-            self.slot_time_window.push_back((slot, arrived));
-            trim_slot_window(&mut self.slot_time_window, self.caught_up_at);
+            self.record_slot_arrival(slot, arrived);
         }
 
         for entry in &changed {
@@ -659,6 +661,36 @@ impl Collector {
         match self.ctx.blockstore.meta(slot) {
             Ok(Some(meta)) if meta.first_shred_timestamp > 0 => Some(meta.first_shred_timestamp),
             _ => None,
+        }
+    }
+
+    /// Adds a sample to the slot-time window, discarding what sits behind a
+    /// burst of replay.
+    ///
+    /// Catching up contaminates a long window quietly. Over hundreds of slots a
+    /// burst in the middle leaves both ends looking ordinary, so a test across
+    /// the whole window would never see it and the mean would come out too low
+    /// for as long as the window held the burst. Tested over a short recent run
+    /// instead, and everything behind one is dropped.
+    fn record_slot_arrival(&mut self, slot: Slot, arrived: u64) {
+        self.slot_time_window.push_back((slot, arrived));
+        while self.slot_time_window.len() > SLOT_TIME_WINDOW_SLOTS {
+            self.slot_time_window.pop_front();
+        }
+
+        let behind = self
+            .slot_time_window
+            .len()
+            .saturating_sub(CATCH_UP_SAMPLE_SPAN);
+        let (Some(&first), Some(&last)) = (
+            self.slot_time_window.get(behind),
+            self.slot_time_window.back(),
+        ) else {
+            return;
+        };
+        if looks_like_catch_up(first, last) {
+            self.slot_time_window.clear();
+            self.slot_time_window.push_back(last);
         }
     }
 
@@ -1629,14 +1661,6 @@ impl Collector {
 
     fn collect_startup_progress(&mut self) {
         let progress = (self.startup_progress)();
-        // Marked once, where replay stopped racing through the ledger and
-        // started keeping pace with the cluster. Everything the slot-time
-        // window holds from before it is discarded, and nothing sets it again:
-        // a validator that falls behind later and catches up is not covered,
-        // which is the bargain Firedancer makes too.
-        if progress.running && self.caught_up_at.is_none() {
-            self.caught_up_at = Some(self.last_completed_slot);
-        }
         self.running = progress.running;
         self.startup.publish(&self.publisher, progress);
     }
@@ -1654,31 +1678,18 @@ fn slot_nanos_between(first: (Slot, u64), last: (Slot, u64)) -> Option<u64> {
     Some(((millis as f64 / slots as f64) * 1_000_000.0) as u64)
 }
 
-/// Bounds the slot-time window by length, and by where the validator caught up.
+/// Whether a span of samples arrived faster than a cluster can produce them.
 ///
-/// Slots replayed during startup arrived as fast as the ledger could be read
-/// rather than as fast as the cluster produces them, so a mean taken across
-/// them is a record of the download. They are dropped by slot number, once,
-/// rather than detected by rate.
-///
-/// A rate test was tried here and was a mistake. Whatever threshold it used, it
-/// was at its most sensitive when the window was short, which is the state
-/// clearing the window creates, so it cleared repeatedly during ordinary
-/// running and the mean it guarded never settled. Firedancer marks the slot it
-/// caught up at and floors its window there, which is what this does.
-///
-/// Nothing expires the floor: once the window has moved past that slot the
-/// comparison stops matching and costs one look at the front.
-fn trim_slot_window(window: &mut VecDeque<(Slot, u64)>, caught_up_at: Option<Slot>) {
-    while window.len() > SLOT_TIME_WINDOW_SLOTS {
-        window.pop_front();
-    }
-    let Some(caught_up) = caught_up_at else {
-        return;
+/// Repair delivers shreds for many old slots at once, so their arrival times
+/// bunch up and any mean taken across them collapses. That is a record of the
+/// download rather than of the cluster.
+fn looks_like_catch_up(first: (Slot, u64), last: (Slot, u64)) -> bool {
+    let Some(slots) = last.0.checked_sub(first.0).filter(|slots| *slots > 0) else {
+        return false;
     };
-    while window.front().is_some_and(|(slot, _)| *slot < caught_up) {
-        window.pop_front();
-    }
+    let millis = last.1.saturating_sub(first.1);
+    let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
+    per_second > CATCH_UP_SLOTS_PER_SECOND
 }
 
 /// Folds a gossip version string to its release, dropping any pre-release or
@@ -1745,57 +1756,25 @@ mod tests {
         assert_eq!(slot_nanos_between((100, 5_000), (110, 1_000)), None);
     }
 
-    fn window(samples: &[(Slot, u64)]) -> VecDeque<(Slot, u64)> {
-        samples.iter().copied().collect()
+    #[test]
+    fn a_repair_burst_is_recognised_as_a_download() {
+        // A thousand slots arriving in two seconds is not a cluster rate.
+        assert!(looks_like_catch_up((0, 0), (1_000, 2_000)));
     }
 
     #[test]
-    fn slots_replayed_before_catching_up_are_dropped() {
-        // Their arrivals record how fast the ledger was read, not how fast the
-        // cluster produces slots.
-        let mut held = window(&[(100, 0), (101, 5), (102, 9), (103, 400), (104, 800)]);
-        trim_slot_window(&mut held, Some(103));
-        assert_eq!(held, window(&[(103, 400), (104, 800)]));
+    fn an_ordinary_run_of_slots_is_not_mistaken_for_one() {
+        // Four hundred milliseconds a slot, and a brisk two hundred.
+        assert!(!looks_like_catch_up((0, 0), (32, 12_800)));
+        assert!(!looks_like_catch_up((0, 0), (32, 6_400)));
     }
 
     #[test]
-    fn the_floor_stops_mattering_once_the_window_has_moved_past_it() {
-        let mut held = window(&[(500, 0), (501, 400)]);
-        trim_slot_window(&mut held, Some(103));
-        assert_eq!(held.len(), 2);
-    }
-
-    #[test]
-    fn a_window_with_no_floor_is_only_bounded_by_length() {
-        let mut held = window(&[(100, 0), (101, 5)]);
-        trim_slot_window(&mut held, None);
-        assert_eq!(held.len(), 2);
-    }
-
-    #[test]
-    fn the_window_is_bounded_by_length() {
-        let mut held: VecDeque<(Slot, u64)> = (0..SLOT_TIME_WINDOW_SLOTS as u64 + 50)
-            .map(|slot| (slot, slot * 400))
-            .collect();
-        trim_slot_window(&mut held, None);
-        assert_eq!(held.len(), SLOT_TIME_WINDOW_SLOTS);
-        assert_eq!(held.front().map(|(slot, _)| *slot), Some(50));
-    }
-
-    #[test]
-    fn ordinary_running_never_empties_the_window() {
-        // The rate test this replaced cleared the window whenever a short run
-        // looked fast, which on a brisk cluster was most of the time, and the
-        // mean it guarded never settled long enough to be worth reading.
-        let mut held = VecDeque::new();
-        for slot in 0..2_000_u64 {
-            // Alternating 90ms and 300ms: an average well inside what a cluster
-            // does, with pairs far faster than any per-second threshold.
-            let arrived = (slot / 2) * 390 + if slot.is_multiple_of(2) { 0 } else { 90 };
-            held.push_back((slot, arrived));
-            trim_slot_window(&mut held, Some(0));
-        }
-        assert_eq!(held.len(), SLOT_TIME_WINDOW_SLOTS);
+    fn two_slots_arriving_together_do_not_look_like_catching_up() {
+        // Why the test spans a run rather than a pair: adjacent slots can land
+        // milliseconds apart without replay being involved at all.
+        assert!(looks_like_catch_up((100, 1_000), (101, 1_005)));
+        assert!(!looks_like_catch_up((100, 1_000), (132, 1_005 + 12_795)));
     }
 
     #[test]

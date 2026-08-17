@@ -63,16 +63,15 @@ impl SlotEntry {
     }
 }
 
-/// This validator's own leader slots held back from pruning.
+/// This validator's own leader slots kept past the window.
 ///
 /// A validator leads roughly one slot in eight hundred, so a window sized for
-/// the live strip holds none of its own. Held back, a client that reconnects
-/// still receives them; pruned with everything else, the sidebar's own-slots
-/// view would be empty on every reload.
+/// the live strip holds none of its own. Kept separately, a client that
+/// reconnects still receives them; pruned with everything else, the sidebar's
+/// own-slots view would be empty on every reload.
 ///
-/// They occupy the ring's capacity rather than extending it, so the oldest
-/// ordinary slots make way for them. Matches the browser's own retention, so a
-/// reload restores what was on screen rather than some other depth.
+/// Matches the browser's own retention, so a reload restores what was on screen
+/// rather than some other depth.
 const OWN_SLOTS_KEPT: usize = 64;
 
 /// A bounded, slot-keyed history. Slots more than `capacity` behind the highest
@@ -160,19 +159,8 @@ impl SlotRing {
         for (&slot, entry) in &self.entries {
             if entry.mine { &mut own } else { &mut rest }.push(slot);
         }
-        // Our own slots are kept within the ring's capacity, not on top of it.
-        // Kept on top, the map settled above the threshold the guard returns
-        // early at, so the guard never fired again: every update ran this whole
-        // scan, removed nothing, and left the length exactly where it was.
-        //
-        // The cost is that a validator holding its full allowance of leader
-        // slots keeps that many fewer ordinary ones, which out of four thousand
-        // is not a window anybody will miss.
         let drop_own = own.len().saturating_sub(OWN_SLOTS_KEPT);
-        let kept_own = own.len().saturating_sub(drop_own);
-        let drop_rest = rest
-            .len()
-            .saturating_sub(self.capacity.saturating_sub(kept_own));
+        let drop_rest = rest.len().saturating_sub(self.capacity);
         for slot in own
             .into_iter()
             .take(drop_own)
@@ -323,34 +311,6 @@ mod tests {
             ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
         }
         assert_eq!(ours(&ring), vec![1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn pruning_settles_where_the_guard_will_leave_it_alone() {
-        // `prune` returns early at `capacity`, so it has to prune to at most
-        // that. When our own slots were kept on top of the capacity instead of
-        // within it, the map settled above the threshold and the guard never
-        // fired again: every update ran the whole scan, removed nothing, and
-        // left the length where it was. Nothing failed, it just burned the
-        // collector's tick, and samples started arriving late.
-        let mut ring = SlotRing::new(256);
-        for slot in 1..=80 {
-            ring.update(slot, |entry| entry.mine = true);
-        }
-        for slot in 81..=2_000 {
-            ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
-        }
-
-        let settled = ring.entries.len();
-        assert!(
-            settled <= ring.capacity,
-            "settled at {settled}, above the {} the guard returns early at",
-            ring.capacity
-        );
-
-        // The fixed point itself: pruning again has nothing left to do.
-        ring.prune();
-        assert_eq!(ring.entries.len(), settled);
     }
 
     #[test]

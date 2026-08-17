@@ -45,5 +45,17 @@ tokio-util = { workspace = true, features = ["compat"] }
 # ledger and runtime for the same reason.
 agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
 
+# Re-declared with their test features so `src/fixture.rs` can build a bank, a
+# blockstore and a cluster info. Cargo unifies these with the entries above for
+# the test build; the shipped crate is unaffected.
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
+solana-keypair = { workspace = true }
+solana-leader-schedule = { workspace = true }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { workspace = true }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signer = { workspace = true }
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

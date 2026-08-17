@@ -9,6 +9,10 @@
 pub mod collect;
 pub mod config;
 pub mod context;
+/// Shared by the tests in several modules, so it lives at the crate root
+/// rather than being rebuilt inside each `mod tests`.
+#[cfg(test)]
+pub(crate) mod fixture;
 pub mod meters;
 pub mod net_stats;
 pub mod produced;

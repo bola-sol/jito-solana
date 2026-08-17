@@ -72,36 +72,9 @@ const PRODUCED_BLOCKS: usize = 64;
 /// stays visible for a while after it stops, short enough that it clears.
 const DROPS_WINDOW: Duration = Duration::from_secs(60);
 
-/// Window the live slot-time reading averages over. Short on purpose: it says
-/// what the cluster is doing now, and is not a rate to project with.
-const SLOT_TIME_LIVE_MS: u64 = 60_000;
-
-/// Slots the sustained average spans, and so how many samples are kept.
-///
-/// Long enough that a countdown built on it does not visibly move. A minute's
-/// worth did not manage that: multiplied by an epoch of remaining slots, its
-/// wobble came out as minutes of jitter. Matches Firedancer's window, so the
-/// two dashboards project alike.
-const SLOT_TIME_WINDOW_SLOTS: usize = 750;
-
-/// Slots the sustained average needs before it will report at all.
-///
-/// Under this the window is still filling and its mean moves about, so a caller
-/// falls back to the cluster's configured rate rather than projecting from a
-/// measurement that has not settled.
-const SLOT_TIME_MIN_SLOTS: u64 = 150;
-
-/// Slots the catch-up test spans.
-///
-/// A single pair is too noisy, since two slots can legitimately arrive a few
-/// milliseconds apart, while a run this long only looks fast when replay really
-/// is outrunning the cluster.
-const CATCH_UP_SAMPLE_SPAN: usize = 32;
-
-/// Bounds on the sustained figure. A stall can leave two samples hours apart,
-/// and an epoch countdown built on that reads in years.
-const SLOT_TIME_FLOOR_NANOS: u64 = 50_000_000;
-const SLOT_TIME_CEILING_NANOS: u64 = 10_000_000_000;
+/// Window the reported slot time averages over. Short enough to follow the
+/// cluster, long enough that a single slow slot does not move the reading.
+const SLOT_TIME_WINDOW_MS: u64 = 60_000;
 
 /// Slots timed in one tick. Bounds the blockstore lookups after a stall, when
 /// the cursor could otherwise be thousands of slots behind.
@@ -277,7 +250,6 @@ struct Debounces {
     block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
-    sustained_slot_duration_nanos: Debounced<Option<u64>>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
     health: Debounced<Health>,
@@ -598,17 +570,7 @@ impl Collector {
             &self.publisher,
             TOPIC_SUMMARY,
             "observed_slot_duration_nanos",
-            self.live_slot_nanos(),
-        );
-
-        // Published alongside the live reading rather than replacing it. The
-        // two answer different questions: what the cluster is doing this minute,
-        // and what rate to project the rest of an epoch at.
-        self.debounces.sustained_slot_duration_nanos.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "sustained_slot_duration_nanos",
-            self.sustained_slot_nanos(),
+            self.windowed_slot_nanos(),
         );
     }
 
@@ -649,7 +611,14 @@ impl Collector {
             }
 
             self.last_shred_time = Some((slot, arrived));
-            self.record_slot_arrival(slot, arrived);
+            self.slot_time_window.push_back((slot, arrived));
+            while let Some((_, oldest)) = self.slot_time_window.front() {
+                if arrived.saturating_sub(*oldest) > SLOT_TIME_WINDOW_MS {
+                    self.slot_time_window.pop_front();
+                } else {
+                    break;
+                }
+            }
         }
 
         for entry in &changed {
@@ -664,59 +633,28 @@ impl Collector {
         }
     }
 
-    /// Adds a sample to the slot-time window, discarding what sits behind a
-    /// burst of replay.
+    /// Mean milliseconds per slot across the window, in nanoseconds.
     ///
-    /// Catching up contaminates a long window quietly. Over hundreds of slots a
-    /// burst in the middle leaves both ends looking ordinary, so a test across
-    /// the whole window would never see it and the mean would come out too low
-    /// for as long as the window held the burst. Tested over a short recent run
-    /// instead, and everything behind one is dropped.
-    fn record_slot_arrival(&mut self, slot: Slot, arrived: u64) {
-        self.slot_time_window.push_back((slot, arrived));
-        while self.slot_time_window.len() > SLOT_TIME_WINDOW_SLOTS {
-            self.slot_time_window.pop_front();
-        }
+    /// A true mean between the ends of the window rather than a decaying
+    /// average, so it does not drift and does not need to be seeded.
+    fn windowed_slot_nanos(&self) -> Option<u64> {
+        let (first_slot, first_arrival) = self.slot_time_window.front().copied()?;
+        let (last_slot, last_arrival) = self.slot_time_window.back().copied()?;
+        let slots = last_slot
+            .checked_sub(first_slot)
+            .filter(|slots| *slots > 0)?;
+        let millis = last_arrival.checked_sub(first_arrival)?;
 
-        let behind = self
-            .slot_time_window
-            .len()
-            .saturating_sub(CATCH_UP_SAMPLE_SPAN);
-        let (Some(&first), Some(&last)) = (
-            self.slot_time_window.get(behind),
-            self.slot_time_window.back(),
-        ) else {
-            return;
-        };
-        if looks_like_catch_up(first, last) {
-            self.slot_time_window.clear();
-            self.slot_time_window.push_back(last);
-        }
-    }
-
-    /// What the cluster is doing now: the mean across the last minute.
-    fn live_slot_nanos(&self) -> Option<u64> {
-        let &last = self.slot_time_window.back()?;
-        let &first = self
-            .slot_time_window
-            .iter()
-            .find(|(_, arrival)| last.1.saturating_sub(*arrival) <= SLOT_TIME_LIVE_MS)?;
-        slot_nanos_between(first, last)
-    }
-
-    /// The rate to project with: the mean across the whole window.
-    ///
-    /// `None` until the window spans enough slots to hold still, so a caller
-    /// uses the cluster's configured rate rather than a figure that is visibly
-    /// settling in the first minutes after start.
-    fn sustained_slot_nanos(&self) -> Option<u64> {
-        let &first = self.slot_time_window.front()?;
-        let &last = self.slot_time_window.back()?;
-        if last.0.saturating_sub(first.0) < SLOT_TIME_MIN_SLOTS {
+        // Repair delivers shreds for many old slots at once, so their arrival
+        // times bunch up and the mean collapses. That is a record of the
+        // download, not of the cluster, so it is not reported.
+        let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
+        if per_second > CATCH_UP_SLOTS_PER_SECOND {
             return None;
         }
-        slot_nanos_between(first, last)
-            .map(|nanos| nanos.clamp(SLOT_TIME_FLOOR_NANOS, SLOT_TIME_CEILING_NANOS))
+
+        let nanos = (millis as f64 / slots as f64) * 1_000_000.0;
+        Some(nanos as u64)
     }
 
     fn collect_leaders(&mut self, root_bank: &Bank, highest_slot: Slot) {
@@ -1666,32 +1604,6 @@ impl Collector {
     }
 }
 
-/// Mean nanoseconds per slot between two `(slot, arrival millis)` samples.
-///
-/// Wall clock divided by slot numbers rather than a mean of measured durations,
-/// so a skipped slot still counts for its share of the time. That is what
-/// projecting an epoch's end wants: a skipped slot consumes the clock like any
-/// other.
-fn slot_nanos_between(first: (Slot, u64), last: (Slot, u64)) -> Option<u64> {
-    let slots = last.0.checked_sub(first.0).filter(|slots| *slots > 0)?;
-    let millis = last.1.checked_sub(first.1)?;
-    Some(((millis as f64 / slots as f64) * 1_000_000.0) as u64)
-}
-
-/// Whether a span of samples arrived faster than a cluster can produce them.
-///
-/// Repair delivers shreds for many old slots at once, so their arrival times
-/// bunch up and any mean taken across them collapses. That is a record of the
-/// download rather than of the cluster.
-fn looks_like_catch_up(first: (Slot, u64), last: (Slot, u64)) -> bool {
-    let Some(slots) = last.0.checked_sub(first.0).filter(|slots| *slots > 0) else {
-        return false;
-    };
-    let millis = last.1.saturating_sub(first.1);
-    let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
-    per_second > CATCH_UP_SLOTS_PER_SECOND
-}
-
 /// Folds a gossip version string to its release, dropping any pre-release or
 /// build metadata.
 ///
@@ -1730,13 +1642,24 @@ fn system_time_nanos(time: SystemTime) -> u64 {
 mod tests {
     use super::*;
 
+    /// The window mean and its catch-up guard, without a validator behind it.
+    fn window_nanos(samples: &[(Slot, u64)]) -> Option<u64> {
+        let (first_slot, first_arrival) = *samples.first()?;
+        let (last_slot, last_arrival) = *samples.last()?;
+        let slots = last_slot.checked_sub(first_slot).filter(|s| *s > 0)?;
+        let millis = last_arrival.checked_sub(first_arrival)?;
+        let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
+        if per_second > CATCH_UP_SLOTS_PER_SECOND {
+            return None;
+        }
+        Some(((millis as f64 / slots as f64) * 1_000_000.0) as u64)
+    }
+
     #[test]
     fn the_mean_spans_the_ends_of_the_window() {
         // Ten slots over four seconds is 400ms each, however the middle fell.
-        assert_eq!(
-            slot_nanos_between((100, 1_000), (110, 5_000)),
-            Some(400_000_000)
-        );
+        let samples = [(100, 1_000_u64), (105, 3_100), (110, 5_000)];
+        assert_eq!(window_nanos(&samples), Some(400_000_000));
     }
 
     #[test]
@@ -1744,37 +1667,21 @@ mod tests {
         // 150 slots at 400ms with a single two-second slot among them.
         let steady = 150_u64 * 400;
         assert_eq!(
-            slot_nanos_between((0, 0), (150, steady + 1_600)),
+            window_nanos(&[(0, 0), (150, steady + 1_600)]),
             Some(410_666_666)
         );
     }
 
     #[test]
-    fn a_span_that_cannot_cover_two_slots_measures_nothing() {
-        assert_eq!(slot_nanos_between((100, 1_000), (100, 2_000)), None);
-        // Arrivals going backwards, which a clock adjustment can produce.
-        assert_eq!(slot_nanos_between((100, 5_000), (110, 1_000)), None);
+    fn a_repair_burst_is_not_reported_as_the_cluster_rate() {
+        // A thousand slots arriving in two seconds is a download, not a cluster.
+        assert_eq!(window_nanos(&[(0, 0), (1_000, 2_000)]), None);
     }
 
     #[test]
-    fn a_repair_burst_is_recognised_as_a_download() {
-        // A thousand slots arriving in two seconds is not a cluster rate.
-        assert!(looks_like_catch_up((0, 0), (1_000, 2_000)));
-    }
-
-    #[test]
-    fn an_ordinary_run_of_slots_is_not_mistaken_for_one() {
-        // Four hundred milliseconds a slot, and a brisk two hundred.
-        assert!(!looks_like_catch_up((0, 0), (32, 12_800)));
-        assert!(!looks_like_catch_up((0, 0), (32, 6_400)));
-    }
-
-    #[test]
-    fn two_slots_arriving_together_do_not_look_like_catching_up() {
-        // Why the test spans a run rather than a pair: adjacent slots can land
-        // milliseconds apart without replay being involved at all.
-        assert!(looks_like_catch_up((100, 1_000), (101, 1_005)));
-        assert!(!looks_like_catch_up((100, 1_000), (132, 1_005 + 12_795)));
+    fn a_window_that_cannot_span_two_slots_reports_nothing() {
+        assert_eq!(window_nanos(&[]), None);
+        assert_eq!(window_nanos(&[(100, 1_000)]), None);
     }
 
     #[test]

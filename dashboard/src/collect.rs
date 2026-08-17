@@ -598,15 +598,7 @@ impl Collector {
                 }
             }
 
-            let level = if slot <= finalized {
-                SlotLevel::Finalized
-            } else if slot <= root {
-                SlotLevel::Rooted
-            } else if slot <= confirmed {
-                SlotLevel::OptimisticallyConfirmed
-            } else {
-                SlotLevel::Completed
-            };
+            let level = level_for(slot, root, confirmed, finalized);
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.level = level;
                 if let Some((total, non_vote)) = counts {
@@ -906,124 +898,38 @@ impl Collector {
             .collect::<HashSet<_>>()
             .len();
 
-        // Keyed by identity, not by vote account: a validator running more than
-        // one staked vote account is one validator, and its stake is the sum.
-        let mut staked: HashMap<Pubkey, u64> = HashMap::new();
-        let mut delinquent: HashSet<Pubkey> = HashSet::new();
-        let mut delinquent_stake = 0u64;
-        let mut non_delinquent_stake = 0u64;
-
-        for (_vote_pubkey, (stake, account)) in vote_accounts.iter() {
-            // The bank holds every vote account ever created, most with no
-            // stake. Counting those puts the validator total in the tens of
-            // thousands; a validator is one with stake this epoch, which is
-            // what every other tool reports and who the leader schedule draws
-            // from.
-            if *stake == 0 {
-                continue;
-            }
-            let identity = *account.node_pubkey();
-            let is_delinquent = account
-                .vote_state_view()
-                .last_voted_slot()
-                .map(|vote| tip.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
-                .unwrap_or(true);
-            if is_delinquent {
-                delinquent.insert(identity);
-                delinquent_stake = delinquent_stake.saturating_add(*stake);
-            } else {
-                non_delinquent_stake = non_delinquent_stake.saturating_add(*stake);
-            }
-            let total = staked.entry(identity).or_insert(0);
-            *total = total.saturating_add(*stake);
-        }
+        let tally = tally_stake(
+            vote_accounts
+                .iter()
+                .map(|(_vote_pubkey, (stake, account))| {
+                    (
+                        *account.node_pubkey(),
+                        *stake,
+                        account.vote_state_view().last_voted_slot(),
+                    )
+                }),
+            tip,
+        );
 
         self.debounces.validator_counts.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "validator_counts",
             ValidatorCounts {
-                // Both by identity, so that `total - delinquent` — which the
-                // page renders as active validators — cannot go negative for a
-                // validator whose several vote accounts are all behind.
-                total: staked.len(),
-                delinquent: delinquent.len(),
+                total: tally.staked.len(),
+                delinquent: tally.delinquent.len(),
                 rpc_nodes,
-                non_delinquent_stake,
-                delinquent_stake,
+                non_delinquent_stake: tally.non_delinquent_stake,
+                delinquent_stake: tally.delinquent_stake,
             },
         );
 
-        self.publish_versions(&staked, &versions);
-    }
-
-    /// Publishes how the cluster's stake divides across client versions.
-    ///
-    /// Every identity counts once, staked or not: unstaked nodes are most of
-    /// the cluster by number and say something about how far an upgrade has
-    /// spread, even though they carry none of the vote. During an upgrade this
-    /// answers the question operators actually ask — how much stake has moved,
-    /// and is this validator in the minority.
-    ///
-    /// Releases are borrowed from the gossip strings rather than copied. There
-    /// are a few thousand peers and at most six rows, so only the rows that
-    /// survive the fold are allocated.
-    fn publish_versions(
-        &mut self,
-        staked: &HashMap<Pubkey, u64>,
-        versions: &HashMap<Pubkey, String>,
-    ) {
-        let mut totals: HashMap<Option<&str>, (usize, u64)> = HashMap::new();
-        for (identity, version) in versions {
-            let stake = staked.get(identity).copied().unwrap_or(0);
-            let entry = totals.entry(Some(release_of(version))).or_insert((0, 0));
-            entry.0 = entry.0.saturating_add(1);
-            entry.1 = entry.1.saturating_add(stake);
-        }
-        // Staked validators gossip is not currently hearing from. They report
-        // no version, which is not the same as the folded tail below.
-        for (identity, stake) in staked {
-            if versions.contains_key(identity) {
-                continue;
-            }
-            let entry = totals.entry(None).or_insert((0, 0));
-            entry.0 = entry.0.saturating_add(1);
-            entry.1 = entry.1.saturating_add(*stake);
-        }
-
-        let mut shares: Vec<VersionShare> = totals
-            .into_iter()
-            .map(|(version, (validators, stake))| VersionShare {
-                version: version.map(str::to_string),
-                validators,
-                stake,
-                other: false,
-            })
-            .collect();
-        // Stake first: a version running on a crowd of unstaked nodes matters
-        // far less than one carrying a slice of the vote.
-        shares.sort_by(|a, b| {
-            b.stake
-                .cmp(&a.stake)
-                .then_with(|| b.validators.cmp(&a.validators))
-        });
-
-        // Version strings arrive over gossip, so how many distinct values show
-        // up is not ours to bound. Keeping the leaders and folding the tail
-        // into one row keeps this message a fixed size whatever turns up.
-        if shares.len() > MAX_VERSIONS_REPORTED {
-            let tail = shares.split_off(MAX_VERSIONS_REPORTED);
-            shares.push(VersionShare {
-                version: None,
-                validators: tail.iter().map(|share| share.validators).sum(),
-                stake: tail.iter().map(|share| share.stake).sum(),
-                other: true,
-            });
-        }
-
-        self.debounces
-            .versions
-            .publish(&self.publisher, TOPIC_SUMMARY, "versions", shares);
+        self.debounces.versions.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "versions",
+            version_shares(&tally.staked, &versions),
+        );
     }
 
     /// Fills in leader names that were unknown when the slot was first labelled.
@@ -1105,29 +1011,16 @@ impl Collector {
     // ---- health, skip rate ----------------------------------------------
 
     fn collect_health(&mut self) {
-        let replay = if self.last_completed_at.elapsed() > Duration::from_secs(12) {
-            "stalled"
-        } else if self.last_completed_slot == 0 {
-            "not_started"
-        } else {
-            "running"
-        };
-
-        let vote_slot = self.debounces.vote_slot.last().copied().flatten();
-        let distance = self.debounces.vote_distance.last().copied().flatten();
-        let vote = match (vote_slot, distance) {
-            (None, _) => "not_started",
-            (Some(_), Some(distance)) if distance > 150 => "delinquent",
-            _ if self.last_vote_advance.elapsed() > Duration::from_secs(60) => "delinquent",
-            _ => "voting",
-        };
-
-        self.debounces.health.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "health",
-            Health { replay, vote },
+        let health = health_of(
+            self.last_completed_at.elapsed(),
+            self.last_completed_slot,
+            self.debounces.vote_slot.last().copied().flatten(),
+            self.debounces.vote_distance.last().copied().flatten(),
+            self.last_vote_advance.elapsed(),
         );
+        self.debounces
+            .health
+            .publish(&self.publisher, TOPIC_SUMMARY, "health", health);
     }
 
     /// Skip rate across this validator's leader slots for the whole epoch.
@@ -1197,6 +1090,183 @@ impl Collector {
     }
 }
 
+/// How settled a frozen slot is, given the three thresholds.
+///
+/// Tested in order most-settled first, which is what makes the three
+/// thresholds independent: they cross each other during startup, when the
+/// commitment cache briefly lags the root bank, and a rooted slot must not
+/// report as merely confirmed because `confirmed` had not caught up.
+fn level_for(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLevel {
+    if slot <= finalized {
+        SlotLevel::Finalized
+    } else if slot <= root {
+        SlotLevel::Rooted
+    } else if slot <= confirmed {
+        SlotLevel::OptimisticallyConfirmed
+    } else {
+        SlotLevel::Completed
+    }
+}
+
+/// What the vote accounts say about who holds stake and who is behind.
+///
+/// Everything is keyed by identity rather than by vote account: a validator
+/// running more than one staked vote account is one validator, its stake is
+/// the sum, and it counts once as delinquent. Counted per vote account,
+/// `total - delinquent` — which the page renders as active validators — went
+/// negative.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct StakeTally {
+    /// Stake per identity, summed across that identity's vote accounts.
+    staked: HashMap<Pubkey, u64>,
+    delinquent: HashSet<Pubkey>,
+    delinquent_stake: u64,
+    non_delinquent_stake: u64,
+}
+
+/// Folds vote accounts into [`StakeTally`], as `(identity, stake, last_vote)`.
+///
+/// Takes the fields rather than the accounts so that it can be tested: reading
+/// a `VoteAccount` needs a bank behind it, and the counting is the part that
+/// has been wrong.
+fn tally_stake(
+    accounts: impl Iterator<Item = (Pubkey, u64, Option<Slot>)>,
+    tip: Slot,
+) -> StakeTally {
+    let mut tally = StakeTally::default();
+    for (identity, stake, last_vote) in accounts {
+        // The bank holds every vote account ever created, most with no stake.
+        // Counting those puts the validator total in the tens of thousands; a
+        // validator is one with stake this epoch, which is what every other
+        // tool reports and who the leader schedule draws from.
+        if stake == 0 {
+            continue;
+        }
+        let is_delinquent = last_vote
+            .map(|vote| tip.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
+            .unwrap_or(true);
+        if is_delinquent {
+            tally.delinquent.insert(identity);
+            tally.delinquent_stake = tally.delinquent_stake.saturating_add(stake);
+        } else {
+            tally.non_delinquent_stake = tally.non_delinquent_stake.saturating_add(stake);
+        }
+        let total = tally.staked.entry(identity).or_insert(0);
+        *total = total.saturating_add(stake);
+    }
+    tally
+}
+
+/// A validator whose last vote is further behind than this is reported as
+/// delinquent on the status card. Deliberately looser than the threshold used
+/// for the cluster-wide count: this one is about our own node, where a brief
+/// lag is normal and a red badge for it would be noise.
+const VOTE_BEHIND_LIMIT: u64 = 150;
+
+/// How long replay may go without completing a slot before it reads as stalled.
+const REPLAY_STALL_AFTER: Duration = Duration::from_secs(12);
+
+/// How long the last vote may stand still before the node reads as delinquent
+/// however close to the tip that vote was.
+const VOTE_STALL_AFTER: Duration = Duration::from_secs(60);
+
+/// This validator's own replay and vote health.
+///
+/// The two durations sit at either end of the argument list rather than
+/// together: they are the same type, and swapping them compiles.
+fn health_of(
+    since_completed: Duration,
+    completed_slot: Slot,
+    vote_slot: Option<Slot>,
+    behind: Option<u64>,
+    since_vote_advance: Duration,
+) -> Health {
+    let replay = if since_completed > REPLAY_STALL_AFTER {
+        "stalled"
+    } else if completed_slot == 0 {
+        "not_started"
+    } else {
+        "running"
+    };
+
+    // A vote can be delinquent two ways: far behind the tip, or not moving at
+    // all. The second catches a node whose vote is close but frozen, which the
+    // distance alone reports as healthy right up until it drifts.
+    let vote = match (vote_slot, behind) {
+        (None, _) => "not_started",
+        (Some(_), Some(behind)) if behind > VOTE_BEHIND_LIMIT => "delinquent",
+        _ if since_vote_advance > VOTE_STALL_AFTER => "delinquent",
+        _ => "voting",
+    };
+
+    Health { replay, vote }
+}
+
+/// How the cluster's stake divides across client versions, ready to publish.
+///
+/// Every identity counts once, staked or not: unstaked nodes are most of the
+/// cluster by number and say something about how far an upgrade has spread,
+/// even though they carry none of the vote. During an upgrade this answers the
+/// question operators actually ask — how much stake has moved, and is this
+/// validator in the minority.
+///
+/// Releases are borrowed from the gossip strings rather than copied. There are
+/// a few thousand peers and at most six rows, so only the rows that survive the
+/// fold are allocated.
+fn version_shares(
+    staked: &HashMap<Pubkey, u64>,
+    versions: &HashMap<Pubkey, String>,
+) -> Vec<VersionShare> {
+    let mut totals: HashMap<Option<&str>, (usize, u64)> = HashMap::new();
+    for (identity, version) in versions {
+        let stake = staked.get(identity).copied().unwrap_or(0);
+        let entry = totals.entry(Some(release_of(version))).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = entry.1.saturating_add(stake);
+    }
+    // Staked validators gossip is not currently hearing from. They report no
+    // version, which is not the same as the folded tail below.
+    for (identity, stake) in staked {
+        if versions.contains_key(identity) {
+            continue;
+        }
+        let entry = totals.entry(None).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = entry.1.saturating_add(*stake);
+    }
+
+    let mut shares: Vec<VersionShare> = totals
+        .into_iter()
+        .map(|(version, (validators, stake))| VersionShare {
+            version: version.map(str::to_string),
+            validators,
+            stake,
+            other: false,
+        })
+        .collect();
+    // Stake first: a version running on a crowd of unstaked nodes matters far
+    // less than one carrying a slice of the vote.
+    shares.sort_by(|a, b| {
+        b.stake
+            .cmp(&a.stake)
+            .then_with(|| b.validators.cmp(&a.validators))
+    });
+
+    // Version strings arrive over gossip, so how many distinct values show up
+    // is not ours to bound. Keeping the leaders and folding the tail into one
+    // row keeps this message a fixed size whatever turns up.
+    if shares.len() > MAX_VERSIONS_REPORTED {
+        let tail = shares.split_off(MAX_VERSIONS_REPORTED);
+        shares.push(VersionShare {
+            version: None,
+            validators: tail.iter().map(|share| share.validators).sum(),
+            stake: tail.iter().map(|share| share.stake).sum(),
+            other: true,
+        });
+    }
+    shares
+}
+
 /// Mean milliseconds per slot across a window of arrival times, in nanoseconds.
 ///
 /// A true mean between the ends of the window rather than a decaying average,
@@ -1254,6 +1324,263 @@ mod tests {
     /// The arrival window as the collector holds it.
     fn window(samples: &[(Slot, u64)]) -> VecDeque<(Slot, u64)> {
         samples.iter().copied().collect()
+    }
+
+    // ---- slot levels ----------------------------------------------------
+
+    #[test]
+    fn test_level_reads_the_thresholds_most_settled_first() {
+        // root 100, confirmed 110, finalized 90 — the ordinary arrangement.
+        assert_eq!(level_for(80, 100, 110, 90), SlotLevel::Finalized);
+        assert_eq!(level_for(95, 100, 110, 90), SlotLevel::Rooted);
+        assert_eq!(
+            level_for(105, 100, 110, 90),
+            SlotLevel::OptimisticallyConfirmed
+        );
+        assert_eq!(level_for(120, 100, 110, 90), SlotLevel::Completed);
+    }
+
+    #[test]
+    fn test_a_rooted_slot_is_not_demoted_when_confirmed_lags_the_root() {
+        // During startup the commitment cache trails the root bank, so
+        // `confirmed` can sit below a slot the root has already passed. Tested
+        // least-settled first, that slot would come back Completed.
+        assert_eq!(level_for(100, 100, 50, 0), SlotLevel::Rooted);
+    }
+
+    #[test]
+    fn test_the_boundaries_are_inclusive() {
+        // A slot exactly at a threshold has reached it.
+        assert_eq!(level_for(90, 100, 110, 90), SlotLevel::Finalized);
+        assert_eq!(level_for(100, 100, 110, 90), SlotLevel::Rooted);
+        assert_eq!(
+            level_for(110, 100, 110, 90),
+            SlotLevel::OptimisticallyConfirmed
+        );
+    }
+
+    // ---- stake tally ----------------------------------------------------
+
+    fn identity(seed: u8) -> Pubkey {
+        Pubkey::new_from_array([seed; 32])
+    }
+
+    const TIP: Slot = 1_000;
+
+    #[test]
+    fn test_unstaked_vote_accounts_are_not_counted() {
+        // The bank keeps every vote account ever created, tens of thousands of
+        // them with no stake. Counting those put the validator total an order
+        // of magnitude above what every other tool reports.
+        let tally = tally_stake(
+            [(identity(1), 0, Some(TIP)), (identity(2), 100, Some(TIP))].into_iter(),
+            TIP,
+        );
+        assert_eq!(tally.staked.len(), 1);
+        assert_eq!(tally.non_delinquent_stake, 100);
+    }
+
+    #[test]
+    fn test_two_vote_accounts_on_one_identity_are_one_validator() {
+        let tally = tally_stake(
+            [(identity(1), 100, Some(TIP)), (identity(1), 250, Some(TIP))].into_iter(),
+            TIP,
+        );
+        assert_eq!(tally.staked.len(), 1, "one identity is one validator");
+        assert_eq!(tally.staked[&identity(1)], 350, "its stake is the sum");
+    }
+
+    #[test]
+    fn test_active_validators_cannot_go_negative() {
+        // Counted per vote account, an identity with two delinquent accounts
+        // gave total 1 and delinquent 2, and the page renders the difference.
+        let tally = tally_stake(
+            [(identity(1), 100, Some(0)), (identity(1), 100, Some(0))].into_iter(),
+            TIP,
+        );
+        assert_eq!(tally.staked.len(), 1);
+        assert_eq!(tally.delinquent.len(), 1);
+        assert_eq!(tally.staked.len() - tally.delinquent.len(), 0);
+    }
+
+    #[test]
+    fn test_a_vote_account_that_never_voted_is_delinquent() {
+        let tally = tally_stake([(identity(1), 100, None)].into_iter(), TIP);
+        assert_eq!(tally.delinquent.len(), 1);
+        assert_eq!(tally.delinquent_stake, 100);
+        assert_eq!(tally.non_delinquent_stake, 0);
+    }
+
+    #[test]
+    fn test_delinquency_is_decided_at_the_threshold() {
+        let at = TIP - MAX_DELINQUENT_SLOT_DISTANCE;
+        assert!(
+            tally_stake([(identity(1), 1, Some(at))].into_iter(), TIP)
+                .delinquent
+                .is_empty(),
+            "exactly at the limit is still voting"
+        );
+        assert_eq!(
+            tally_stake([(identity(1), 1, Some(at - 1))].into_iter(), TIP)
+                .delinquent
+                .len(),
+            1,
+            "one slot past it is not"
+        );
+    }
+
+    #[test]
+    fn test_stake_splits_by_delinquency() {
+        let tally = tally_stake(
+            [
+                (identity(1), 100, Some(TIP)),
+                (identity(2), 30, Some(0)),
+                (identity(3), 7, Some(TIP)),
+            ]
+            .into_iter(),
+            TIP,
+        );
+        assert_eq!(tally.non_delinquent_stake, 107);
+        assert_eq!(tally.delinquent_stake, 30);
+    }
+
+    // ---- version shares -------------------------------------------------
+
+    fn staked(entries: &[(u8, u64)]) -> HashMap<Pubkey, u64> {
+        entries
+            .iter()
+            .map(|&(seed, stake)| (identity(seed), stake))
+            .collect()
+    }
+
+    fn gossiped(entries: &[(u8, &str)]) -> HashMap<Pubkey, String> {
+        entries
+            .iter()
+            .map(|&(seed, version)| (identity(seed), version.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn test_prerelease_tags_fold_into_one_release_row() {
+        // A cluster mid-upgrade reports 4.2.0, 4.2.0-rc.0 and 4.2.0-rc.1.
+        // Counted apart they understate how much stake has actually moved.
+        let shares = version_shares(
+            &staked(&[(1, 10), (2, 10), (3, 10)]),
+            &gossiped(&[(1, "4.2.0"), (2, "4.2.0-rc.0"), (3, "4.2.0-rc.1")]),
+        );
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].version.as_deref(), Some("4.2.0"));
+        assert_eq!(shares[0].validators, 3);
+        assert_eq!(shares[0].stake, 30);
+    }
+
+    #[test]
+    fn test_rows_are_ordered_by_stake_not_by_node_count() {
+        // The whole point of the panel: a version on a crowd of unstaked nodes
+        // matters less than one carrying a slice of the vote.
+        let shares = version_shares(
+            &staked(&[(1, 1_000)]),
+            &gossiped(&[(1, "4.2.0"), (2, "4.1.0"), (3, "4.1.0"), (4, "4.1.0")]),
+        );
+        assert_eq!(shares[0].version.as_deref(), Some("4.2.0"));
+        assert_eq!(shares[0].stake, 1_000);
+        assert_eq!(shares[1].validators, 3, "more nodes, no stake, second");
+    }
+
+    #[test]
+    fn test_an_unstaked_gossip_node_counts_without_moving_stake() {
+        let shares = version_shares(&staked(&[]), &gossiped(&[(1, "4.2.0")]));
+        assert_eq!(shares[0].validators, 1);
+        assert_eq!(shares[0].stake, 0);
+    }
+
+    #[test]
+    fn test_a_staked_validator_gossip_cannot_see_reports_no_version() {
+        let shares = version_shares(&staked(&[(9, 500)]), &gossiped(&[]));
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].version, None);
+        assert_eq!(shares[0].stake, 500);
+        assert!(
+            !shares[0].other,
+            "no version reported is not the folded tail"
+        );
+    }
+
+    #[test]
+    fn test_the_tail_folds_into_one_flagged_row() {
+        // Version strings arrive over gossip, so the number of distinct values
+        // is not ours to bound; the message has to stay a fixed size.
+        let peers: Vec<(u8, String)> = (1..=9).map(|seed| (seed, format!("4.{seed}.0"))).collect();
+        let versions = gossiped(
+            &peers
+                .iter()
+                .map(|(seed, version)| (*seed, version.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let shares = version_shares(&staked(&[]), &versions);
+
+        assert_eq!(shares.len(), MAX_VERSIONS_REPORTED + 1);
+        let last = shares.last().unwrap();
+        assert!(last.other, "the fold is flagged rather than inferred");
+        assert_eq!(last.validators, 9 - MAX_VERSIONS_REPORTED);
+        assert!(
+            shares[..MAX_VERSIONS_REPORTED].iter().all(|s| !s.other),
+            "only the tail row is flagged"
+        );
+    }
+
+    // ---- health ---------------------------------------------------------
+
+    const FRESH: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn test_replay_is_stalled_when_no_slot_completes() {
+        assert_eq!(
+            health_of(Duration::from_secs(13), 100, Some(99), Some(1), FRESH).replay,
+            "stalled"
+        );
+        assert_eq!(
+            health_of(FRESH, 100, Some(99), Some(1), FRESH).replay,
+            "running"
+        );
+    }
+
+    #[test]
+    fn test_replay_has_not_started_before_the_first_slot() {
+        // Slot zero means nothing has completed yet, which is not a stall.
+        assert_eq!(health_of(FRESH, 0, None, None, FRESH).replay, "not_started");
+    }
+
+    #[test]
+    fn test_a_vote_far_behind_the_tip_is_delinquent() {
+        assert_eq!(
+            health_of(FRESH, 100, Some(50), Some(VOTE_BEHIND_LIMIT + 1), FRESH).vote,
+            "delinquent"
+        );
+        assert_eq!(
+            health_of(FRESH, 100, Some(50), Some(VOTE_BEHIND_LIMIT), FRESH).vote,
+            "voting"
+        );
+    }
+
+    #[test]
+    fn test_a_vote_that_is_close_but_frozen_is_delinquent() {
+        // The case the distance alone misses: the last vote is near the tip and
+        // has not moved in a minute, which reads as healthy right up until it
+        // drifts far enough to trip the other arm.
+        assert_eq!(
+            health_of(FRESH, 100, Some(99), Some(1), Duration::from_secs(61)).vote,
+            "delinquent"
+        );
+    }
+
+    #[test]
+    fn test_a_node_that_has_never_voted_is_not_delinquent() {
+        // An unstaked node is not a failing one, however long it sits there.
+        assert_eq!(
+            health_of(FRESH, 100, None, None, Duration::from_secs(3_600)).vote,
+            "not_started"
+        );
     }
 
     #[test]

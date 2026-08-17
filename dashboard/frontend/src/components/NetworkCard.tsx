@@ -1,6 +1,6 @@
 import { bytes } from "../format";
 import type { Network, NetworkSample } from "../types";
-import { useNow, windowed } from "../useNow";
+import { RENDER_LAG_MS, useNow, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, chartY, PEAK_HEADROOM, PeakLine, Stat } from "./primitives";
 
@@ -51,9 +51,11 @@ export function NetworkCard() {
 }
 
 function NetworkChart({ samples }: { samples: NetworkSample[] }) {
-  const now = useNow();
+  // Drawn a sample behind live, so the newest point sits past the right edge
+  // and the line is continuous across it rather than ending in a notch.
+  const edge = useNow() - RENDER_LAG_MS;
   const windowMs = WINDOW_SECONDS * 1000;
-  const visible = windowed(samples, now, windowMs, (sample) => sample.timestamp_nanos);
+  const visible = windowed(samples, edge, windowMs, (sample) => sample.timestamp_nanos);
 
   if (visible.length < 2) {
     return <div className="chart-empty">collecting samples…</div>;
@@ -65,7 +67,7 @@ function NetworkChart({ samples }: { samples: NetworkSample[] }) {
     1,
   );
   const x = (sample: NetworkSample) =>
-    WIDTH * (1 - (now - sample.timestamp_nanos / 1e6) / windowMs);
+    WIDTH * (1 - (edge - sample.timestamp_nanos / 1e6) / windowMs);
   const y = (value: number) => chartY(value, peak, HEIGHT);
 
   return (

@@ -1,6 +1,6 @@
 import { decimal } from "../format";
 import type { TpsSample } from "../types";
-import { useNow, windowed } from "../useNow";
+import { RENDER_LAG_MS, useNow, windowed } from "../useNow";
 import { chartY, PEAK_HEADROOM, PeakLine } from "./primitives";
 
 const WIDTH = 600;
@@ -26,9 +26,11 @@ const WINDOW_SECONDS = 60;
  * its size for the sake of one chart.
  */
 export function TpsChart({ samples }: { samples: TpsSample[] }) {
-  const now = useNow();
+  // Drawn a sample behind live, so the newest point sits past the right edge
+  // and the line is continuous across it rather than ending in a notch.
+  const edge = useNow() - RENDER_LAG_MS;
   const windowMs = WINDOW_SECONDS * 1000;
-  const visible = windowed(samples, now, windowMs, (sample) => sample.timestamp_nanos);
+  const visible = windowed(samples, edge, windowMs, (sample) => sample.timestamp_nanos);
 
   if (visible.length < 2) {
     return <div className="chart-empty">collecting samples…</div>;
@@ -36,7 +38,7 @@ export function TpsChart({ samples }: { samples: TpsSample[] }) {
 
   const peak = Math.max(...visible.map((sample) => sample.total), 1);
   const x = (sample: TpsSample) =>
-    WIDTH * (1 - (now - sample.timestamp_nanos / 1e6) / windowMs);
+    WIDTH * (1 - (edge - sample.timestamp_nanos / 1e6) / windowMs);
   const y = (value: number) => chartY(value, peak, HEIGHT);
 
   // Vote traffic sits underneath and non-vote stacks on top, so the upper edge

@@ -267,6 +267,65 @@ impl SlotRing {
 mod tests {
     use super::*;
 
+    fn leader(seed: u8) -> Pubkey {
+        Pubkey::new_from_array([seed; 32])
+    }
+
+    #[test]
+    fn test_setting_a_leader_records_who_and_whether_it_is_ours() {
+        let mut ring = SlotRing::new(16);
+        let entry = ring
+            .set_leader(7, &leader(1), Some("Lantern".into()), None, true)
+            .expect("a new leader is a change");
+        assert_eq!(
+            entry.leader.as_deref(),
+            Some(leader(1).to_string().as_str())
+        );
+        assert_eq!(entry.leader_name.as_deref(), Some("Lantern"));
+        assert!(entry.mine);
+    }
+
+    #[test]
+    fn test_setting_the_same_leader_twice_reports_no_change() {
+        // The schedule is walked forwards on every tick, so a slot is labelled
+        // repeatedly. Republishing each time would put the strip's whole window
+        // on the wire five times a second.
+        let mut ring = SlotRing::new(16);
+        assert!(ring.set_leader(7, &leader(1), None, None, false).is_some());
+        assert!(ring.set_leader(7, &leader(1), None, None, false).is_none());
+    }
+
+    #[test]
+    fn test_a_slot_awaits_a_name_only_while_it_has_none() {
+        let mut ring = SlotRing::new(16);
+        ring.set_leader(7, &leader(1), None, None, false);
+        ring.set_leader(8, &leader(2), Some("Known".into()), None, false);
+        // Slot 9 has no leader at all, so there is nothing to look up for it.
+        ring.update(9, |entry| entry.level = SlotLevel::Completed);
+
+        let waiting = ring.leaders_without_names();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].0, 7);
+        assert_eq!(waiting[0].1, leader(1).to_string());
+    }
+
+    #[test]
+    fn test_a_name_arriving_late_fills_the_slot_in() {
+        // The validator info scan takes minutes, so slots seen before it lands
+        // carry a raw pubkey until it does.
+        let mut ring = SlotRing::new(16);
+        ring.set_leader(7, &leader(1), None, None, false);
+        let entry = ring
+            .set_leader_display(7, Some("Lantern".into()), Some("https://i".into()))
+            .expect("a name where there was none is a change");
+        assert_eq!(entry.leader_name.as_deref(), Some("Lantern"));
+        assert_eq!(entry.leader_icon.as_deref(), Some("https://i"));
+        assert!(
+            ring.leaders_without_names().is_empty(),
+            "and it stops asking"
+        );
+    }
+
     /// The slot overview is the largest message the server sends, and the
     /// websocket ceiling is sized from it. If a field is added here, or the
     /// overview grows, this is what notices before a client is cut off

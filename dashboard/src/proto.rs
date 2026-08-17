@@ -201,6 +201,50 @@ impl<T: Serialize + PartialEq> Debounced<T> {
 mod tests {
     use super::*;
 
+    /// A value whose `Serialize` impl fails, standing in for a bug in one
+    /// topic's payload.
+    struct Unserializable;
+
+    impl Serialize for Unserializable {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("this value cannot be encoded"))
+        }
+    }
+
+    #[test]
+    fn test_a_payload_that_cannot_encode_does_not_take_the_feed_down() {
+        // The fallback exists so that one broken topic costs that topic and
+        // nothing else. Without it the encode would have to panic or the
+        // publisher would have to return an error to every caller.
+        let message = encode("summary", "broken", &Unserializable);
+        assert_eq!(
+            &*message,
+            r#"{"topic":"summary","key":"broken","value":null}"#
+        );
+    }
+
+    #[test]
+    fn test_a_publisher_defaults_to_an_empty_one() {
+        let publisher = Publisher::default();
+        assert!(publisher.snapshot().is_empty());
+        assert_eq!(publisher.subscriber_count(), 0);
+    }
+
+    #[test]
+    fn test_a_debounce_remembers_what_it_last_sent() {
+        // The collector reads this back to notice a vote that has moved, so it
+        // has to hold the published value rather than merely a hash of it.
+        let publisher = Publisher::new();
+        let mut debounced: Debounced<u64> = Debounced::default();
+        assert_eq!(debounced.last(), None);
+
+        debounced.publish(&publisher, "summary", "root_slot", 7);
+        assert_eq!(debounced.last(), Some(&7));
+
+        debounced.publish(&publisher, "summary", "root_slot", 9);
+        assert_eq!(debounced.last(), Some(&9));
+    }
+
     #[test]
     fn test_retained_snapshot_replays_latest_value_only() {
         let publisher = Publisher::new();

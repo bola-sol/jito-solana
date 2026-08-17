@@ -34,3 +34,30 @@ impl Default for DashboardConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_the_default_is_reachable_only_from_this_machine() {
+        // The validator spreads this over whatever the flags set, so the
+        // default is what an operator gets for anything they did not name. It
+        // exposes validator internals and has no authentication, so binding
+        // anywhere but loopback has to be a deliberate act.
+        let config = DashboardConfig::default();
+        assert!(config.listen_addr.ip().is_loopback());
+        assert_eq!(config.listen_addr.port(), 10999);
+    }
+
+    #[test]
+    fn test_localhost_is_answered_without_being_configured() {
+        // A reverse proxy forwards the name a visitor typed, so a domain has to
+        // be added — but the box's own name must work out of the box, or the
+        // first thing an operator does after enabling this fails with a 421.
+        assert_eq!(
+            DashboardConfig::default().allowed_hosts,
+            vec!["localhost".to_string()]
+        );
+    }
+}

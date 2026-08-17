@@ -1,4 +1,3 @@
-import { countdownSlotMs } from "../countdown";
 import { count, decimal, duration, percent, solCompact } from "../format";
 import type {
   EpochInfo,
@@ -18,10 +17,6 @@ export function EpochCard() {
   const epoch = store.get<EpochInfo>("epoch", "new");
   const slot = store.get<number>("summary", "completed_slot");
   const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
-  const sustainedSlotNanos = store.get<number | null>(
-    "summary",
-    "sustained_slot_duration_nanos",
-  );
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
 
@@ -29,7 +24,7 @@ export function EpochCard() {
   const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
   // Derived here rather than sent by the server: an absolute end time would
   // change every tick and force the whole epoch message to be republished.
-  const slotMs = countdownSlotMs(sustainedSlotNanos, slotDurationNanos);
+  const slotMs = (slotDurationNanos ?? 400_000_000) / 1e6;
   const remainingMs = Math.max(0, (epoch.end_slot - (slot ?? epoch.start_slot)) * slotMs);
 
   return (
@@ -53,10 +48,6 @@ export function StatusCard() {
   const health = store.get<Health>("summary", "health");
   const voteDistance = store.get<number | null>("summary", "vote_distance");
   const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
-  const sustainedSlotNanos = store.get<number | null>(
-    "summary",
-    "sustained_slot_duration_nanos",
-  );
   const startup = store.get<StartupProgress>("summary", "startup_progress");
   const skip = store.get<SkipRate>("summary", "skip_rate");
 
@@ -71,11 +62,8 @@ export function StatusCard() {
   }
 
   const untilLeaderMs =
-    nextLeader !== null && nextLeader !== undefined && slot !== undefined
-      ? Math.max(
-          0,
-          (nextLeader - slot) * countdownSlotMs(sustainedSlotNanos, slotDurationNanos),
-        )
+    nextLeader !== null && nextLeader !== undefined && slot !== undefined && slotDurationNanos
+      ? Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6))
       : undefined;
 
   return (

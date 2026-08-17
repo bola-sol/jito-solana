@@ -630,7 +630,10 @@ fn respond(payload: &[u8]) -> Option<Message> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        soketto::handshake::{Client, ServerResponse},
+    };
 
     #[test]
     fn test_detects_a_websocket_upgrade() {
@@ -1072,6 +1075,109 @@ mod tests {
         );
         // Anything short enough is passed through whole, with no marker.
         assert_eq!(for_logging("summary"), "summary");
+    }
+
+    #[tokio::test]
+    async fn test_a_get_over_a_socket_serves_the_page() {
+        // The whole HTTP path end to end: peek the head, drain what was
+        // peeked, look the asset up, write it, shut down cleanly. The drain is
+        // the part that matters — closing on unread bytes makes the kernel send
+        // a reset, which discards the response that was just written.
+        let reply = request_with_hosts(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 200 OK"),
+            "expected the page, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
+        assert!(reply.contains("content-type: text/html"));
+        assert!(
+            reply.contains("\r\n\r\n"),
+            "a response with no body terminator"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_an_unknown_path_falls_through_to_the_app() {
+        // Client-side routes have to survive a hard refresh, so anything not
+        // found is answered with the entry document rather than a 404.
+        let reply = request_with_hosts(
+            b"GET /some/client/route HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 200 OK"));
+        assert!(reply.contains("content-type: text/html"));
+    }
+
+    #[tokio::test]
+    async fn test_a_method_that_would_write_is_refused() {
+        // Nothing here accepts input over HTTP, and a server that quietly
+        // ignores a POST reads as one that took it.
+        let reply = request_with_hosts(
+            b"POST / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 405 Method Not Allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_a_websocket_client_is_sent_the_retained_snapshot() {
+        // The reason the feed works at all: a client connecting at any moment
+        // is caught up in one shot rather than waiting for each value to change
+        // again. Driven with a real soketto client so the handshake, the
+        // per-message flush and the frame encoding are all exercised.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        publisher.publish("summary", "root_slot", &7u64);
+
+        let allowed_hosts = vec!["x".to_string()];
+        let server = {
+            let publisher = publisher.clone();
+            tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                handle(socket, publisher, Limits::new(), &allowed_hosts).await
+            })
+        };
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut client = Client::new(stream.compat(), "x", WEBSOCKET_PATH);
+        match client.handshake().await.unwrap() {
+            ServerResponse::Accepted { .. } => {}
+            _ => panic!("the server refused a well-formed handshake"),
+        }
+
+        let (mut sender, mut receiver) = client.into_builder().finish();
+        let mut frames = Vec::new();
+        for _ in 0..2 {
+            let mut data = Vec::new();
+            receiver.receive_data(&mut data).await.unwrap();
+            frames.push(String::from_utf8(data).unwrap());
+        }
+
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.contains(r#""key":"cluster""#)),
+            "the snapshot was missing a retained key: {frames:?}"
+        );
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.contains(r#""key":"root_slot""#)),
+            "the snapshot was missing a retained key: {frames:?}"
+        );
+
+        // A clean close, so the server returns rather than being torn down.
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
     }
 
     #[test]

@@ -459,3 +459,102 @@ fn push_history<T: Serialize>(history: &mut Vec<T>, sample: T, publisher: &Publi
     }
     publisher.retain_only(TOPIC_SUMMARY, key, history);
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::fixture::fixture, std::thread::sleep};
+
+    #[test]
+    fn test_a_tick_always_publishes_the_clock() {
+        // The heartbeat. Everything else here can legitimately report nothing —
+        // the counters may be unreadable, the sample may be skipped — but the
+        // clock is what tells a viewer the feed is alive at all.
+        let harness = fixture();
+        let mut meters = harness.meters();
+        meters.tick();
+
+        assert!(
+            harness
+                .published_key("summary", "server_time_nanos")
+                .is_some()
+        );
+        assert!(harness.published_key("summary", "uptime_nanos").is_some());
+    }
+
+    #[test]
+    fn test_a_busy_bank_forks_costs_a_sample_and_not_the_heartbeat() {
+        // The reason this thread takes bank forks with try_read. Replay holds
+        // that lock to advance, and waiting for it would stop the clock — which
+        // looks identical to a dead feed, because a stalled panel keeps showing
+        // its last value.
+        let harness = fixture();
+        let mut meters = harness.meters();
+        let held = harness.bank_forks.write().unwrap();
+
+        meters.tick();
+        drop(held);
+
+        assert!(
+            harness
+                .published_key("summary", "server_time_nanos")
+                .is_some(),
+            "the heartbeat stopped while replay held the lock"
+        );
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_none(),
+            "the sample should have been skipped, not waited for"
+        );
+    }
+
+    #[test]
+    fn test_throughput_needs_two_samples_with_a_slot_between_them() {
+        // Rates are differences, so the first tick can only establish a
+        // baseline. Publishing one from a single reading would divide the
+        // chain's whole history by a second.
+        let harness = fixture();
+        let mut meters = harness.meters();
+
+        meters.tick();
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_none(),
+            "a rate was reported from one reading"
+        );
+
+        // Slow enough that one slot does not look like a catch-up burst: the
+        // guard discards anything above six slots a second, and two ticks in
+        // immediate succession are far above it. Sleeping longer only lowers
+        // the measured rate, so a loaded machine cannot flake this.
+        sleep(Duration::from_millis(250));
+        harness.advance_to(1);
+        meters.tick();
+
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_some(),
+            "two readings a slot apart should have produced a rate"
+        );
+        assert!(
+            harness.published_key("summary", "tps_history").is_some(),
+            "the chart series is retained for a client connecting later"
+        );
+    }
+
+    #[test]
+    fn test_a_replayed_burst_is_not_reported_as_throughput() {
+        // Catching up chews through slots far faster than the cluster produces
+        // them. One such sample pins the chart's scale for as long as it stays
+        // in view, so it is discarded rather than drawn.
+        let harness = fixture();
+        let mut meters = harness.meters();
+
+        meters.tick();
+        // No sleep: two ticks in immediate succession put the rate orders of
+        // magnitude above the guard.
+        harness.advance_to(1);
+        meters.tick();
+
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_none(),
+            "replay throughput was reported as cluster throughput"
+        );
+    }
+}

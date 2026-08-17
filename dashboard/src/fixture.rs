@@ -13,7 +13,8 @@
 use {
     crate::{
         collect::Collector,
-        context::{DashboardContext, StartupProgress},
+        context::{DashboardContext, StartupProgress, StartupProgressFn},
+        meters::Meters,
         proto::Publisher,
         validator_info::ValidatorInfoCache,
     },
@@ -114,15 +115,26 @@ impl Fixture {
             self.ctx.clone(),
             self.publisher.clone(),
             Arc::new(RwLock::new(ValidatorInfoCache::default())),
-            Arc::new(|| StartupProgress {
-                phase: "running".to_string(),
-                detail: None,
-                running: true,
-                fraction: None,
-                replay_slots: None,
-            }),
+            running(),
         )
     }
+
+    /// The once-a-second readings over this fixture, ready to tick.
+    pub fn meters(&self) -> Meters {
+        Meters::new(self.ctx.clone(), self.publisher.clone(), running())
+    }
+}
+
+/// Startup progress for a validator that has finished starting, which is what
+/// both threads report against for all but the boot sequence itself.
+fn running() -> StartupProgressFn {
+    Arc::new(|| StartupProgress {
+        phase: "running".to_string(),
+        detail: None,
+        running: true,
+        fraction: None,
+        replay_slots: None,
+    })
 }
 
 pub fn fixture() -> Fixture {

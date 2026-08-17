@@ -5,12 +5,19 @@
 //! ledger replay — the hour in which an operator most wants to see something —
 //! is visible rather than blank. The collector attaches later, once bank forks
 //! and the blockstore exist for it to read.
+//!
+//! Sampling runs on two threads. The collector walks slots, which means reading
+//! the blockstore and the accounts database; the meters take the once-a-second
+//! readings, which touch neither. Kept on one thread, a validator busy enough to
+//! slow a blockstore read stalled every panel at once — and since a stalled
+//! panel goes on showing its last value, it looked no different from a live one.
 
 use {
     crate::{
         collect::Collector,
         config::DashboardConfig,
         context::{DashboardContext, StartupProgressFn},
+        meters::{METER_INTERVAL, Meters},
         proto::Publisher,
         server,
         startup::StartupPublisher,
@@ -74,6 +81,7 @@ pub struct DashboardService {
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
+    meters: Option<JoinHandle<()>>,
     info_loader: Option<JoinHandle<()>>,
 }
 
@@ -148,6 +156,7 @@ impl DashboardService {
             server: Some(server),
             boot: Some(boot),
             collector: None,
+            meters: None,
             info_loader: None,
         })
     }
@@ -211,6 +220,23 @@ impl DashboardService {
                 })?
         });
 
+        self.meters = Some({
+            let exit = self.exit.clone();
+            let publisher = self.publisher.clone();
+            let startup_progress = self.startup_progress.clone();
+            let context = context.clone();
+            let validator_exit = validator_exit.clone();
+            thread::Builder::new()
+                .name("solDashMeter".to_string())
+                .spawn(move || {
+                    let mut meters = Meters::new(context, publisher, startup_progress);
+                    while !exit.load(Ordering::Relaxed) && !validator_exit.load(Ordering::Relaxed) {
+                        meters.tick();
+                        thread::sleep(METER_INTERVAL);
+                    }
+                })?
+        });
+
         self.collector = Some({
             let exit = self.exit.clone();
             let publisher = self.publisher.clone();
@@ -238,6 +264,7 @@ impl DashboardService {
         self.exit.store(true, Ordering::Relaxed);
         for handle in [
             self.collector.take(),
+            self.meters.take(),
             self.boot.take(),
             self.server.take(),
             self.info_loader.take(),

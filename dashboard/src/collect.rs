@@ -493,23 +493,7 @@ impl Collector {
     /// A true mean between the ends of the window rather than a decaying
     /// average, so it does not drift and does not need to be seeded.
     fn windowed_slot_nanos(&self) -> Option<u64> {
-        let (first_slot, first_arrival) = self.slot_time_window.front().copied()?;
-        let (last_slot, last_arrival) = self.slot_time_window.back().copied()?;
-        let slots = last_slot
-            .checked_sub(first_slot)
-            .filter(|slots| *slots > 0)?;
-        let millis = last_arrival.checked_sub(first_arrival)?;
-
-        // Repair delivers shreds for many old slots at once, so their arrival
-        // times bunch up and the mean collapses. That is a record of the
-        // download, not of the cluster, so it is not reported.
-        let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
-        if per_second > CATCH_UP_SLOTS_PER_SECOND {
-            return None;
-        }
-
-        let nanos = (millis as f64 / slots as f64) * 1_000_000.0;
-        Some(nanos as u64)
+        windowed_mean_nanos(&self.slot_time_window)
     }
 
     fn collect_leaders(&mut self, root_bank: &Bank, highest_slot: Slot) {
@@ -1213,6 +1197,36 @@ impl Collector {
     }
 }
 
+/// Mean milliseconds per slot across a window of arrival times, in nanoseconds.
+///
+/// A true mean between the ends of the window rather than a decaying average,
+/// so it does not drift and does not need to be seeded. Only the two ends are
+/// read; what the samples between them did does not change the answer.
+///
+/// A free function rather than a method so that the tests exercise this rather
+/// than a copy of it. As a method reading `self.slot_time_window` it needed a
+/// whole collector to call, so the tests had grown their own reimplementation
+/// and would have kept passing while this drifted.
+fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>) -> Option<u64> {
+    let (first_slot, first_arrival) = window.front().copied()?;
+    let (last_slot, last_arrival) = window.back().copied()?;
+    let slots = last_slot
+        .checked_sub(first_slot)
+        .filter(|slots| *slots > 0)?;
+    let millis = last_arrival.checked_sub(first_arrival)?;
+
+    // Repair delivers shreds for many old slots at once, so their arrival
+    // times bunch up and the mean collapses. That is a record of the
+    // download, not of the cluster, so it is not reported.
+    let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
+    if per_second > CATCH_UP_SLOTS_PER_SECOND {
+        return None;
+    }
+
+    let nanos = (millis as f64 / slots as f64) * 1_000_000.0;
+    Some(nanos as u64)
+}
+
 /// Folds a gossip version string to its release, dropping any pre-release or
 /// build metadata.
 ///
@@ -1237,24 +1251,16 @@ pub(crate) fn system_time_nanos(time: SystemTime) -> u64 {
 mod tests {
     use super::*;
 
-    /// The window mean and its catch-up guard, without a validator behind it.
-    fn window_nanos(samples: &[(Slot, u64)]) -> Option<u64> {
-        let (first_slot, first_arrival) = *samples.first()?;
-        let (last_slot, last_arrival) = *samples.last()?;
-        let slots = last_slot.checked_sub(first_slot).filter(|s| *s > 0)?;
-        let millis = last_arrival.checked_sub(first_arrival)?;
-        let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
-        if per_second > CATCH_UP_SLOTS_PER_SECOND {
-            return None;
-        }
-        Some(((millis as f64 / slots as f64) * 1_000_000.0) as u64)
+    /// The arrival window as the collector holds it.
+    fn window(samples: &[(Slot, u64)]) -> VecDeque<(Slot, u64)> {
+        samples.iter().copied().collect()
     }
 
     #[test]
     fn the_mean_spans_the_ends_of_the_window() {
         // Ten slots over four seconds is 400ms each, however the middle fell.
-        let samples = [(100, 1_000_u64), (105, 3_100), (110, 5_000)];
-        assert_eq!(window_nanos(&samples), Some(400_000_000));
+        let samples = window(&[(100, 1_000), (105, 3_100), (110, 5_000)]);
+        assert_eq!(windowed_mean_nanos(&samples), Some(400_000_000));
     }
 
     #[test]
@@ -1262,7 +1268,7 @@ mod tests {
         // 150 slots at 400ms with a single two-second slot among them.
         let steady = 150_u64 * 400;
         assert_eq!(
-            window_nanos(&[(0, 0), (150, steady + 1_600)]),
+            windowed_mean_nanos(&window(&[(0, 0), (150, steady + 1_600)])),
             Some(410_666_666)
         );
     }
@@ -1270,13 +1276,16 @@ mod tests {
     #[test]
     fn a_repair_burst_is_not_reported_as_the_cluster_rate() {
         // A thousand slots arriving in two seconds is a download, not a cluster.
-        assert_eq!(window_nanos(&[(0, 0), (1_000, 2_000)]), None);
+        assert_eq!(
+            windowed_mean_nanos(&window(&[(0, 0), (1_000, 2_000)])),
+            None
+        );
     }
 
     #[test]
     fn a_window_that_cannot_span_two_slots_reports_nothing() {
-        assert_eq!(window_nanos(&[]), None);
-        assert_eq!(window_nanos(&[(100, 1_000)]), None);
+        assert_eq!(windowed_mean_nanos(&window(&[])), None);
+        assert_eq!(windowed_mean_nanos(&window(&[(100, 1_000)])), None);
     }
 
     #[test]

@@ -11,10 +11,12 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 ### Validator
 #### Changes
 * Added an optional web dashboard, served by the validator itself on one port and enabled with `--dashboard-port`. It
-  reports slot and epoch progress, vote status and skip rate, how cluster stake is spread across client versions,
-  transaction throughput, host network throughput, and per-socket packet drops counted by the kernel. It is off unless
-  the flag is passed, and it needs no second process: the page is embedded in the validator binary and the data comes
-  from handles the validator already holds.
+  reports slot and epoch progress, vote status and skip rate, how many validators are staked and how many are
+  delinquent, how cluster stake is spread across client versions, transaction throughput, host network throughput,
+  per-socket packet drops counted by the kernel, and what each block this validator produced contained — its
+  transactions, fees and compute units against the block limit. It is off unless the flag is passed, and it needs no
+  second process: the page is embedded in the validator binary and the data comes from handles the validator already
+  holds.
   * The dashboard has no authentication and it exposes validator internals, so it binds `127.0.0.1` unless
     `--dashboard-bind-address` says otherwise. Serving it to anyone else means putting a reverse proxy with
     authentication in front of it.

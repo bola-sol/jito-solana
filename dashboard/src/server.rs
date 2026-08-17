@@ -59,6 +59,39 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 /// enough that a legitimate viewer with several tabs never notices it.
 const MAX_WEBSOCKET_CLIENTS: usize = 64;
 
+/// Connections being served at once, websockets included.
+///
+/// Every request in flight holds a copy of whatever it is answering with, and
+/// the largest asset is the bundle at a couple of hundred kilobytes. Serving
+/// is otherwise cheap, so what needs bounding is not the rate but how many
+/// copies can exist at once: unbounded, a request flood is a memory
+/// amplifier, in a process where being killed for it takes the validator too.
+///
+/// Loading the page takes four requests and a browser opens few connections
+/// for them, so this is two orders of magnitude above what a room full of
+/// operators would use. It is a ceiling, not a throttle.
+const MAX_CONNECTIONS: usize = 256;
+
+/// The caps a connection has to pass.
+///
+/// Named rather than two positional `Arc<Semaphore>` parameters: they are the
+/// same type and would sit next to each other, so transposing them would
+/// compile and quietly swap a limit of 256 with a limit of 64.
+#[derive(Clone)]
+struct Limits {
+    connections: Arc<Semaphore>,
+    websockets: Arc<Semaphore>,
+}
+
+impl Limits {
+    fn new() -> Self {
+        Self {
+            connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+            websockets: Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS)),
+        }
+    }
+}
+
 /// Served when the crate was built without `frontend/dist` present.
 const MISSING_FRONTEND: &str = include_str!("missing_frontend.html");
 
@@ -81,7 +114,7 @@ enum ConnectionError {
 }
 
 pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hosts: Arc<[String]>) {
-    let clients = Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS));
+    let limits = Limits::new();
     loop {
         let (socket, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -91,10 +124,10 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hos
             }
         };
         let publisher = publisher.clone();
-        let clients = clients.clone();
+        let limits = limits.clone();
         let allowed_hosts = allowed_hosts.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(socket, publisher, clients, &allowed_hosts).await {
+            if let Err(err) = handle(socket, publisher, limits, &allowed_hosts).await {
                 log::debug!("dashboard: connection from {peer} ended: {err}");
             }
         });
@@ -104,12 +137,21 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hos
 async fn handle(
     mut socket: TcpStream,
     publisher: Arc<Publisher>,
-    clients: Arc<Semaphore>,
+    limits: Limits,
     allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
     let (head, head_len) = timeout(REQUEST_TIMEOUT, peek_request_head(&socket))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "request head"))??;
+
+    // Taken after the head is read, not before, so that a refusal can drain
+    // and answer properly rather than closing on unread bytes and sending a
+    // reset. The 8KB peek that costs is the cheap half; what this bounds is
+    // the response copy that follows.
+    let Ok(_connection) = limits.connections.try_acquire_owned() else {
+        log::info!("dashboard: refusing a connection, {MAX_CONNECTIONS} already being served");
+        return refuse(socket, head_len, 503, b"too many dashboard connections").await;
+    };
 
     // Checked before anything is served, so a rebound name cannot reach the
     // page either. Serving the document to an attacker's origin would make
@@ -131,8 +173,9 @@ async fn handle(
             return refuse(socket, head_len, 403, b"origin not allowed").await;
         }
         // Held for the lifetime of the websocket below, and released when this
-        // function returns.
-        let Ok(_permit) = clients.try_acquire_owned() else {
+        // function returns. A websocket holds a connection permit too: it is
+        // one of the connections being served.
+        let Ok(_permit) = limits.websockets.try_acquire_owned() else {
             log::info!(
                 "dashboard: refusing a websocket, {MAX_WEBSOCKET_CLIENTS} clients already \
                  connected"
@@ -733,16 +776,19 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let clients = Arc::new(Semaphore::new(1));
+        let limits = Limits {
+            connections: Arc::new(Semaphore::new(1)),
+            websockets: Arc::new(Semaphore::new(1)),
+        };
         // Stands in for a viewer already holding the only slot.
-        let _held = clients.clone().try_acquire_owned().unwrap();
+        let _held = limits.websockets.clone().try_acquire_owned().unwrap();
 
         let publisher = Arc::new(Publisher::new());
         let server = tokio::spawn({
-            let clients = clients.clone();
+            let limits = limits.clone();
             async move {
                 let (socket, _) = listener.accept().await.unwrap();
-                handle(socket, publisher, clients, &allowed_hosts).await
+                handle(socket, publisher, limits, &allowed_hosts).await
             }
         });
 
@@ -760,10 +806,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let publisher = Arc::new(Publisher::new());
-        let clients = Arc::new(Semaphore::new(1));
+        let limits = Limits::new();
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            handle(socket, publisher, clients, &allowed_hosts).await
+            handle(socket, publisher, limits, &allowed_hosts).await
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
@@ -823,6 +869,66 @@ mod tests {
         assert!(
             reply.starts_with("HTTP/1.1 200 OK"),
             "expected the page, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
+    }
+
+    /// Drives `handle` with the connection cap already exhausted, which is the
+    /// state every request arrives in once a flood has filled it.
+    async fn request_with_no_connections_left(request: &[u8]) -> String {
+        let allowed_hosts = vec!["x".to_string()];
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let limits = Limits {
+            connections: Arc::new(Semaphore::new(1)),
+            websockets: Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS)),
+        };
+        let _held = limits.connections.clone().try_acquire_owned().unwrap();
+
+        let publisher = Arc::new(Publisher::new());
+        let server = tokio::spawn({
+            let limits = limits.clone();
+            async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                handle(socket, publisher, limits, &allowed_hosts).await
+            }
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        reply
+    }
+
+    #[tokio::test]
+    async fn a_full_connection_cap_refuses_rather_than_serving() {
+        // The cap exists so that a request flood cannot make the validator hold
+        // one copy of the bundle per request in flight. A refusal has to arrive
+        // as a complete response, not as a reset, or the caller cannot tell an
+        // overloaded dashboard from a broken one.
+        let reply = request_with_no_connections_left(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(
+            reply.starts_with("HTTP/1.1 503 Service Unavailable"),
+            "expected a refusal, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
+        assert!(reply.contains("too many dashboard connections"));
+    }
+
+    #[tokio::test]
+    async fn the_connection_cap_covers_websockets_too() {
+        // A websocket is a connection. If it were exempt, the cheapest way past
+        // the cap would be to open the long-lived kind.
+        let reply = request_with_no_connections_left(
+            b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n",
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 503"),
+            "expected a refusal, got {:?}",
             &reply[..reply.len().min(80)]
         );
     }

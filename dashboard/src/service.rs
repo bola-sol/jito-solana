@@ -32,8 +32,18 @@ use {
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::{net::TcpListener, runtime::Runtime},
+    tokio::{net::TcpListener, runtime::Builder},
 };
+
+/// Worker threads the dashboard's runtime is allowed.
+///
+/// `Runtime::new()` takes one per core, which on a large validator is two
+/// dozen threads that can each saturate one — competing with replay, banking
+/// and PoH under the same scheduler, in the same process, where no cgroup or
+/// nice value can separate them. The dashboard serves a handful of operators
+/// and its work is almost all socket writes, so two is generous. What this
+/// bounds is not the ordinary case but the hostile one.
+const RUNTIME_THREADS: usize = 2;
 
 /// How often the boot thread samples the validator's startup phase. Phases
 /// last seconds at least, so this is about responsiveness rather than
@@ -101,7 +111,11 @@ impl DashboardService {
         let exit = Arc::new(AtomicBool::new(false));
         let attached = Arc::new(AtomicBool::new(false));
 
-        let runtime = Runtime::new()?;
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(RUNTIME_THREADS)
+            .thread_name("solDashRt")
+            .enable_all()
+            .build()?;
         let listener = runtime.block_on(async { TcpListener::bind(config.listen_addr).await })?;
         log::info!(
             "dashboard: listening on http://{} (websocket at /websocket)",

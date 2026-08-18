@@ -1,4 +1,4 @@
-import { count, percent, solCompact } from "../format";
+import { count, percent, release, solCompact } from "../format";
 import type { VersionShare } from "../types";
 import { useStore } from "../useStore";
 import { Card } from "./primitives";
@@ -7,13 +7,16 @@ import { Card } from "./primitives";
  * How the cluster's stake divides across client versions.
  *
  * Ordered and measured by stake rather than by node count: during an upgrade
- * what matters is how much of the vote has moved, and a version running on a
- * crowd of unstaked nodes carries none of it.
+ * what matters is how much of the vote has moved, not how many nodes are
+ * carrying it. The counts beside each row are staked validators, the same
+ * population the validator card counts, so the two cards add up to each other.
  */
 export function VersionsCard() {
   const store = useStore();
   const shares = store.get<VersionShare[]>("summary", "versions");
-  const ours = store.get<string>("summary", "version");
+  // Rows are keyed by release, so a build of 4.3.0-beta.0 belongs to the 4.3.0
+  // row and has to be shortened to find it.
+  const ours = release(store.get<string>("summary", "version"));
 
   if (!shares || shares.length === 0) {
     return <Card title="Cluster Versions">waiting for data…</Card>;

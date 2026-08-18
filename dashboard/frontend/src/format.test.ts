@@ -6,6 +6,7 @@ import {
   decimal,
   duration,
   percent,
+  release,
   shortKey,
   slotDelta,
   sol,
@@ -118,5 +119,21 @@ describe("solCompact", () => {
     expect(solCompact(1_500_000_000)).toBe("1.5");
     expect(solCompact(12_340 * 1e9)).toBe("12.3K");
     expect(solCompact(2_500_000 * 1e9)).toBe("2.5M");
+  });
+});
+
+describe("release", () => {
+  it("strips a pre-release tag so a build matches its own cluster row", () => {
+    expect(release("4.3.0-beta.0")).toBe("4.3.0");
+    expect(release("4.3.0-rc.1")).toBe("4.3.0");
+  });
+
+  it("strips build metadata the same way the server does", () => {
+    expect(release("4.3.0+deadbeef")).toBe("4.3.0");
+  });
+
+  it("leaves a plain release alone", () => {
+    expect(release("4.2.1")).toBe("4.2.1");
+    expect(release(undefined)).toBeUndefined();
   });
 });

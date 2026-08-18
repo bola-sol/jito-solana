@@ -112,7 +112,7 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `commit_hash`, `cluster`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `block_height`, `next_leader_slot`, `vote_slot`, `vote_distance`, `identity_balance`, `vote_balance`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `skip_rate`, `health`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_history`, `network_sample` |
+| `summary` | `version`, `commit_hash`, `cluster`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `block_height`, `next_leader_slot`, `vote_slot`, `vote_distance`, `identity_balance`, `vote_balance`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_remaining_nanos`, `skip_rate`, `health`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_history`, `network_sample` |
 | `epoch`   | `new` |
 | `peers`   | `all`, `update` |
 | `slot`    | `overview`, `update` |

@@ -65,6 +65,20 @@ export function blockTime(millis: number | null | undefined): string {
   return `${day} ${time}.${String(at.getMilliseconds()).padStart(3, "0")}`;
 }
 
+/**
+ * The release a version belongs to, e.g. `4.3.0-beta.0` → `4.3.0`.
+ *
+ * Mirrors `release_of` in `collect.rs`, which is what the cluster version rows
+ * are keyed by. Our own version is published in full, because the header shows
+ * the exact build, so without this a validator running any pre-release never
+ * matches its own row and the `ours` marker goes missing.
+ */
+export function release(version: string | undefined): string | undefined {
+  if (version === undefined) return undefined;
+  const at = version.search(/[-+]/);
+  return at === -1 ? version : version.slice(0, at);
+}
+
 /** Shortened pubkey, e.g. `J5e4xh…c8FF1`. */
 export function shortKey(key: string | null | undefined, lead = 6, tail = 5): string {
   if (!key) return "—";

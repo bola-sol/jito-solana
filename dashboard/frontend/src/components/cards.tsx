@@ -16,16 +16,19 @@ export function EpochCard() {
   const store = useStore();
   const epoch = store.get<EpochInfo>("epoch", "new");
   const slot = store.get<number>("summary", "completed_slot");
-  const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
+  // Sent by the server rather than derived here. It used to be the remaining
+  // slots times the configured slot duration, which is what the cluster aims
+  // at rather than what it does, and the gap between the two is an hour or
+  // more across a whole epoch. The server measures the rate instead, and holds
+  // the answer still unless it really moves — neither of which the client can
+  // do from one duration and a slot number.
+  const remainingNanos = store.get<number>("summary", "epoch_remaining_nanos");
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
 
   const elapsed = Math.max(0, (slot ?? epoch.start_slot) - epoch.start_slot);
   const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
-  // Derived here rather than sent by the server: an absolute end time would
-  // change every tick and force the whole epoch message to be republished.
-  const slotMs = (slotDurationNanos ?? 400_000_000) / 1e6;
-  const remainingMs = Math.max(0, (epoch.end_slot - (slot ?? epoch.start_slot)) * slotMs);
+  const remainingMs = remainingNanos === undefined ? undefined : remainingNanos / 1e6;
 
   return (
     <Card title="Epoch" className="epoch-body">

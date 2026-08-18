@@ -23,7 +23,7 @@ use {
         validator_info::{self, ValidatorInfoCache},
     },
     serde::Serialize,
-    solana_clock::{Epoch, Slot},
+    solana_clock::{Clock, Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{
@@ -59,9 +59,63 @@ const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 /// four slots in every eight hundred, so this is hours of them.
 const PRODUCED_BLOCKS: usize = 64;
 
-/// Window the reported slot time averages over. Short enough to follow the
-/// cluster, long enough that a single slow slot does not move the reading.
-const SLOT_TIME_WINDOW_MS: u64 = 60_000;
+/// Slots of arrival times kept, about five minutes of them. Matches
+/// Firedancer, whose dashboard averages over the same 750.
+///
+/// This is what is retained, not what is reported. Readings are taken over
+/// spans of it: the strip's readout wants a figure that follows the cluster
+/// now, and the epoch countdown wants one that sits still, because it is
+/// multiplied by an epoch's worth of remaining slots where a millisecond of
+/// wobble is seven minutes on the clock. Both come off these samples rather
+/// than from two windows kept in step.
+///
+/// Counted in slots rather than in wall-clock time so that it does not thin out
+/// during a stall, which is exactly when it gets read.
+const SLOT_TIME_WINDOW_SLOTS: usize = 750;
+
+/// Span the slot strip's readout averages over. Short enough to follow the
+/// cluster, long enough that a single slow slot does not move it.
+const SLOT_READOUT_SPAN_MS: u64 = 60_000;
+
+/// How near the highest slot held replay must come before this validator is
+/// following the cluster rather than replaying towards it. Firedancer uses the
+/// same few slots against its highest turbine slot.
+const CAUGHT_UP_SLOT_DISTANCE: u64 = 4;
+
+/// Samples the window must already hold before that distance is believed.
+///
+/// Distance alone says nothing on its own: a validator that has just loaded a
+/// snapshot and received nothing sits at zero distance, and would mark itself
+/// caught up immediately before replaying half a million slots. Requiring the
+/// window to have filled first means the distance is only read once slots have
+/// been arriving for a while, which is what Firedancer's full-turbine-history
+/// condition does for the same reason.
+const CAUGHT_UP_MIN_SAMPLES: usize = 64;
+
+/// Slots skipped past when the marker is set, so that the interval straddling
+/// the transition — part replay burst, part cluster — is not measured.
+const CAUGHT_UP_MARGIN_SLOTS: u64 = 4;
+
+/// Slots an epoch must have run before its own rate is believed.
+///
+/// The cluster's clock moves in whole seconds, so a rate taken from it carries
+/// a second of quantisation spread across the slots elapsed so far: a
+/// millisecond a slot after a thousand slots, a tenth of that after ten
+/// thousand. The sliding window's own jitter is about a quarter of a
+/// millisecond, so below roughly four thousand slots the window is the quieter
+/// of the two, and above it the epoch is — by a margin that only grows.
+const EPOCH_RATE_MIN_ELAPSED_SLOTS: u64 = 4_000;
+
+/// The countdown follows its estimate once that estimate has moved further than
+/// this fraction of the time still to run.
+///
+/// Proportional rather than a fixed duration, because the countdown's
+/// sensitivity to the slot rate scales with the slots left: sixty seconds of
+/// countdown is a seventh of a millisecond of slot time at the start of an
+/// epoch and sixty milliseconds at the end, four hundred times looser. A single
+/// figure cannot be right at both ends, and one that is far too tight at the
+/// start lets every sample turnover through, which is a gate that does nothing.
+const EPOCH_END_DRIFT_DIVISOR: u32 = 64;
 
 /// Slots timed in one tick. Bounds the blockstore lookups after a stall, when
 /// the cursor could otherwise be thousands of slots behind.
@@ -160,6 +214,7 @@ struct Debounces {
     skip_rate: Debounced<SkipRate>,
     health: Debounced<Health>,
     epoch: Debounced<EpochInfo>,
+    epoch_remaining_nanos: Debounced<u64>,
 }
 
 pub struct Collector {
@@ -206,7 +261,19 @@ pub struct Collector {
     /// milliseconds. The next slot's duration is measured from here.
     last_shred_time: Option<(Slot, u64)>,
     /// `(slot, arrival)` pairs spanning the averaging window, oldest first.
+    /// Bounded by [`SLOT_TIME_WINDOW_SLOTS`].
     slot_time_window: VecDeque<(Slot, u64)>,
+    /// First slot whose timing describes the cluster rather than a replay
+    /// burst. Set once, never cleared. See [`Collector::mark_caught_up`].
+    caught_up_at: Option<Slot>,
+    /// Whether replay was ever seen trailing the highest slot held, before the
+    /// marker above was set. Decides whether there is anything to throw away
+    /// when it is: a validator that started level never measured a burst.
+    replayed_behind: bool,
+    /// The epoch end currently being counted down to, and the epoch it belongs
+    /// to. Held rather than recomputed so the readout does not chase its own
+    /// estimate. See [`EPOCH_END_DRIFT_DIVISOR`].
+    epoch_end: Option<(Epoch, SystemTime)>,
     last_vote_advance: Instant,
     last_slow_tick: Instant,
     /// Viewers attached as of the last tick, kept only so that pausing and
@@ -244,6 +311,9 @@ impl Collector {
             slot_timed_to: None,
             last_shred_time: None,
             slot_time_window: VecDeque::new(),
+            caught_up_at: None,
+            replayed_behind: false,
+            epoch_end: None,
             last_vote_advance: now,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             subscribers: 0,
@@ -391,28 +461,26 @@ impl Collector {
             completed,
         );
         self.collect_slot_durations(completed);
+        self.mark_caught_up(highest_slot, completed);
         self.observe_slot_duration(root_bank, completed);
     }
 
-    /// Maintains a smoothed estimate of how long a slot is taking, which the
-    /// epoch countdown is derived from.
-    /// Records replay progress and publishes the cluster's slot duration.
+    /// Records replay progress and publishes both slot durations: what the
+    /// cluster is configured for, and what it is doing.
     ///
-    /// The duration is the bank's configured `ns_per_slot`, not a measurement.
-    /// Measuring it was unstable: the sample window gets anchored during a
-    /// catch-up burst, when slots arrive far faster than the cluster produces
-    /// them, and then drifts for minutes as real time accumulates. That moved
-    /// the epoch countdown by ten minutes between refreshes. The configured
-    /// value only changes at an epoch boundary, so the countdown is steady.
+    /// The configured one is what the slot strip draws its bars against, where
+    /// a fixed reference is the point — bars that rescale themselves show no
+    /// change when everything slows down together. The measured one is the
+    /// strip's readout. Neither feeds the epoch countdown any more; that reads
+    /// the wider window directly, in `collect_epoch_countdown`.
     fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
         if completed > self.last_completed_slot {
             self.last_completed_slot = completed;
             self.last_completed_at = Instant::now();
         }
 
-        // What the cluster is configured for. Constant, and what the client's
-        // countdowns run on: multiplied by an epoch's worth of slots, a moving
-        // average never lets them settle.
+        // Constant between epoch boundaries, which is what makes it usable as
+        // the scale the bars are drawn against.
         let ns_per_slot = root_bank.ns_per_slot_at_slot(completed) as u64;
         self.debounces.slot_duration_nanos.publish(
             &self.publisher,
@@ -467,18 +535,61 @@ impl Collector {
 
             self.last_shred_time = Some((slot, arrived));
             self.slot_time_window.push_back((slot, arrived));
-            while let Some((_, oldest)) = self.slot_time_window.front() {
-                if arrived.saturating_sub(*oldest) > SLOT_TIME_WINDOW_MS {
-                    self.slot_time_window.pop_front();
-                } else {
-                    break;
-                }
+            // Skipped slots carry no timestamp and so never enter the window.
+            // The mean divides by the slot span rather than by the sample
+            // count, so they are still accounted for; the window just reaches
+            // back a little further than its length in slot numbers.
+            while self.slot_time_window.len() > SLOT_TIME_WINDOW_SLOTS {
+                self.slot_time_window.pop_front();
             }
         }
 
         for entry in &changed {
             self.publish_slot(entry);
         }
+    }
+
+    /// Records, once, the point from which slot timings describe the cluster.
+    ///
+    /// A validator replaying towards the tip runs through slots far faster than
+    /// they were produced. Those intervals are a record of the download, not of
+    /// the cluster, and averaged in they drag the epoch countdown down for as
+    /// long as they stay in the window.
+    ///
+    /// Firedancer solves this with a one-shot marker: `slot_caught_up` is set
+    /// when its highest turbine slot comes within a few slots of what it has
+    /// replayed, and the average is then truncated to slots after it. This is
+    /// the same shape, and deliberately so. An earlier attempt here tested the
+    /// replay rate continuously and cleared the window whenever it looked like
+    /// a burst, which fed back on itself: clearing the window shortened it,
+    /// a shorter window is more easily tripped, and the reading never settled.
+    ///
+    /// Set once and never cleared, so there is no loop to close. A validator
+    /// that later falls behind is a validator whose slot timings are genuinely
+    /// slow, which is a thing worth reporting rather than hiding.
+    fn mark_caught_up(&mut self, highest_slot: Slot, completed: Slot) {
+        if self.caught_up_at.is_some() {
+            return;
+        }
+        if highest_slot.saturating_sub(completed) > CAUGHT_UP_SLOT_DISTANCE {
+            self.replayed_behind = true;
+            return;
+        }
+        if self.slot_time_window.len() < CAUGHT_UP_MIN_SAMPLES {
+            return;
+        }
+
+        let from = completed.saturating_add(CAUGHT_UP_MARGIN_SLOTS);
+        self.caught_up_at = Some(from);
+        if self.replayed_behind {
+            // Everything held was measured while trailing the tip, so all of it
+            // goes and the readout is blank until the window refills. That is
+            // the honest answer: none of it describes the cluster. A validator
+            // that started level has nothing to throw away and keeps its
+            // samples, rather than blanking a working readout for a minute.
+            self.slot_time_window.retain(|(slot, _)| *slot >= from);
+        }
+        log::info!("dashboard: caught up with the cluster, timing slots from {from}");
     }
 
     fn first_shred_time(&self, slot: Slot) -> Option<u64> {
@@ -488,12 +599,12 @@ impl Collector {
         }
     }
 
-    /// Mean milliseconds per slot across the window, in nanoseconds.
+    /// Mean milliseconds per slot over the last minute, in nanoseconds.
     ///
-    /// A true mean between the ends of the window rather than a decaying
+    /// A true mean between the ends of the span rather than a decaying
     /// average, so it does not drift and does not need to be seeded.
     fn windowed_slot_nanos(&self) -> Option<u64> {
-        windowed_mean_nanos(&self.slot_time_window)
+        windowed_mean_nanos(&self.slot_time_window, SLOT_READOUT_SPAN_MS)
     }
 
     fn collect_leaders(&mut self, root_bank: &Bank, highest_slot: Slot) {
@@ -804,10 +915,9 @@ impl Collector {
         let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
         let end_slot = start_slot.saturating_add(slots_in_epoch.saturating_sub(1));
 
-        // No wall-clock estimate here. It would change on every tick, so the
-        // debounce could never suppress it and this message, which carries every
-        // leader slot in the epoch, would go out five times a second. The client
-        // derives the countdown from the current slot and the slot duration.
+        // The countdown is published separately, below. It changes constantly,
+        // and this message carries every leader slot in the epoch, so folding
+        // the two together would send the whole schedule out once a second.
 
         // An unknown schedule is published as no leader slots. The panel counts
         // them, and a count is better absent-as-zero than withheld.
@@ -825,6 +935,88 @@ impl Collector {
                 my_leader_slots,
             },
         );
+
+        self.collect_epoch_countdown(bank, epoch, start_slot, end_slot);
+    }
+
+    /// Publishes how much of the epoch is left, as a duration rather than as an
+    /// end time.
+    ///
+    /// A duration needs no agreement about the clock. An absolute end time
+    /// would be read against the viewer's own, which is not this validator's,
+    /// and the countdown would be wrong by the difference. `uptime_nanos` is
+    /// reported the same way for the same reason.
+    ///
+    /// Rounded to the second so that the debounce has something to suppress:
+    /// the collector ticks five times a second and the value would otherwise
+    /// differ every time.
+    fn collect_epoch_countdown(
+        &mut self,
+        bank: &Bank,
+        epoch: Epoch,
+        start_slot: Slot,
+        end_slot: Slot,
+    ) {
+        // The slot the panel's own progress bar is drawn from, so the two
+        // halves of the card cannot disagree about where the epoch has got to.
+        // Taken with the working bank's slot because nothing has frozen yet in
+        // the first moments after startup, and a completed slot of zero would
+        // put the end of the epoch several years out.
+        let completed = self.last_completed_slot.max(bank.slot());
+        let remaining_slots = end_slot.saturating_sub(completed);
+        let ahead = Duration::from_nanos(
+            remaining_slots.saturating_mul(self.cluster_slot_nanos(bank, start_slot, completed)),
+        );
+
+        let now = SystemTime::now();
+        let Some(estimate) = now.checked_add(ahead) else {
+            return;
+        };
+        let held = self
+            .epoch_end
+            .filter(|(held_epoch, _)| *held_epoch == epoch)
+            .map(|(_, end)| end);
+        // Measured against what is left, so the countdown is as steady an hour
+        // from the boundary as it is six hours out.
+        let allowance = held
+            .and_then(|end| end.duration_since(now).ok())
+            .unwrap_or_default()
+            .checked_div(EPOCH_END_DRIFT_DIVISOR)
+            .unwrap_or_default();
+        let end = steady_epoch_end(held, estimate, allowance);
+        self.epoch_end = Some((epoch, end));
+
+        let remaining = end.duration_since(now).unwrap_or_default();
+        self.debounces.epoch_remaining_nanos.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "epoch_remaining_nanos",
+            remaining.as_secs().saturating_mul(1_000_000_000),
+        );
+    }
+
+    /// How long a slot is taking, on the best evidence available.
+    ///
+    /// The epoch's own rate first. It is measured over every slot since the
+    /// epoch began — hours of them by the middle of one — so each new slot
+    /// moves it by one part in hundreds of thousands, where the sliding window
+    /// turns a quarter of its samples over every minute and never settles. It
+    /// also comes from the cluster's clock rather than this host's, needs no
+    /// history, and is available immediately after a restart for an epoch this
+    /// validator never saw begin.
+    ///
+    /// The sliding window stands in for the first few thousand slots of an
+    /// epoch, where too little has elapsed for the epoch's own rate to mean
+    /// anything, and the configured duration stands in behind that — before
+    /// this validator has caught up there is nothing honest to measure at all,
+    /// because replayed slots record the download rather than the cluster.
+    fn cluster_slot_nanos(&self, bank: &Bank, start_slot: Slot, completed: Slot) -> u64 {
+        epoch_anchored_nanos(&bank.clock(), start_slot, completed)
+            .or_else(|| {
+                self.caught_up_at
+                    .and_then(|_| windowed_mean_nanos(&self.slot_time_window, u64::MAX))
+            })
+            .unwrap_or_else(|| bank.ns_per_slot_at_slot(completed) as u64)
     }
 
     /// This validator's leader slots in `epoch`, ascending.
@@ -1204,11 +1396,16 @@ fn health_of(
 
 /// How the cluster's stake divides across client versions, ready to publish.
 ///
-/// Every identity counts once, staked or not: unstaked nodes are most of the
-/// cluster by number and say something about how far an upgrade has spread,
-/// even though they carry none of the vote. During an upgrade this answers the
-/// question operators actually ask — how much stake has moved, and is this
-/// validator in the minority.
+/// Counted over staked identities only, the same population the validator
+/// counts are drawn from, so the two cards on the page add up to each other.
+/// Counting every gossip peer instead described a wider cluster than the one
+/// the bars measure: the bars have always been stake-weighted, so an unstaked
+/// node moved the count beside a row without moving the row, and the counts
+/// summed past the validator total by however many unstaked peers gossip
+/// happened to know about.
+///
+/// A staked identity gossip is not currently hearing from has no version and
+/// falls in the `None` bucket, which is not the same as the folded tail below.
 ///
 /// Releases are borrowed from the gossip strings rather than copied. There are
 /// a few thousand peers and at most six rows, so only the rows that survive the
@@ -1218,19 +1415,9 @@ fn version_shares(
     versions: &HashMap<Pubkey, String>,
 ) -> Vec<VersionShare> {
     let mut totals: HashMap<Option<&str>, (usize, u64)> = HashMap::new();
-    for (identity, version) in versions {
-        let stake = staked.get(identity).copied().unwrap_or(0);
-        let entry = totals.entry(Some(release_of(version))).or_insert((0, 0));
-        entry.0 = entry.0.saturating_add(1);
-        entry.1 = entry.1.saturating_add(stake);
-    }
-    // Staked validators gossip is not currently hearing from. They report no
-    // version, which is not the same as the folded tail below.
     for (identity, stake) in staked {
-        if versions.contains_key(identity) {
-            continue;
-        }
-        let entry = totals.entry(None).or_insert((0, 0));
+        let release = versions.get(identity).map(|version| release_of(version));
+        let entry = totals.entry(release).or_insert((0, 0));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = entry.1.saturating_add(*stake);
     }
@@ -1269,17 +1456,30 @@ fn version_shares(
 
 /// Mean milliseconds per slot across a window of arrival times, in nanoseconds.
 ///
-/// A true mean between the ends of the window rather than a decaying average,
-/// so it does not drift and does not need to be seeded. Only the two ends are
+/// A true mean between the ends of the span rather than a decaying average, so
+/// it does not drift and does not need to be seeded. Only the two ends are
 /// read; what the samples between them did does not change the answer.
+///
+/// `span_ms` bounds how far back from the newest sample to reach, so that one
+/// window can answer both of the questions asked of it. `u64::MAX` reads the
+/// whole of it.
 ///
 /// A free function rather than a method so that the tests exercise this rather
 /// than a copy of it. As a method reading `self.slot_time_window` it needed a
 /// whole collector to call, so the tests had grown their own reimplementation
 /// and would have kept passing while this drifted.
-fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>) -> Option<u64> {
-    let (first_slot, first_arrival) = window.front().copied()?;
+fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u64> {
     let (last_slot, last_arrival) = window.back().copied()?;
+    // The oldest sample still inside the span. The newest is always inside it,
+    // so this yields something whenever the window holds anything; a span
+    // holding only that one sample is then rejected below for spanning no
+    // slots, which is the same answer a window of one gives.
+    let (first_slot, first_arrival) = window
+        .iter()
+        .rev()
+        .take_while(|(_, arrival)| last_arrival.saturating_sub(*arrival) <= span_ms)
+        .last()
+        .copied()?;
     let slots = last_slot
         .checked_sub(first_slot)
         .filter(|slots| *slots > 0)?;
@@ -1295,6 +1495,59 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>) -> Option<u64> {
 
     let nanos = (millis as f64 / slots as f64) * 1_000_000.0;
     Some(nanos as u64)
+}
+
+/// The rate this epoch has actually run at, from the cluster's own clock.
+///
+/// `epoch_start_timestamp` is fixed for the epoch and `unix_timestamp` is the
+/// cluster's view of now, both stake-weighted medians agreed on chain rather
+/// than readings from this host. Dividing one span by the other gives the rate
+/// that has genuinely applied, over a base that grows all epoch — which is what
+/// makes it settle where a sliding window cannot.
+///
+/// `None` until enough of the epoch has run for the clock's whole-second
+/// granularity to matter less than the answer does.
+fn epoch_anchored_nanos(clock: &Clock, start_slot: Slot, completed: Slot) -> Option<u64> {
+    let slots = completed.saturating_sub(start_slot);
+    if slots < EPOCH_RATE_MIN_ELAPSED_SLOTS {
+        return None;
+    }
+    // A cluster whose clock has not advanced past the epoch's first slot says
+    // nothing about the rate, and a negative span says the two disagree.
+    let elapsed = clock
+        .unix_timestamp
+        .checked_sub(clock.epoch_start_timestamp)?;
+    let elapsed = u64::try_from(elapsed).ok().filter(|secs| *secs > 0)?;
+    elapsed.checked_mul(1_000_000_000)?.checked_div(slots)
+}
+
+/// The epoch end to count down to, given the one already being counted down to.
+///
+/// Holding the previous answer unless the new one has moved further than
+/// `allowance` is what keeps the readout still. The estimate underneath it
+/// moves constantly, by amounts that say nothing: it is a slot duration
+/// multiplied by hundreds of thousands of slots, so it swings by minutes on
+/// changes far too small to mean anything.
+///
+/// The allowance is supplied rather than fixed here because it has to scale
+/// with the time left; see [`EPOCH_END_DRIFT_DIVISOR`].
+///
+/// Drift beyond the allowance is real and is followed in one step. The step is
+/// visible, which is the point — the estimate genuinely changed.
+fn steady_epoch_end(
+    held: Option<SystemTime>,
+    estimate: SystemTime,
+    allowance: Duration,
+) -> SystemTime {
+    let Some(held) = held else {
+        return estimate;
+    };
+    // Either order, whichever way the estimate moved.
+    let drift = held
+        .duration_since(estimate)
+        .or_else(|_| estimate.duration_since(held))
+        .unwrap_or_default();
+    if drift > allowance { estimate } else { held }
 }
 
 /// Folds a gossip version string to its release, dropping any pre-release or
@@ -1319,7 +1572,7 @@ pub(crate) fn system_time_nanos(time: SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::fixture::fixture};
 
     /// The arrival window as the collector holds it.
     fn window(samples: &[(Slot, u64)]) -> VecDeque<(Slot, u64)> {
@@ -1476,22 +1729,35 @@ mod tests {
 
     #[test]
     fn test_rows_are_ordered_by_stake_not_by_node_count() {
-        // The whole point of the panel: a version on a crowd of unstaked nodes
-        // matters less than one carrying a slice of the vote.
+        // The whole point of the panel: a version on a crowd of lightly staked
+        // nodes matters less than one carrying a slice of the vote.
         let shares = version_shares(
-            &staked(&[(1, 1_000)]),
+            &staked(&[(1, 1_000), (2, 1), (3, 1), (4, 1)]),
             &gossiped(&[(1, "4.2.0"), (2, "4.1.0"), (3, "4.1.0"), (4, "4.1.0")]),
         );
         assert_eq!(shares[0].version.as_deref(), Some("4.2.0"));
         assert_eq!(shares[0].stake, 1_000);
-        assert_eq!(shares[1].validators, 3, "more nodes, no stake, second");
+        assert_eq!(shares[1].validators, 3, "more nodes, less stake, second");
     }
 
     #[test]
-    fn test_an_unstaked_gossip_node_counts_without_moving_stake() {
+    fn test_an_unstaked_gossip_node_is_not_counted() {
+        // The counts are read beside the validator card, which counts staked
+        // identities. Counting gossip peers here summed past that total.
         let shares = version_shares(&staked(&[]), &gossiped(&[(1, "4.2.0")]));
-        assert_eq!(shares[0].validators, 1);
-        assert_eq!(shares[0].stake, 0);
+        assert!(shares.is_empty());
+    }
+
+    #[test]
+    fn test_the_counts_sum_to_the_staked_validator_total() {
+        let staked = staked(&[(1, 10), (2, 10), (3, 10)]);
+        // Two unstaked peers gossip a version alongside them.
+        let shares = version_shares(
+            &staked,
+            &gossiped(&[(1, "4.2.0"), (2, "4.3.0"), (7, "4.3.0"), (8, "4.3.0")]),
+        );
+        let counted: usize = shares.iter().map(|share| share.validators).sum();
+        assert_eq!(counted, staked.len());
     }
 
     #[test]
@@ -1517,7 +1783,10 @@ mod tests {
                 .map(|(seed, version)| (*seed, version.as_str()))
                 .collect::<Vec<_>>(),
         );
-        let shares = version_shares(&staked(&[]), &versions);
+        // Distinct stakes, so which rows survive the fold does not come down to
+        // the order a hash map happened to iterate in.
+        let stakes: Vec<(u8, u64)> = (1..=9).map(|seed| (seed, u64::from(seed))).collect();
+        let shares = version_shares(&staked(&stakes), &versions);
 
         assert_eq!(shares.len(), MAX_VERSIONS_REPORTED + 1);
         let last = shares.last().unwrap();
@@ -1583,11 +1852,235 @@ mod tests {
         );
     }
 
+    /// `count` samples `slot_ms` apart, starting at `from`, newest last.
+    ///
+    /// Saturating throughout because the crate denies bare arithmetic, tests
+    /// included, and an index-driven `+` is exactly what that lint is for.
+    fn steady_window(from: (Slot, u64), count: u64, slot_ms: u64) -> VecDeque<(Slot, u64)> {
+        let (slot, arrival) = from;
+        (0..count)
+            .map(|index| {
+                (
+                    slot.saturating_add(index),
+                    arrival.saturating_add(index.saturating_mul(slot_ms)),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_a_full_window_averages_the_whole_of_it() {
+        // Five minutes of slots at 420ms, read whole, as the epoch countdown
+        // will read them.
+        let samples = steady_window((100, 1_000), SLOT_TIME_WINDOW_SLOTS as u64, 420);
+        assert_eq!(windowed_mean_nanos(&samples, u64::MAX), Some(420_000_000));
+    }
+
+    #[test]
+    fn test_a_full_window_of_replay_is_still_rejected() {
+        // Widening the window made the catch-up guard less twitchy, which is
+        // the point, but it must not have made it blind.
+        let samples = steady_window((100, 1_000), SLOT_TIME_WINDOW_SLOTS as u64, 10);
+        assert_eq!(windowed_mean_nanos(&samples, u64::MAX), None);
+    }
+
+    #[test]
+    fn test_the_readout_span_ignores_samples_older_than_itself() {
+        // Five minutes at 400ms, then the last minute at 500ms. Read whole,
+        // the recent slowdown is diluted; read over the readout's span, it is
+        // the whole answer. Both readings come off this one window.
+        let mut samples = steady_window((100, 1_000), SLOT_TIME_WINDOW_SLOTS as u64, 400);
+        let (last_slot, last_arrival) = *samples.back().unwrap();
+        samples.extend(steady_window(
+            (
+                last_slot.saturating_add(1),
+                last_arrival.saturating_add(500),
+            ),
+            120,
+            500,
+        ));
+        assert_eq!(
+            windowed_mean_nanos(&samples, SLOT_READOUT_SPAN_MS),
+            Some(500_000_000)
+        );
+        assert!(windowed_mean_nanos(&samples, u64::MAX).unwrap() < 420_000_000);
+    }
+
+    // ---- epoch countdown ------------------------------------------------
+
+    fn at(seconds: u64) -> SystemTime {
+        UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap()
+    }
+
+    const ALLOWANCE: Duration = Duration::from_secs(60);
+
+    /// A clock `elapsed` seconds into its epoch.
+    fn clock_at(elapsed: i64) -> Clock {
+        Clock {
+            epoch_start_timestamp: 1_700_000_000,
+            unix_timestamp: 1_700_000_000_i64.saturating_add(elapsed),
+            ..Clock::default()
+        }
+    }
+
+    #[test]
+    fn test_the_epoch_rate_is_its_own_elapsed_time_over_its_own_slots() {
+        // Six hours across sixty thousand slots is 360ms a slot.
+        let nanos = epoch_anchored_nanos(&clock_at(21_600), 100, 60_100);
+        assert_eq!(nanos, Some(360_000_000));
+    }
+
+    #[test]
+    fn test_the_epoch_rate_waits_for_the_epoch_to_get_going() {
+        // The cluster clock moves in whole seconds, so early on the error in
+        // that second is worth more than the answer.
+        assert_eq!(epoch_anchored_nanos(&clock_at(400), 100, 1_100), None);
+    }
+
+    #[test]
+    fn test_a_clock_that_has_not_moved_yields_no_rate() {
+        // Nothing to divide, and a negative span means the two disagree.
+        assert_eq!(epoch_anchored_nanos(&clock_at(0), 100, 60_100), None);
+        assert_eq!(epoch_anchored_nanos(&clock_at(-10), 100, 60_100), None);
+    }
+
+    #[test]
+    fn test_the_first_estimate_is_adopted_as_it_stands() {
+        assert_eq!(steady_epoch_end(None, at(10_000), ALLOWANCE), at(10_000));
+    }
+
+    #[test]
+    fn test_an_estimate_that_barely_moved_does_not_move_the_countdown() {
+        // Half a minute either way, on a figure hours out. Following this is
+        // what made the readout restless while telling nobody anything.
+        let held = at(10_000);
+        for estimate in [at(10_030), at(9_970)] {
+            assert_eq!(steady_epoch_end(Some(held), estimate, ALLOWANCE), held);
+        }
+    }
+
+    #[test]
+    fn test_real_drift_is_followed_in_one_step() {
+        let held = at(10_000);
+        assert_eq!(
+            steady_epoch_end(Some(held), at(10_600), ALLOWANCE),
+            at(10_600),
+            "ten minutes is the estimate genuinely changing, not noise"
+        );
+    }
+
+    #[test]
+    fn test_drift_exactly_at_the_allowance_is_still_held() {
+        // The boundary belongs to the quiet side: a countdown that steps for a
+        // difference this small is a countdown that steps constantly.
+        let held = at(10_000);
+        assert_eq!(steady_epoch_end(Some(held), at(10_060), ALLOWANCE), held);
+    }
+
+    #[test]
+    fn test_the_allowance_scales_with_what_is_left() {
+        // The bug this replaces: sixty seconds fixed is a seventh of a
+        // millisecond of slot time across a fresh epoch, which every sample
+        // turnover clears, so the gate never held anything. Six hours out the
+        // same relative move has to be tolerated that an hour out is not.
+        let six_hours = Duration::from_secs(21_600);
+        let allowance = six_hours.checked_div(EPOCH_END_DRIFT_DIVISOR).unwrap();
+        assert!(allowance > Duration::from_secs(300), "{allowance:?}");
+
+        let one_hour = Duration::from_secs(3_600);
+        let allowance = one_hour.checked_div(EPOCH_END_DRIFT_DIVISOR).unwrap();
+        assert!(allowance < Duration::from_secs(60), "{allowance:?}");
+    }
+
+    // ---- catching up ----------------------------------------------------
+
+    /// A collector holding `count` samples ending at `last`, 400ms apart.
+    fn collector_following(last: Slot, count: u64) -> Collector {
+        let mut collector = fixture().collector();
+        let first = last.saturating_sub(count.saturating_sub(1));
+        collector.slot_time_window = steady_window((first, 1_000), count, 400);
+        collector
+    }
+
+    #[test]
+    fn test_the_marker_waits_for_the_window_to_fill() {
+        // A validator that has loaded a snapshot and received nothing sits at
+        // zero distance without having caught up with anything. Marking here
+        // would bless the half-million slot replay that follows.
+        let mut collector = collector_following(300_000_000, 4);
+        collector.mark_caught_up(300_000_000, 300_000_000);
+        assert_eq!(collector.caught_up_at, None);
+        assert_eq!(collector.slot_time_window.len(), 4, "nothing discarded");
+    }
+
+    #[test]
+    fn test_the_marker_waits_for_replay_to_reach_the_tip() {
+        let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
+        // Replaying, and still a thousand slots behind what it holds.
+        collector.mark_caught_up(300_001_000, 300_000_000);
+        assert_eq!(collector.caught_up_at, None);
+    }
+
+    #[test]
+    fn test_catching_up_discards_everything_measured_while_behind() {
+        let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
+        // Trailing the tip by a thousand slots, then level.
+        collector.mark_caught_up(300_001_000, 300_000_000);
+        collector.mark_caught_up(300_000_002, 300_000_000);
+
+        assert_eq!(
+            collector.caught_up_at,
+            Some(300_000_000_u64.saturating_add(CAUGHT_UP_MARGIN_SLOTS))
+        );
+        assert!(
+            collector.slot_time_window.is_empty(),
+            "every sample was taken while behind, so none of it describes the cluster"
+        );
+    }
+
+    #[test]
+    fn test_starting_level_keeps_the_samples_it_already_has() {
+        // A restart that never trails the tip has measured nothing but the
+        // cluster. Discarding here would blank a working readout for a minute
+        // to protect against a burst that never happened.
+        let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
+        collector.mark_caught_up(300_000_000, 300_000_000);
+
+        assert!(collector.caught_up_at.is_some());
+        assert_eq!(
+            collector.slot_time_window.len(),
+            CAUGHT_UP_MIN_SAMPLES,
+            "nothing was measured while behind, so nothing is thrown away"
+        );
+    }
+
+    #[test]
+    fn test_the_marker_is_set_once_and_falling_behind_does_not_move_it() {
+        // The failure this replaces re-tested the rate continuously and cleared
+        // the window whenever it looked like a burst. Clearing shortened the
+        // window, a shorter window trips more easily, and it never settled.
+        let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
+        collector.mark_caught_up(300_000_000, 300_000_000);
+        let marked = collector.caught_up_at;
+
+        collector.slot_time_window = steady_window((300_001_000, 1_000), 200, 400);
+        collector.mark_caught_up(300_099_000, 300_001_000);
+
+        assert_eq!(collector.caught_up_at, marked, "the marker never moves");
+        assert_eq!(
+            collector.slot_time_window.len(),
+            200,
+            "and nothing is discarded a second time"
+        );
+    }
+
     #[test]
     fn test_mean_spans_the_ends_of_the_window() {
         // Ten slots over four seconds is 400ms each, however the middle fell.
         let samples = window(&[(100, 1_000), (105, 3_100), (110, 5_000)]);
-        assert_eq!(windowed_mean_nanos(&samples), Some(400_000_000));
+        assert_eq!(windowed_mean_nanos(&samples, u64::MAX), Some(400_000_000));
     }
 
     #[test]
@@ -1595,7 +2088,7 @@ mod tests {
         // 150 slots at 400ms with a single two-second slot among them.
         let steady = 150_u64 * 400;
         assert_eq!(
-            windowed_mean_nanos(&window(&[(0, 0), (150, steady + 1_600)])),
+            windowed_mean_nanos(&window(&[(0, 0), (150, steady + 1_600)]), u64::MAX),
             Some(410_666_666)
         );
     }
@@ -1604,15 +2097,18 @@ mod tests {
     fn test_repair_burst_is_not_reported_as_the_cluster_rate() {
         // A thousand slots arriving in two seconds is a download, not a cluster.
         assert_eq!(
-            windowed_mean_nanos(&window(&[(0, 0), (1_000, 2_000)])),
+            windowed_mean_nanos(&window(&[(0, 0), (1_000, 2_000)]), u64::MAX),
             None
         );
     }
 
     #[test]
     fn test_window_that_cannot_span_two_slots_reports_nothing() {
-        assert_eq!(windowed_mean_nanos(&window(&[])), None);
-        assert_eq!(windowed_mean_nanos(&window(&[(100, 1_000)])), None);
+        assert_eq!(windowed_mean_nanos(&window(&[]), u64::MAX), None);
+        assert_eq!(
+            windowed_mean_nanos(&window(&[(100, 1_000)]), u64::MAX),
+            None
+        );
     }
 
     #[test]

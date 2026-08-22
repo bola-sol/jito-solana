@@ -1499,6 +1499,7 @@ body {
 }
 
 .waterfall-row.is-loss .waterfall-label,
+.waterfall-row.is-count .waterfall-label,
 .waterfall-row.is-note .waterfall-label {
   padding-left: 12px;
   color: var(--text-dim);
@@ -1514,6 +1515,7 @@ body {
 }
 
 .waterfall-row.is-loss .waterfall-count,
+.waterfall-row.is-count .waterfall-count,
 .waterfall-row.is-note .waterfall-count {
   color: var(--text-dim);
 }
@@ -1523,6 +1525,14 @@ body {
   border-radius: 3px;
   background: var(--panel-raised);
   overflow: hidden;
+}
+
+/* No track either, on a row with nothing to draw in one. An empty track beside
+   a figure of forty reads as a bar that failed to render; blank space reads as
+   a row that has no bar, which is the truth. The cell stays so the tracks above
+   and below it keep one baseline. */
+.waterfall-row.is-count .waterfall-bar {
+  background: none;
 }
 
 .waterfall-fill {
@@ -1588,11 +1598,27 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.produced-waterfall-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .produced-waterfall-title {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
+}
+
+/* Named only when something other than the validator's own scheduler built the
+   block, so it carries the accent rather than the faint grey of the heading it
+   sits beside: it is the exception, and it changes what the rows below mean. */
+.produced-waterfall-source {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
 }
 
 @media (max-width: 700px) {

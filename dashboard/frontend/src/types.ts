@@ -244,8 +244,23 @@ export interface ProducedBlock {
  * not, and cannot be, because the queue holds a standing population: what was
  * scheduled in this window was largely buffered in an earlier one.
  */
+/**
+ * Which of the process's schedulers built a slot.
+ *
+ * A stock validator runs one and always reports `scheduler`. jito runs a second
+ * beside it for BAM, which builds the block itself whenever it is connected,
+ * and counts what arrived in a different unit.
+ */
+export type SchedulerSource = "scheduler" | "bam";
+
 export interface Waterfall {
   received: number;
+
+  /**
+   * Which scheduler these counts came from. Sent per slot and absent on the
+   * live card, which covers both without distinguishing them.
+   */
+  source?: SchedulerSource;
 
   /** Lost at the door, before ever being queued. These plus `buffered` are `received`. */
   not_held: number;

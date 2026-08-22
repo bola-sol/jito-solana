@@ -22,6 +22,22 @@ function against(total: number, count: number): { share: number; over: boolean }
   return { share: Math.min(1, share), over: share > 1 };
 }
 
+/**
+ * A row's share of its section, which a `count` row does not have.
+ *
+ * Zeroed at the source rather than hidden at the last moment by whatever draws
+ * it. A count is in a different unit from the total, so `count / total` is a
+ * number with no meaning, and leaving it in the row for the component to
+ * remember to ignore is how it ends up drawn somewhere else later.
+ */
+function shareOf(
+  kind: RowKind,
+  total: number,
+  count: number,
+): { share: number; over: boolean } {
+  return kind === "count" ? { share: 0, over: false } : against(total, count);
+}
+
 /** What a row is doing in the list, which is what decides how it is drawn. */
 export type RowKind =
   /** A point every transaction passes through: received, buffered, scheduled. */
@@ -29,7 +45,13 @@ export type RowKind =
   /** A transaction that got no further, and the reason. */
   | "loss"
   /** Neither: something that happened without anything being lost. */
-  | "note";
+  | "note"
+  /**
+   * A figure counted in a different unit from the rest, so it has no share of
+   * them and is drawn without a bar. Showing one would invite a comparison the
+   * numbers do not support.
+   */
+  | "count";
 
 export interface WaterfallRow {
   key: string;
@@ -63,6 +85,17 @@ export interface WaterfallRow {
  * "no transaction failed its fee payer check" and "nothing here counts that".
  */
 export function waterfallRows(w: Waterfall): WaterfallRow[] {
+  // BAM is sent atomic batches rather than packets, and counts them, so on a
+  // slot it built `received` is in a different unit from every row beneath it
+  // and cannot be their denominator — a batch carries however many
+  // transactions it carries. What parsed out of those batches can be, and is
+  // the first figure in the same unit as the rest. It sits below the door
+  // losses rather than above them, so those rows can run past it; they show
+  // their count and no percentage when they do, which is the same treatment a
+  // slot that dispatched more than arrived in it already gets.
+  const batches = w.source === "bam";
+  const total = batches ? w.buffered : w.received;
+
   // Everything is drawn against what arrived, so the bars are comparable down
   // the whole card rather than each stage being renormalised against the one
   // above it. Guarded because the card is drawn from the first sample.
@@ -72,16 +105,24 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
     kind: RowKind,
     count: number,
     explain: string,
-  ): WaterfallRow => ({ key, label, kind, count, ...against(w.received, count), explain });
+  ): WaterfallRow => ({ key, label, kind, count, ...shareOf(kind, total, count), explain });
 
   return [
-    row(
-      "received",
-      "Received",
-      "stage",
-      w.received,
-      "Transactions handed to the banking stage after signature verification. Everything below is what became of them.",
-    ),
+    batches
+      ? row(
+          "received",
+          "Batches received",
+          "count",
+          w.received,
+          "Atomic transaction batches BAM sent for this slot. Batches, not transactions: a batch holds as many as it holds, so this is not a total the rows below are shares of. Buffered is, and is the first figure here counted in transactions.",
+        )
+      : row(
+          "received",
+          "Received",
+          "stage",
+          w.received,
+          "Transactions handed to the banking stage after signature verification. Everything below is what became of them.",
+        ),
 
     // Lost at the door. These and `buffered` account for every one of the
     // above exactly — it is an identity the validator's own tests assert.
@@ -270,7 +311,7 @@ function rowsOf(
     label,
     kind,
     count,
-    ...against(total, count),
+    ...shareOf(kind, total, count),
     explain,
   }));
 }
@@ -357,7 +398,7 @@ export function verifyRows(v: VerifyStage): WaterfallRow[] {
     [
       "verify_evicted",
       "batches dropped, queue full",
-      "note",
+      "count",
       v.evicted_batches,
       "Counted in batches rather than transactions, which is why it sits apart from the figures above and is not subtracted from them. Verified work thrown away because the queue onward to the scheduler was full — real loss, in a unit that cannot be added to the rest.",
     ],

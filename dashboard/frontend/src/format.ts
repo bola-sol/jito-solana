@@ -123,6 +123,25 @@ export function release(version: string | undefined): string | undefined {
   return at === -1 ? version : version.slice(0, at);
 }
 
+/**
+ * How the header names this build, e.g. `Agave v4.3.0-beta.0`.
+ *
+ * The client leads because it is the half that tells one build from another: a
+ * fork ships the version number of the release it follows, so `4.2.1` reads the
+ * same whether it is stock Agave, Jito or any of the others, and the header
+ * said nothing about which was running.
+ *
+ * Either half can be absent — a server older than the client field publishes
+ * only the version, and neither has arrived before the first message — and
+ * whatever is known is shown on its own rather than held back.
+ */
+export function buildLabel(
+  client: string | undefined,
+  version: string | undefined,
+): string {
+  return [client, version && `v${version}`].filter(Boolean).join(" ");
+}
+
 /** Shortened pubkey, e.g. `J5e4xh…c8FF1`. */
 export function shortKey(key: string | null | undefined, lead = 6, tail = 5): string {
   if (!key) return "—";

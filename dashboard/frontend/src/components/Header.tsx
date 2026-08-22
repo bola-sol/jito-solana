@@ -1,4 +1,4 @@
-import { percent, sol, solCompact, duration } from "../format";
+import { buildLabel, percent, sol, solCompact, duration } from "../format";
 import type { StakeSummary } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
@@ -16,17 +16,26 @@ export function Header() {
   const uptimeNanos = store.get<number>("summary", "uptime_nanos");
   const cluster = store.get<string>("summary", "cluster");
   const version = store.get<string>("summary", "version");
+  const client = store.get<string>("summary", "client");
   const shredVersion = store.get<number>("summary", "shred_version");
   const connection = store.getConnection();
 
   const name = store.get<string | null>("summary", "identity_name") ?? "Private";
   const icon = store.get<string | null>("summary", "identity_icon") ?? null;
+  const build = buildLabel(client, version);
 
   return (
     <header className="header">
       <div className="header-brand">
         <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
-        <span className="version">{version ? `v${version}` : ""}</span>
+        {build && (
+          <Explain
+            className="version"
+            text="Which client this validator runs, and its version. A fork carries the version number of the release it follows, so the number alone does not say which client it is."
+          >
+            {build}
+          </Explain>
+        )}
         {shredVersion !== undefined && (
           <Explain className="version" text="Shred version. Nodes only gossip with matching versions.">
             shred {shredVersion}

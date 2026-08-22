@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   blockStamp,
   blockTime,
+  buildLabel,
   bytes,
   count,
   decimal,
@@ -163,6 +164,26 @@ describe("solCompact", () => {
     expect(solCompact(1_500_000_000)).toBe("1.5");
     expect(solCompact(12_340 * 1e9)).toBe("12.3K");
     expect(solCompact(2_500_000 * 1e9)).toBe("2.5M");
+  });
+});
+
+describe("buildLabel", () => {
+  it("names the client ahead of the version", () => {
+    // The whole point: two builds carrying the same number are told apart by
+    // the half in front of it.
+    expect(buildLabel("Agave", "4.3.0-beta.0")).toBe("Agave v4.3.0-beta.0");
+    expect(buildLabel("JitoLabs", "4.2.1")).toBe("JitoLabs v4.2.1");
+  });
+
+  it("shows whichever half it has", () => {
+    // A server older than the client field publishes only the version, and it
+    // should read as it always did rather than falling blank.
+    expect(buildLabel(undefined, "4.2.1")).toBe("v4.2.1");
+    expect(buildLabel("Agave", undefined)).toBe("Agave");
+  });
+
+  it("is empty before the first message, so the header shows no stray v", () => {
+    expect(buildLabel(undefined, undefined)).toBe("");
   });
 });
 

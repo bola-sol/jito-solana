@@ -372,6 +372,15 @@ impl Collector {
         let version = solana_version::Version::this_build();
         self.publisher
             .publish(TOPIC_SUMMARY, "version", &version.as_semver_string());
+        // Published apart from the version because the semver string does not
+        // carry it: `Display` for a version prints the numbers and leaves the
+        // client out. Forks ship the version number of the release they follow,
+        // so `4.2.1` alone does not say whether this is stock Agave, Jito, or
+        // any of the dozen others gossip knows about, and the header read the
+        // same on all of them. This is the name the validator's own startup
+        // line reports as `client:`.
+        self.publisher
+            .publish(TOPIC_SUMMARY, "client", &version.client().to_string());
         self.publisher.publish(
             TOPIC_SUMMARY,
             "commit_hash",
@@ -1877,6 +1886,39 @@ mod tests {
         );
         assert_eq!(tally.non_delinquent_stake, 107);
         assert_eq!(tally.delinquent_stake, 30);
+    }
+
+    // ---- what this build is ---------------------------------------------
+
+    #[test]
+    fn test_the_build_reports_its_client_beside_its_version() {
+        let harness = fixture();
+        harness.collector().publish_static();
+        let client = solana_version::Version::this_build().client().to_string();
+
+        // Asserting a name here would only assert which fork the tests were
+        // run from, and this file is shared by all of them. What can actually
+        // break is the header disagreeing with the line the validator logs
+        // about itself, or the client going missing altogether.
+        let published = harness.published_key("summary", "client").unwrap();
+        assert!(
+            published.contains(&format!(r#""value":"{client}""#)),
+            "published {published}, which does not carry the client {client}"
+        );
+        assert!(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .contains(&format!("client:{client}")),
+            "the header and the startup log would name the client differently"
+        );
+
+        // And the reason it is published at all: the version it sits beside
+        // does not carry it, which is why every fork's header read the same.
+        let version = harness.published_key("summary", "version").unwrap();
+        assert!(
+            !version.contains(&client),
+            "{version} already names the client, so publishing it apart is dead weight"
+        );
     }
 
     // ---- version shares -------------------------------------------------

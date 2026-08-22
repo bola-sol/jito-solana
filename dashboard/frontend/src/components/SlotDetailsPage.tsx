@@ -89,7 +89,13 @@ function BlockRow({
         <span className="produced-fill">{percent(filled, 1)} full</span>
         {/* Base and priority together, which is what the block earned. The
             detail below splits them; the row wants one figure. */}
-        <span className="produced-fees">{sol(block.total_fees, 5)} SOL</span>
+        <span className="produced-fees">
+          {sol(block.total_fees, 5)}
+          {/* Dropped on the narrowest screens, where the column it costs is
+              the slot number's. SOL is the only unit fees are ever in here,
+              and the expanded detail below states it either way. */}
+          <span className="produced-fees-unit"> SOL</span>
+        </span>
         <span className="produced-ms">
           {block.duration_nanos === null
             ? "—"

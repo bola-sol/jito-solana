@@ -1377,15 +1377,34 @@ body {
   color: var(--text-faint);
 }
 
-/* On a narrow screen the three figure columns leave too little for the slot
+/* On a narrow screen the four figure columns leave too little for the slot
    number, which is the one thing in the row that must not be cut. The fill
-   percentage goes, since the meter states it whenever the row is open. */
+   percentage goes, since the meter states it whenever the row is open.
+
+   The column count here has to match what is left after that: the row has five
+   children and hiding one leaves four, and a fourth child in a three column
+   grid wraps onto a second row and doubles the height of every row in the
+   list. */
 @media (max-width: 560px) {
   .produced-head {
-    grid-template-columns: minmax(0, 1fr) 5.5em 4.5em;
+    grid-template-columns: minmax(0, 1fr) 5.5em 6.5em 4.5em;
   }
 
   .produced-fill {
+    display: none;
+  }
+}
+
+/* Narrower still, where even four columns crowd the slot number out. The unit
+   goes rather than a figure: fees on this page are only ever in SOL, and the
+   detail under an opened row says so. */
+@media (max-width: 344px) {
+  .produced-head {
+    grid-template-columns: minmax(0, 1fr) 5em 4.5em 4em;
+    gap: 6px;
+  }
+
+  .produced-fees-unit {
     display: none;
   }
 }

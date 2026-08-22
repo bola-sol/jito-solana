@@ -86,6 +86,30 @@ export function blockTime(millis: number | null | undefined): string {
 }
 
 /**
+ * Wall-clock time of a block to the second, with the zone it is being read in.
+ *
+ * The row version of [`blockTime`], which carries milliseconds because two
+ * blocks in a row can be two hundred of them apart and the detail panel is
+ * where that matters. A list wants a stamp that lines up down the column, so
+ * this stops at seconds.
+ *
+ * The zone is the viewer's own, named by whatever abbreviation the browser
+ * holds for it. That is `EDT` or `UTC` where English has a common short form
+ * and `GMT+4` where it does not, which covers most of the world. Deriving
+ * initials from the long name would read better in a few places and be wrong in
+ * more: `Gulf Standard Time` gives `GST`, but `United Kingdom Time` gives `UKT`
+ * for a zone nobody calls that.
+ */
+export function blockStamp(millis: number | null | undefined): string {
+  if (millis === null || millis === undefined) return "—";
+  const at = new Date(millis);
+  if (Number.isNaN(at.getTime())) return "—";
+  const day = at.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const time = at.toLocaleTimeString(undefined, { hour12: false, timeZoneName: "short" });
+  return `${day} ${time}`;
+}
+
+/**
  * The release a version belongs to, e.g. `4.3.0-beta.0` → `4.3.0`.
  *
  * Mirrors `release_of` in `collect.rs`, which is what the cluster version rows

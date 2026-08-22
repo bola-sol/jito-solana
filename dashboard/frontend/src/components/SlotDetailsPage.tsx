@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { blockTime, count, percent, sol } from "../format";
+import { blockStamp, blockTime, count, percent, sol } from "../format";
 import type { ProducedBlock, SlotWaterfall } from "../types";
 import { useStore } from "../useStore";
 import { waterfallRows } from "../waterfall";
@@ -84,7 +84,15 @@ function BlockRow({
   return (
     <div className={`produced-block${open ? " is-open" : ""}`}>
       <button type="button" className="produced-head" onClick={onToggle} aria-expanded={open}>
-        <span className="produced-slot">{count(block.slot)}</span>
+        {/* One cell, because both name the block where everything to the right
+            says what was in it. Kept together rather than given a column each,
+            which also leaves the grid at five columns however narrow the screen
+            gets: hiding the stamp is then a `display: none` and not a count
+            the media rules have to be kept in step with. */}
+        <span className="produced-id">
+          <span className="produced-slot">{count(block.slot)}</span>
+          <span className="produced-when">{blockStamp(block.slot_time_millis)}</span>
+        </span>
         <span className="produced-txns">{count(block.transactions)} txns</span>
         <span className="produced-fill">{percent(filled, 1)} full</span>
         {/* Base and priority together, which is what the block earned. The

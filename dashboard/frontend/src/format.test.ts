@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  blockStamp,
   blockTime,
   bytes,
   count,
@@ -178,5 +179,30 @@ describe("release", () => {
   it("leaves a plain release alone", () => {
     expect(release("4.2.1")).toBe("4.2.1");
     expect(release(undefined)).toBeUndefined();
+  });
+});
+
+describe("blockStamp", () => {
+  it("says nothing when the blockstore held no timing", () => {
+    expect(blockStamp(null)).toBe("—");
+    expect(blockStamp(undefined)).toBe("—");
+    expect(blockStamp(Number.NaN)).toBe("—");
+  });
+
+  it("stops at seconds, unlike the detail panel's stamp", () => {
+    // The row version. Milliseconds are what let two blocks two hundred apart
+    // be told apart in the detail, and what stop a column of these lining up.
+    const at = Date.UTC(2026, 7, 22, 9, 29, 57, 626);
+    expect(blockStamp(at)).not.toMatch(/\.626/);
+    expect(blockTime(at)).toMatch(/\.626$/);
+  });
+
+  it("names the zone it is being read in", () => {
+    // Whatever abbreviation the browser holds: a short form where English has
+    // one, an offset where it does not. Either way the reader is told which
+    // clock this is, which a bare time does not.
+    const stamp = blockStamp(Date.UTC(2026, 7, 22, 9, 29, 57));
+    expect(stamp).toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(stamp.split(" ").length).toBeGreaterThan(2);
   });
 });

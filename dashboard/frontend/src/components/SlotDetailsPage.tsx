@@ -163,13 +163,26 @@ function BlockRow({
  * Only ever drawn under a block this validator produced, which is the only
  * place the figures exist: the counters are tagged with the bank being
  * produced, and there is no bank unless we are producing it.
+ *
+ * Named for whichever scheduler built the block. A stock validator has one and
+ * the name never changes; a jito validator hands the slot to BAM whenever BAM
+ * is connected, and which of the two built a given block is not otherwise
+ * visible anywhere on the page.
  */
 function SlotWaterfallDetail({ waterfall }: { waterfall: SlotWaterfall }) {
+  const bam = waterfall.source === "bam";
   return (
     <div className="produced-waterfall">
-      <Explain text="Every transaction the banking stage was handed during this slot, and what became of it. The indented rows are the ones that got no further, and why. Received is exactly buffered plus those first reasons; the later stages do not add up the same way, because the queue holds transactions across slots and some of what was scheduled here arrived before this slot began.">
-        <span className="produced-waterfall-title">Scheduler</span>
-      </Explain>
+      <div className="produced-waterfall-head">
+        <Explain text="Every transaction the banking stage was handed during this slot, and what became of it. The indented rows are the ones that got no further, and why. Received is exactly buffered plus those first reasons; the later stages do not add up the same way, because the queue holds transactions across slots and some of what was scheduled here arrived before this slot began.">
+          <span className="produced-waterfall-title">Scheduler</span>
+        </Explain>
+        {bam && (
+          <Explain text="BAM built this block. It is sent atomic transaction batches rather than packets off the wire, so the figures below start from what parsed out of those batches.">
+            <span className="produced-waterfall-source">BAM</span>
+          </Explain>
+        )}
+      </div>
       <WaterfallRows rows={waterfallRows(waterfall)} />
     </div>
   );

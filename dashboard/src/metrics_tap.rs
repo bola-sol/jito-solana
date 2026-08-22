@@ -142,6 +142,16 @@ const SLOT: &str = "slot";
 /// every block it can show has its waterfall for as long as it is shown.
 const SLOT_WATERFALLS: usize = 64;
 
+/// The tag naming which scheduler reported a point.
+///
+/// Absent on a stock validator, which runs one scheduler and has nothing to
+/// distinguish. jito runs a second controller beside it for BAM and tags both,
+/// which is the only reason this is read.
+const SCHEDULER_ID: &str = "id";
+
+/// The id the validator's own scheduler reports under.
+const OWN_SCHEDULER_ID: &str = "0";
+
 /// What the accounts database read, wrote, and is holding.
 ///
 /// The read side is a rate of accounts rather than of bytes. Agave counts what
@@ -335,8 +345,54 @@ pub struct MetricsTap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SlotWaterfall {
     pub slot: Slot,
+    pub source: SchedulerSource,
     #[serde(flatten)]
     pub counts: SchedulerTotals,
+}
+
+/// Which of the process's schedulers built a slot, and therefore what its
+/// counts are counting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SchedulerSource {
+    /// The validator's own scheduler, and the only one a stock build runs.
+    #[default]
+    Scheduler,
+    /// A second scheduler running beside it, which on jito is BAM. It receives
+    /// batches from the marketplace rather than packets off the wire and builds
+    /// the block itself whenever it is connected.
+    Bam,
+}
+
+/// Reads the tag, treating an untagged point as the validator's own.
+///
+/// Every agave point is untagged, so this is the answer there. A tagged point
+/// naming anything other than the built-in id is a second scheduler, and BAM is
+/// the only one that exists; a third would be labelled as BAM until this learns
+/// its name, which is wrong in the label but not in which report is kept.
+fn scheduler_source(point: &DataPoint) -> SchedulerSource {
+    match point.tags.iter().find(|(name, _)| *name == SCHEDULER_ID) {
+        None => SchedulerSource::Scheduler,
+        Some((_, id)) if id == OWN_SCHEDULER_ID => SchedulerSource::Scheduler,
+        Some(_) => SchedulerSource::Bam,
+    }
+}
+
+/// Whether a newly arrived report describes more of a slot's work than the one
+/// already held for it.
+///
+/// `scheduled` decides it. Exactly one scheduler is enabled at a time, so on
+/// any slot only one of them placed work with a worker, and that is the one
+/// whose report describes the block. `finished` and then `buffered` break the
+/// tie on a slot where nothing was scheduled at all, so an empty leader slot
+/// still keeps whichever report saw the most.
+///
+/// `received` is deliberately not consulted. It is the one figure the two count
+/// in different units — BAM counts the atomic batches it was sent, the built-in
+/// scheduler counts packets — so comparing them would decide the winner by
+/// batch size.
+fn describes_more_work(new: &SchedulerTotals, held: &SchedulerTotals) -> bool {
+    (new.scheduled, new.finished, new.buffered) > (held.scheduled, held.finished, held.buffered)
 }
 
 /// The banking stage scheduler's counters, in the order a transaction meets
@@ -608,6 +664,7 @@ impl MetricsTap {
         counters.add_point(point);
         let waterfall = SlotWaterfall {
             slot,
+            source: scheduler_source(point),
             counts: counters.totals(),
         };
 
@@ -616,11 +673,22 @@ impl MetricsTap {
             // losing a panel is not worth taking the validator down over.
             return;
         };
-        // Replaced rather than appended if the slot is already held, which
-        // needs the scheduler to report the same slot twice. Appending would
-        // leave two rows for one slot and push a real one off the end.
+        // One row per slot, keeping whichever report describes the block.
+        //
+        // A build running two schedulers reports this point twice for every
+        // leader slot, once from each, and only the one that was enabled did
+        // any of the work; the other's report is nearly empty. Replacing
+        // unconditionally let whichever thread happened to report last decide,
+        // which emptied the panel on roughly half of all slots. Summing them
+        // would be worse still: it would add two populations counted in
+        // different units.
+        //
+        // Appending is not an option either. It would leave two rows for one
+        // slot and push a real one off the end of the queue.
         if let Some(held) = slots.iter_mut().find(|held| held.slot == slot) {
-            *held = waterfall;
+            if describes_more_work(&waterfall.counts, &held.counts) {
+                *held = waterfall;
+            }
             return;
         }
         slots.push_back(waterfall);
@@ -1071,6 +1139,14 @@ mod tests {
         point
     }
 
+    /// A slot point tagged as one scheduler or the other, as a build running
+    /// two of them sends it.
+    fn tagged_slot_point(id: &str, slot: u64, fields: &[(&'static str, &str)]) -> DataPoint {
+        let mut point = slot_point(slot, fields);
+        point.tags.push((SCHEDULER_ID, id.to_string()));
+        point
+    }
+
     fn point(fields: &[(&'static str, &str)]) -> DataPoint {
         named(ACCOUNTS_DB_TIMINGS, fields)
     }
@@ -1362,16 +1438,86 @@ mod tests {
     }
 
     #[test]
-    fn test_a_slot_reported_twice_is_replaced_rather_than_repeated() {
+    fn test_a_slot_reported_twice_keeps_one_row() {
         // Appending would leave two rows describing one slot and push a real
         // one off the end of the queue.
         let tap = MetricsTap::default();
-        tap.observe(&slot_point(100, &[("num_received", "5i")]));
-        tap.observe(&slot_point(100, &[("num_received", "9i")]));
+        tap.observe(&slot_point(100, &[("num_scheduled", "5i")]));
+        tap.observe(&slot_point(100, &[("num_scheduled", "9i")]));
 
         let held = tap.slot_waterfalls();
         assert_eq!(held.len(), 1);
-        assert_eq!(held[0].counts.received, 9);
+        assert_eq!(held[0].counts.scheduled, 9);
+    }
+
+    #[test]
+    fn test_an_idle_scheduler_does_not_empty_a_slot_it_did_not_build() {
+        // The bug this exists to stop. A build running two schedulers reports
+        // this point twice for every leader slot, once from each, and only the
+        // one that was enabled did any of the work. Keeping whichever arrived
+        // last is a race between two threads, and it emptied the panel on about
+        // half of all slots.
+        for order in [["10000", "0"], ["0", "10000"]] {
+            let tap = MetricsTap::default();
+            for id in order {
+                // BAM built this one; the validator's own scheduler sat out and
+                // has nothing but the packets it went on buffering.
+                let fields: &[(&'static str, &str)] = if id == "10000" {
+                    &[
+                        ("num_received", "40i"),
+                        ("num_buffered", "700i"),
+                        ("num_scheduled", "738i"),
+                        ("num_finished", "735i"),
+                    ]
+                } else {
+                    &[("num_received", "710i"), ("num_buffered", "717i")]
+                };
+                tap.observe(&tagged_slot_point(id, 100, fields));
+            }
+
+            let held = tap.slot_waterfalls();
+            assert_eq!(held.len(), 1, "one row per slot, whatever the order");
+            assert_eq!(held[0].counts.finished, 735, "arrival order {order:?}");
+            assert_eq!(held[0].source, SchedulerSource::Bam);
+        }
+    }
+
+    #[test]
+    fn test_the_scheduler_that_built_the_slot_is_named() {
+        // Which one built the block is worth reading on its own, and the panel
+        // needs it: the two count what arrived in different units, so the rows
+        // cannot be drawn against the same total.
+        let tap = MetricsTap::default();
+        tap.observe(&tagged_slot_point("0", 1, &[("num_scheduled", "5i")]));
+        tap.observe(&tagged_slot_point("10000", 2, &[("num_scheduled", "5i")]));
+        // Untagged, as every stock validator sends it.
+        tap.observe(&slot_point(3, &[("num_scheduled", "5i")]));
+
+        let held = tap.slot_waterfalls();
+        let sources: Vec<SchedulerSource> = held.iter().map(|slot| slot.source).collect();
+        assert_eq!(
+            sources,
+            [
+                SchedulerSource::Scheduler,
+                SchedulerSource::Bam,
+                SchedulerSource::Scheduler
+            ]
+        );
+    }
+
+    #[test]
+    fn test_an_empty_leader_slot_keeps_the_report_that_saw_the_most() {
+        // Nothing was scheduled by either, so the tie falls to what was
+        // buffered. Without it the row would be decided by arrival order again,
+        // on exactly the slots that have least to show.
+        let tap = MetricsTap::default();
+        tap.observe(&tagged_slot_point("10000", 100, &[("num_received", "2i")]));
+        tap.observe(&tagged_slot_point("0", 100, &[("num_buffered", "31i")]));
+
+        let held = tap.slot_waterfalls();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].counts.buffered, 31);
+        assert_eq!(held[0].source, SchedulerSource::Scheduler);
     }
 
     #[test]

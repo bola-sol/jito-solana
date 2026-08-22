@@ -118,6 +118,57 @@ describe("waterfallRows", () => {
   });
 });
 
+describe("a slot BAM built", () => {
+  /** What BAM reports: batches in, transactions from there down. */
+  function bamSlot(): Waterfall {
+    return quiet({
+      source: "bam",
+      received: 40,
+      unparsable: 3,
+      buffered: 700,
+      scheduled: 738,
+      finished: 735,
+    });
+  }
+
+  it("does not draw the rows against a count of batches", () => {
+    // The bug this guards. BAM is sent atomic batches and counts them, so
+    // drawing 735 finished transactions against 40 received batches puts every
+    // row past a hundred percent and reports nothing at all.
+    const rows = waterfallRows(bamSlot());
+    const parsed = rows.find((r) => r.key === "unparsable")!;
+    expect(parsed.share).toBeCloseTo(3 / 700, 5);
+
+    // Against the batch count 735 finished would have been eighteen times the
+    // total. Against what parsed it is a slot that dispatched a little more
+    // than arrived in it, which is the ordinary reading of a queue that holds
+    // work across slots, and gets the ordinary treatment: the count, no
+    // percentage.
+    const finished = rows.find((r) => r.key === "finished")!;
+    expect(finished.over).toBe(true);
+    expect(finished.share).toBe(1);
+  });
+
+  it("shows the batch count without a share of the transactions", () => {
+    const received = waterfallRows(bamSlot()).find((r) => r.key === "received")!;
+    expect(received.label).toBe("Batches received");
+    expect(received.kind).toBe("count");
+    expect(received.count).toBe(40);
+    // No share, because there is no total it is a share of.
+    expect(received.share).toBe(0);
+    expect(received.over).toBe(false);
+  });
+
+  it("leaves a slot the validator built alone", () => {
+    // Same numbers, no source: the ordinary reading, drawn against received.
+    const rows = waterfallRows(quiet({ received: 1000, buffered: 700, finished: 500 }));
+    const received = rows.find((r) => r.key === "received")!;
+    expect(received.label).toBe("Received");
+    expect(received.kind).toBe("stage");
+    expect(rows.find((r) => r.key === "finished")!.share).toBeCloseTo(0.5, 5);
+  });
+});
+
 describe("scheduledShare", () => {
   it("measures against what the validator kept, not what reached it", () => {
     // Against received it would read 6%, which is a statement about how much of
@@ -184,7 +235,9 @@ describe("verifyRows", () => {
     );
     expect(rowOf(rows, "verify_bad").count).toBe(0);
     expect(rowOf(rows, "verify_evicted").count).toBe(7);
-    expect(rowOf(rows, "verify_evicted").kind).toBe("note");
+    expect(rowOf(rows, "verify_evicted").kind).toBe("count");
+    // And carries no share, for the same reason it is labelled apart.
+    expect(rowOf(rows, "verify_evicted").share).toBe(0);
   });
 });
 

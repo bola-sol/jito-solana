@@ -6,9 +6,16 @@
 //! that is the common way a validator loses shreds. `sk_drops` counts exactly
 //! those.
 //!
+//! The two are complementary rather than rival readings, and the panel adds
+//! them: what a socket delivered plus what it discarded is everything that
+//! arrived at it, which is the only denominator a drop count can be judged
+//! against. [`crate::metrics_tap`] supplies the delivered half, for the ports
+//! that have a receiver reporting one.
+//!
 //! It also reaches the QUIC paths. QUIC runs over UDP, so the TPU sockets appear
-//! here with drop counters of their own, where the equivalent in-process figures
-//! are private to `solana-streamer`.
+//! here with drop counters of their own, where the in-process figures count
+//! transactions pulled out of streams and so cannot be added to a datagram
+//! count.
 //!
 //! Counters are cumulative per socket and keyed here by port. Attribution to a
 //! service is the caller's job, and it is a heuristic: this file describes every
@@ -39,21 +46,29 @@ pub struct PortCounters {
 
 pub type PortMap = HashMap<u16, PortCounters>;
 
-/// Drops over a trailing window, alongside the cumulative total.
+/// A cumulative per-port counter over a trailing window.
 ///
-/// The total on its own cannot answer the question the panel is opened to ask,
-/// which is whether packets are being lost *now*. A validator that dropped a
-/// quarter of a million while gossip pulled its first view of the cluster, and
-/// none in the hour since, reads identically to one still dropping them. This
-/// lets that burst age out.
+/// Built for drops, where the running total cannot answer the question the
+/// panel is opened to ask, which is whether packets are being lost *now*. A
+/// validator that dropped a quarter of a million while gossip pulled its first
+/// view of the cluster, and none in the hour since, reads identically to one
+/// still dropping them. This lets that burst age out.
+///
+/// Also holds the packets each port delivered, which are counted by the
+/// validator rather than by the kernel and reach the caller from somewhere
+/// else entirely. Same shape, and driven from the same tick with the same set
+/// of ports, so that the two windows cover the same span by construction: the
+/// share of a port's traffic that was lost is one divided by the sum of both,
+/// and two windows that had drifted a sample apart would make that share
+/// quietly wrong in a way nothing on the page could show.
 #[derive(Debug)]
-pub struct DropWindow {
+pub struct PortWindow {
     span: Duration,
     /// Oldest first, each entry one tick's cumulative totals per port.
     samples: VecDeque<(Instant, HashMap<u16, u64>)>,
 }
 
-impl DropWindow {
+impl PortWindow {
     pub fn new(span: Duration) -> Self {
         Self {
             span,
@@ -89,7 +104,7 @@ impl DropWindow {
             .unwrap_or_default()
     }
 
-    /// Drops on `port` since the start of the window.
+    /// How far `port`'s counter has climbed since the start of the window.
     ///
     /// Zero for a port with no reading yet at the window's start, which needs a
     /// port to have appeared part-way through — the caller writes every port it
@@ -99,7 +114,7 @@ impl DropWindow {
             .front()
             .and_then(|(_, totals)| totals.get(&port))
             // A socket closed and reopened restarts at zero, so a total below
-            // the remembered one is read as no drops rather than as a wrap.
+            // the remembered one is read as no movement rather than as a wrap.
             .and_then(|earlier| current.checked_sub(*earlier))
             .unwrap_or(0)
     }
@@ -275,7 +290,7 @@ mod tests {
     #[test]
     fn test_burst_ages_out_of_the_window() {
         let base = Instant::now();
-        let mut window = DropWindow::new(Duration::from_secs(60));
+        let mut window = PortWindow::new(Duration::from_secs(60));
 
         // A hundred dropped at startup, then nothing for two minutes.
         window.push(base, totals(8001, 0));
@@ -292,7 +307,7 @@ mod tests {
     #[test]
     fn test_window_covers_at_least_its_span_once_filled() {
         let base = Instant::now();
-        let mut window = DropWindow::new(Duration::from_secs(60));
+        let mut window = PortWindow::new(Duration::from_secs(60));
         for second in 0..=120 {
             window.push(base + Duration::from_secs(second), totals(8001, 0));
         }
@@ -305,7 +320,7 @@ mod tests {
     #[test]
     fn test_short_window_reports_the_span_it_has_actually_watched() {
         let base = Instant::now();
-        let mut window = DropWindow::new(Duration::from_secs(60));
+        let mut window = PortWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 0));
         window.push(base + Duration::from_secs(5), totals(8001, 3));
         assert_eq!(
@@ -321,7 +336,7 @@ mod tests {
         // bound part-way through the window as having dropped everything it
         // has ever dropped inside it.
         let base = Instant::now();
-        let mut window = DropWindow::new(Duration::from_secs(60));
+        let mut window = PortWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 0));
         assert_eq!(window.since(8899, 4_000), 0);
     }
@@ -329,7 +344,7 @@ mod tests {
     #[test]
     fn test_counter_reset_reads_as_no_drops_rather_than_a_wrap() {
         let base = Instant::now();
-        let mut window = DropWindow::new(Duration::from_secs(60));
+        let mut window = PortWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 900));
         assert_eq!(window.since(8001, 12), 0);
     }

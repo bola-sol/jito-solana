@@ -15,10 +15,17 @@ use {
         collect::Collector,
         context::{DashboardContext, StartupProgress, StartupProgressFn},
         meters::Meters,
+        metrics_tap::MetricsTap,
         proto::Publisher,
         validator_info::ValidatorInfoCache,
     },
     solana_account::AccountSharedData,
+    solana_accounts_db::{
+        accounts_db::AccountsDbConfig,
+        accounts_index::{
+            AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
+        },
+    },
     solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
@@ -30,13 +37,14 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
     },
     solana_signer::Signer,
     std::{
+        collections::HashSet,
         sync::{Arc, RwLock},
         time::SystemTime,
     },
@@ -133,7 +141,15 @@ impl Fixture {
 
     /// The once-a-second readings over this fixture, ready to tick.
     pub fn meters(&self) -> Meters {
-        Meters::new(self.ctx.clone(), self.publisher.clone(), running())
+        // A tap of its own rather than the process-wide one: the observer is
+        // installed once per process and the tests share a process, so an
+        // installed tap would carry whatever the rest of the suite measured.
+        Meters::new(
+            self.ctx.clone(),
+            self.publisher.clone(),
+            running(),
+            Arc::new(MetricsTap::default()),
+        )
     }
 }
 
@@ -146,6 +162,9 @@ fn running() -> StartupProgressFn {
         running: true,
         fraction: None,
         replay_slots: None,
+        stake_percent: None,
+        phase_elapsed_nanos: 0,
+        phases_taken: Vec::new(),
     })
 }
 
@@ -160,7 +179,27 @@ pub fn fixture() -> Fixture {
     } = create_genesis_config_with_leader(MINT, &identity, VALIDATOR_STAKE);
     let vote_account = voting_keypair.pubkey();
 
-    let bank = Bank::new_for_tests(&genesis_config);
+    // Built with the config program in the account index, which is what the
+    // README tells an operator to switch on and what `validator_info::scan_all`
+    // requires. Without it the name lookup is skipped and the tests covering it
+    // would pass against a code path nobody runs.
+    let bank = Bank::new_with_paths_for_tests(
+        &genesis_config,
+        Some(BankTestConfig {
+            accounts_db_config: AccountsDbConfig {
+                account_indexes: Some(AccountSecondaryIndexes {
+                    indexes: HashSet::from([AccountIndex::ProgramId]),
+                    keys: Some(AccountSecondaryIndexesIncludeExclude {
+                        exclude: false,
+                        keys: HashSet::from([solana_sdk_ids::config::id()]),
+                    }),
+                }),
+                ..BankTestConfig::default().accounts_db_config
+            },
+        }),
+        Vec::new(),
+        None,
+    );
     // Taken before the bank moves into bank forks, and from the same bank, so
     // the schedule the collector resolves against is the one it is reading.
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));

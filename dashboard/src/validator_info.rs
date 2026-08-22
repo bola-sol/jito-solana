@@ -3,16 +3,26 @@
 //! These are the names the dashboard shows instead of raw pubkeys. They live in
 //! accounts owned by the config program, keyed by the validator's identity.
 //!
-//! Enumerating them is a full accounts scan, which is far too expensive to do
-//! on a timer, so it happens exactly once, on a background thread, and only
-//! once the validator has caught up — a full scan during the replay burst that
-//! follows startup is the worst possible overlap. After that the cache is kept
-//! current from the much cheaper per-slot list of config accounts written in
-//! that slot.
+//! Their addresses are not derived from the identity they describe. The tool
+//! that publishes one generates a fresh keypair for it, so there is no address
+//! to compute from a validator's pubkey and the only way to find these accounts
+//! is to search by owner.
+//!
+//! That search is only affordable against the secondary index, which has to be
+//! turned on with `--account-index program-id`. Without it the same call reads
+//! every account on the validator off disk to check one field, which on a
+//! mainnet node is hundreds of gigabytes and does not finish in any useful
+//! time. So the index is checked first and the search is skipped when it is
+//! absent, leaving the dashboard to show pubkeys.
+//!
+//! Whatever the search finds is a starting point, not the whole story. The
+//! cache is kept current afterwards from the per-slot list of config accounts
+//! written in that slot, which costs almost nothing.
 
 use {
     serde::Deserialize,
     solana_account::ReadableAccount,
+    solana_accounts_db::accounts_index::IndexKey,
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -79,8 +89,9 @@ impl ValidatorInfoCache {
 
 /// Validator info written in `bank`'s own slot.
 ///
-/// Cheap next to [`scan_all`]: it reads one slot's write set rather than the
-/// whole accounts database. Like `scan_all` it returns rather than merges, so
+/// The path that works on every validator, indexed or not: it reads one slot's
+/// write set rather than searching for accounts by owner. Like `scan_all` it
+/// returns rather than merges, so
 /// that a caller sweeping several banks can take the cache lock once, at the
 /// end, and only if anything turned up — config accounts are written perhaps
 /// once a day across the whole cluster, so almost every sweep finds nothing.
@@ -97,13 +108,43 @@ pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
 /// It must run on a background thread, and no lock may be held across it, or
 /// anything else wanting that lock stalls for the duration.
 pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
-    let accounts = match bank.get_program_accounts(&solana_sdk_ids::config::id()) {
+    let config_id = solana_sdk_ids::config::id();
+
+    // Refused rather than attempted when the config program is excluded from
+    // the index. The indexed call quietly falls back to reading every account
+    // on the validator when it cannot use the index, and that is the one thing
+    // this must never do: it takes hours on a mainnet node, holds back storage
+    // cleaning for the whole of it, and cannot be interrupted once started.
+    if !bank.account_indexes_include_key(&config_id) {
+        log::info!(
+            "dashboard: the config program is excluded from the account index, so validator              names are unavailable and the dashboard will show pubkeys"
+        );
+        return Vec::new();
+    }
+
+    let accounts = match bank.get_filtered_indexed_accounts(
+        &IndexKey::ProgramId(config_id),
+        |account| account.owner() == &config_id,
+        None,
+    ) {
         Ok(accounts) => accounts,
         Err(err) => {
-            log::warn!("dashboard: could not scan validator info accounts: {err}");
+            log::warn!("dashboard: could not read validator info accounts: {err}");
             return Vec::new();
         }
     };
+
+    // An empty result on a live cluster means the index is not switched on. The
+    // lookup asks the secondary index which accounts the config program owns,
+    // and an index that was never built answers none of them rather than
+    // failing. There are thousands of these accounts on any real cluster, so
+    // nothing found is a configuration answer, not a measurement.
+    if accounts.is_empty() {
+        log::info!(
+            "dashboard: found no validator info accounts. Start the validator with              --account-index program-id --account-index-include-key {config_id} to show              validator names instead of pubkeys"
+        );
+    }
+
     accounts
         .into_iter()
         .filter_map(|(_pubkey, account)| parse(account.data()))
@@ -202,8 +243,10 @@ mod tests {
 
     #[test]
     fn test_the_full_scan_finds_info_from_an_earlier_slot() {
-        // The one-shot startup scan, which is what populates the cache at all:
+        // The one-shot startup read, which is what populates the cache at all:
         // the slot sweep only ever sees writes that happen while it is running.
+        // The fixture's bank carries the config program in its account index,
+        // without which this read is skipped and finds nothing by design.
         let harness = fixture();
         let identity = Pubkey::new_unique();
         harness.advance_with(

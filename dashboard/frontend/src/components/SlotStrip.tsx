@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { count, shortKey, slotDelta } from "../format";
 import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
@@ -42,12 +42,16 @@ export function SlotStrip() {
   // one it is aimed at. Entering the strip pins what is on screen; leaving
   // releases it and the view jumps forward to live.
   const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
-  // An index rather than the entry itself, so the pointer and the arrow keys
-  // drive the same thing and only one of them can be in charge at a time.
+  // The slot being inspected, by number rather than by position in the window.
+  // Both the pointer and the arrow keys set it, so only one of them is ever in
+  // charge — and a slot number survives the strip scrolling underneath it,
+  // which a position does not: every bar's index changes when a slot arrives,
+  // which would rebuild all sixty four of them on every tick.
   const [cursor, setCursor] = useState<number | null>(null);
   const live = store.getSlots().slice(-STRIP_LENGTH);
   const slots = pinned ?? live;
-  const active = cursor === null ? null : (slots[cursor] ?? null);
+  const active =
+    cursor === null ? null : (slots.find((entry) => entry.slot === cursor) ?? null);
   // Bars are drawn against what the cluster is configured for, so a nominal
   // slot lands at half height and anything at twice nominal fills the bar.
   const nominalMs =
@@ -111,13 +115,17 @@ export function SlotStrip() {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const last = slots.length - 1;
     if (last < 0) return;
+    // Movement is by position even though the cursor is a slot number: the
+    // arrows mean "the bar beside this one", which is a position.
+    const at = slots.findIndex((entry) => entry.slot === cursor);
+    const from = at === -1 ? last : at;
     let next: number;
     switch (event.key) {
       case "ArrowLeft":
-        next = (cursor ?? last) - 1;
+        next = from - 1;
         break;
       case "ArrowRight":
-        next = (cursor ?? last) + 1;
+        next = from + 1;
         break;
       case "Home":
         next = 0;
@@ -133,7 +141,7 @@ export function SlotStrip() {
     }
     // Otherwise the arrows scroll the page out from under the strip.
     event.preventDefault();
-    setCursor(Math.min(last, Math.max(0, next)));
+    setCursor(slots[Math.min(last, Math.max(0, next))].slot);
   };
 
   return (
@@ -180,7 +188,7 @@ export function SlotStrip() {
           setPinned((current) => current ?? live);
           // Only when nothing is chosen yet. A click focuses the strip as well
           // as hovering a bar, and the hovered bar is the one that was meant.
-          setCursor((current) => current ?? slots.length - 1);
+          setCursor((current) => current ?? (slots[slots.length - 1]?.slot ?? null));
         }}
         onBlur={release}
         onKeyDown={onKeyDown}
@@ -191,12 +199,11 @@ export function SlotStrip() {
             label={`${Math.round(peakMs)} ms peak`}
           />
         )}
-        {slots.map((entry, index) => (
+        {slots.map((entry) => (
           <SlotBar
             key={entry.slot}
             entry={entry}
-            index={index}
-            active={index === cursor}
+            active={entry.slot === cursor}
             nominalMs={nominalMs}
             onPoint={setCursor}
           />
@@ -251,24 +258,31 @@ function SlotDetail({ entry }: { entry: SlotEntry | null }) {
           {leader}
         </span>
       )}
-      {entry.transactions !== null && <span>{count(entry.transactions)} txns</span>}
+      {entry.block && <span>{count(entry.block.transactions)} txns</span>}
       {entry.mine && <span className="slot-detail-mine">ours</span>}
     </span>
   );
 }
 
-function SlotBar({
+/**
+ * Memoised, and the reason the cursor is a slot number rather than a position.
+ *
+ * The strip re-renders on every published value, several times a second, and
+ * the store keeps entry identity for slots that did not change — so all but the
+ * one or two bars that actually moved are skipped. Passing a position instead
+ * would change every bar's props each time a slot arrived and the memo would
+ * never hold. `onPoint` is the raw setState, which React keeps stable.
+ */
+const SlotBar = memo(function SlotBar({
   entry,
-  index,
   active,
   nominalMs,
   onPoint,
 }: {
   entry: SlotEntry;
-  index: number;
   active: boolean;
   nominalMs: number;
-  onPoint: (index: number) => void;
+  onPoint: (slot: number) => void;
 }) {
   // Height carries how long the slot took and colour carries consensus level.
   // The duration comes from when the blockstore first saw a shred for the
@@ -284,7 +298,7 @@ function SlotBar({
     LEVEL_NAMES.get(entry.level) ?? entry.level,
     durationMs === null ? null : `${Math.round(durationMs)} ms`,
     leader,
-    entry.transactions === null ? null : `${count(entry.transactions)} txns`,
+    entry.block === null ? null : `${count(entry.block.transactions)} txns`,
     entry.mine ? "our leader slot" : null,
   ]
     .filter(Boolean)
@@ -298,9 +312,9 @@ function SlotBar({
         active ? " is-active" : ""
       }`}
       aria-label={title}
-      onMouseEnter={() => onPoint(index)}
+      onMouseEnter={() => onPoint(entry.slot)}
     >
       <div className="slot-bar-fill" style={{ height: `${height}%` }} />
     </div>
   );
-}
+});

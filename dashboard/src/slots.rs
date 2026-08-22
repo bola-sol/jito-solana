@@ -4,7 +4,7 @@ use {
     serde::Serialize,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::collections::{BTreeMap, btree_map::Entry},
+    std::collections::{BTreeMap, HashSet, btree_map::Entry},
 };
 
 /// How far a slot has progressed through consensus, ordered from least to most
@@ -39,12 +39,50 @@ pub struct SlotEntry {
     pub leader_icon: Option<String>,
     /// True when this validator was the scheduled leader.
     pub mine: bool,
-    /// Transactions in the block, once replayed.
-    pub transactions: Option<u64>,
-    /// Non-vote transactions in the block, once replayed.
-    pub non_vote_transactions: Option<u64>,
+    /// What replay found in the block. `None` until the slot freezes, and for
+    /// a slot that was skipped or never replayed.
+    pub block: Option<BlockDetail>,
     /// Wall-clock duration from the previous slot completing, in nanoseconds.
+    ///
+    /// Outside [`BlockDetail`] because it is measured from shred arrival rather
+    /// than read off the bank, and so exists for slots that have no block.
     pub duration_nanos: Option<u64>,
+}
+
+/// What one block contained, read off its bank at the moment it froze.
+///
+/// Every field is per block. Some of the bank's counters accumulate along the
+/// fork and some are reset for each bank, and which is which is not guessable
+/// from the names, so the caller differences the inherited ones before they
+/// reach here.
+///
+/// Grouped rather than spread across [`SlotEntry`] because they are all read at
+/// the same instant from the same bank, and because a client is sent five
+/// hundred of these at once: one absent object costs less on the wire than
+/// eight absent fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BlockDetail {
+    /// Transactions in this block. Differenced against the parent.
+    pub transactions: u64,
+    /// Of those, the ones that were not votes. Differenced against the parent.
+    pub non_vote_transactions: u64,
+    /// Transactions that landed but returned an error. The bank's own counter,
+    /// reset for each bank, so this is already per block.
+    pub failed_transactions: u64,
+    /// Entries in the block. The bank's own counter.
+    pub entries: u64,
+    /// Compute units the block consumed, and the protocol limit it was measured
+    /// against.
+    pub block_cost: u64,
+    pub block_cost_limit: u64,
+    /// Fees this block collected, in lamports. Held per bank rather than
+    /// accumulated along the fork, so neither is differenced.
+    ///
+    /// `total_fees` is base and priority together: the bank's
+    /// `total_transaction_fee` adds the two despite its name, so taking it as
+    /// the base fee alone would double-count the priority half.
+    pub total_fees: u64,
+    pub priority_fees: u64,
 }
 
 impl SlotEntry {
@@ -56,8 +94,7 @@ impl SlotEntry {
             leader_name: None,
             leader_icon: None,
             mine: false,
-            transactions: None,
-            non_vote_transactions: None,
+            block: None,
             duration_nanos: None,
         }
     }
@@ -102,6 +139,21 @@ impl SlotRing {
     pub fn recent(&self, count: usize) -> Vec<SlotEntry> {
         let skip = self.entries.len().saturating_sub(count);
         self.entries.values().skip(skip).cloned().collect()
+    }
+
+    /// The distinct leaders of the most recent `count` slots.
+    ///
+    /// What the schedule page needs metadata for, and no more. Bounded by the
+    /// slots a client is actually holding rather than by the size of the
+    /// cluster, so the table that goes with it does not grow with a validator
+    /// set the page never shows.
+    pub fn recent_leaders(&self, count: usize) -> HashSet<String> {
+        let skip = self.entries.len().saturating_sub(count);
+        self.entries
+            .values()
+            .skip(skip)
+            .filter_map(|entry| entry.leader.clone())
+            .collect()
     }
 
     /// What a newly connected client is sent: the most recent `count` slots,
@@ -347,8 +399,16 @@ mod tests {
                 leader_name: Some(long.clone()),
                 leader_icon: Some(long.clone()),
                 mine: true,
-                transactions: Some(u64::MAX),
-                non_vote_transactions: Some(u64::MAX),
+                block: Some(BlockDetail {
+                    transactions: u64::MAX,
+                    non_vote_transactions: u64::MAX,
+                    failed_transactions: u64::MAX,
+                    entries: u64::MAX,
+                    block_cost: u64::MAX,
+                    block_cost_limit: u64::MAX,
+                    total_fees: u64::MAX,
+                    priority_fees: u64::MAX,
+                }),
                 duration_nanos: Some(u64::MAX),
             })
             .collect();

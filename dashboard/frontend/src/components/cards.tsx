@@ -2,6 +2,7 @@ import { count, decimal, duration, percent, solCompact } from "../format";
 import type {
   EpochInfo,
   Health,
+  Shreds,
   SkipRate,
   StartupProgress,
   Tps,
@@ -53,6 +54,7 @@ export function StatusCard() {
   const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
   const startup = store.get<StartupProgress>("summary", "startup_progress");
   const skip = store.get<SkipRate>("summary", "skip_rate");
+  const shreds = store.get<Shreds | null>("summary", "shreds");
 
   // The leader countdown means nothing until the validator is running, so show
   // where it has got to in its boot sequence instead.
@@ -91,6 +93,13 @@ export function StatusCard() {
           tone={health?.replay === "running" ? "good" : "bad"}
         />
         <Stat label="Skip rate" value={percent(skip?.rate)} />
+        <Stat
+          label="Repaired shreds"
+          explain="The share of shreds this validator had to ask another node for because turbine never delivered them, over the last five minutes. Turbine should carry nearly all of them; a rising share means the cluster is not reaching this node, which shows here before it shows in the skip rate."
+          value={percent(shreds?.repair_rate ?? null, 2)}
+          sub={shreds ? `${count(shreds.repaired)} of ${count(shreds.received)}` : undefined}
+          tone={shreds && shreds.repair_rate > 0.05 ? "bad" : undefined}
+        />
       </div>
     </Card>
   );

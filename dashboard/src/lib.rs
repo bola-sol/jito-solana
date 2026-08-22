@@ -14,6 +14,7 @@ pub mod context;
 #[cfg(test)]
 pub(crate) mod fixture;
 pub mod meters;
+pub mod metrics_tap;
 pub mod net_stats;
 pub mod produced;
 pub mod proto;

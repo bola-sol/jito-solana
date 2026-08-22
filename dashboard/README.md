@@ -24,7 +24,7 @@ agave-validator \
 
 `--dashboard-allowed-host` lists the names the dashboard will answer to; repeat
 the flag for each one. `localhost` and any IP literal are accepted without it, so
-`http://<your-ip>:10999` works out of the box — a **domain** has to be listed.
+`http://<your-ip>:10999` works out of the box. A **domain** has to be listed.
 
 A request whose `Host` is not on the list gets a **421** and the page does not
 load at all. That is the failure to expect when a proxy forwards a name the
@@ -52,8 +52,8 @@ the domain in the site block is the name to allow, and nothing else is needed.
 - **Caps websockets** at 64 at once. HTTP is deliberately uncapped: refusing it
   would stop the page loading under exactly the conditions where a cap matters.
 - **Sends a content security policy** that permits no external code, styles,
-  fonts or connections. Images are the exception — validator icons come from
-  URLs operators publish on chain — and are limited to `https`.
+  fonts or connections. Images are the one exception, because validator icons
+  come from URLs operators publish on chain, and those are limited to `https`.
 - **Bounds the work a caller can cause**: 8 KB request heads, 4 KB client
   messages, a 10s header timeout and a 15s write timeout.
 
@@ -67,22 +67,30 @@ the domain in the site block is the name to allow, and nothing else is needed.
 - The identity and vote pubkeys, stake, version and skip rate of your validator
   are all on screen. All of it is already public on chain; none of it is secret,
   but it does identify which validator this is.
+- The schedule page shows the stake, client version and gossip address of the
+  other validators leading the slots on screen. All of that is already public,
+  since every node in the cluster holds it, but serving the page publishes it to
+  anyone who can reach it.
 
 ### What it costs the validator
 
-The expensive sampling — the cluster-wide validator list, and the per-slot
-account sweep behind validator names — only runs while at least one viewer is
+The expensive sampling, meaning the cluster-wide validator list and the per-slot
+account sweep behind validator names, only runs while at least one viewer is
 connected. With nobody watching, the collector does slot bookkeeping and little
-else. The one-off scan that maps identities to names waits until the validator
-has caught up before it runs, so it does not compete with the replay burst that
-follows startup.
+else.
+
+The one-off read that maps identities to names runs once, when the collector
+attaches. It asks the secondary index which accounts the config program owns and
+reads only those, so it costs about what any other account load costs, and it is
+skipped entirely on a validator whose index does not cover that program. See
+[Validator names](#validator-names).
 
 ## Architecture
 
 ```
 core/src/validator.rs ──► DashboardService
                             ├── collector thread  (samples state, diffs, publishes)
-                            ├── info loader       (validator-name scan, once caught up)
+                            ├── info loader       (validator names, read once at attach)
                             └── server thread     (HTTP + websocket on one port)
 ```
 
@@ -112,10 +120,10 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `commit_hash`, `cluster`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `block_height`, `next_leader_slot`, `vote_slot`, `vote_distance`, `identity_balance`, `vote_balance`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_remaining_nanos`, `skip_rate`, `health`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_history`, `network_sample` |
+| `summary` | `version`, `commit_hash`, `cluster`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `block_height`, `next_leader_slot`, `vote_slot`, `vote_distance`, `identity_balance`, `vote_balance`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `program_cache`, `accounts_cache`, `shreds`, `waterfall`, `slot_waterfalls`, `quic`, `verify`, `executed`, `epoch_remaining_nanos`, `produced_blocks`, `skip_rate`, `health`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_history`, `network_sample`, `ingest_paths` |
 | `epoch`   | `new` |
-| `peers`   | `all`, `update` |
-| `slot`    | `overview`, `update` |
+| `peers`   | `all` |
+| `slot`    | `overview`, `update`, `upcoming` |
 
 The only request a client can make today is `summary.ping`.
 
@@ -144,7 +152,7 @@ npm run verify-dist
 ```
 
 A mismatch usually means the bundle predates a source change, or was built
-against different dependency versions — `npm run build` and commit the result.
+against different dependency versions. Run `npm run build` and commit the result.
 
 `npm test` covers the logic that can be tested without a browser: the slot bar
 scale, the formatters, the windowing the charts use, and the store's handling of
@@ -159,10 +167,38 @@ a 404.
 validator on `127.0.0.1:10999`. This is the fast loop for UI work, since it needs
 no Rust rebuild.
 
+## Validator names
+
+The sidebar and the schedule show validator names where it can find them, and
+truncated pubkeys where it cannot.
+
+Names live in accounts owned by the config program. Their addresses are not
+derived from the identity they describe, because the tool that publishes one
+generates a fresh keypair for it, so there is no address to compute from a
+validator's pubkey and the only way to find these accounts is to search by
+owner.
+
+That search is affordable against the secondary index and ruinous without it.
+Unindexed, the same call reads every account on the validator off disk to check
+one field, which on a mainnet node means hundreds of gigabytes and does not
+finish in any useful time. The dashboard therefore checks for the index and
+skips the search when it is absent, which is why an ordinary validator shows
+pubkeys.
+
+To show names instead, start the validator with:
+
+    --account-index program-id     --account-index-include-key Config1111111111111111111111111111111111111
+
+The include key matters. On its own, `--account-index program-id` indexes every
+program on the chain, which costs an entry per account at startup and on every
+write thereafter. Restricted to the config program it costs two hash lookups per
+account and stores a few thousand entries, which against the work index
+generation already does per account is not measurable.
+
 ## Not yet implemented
 
-Three things Firedancer's dashboard shows have no equivalent here, because the
-data behind them does not exist in Agave.
+Two things have no equivalent here, because the data behind them does not exist
+in Agave.
 
 A shred timeline. `shred_fetch_stage` distinguishes turbine from repair via
 `PacketFlags::REPAIR`, but nothing records per-shred arrival timing. Recording
@@ -171,17 +207,6 @@ than a workspace member, so `Meta` cannot gain a field. The timing would have to
 be kept alongside and written from `modify_packets`, which handles tens of
 thousands of shreds a second, so it would want aggregating per slot rather than
 per shred.
-
-A TPU waterfall. The per-stage packet counters exist in the streamer, sigverify,
-and `BankingStageStats`, but they are private and only escape the process
-through `datapoint_info!`. A tee on the metrics agent's `MetricsWriter` would
-reach all of them without touching a single producer, and would work on a
-validator with no metrics configured: the agent buffers every point regardless,
-and it is the InfluxDB writer that discards them. What stands in the way is that
-the agent `datapoint_info!` submits to is a `LazyLock` with no setter, so
-installing a writer needs a hook in `solana-metrics`. Plumbing the counters out
-directly instead spans three crates, and each needs a monotonic mirror, since
-`report()` swaps the originals to zero.
 
 Per-slot transaction detail. The fee, compute units and status of each
 transaction are written by `TransactionStatusService`, which runs only when a

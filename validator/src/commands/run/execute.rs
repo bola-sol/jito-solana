@@ -1269,37 +1269,40 @@ fn startup_progress_fn(progress: Arc<RwLock<ValidatorStartProgress>>) -> Startup
         // Read once: two reads could straddle a phase change and report a
         // phase that disagrees with its own `running` flag.
         let current = *progress.read().unwrap();
-        let (phase, detail, replay_slots) = match current {
-            ValidatorStartProgress::Initializing => ("initializing", None, None),
+        let (phase, detail, replay_slots, stake_percent) = match current {
+            ValidatorStartProgress::Initializing => ("initializing", None, None, None),
             ValidatorStartProgress::SearchingForRpcService => {
-                ("searching_for_rpc_service", None, None)
+                ("searching_for_rpc_service", None, None, None)
             }
             ValidatorStartProgress::DownloadingSnapshot { slot, rpc_addr } => (
                 "downloading_snapshot",
                 Some(format!("slot {slot} from {rpc_addr}")),
                 None,
+                None,
             ),
-            ValidatorStartProgress::CleaningBlockStore => ("cleaning_blockstore", None, None),
-            ValidatorStartProgress::CleaningAccounts => ("cleaning_accounts", None, None),
-            ValidatorStartProgress::LoadingLedger => ("loading_ledger", None, None),
+            ValidatorStartProgress::CleaningBlockStore => ("cleaning_blockstore", None, None, None),
+            ValidatorStartProgress::CleaningAccounts => ("cleaning_accounts", None, None, None),
+            ValidatorStartProgress::LoadingLedger => ("loading_ledger", None, None, None),
             ValidatorStartProgress::ProcessingLedger { slot, max_slot } => (
                 "processing_ledger",
                 Some(format!("slot {slot} of {max_slot}")),
                 Some((slot, max_slot)),
+                None,
             ),
-            ValidatorStartProgress::StartingServices => ("starting_services", None, None),
-            ValidatorStartProgress::Halted => ("halted", None, None),
+            ValidatorStartProgress::StartingServices => ("starting_services", None, None, None),
+            ValidatorStartProgress::Halted => ("halted", None, None, None),
             ValidatorStartProgress::WaitingForSupermajority {
                 slot,
                 gossip_stake_percent,
             } => (
                 "waiting_for_supermajority",
-                Some(format!(
-                    "slot {slot}, {gossip_stake_percent}% of stake in gossip"
-                )),
+                // The share is sent as a figure below rather than written into
+                // this line, so the panel can draw it as well as say it.
+                Some(format!("slot {slot}")),
                 None,
+                Some(gossip_stake_percent as f64 / 100.0),
             ),
-            ValidatorStartProgress::Running => ("running", None, None),
+            ValidatorStartProgress::Running => ("running", None, None, None),
         };
         StartupProgress {
             phase: phase.to_string(),
@@ -1308,6 +1311,11 @@ fn startup_progress_fn(progress: Arc<RwLock<ValidatorStartProgress>>) -> Startup
             // Derived by the dashboard, which tracks where replay began.
             fraction: None,
             replay_slots,
+            stake_percent,
+            // Both filled in by the dashboard, which watches the phase change.
+            // Nothing here knows when the validator entered the phase it is in.
+            phase_elapsed_nanos: 0,
+            phases_taken: Vec::new(),
         }
     })
 }

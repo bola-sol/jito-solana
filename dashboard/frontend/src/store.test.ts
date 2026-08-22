@@ -18,8 +18,7 @@ function slot(number: number, level: SlotEntry["level"] = "completed"): SlotEntr
     leader: null,
     leader_name: null,
     leader_icon: null,
-    transactions: null,
-    non_vote_transactions: null,
+    block: null,
     duration_nanos: null,
     mine: false,
   };

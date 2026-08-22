@@ -1,5 +1,5 @@
-import { count, percent, sol, solCompact, duration } from "../format";
-import type { StakeSummary, ValidatorCounts } from "../types";
+import { percent, sol, solCompact, duration } from "../format";
+import type { StakeSummary } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
@@ -12,11 +12,11 @@ export function Header() {
   const stake = store.get<StakeSummary>("summary", "stake");
   const commission = store.get<number | null>("summary", "vote_commission");
   const identityBalance = store.get<number>("summary", "identity_balance");
+  const voteBalance = store.get<number>("summary", "vote_balance");
   const uptimeNanos = store.get<number>("summary", "uptime_nanos");
   const cluster = store.get<string>("summary", "cluster");
   const version = store.get<string>("summary", "version");
   const shredVersion = store.get<number>("summary", "shred_version");
-  const counts = store.get<ValidatorCounts>("summary", "validator_counts");
   const connection = store.getConnection();
 
   const name = store.get<string | null>("summary", "identity_name") ?? "Private";
@@ -54,11 +54,8 @@ export function Header() {
           value={commission === null || commission === undefined ? "—" : `${commission} %`}
         />
         <HeaderStat label="Identity Balance" value={`${sol(identityBalance)} SOL`} />
+        <HeaderStat label="Vote Balance" value={`${sol(voteBalance)} SOL`} />
         <HeaderStat label="Uptime" value={duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6)} />
-        <HeaderStat
-          label="Validators"
-          value={count(counts && counts.total - counts.delinquent)}
-        />
       </div>
 
       <div className={`connection connection-${connection}`} title={`websocket ${connection}`}>

@@ -51,6 +51,7 @@ const BROADCAST_CAPACITY: usize = 8192;
 pub const TOPIC_SUMMARY: &str = "summary";
 pub const TOPIC_EPOCH: &str = "epoch";
 pub const TOPIC_SLOT: &str = "slot";
+pub const TOPIC_PEERS: &str = "peers";
 
 #[derive(Serialize)]
 struct Envelope<'a, T> {

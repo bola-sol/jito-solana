@@ -91,6 +91,12 @@ body {
   grid-template-columns: 34px minmax(0, 1fr);
 }
 
+/* No rail at all where there is nothing to bring back. Declared after the
+   collapsed rule so it wins when both would apply. */
+.app.is-full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .main {
   display: flex;
   flex-direction: column;
@@ -861,6 +867,36 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent);
 }
 
+/* Pushed to the right edge so the timings line up down the list and can be
+   read as a column, which is how a boot that stalled somewhere gets spotted. */
+.startup-elapsed {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.startup-measure {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+/* The bar means a different thing under each of the two phases that has one —
+   slots replayed, or stake seen — so it is labelled rather than left bare. */
+.startup-measure-label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.startup-measure-value {
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+}
+
 .startup-detail {
   color: var(--text-faint);
   font-weight: 400;
@@ -1009,6 +1045,53 @@ body {
 .sidebar-rows {
   overflow-y: auto;
   min-height: 0;
+  /* The list is five hundred rows long, so the bar is a thin sliver that says
+     nothing useful and crowds an already narrow rail. The way back to the top
+     is the button below, which only appears when it is needed. */
+  scrollbar-width: none;
+}
+
+.sidebar-rows::-webkit-scrollbar {
+  display: none;
+}
+
+/* Carries no height, so the button hangs over the rows instead of moving them.
+   Sticky rather than absolute so it tracks the list it belongs to and not the
+   page around it. */
+.scroll-top-anchor {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.scroll-top {
+  position: relative;
+  top: 8px;
+  margin: 0;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-raised);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.scroll-top:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.scroll-top:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .sidebar-empty {
@@ -1176,26 +1259,24 @@ body {
 
 /* ---- produced blocks ---- */
 
-.produced-body {
+/* Scrolls with the page rather than inside a window of its own. On the overview
+   this was a card capped at six rows, which meant reading several hundred
+   pixels of opened detail through a slot that size. A page has the room. */
+.slot-details {
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
 
 .produced {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* Six rows and a bit, so a long run of leader slots scrolls rather than
-     stretching the card past the others in its row. */
-  max-height: 260px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
 }
 
 .produced-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6em 5.5em 5em;
+  grid-template-columns: minmax(0, 1fr) 6em 5.5em 8em 5em;
   align-items: baseline;
   gap: 8px;
   width: 100%;
@@ -1232,9 +1313,18 @@ body {
 
 .produced-txns,
 .produced-fill,
+.produced-fees,
 .produced-ms {
   text-align: right;
   font-size: 11.5px;
+}
+
+/* The one figure in the row that is money rather than a measurement, so it is
+   given the same monospace treatment as the slot number it belongs to and can
+   be scanned down the column. */
+.produced-fees {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
 }
 
 .produced-detail {
@@ -1300,6 +1390,236 @@ body {
   }
 }
 
+/* ---- transaction waterfall ---- */
+
+.waterfall-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The one figure worth reading at a glance, kept out of the list so it is not
+   one row among twenty. */
+.waterfall-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.waterfall-headline-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.waterfall-headline-value {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.waterfall-row {
+  display: grid;
+  /* The bar takes the free space, not the label. The bar is the thing the card
+     exists to draw, and giving the label the `1fr` left it five hundred pixels
+     wide with a fifty-pixel bar beside it. The label is capped instead and
+     ellipsises; the bar keeps a floor so it never collapses to a stray dot in a
+     narrow column. */
+  grid-template-columns: minmax(0, 16em) 5em minmax(40px, 1fr) 3.4em;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.waterfall-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Stages carry the eye down the card; the reasons under them are subordinate
+   and indented to say so. */
+.waterfall-row.is-stage .waterfall-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.waterfall-row.is-loss .waterfall-label,
+.waterfall-row.is-note .waterfall-label {
+  padding-left: 12px;
+  color: var(--text-dim);
+}
+
+.waterfall-row.is-stage {
+  margin-top: 5px;
+}
+
+.waterfall-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.waterfall-row.is-loss .waterfall-count,
+.waterfall-row.is-note .waterfall-count {
+  color: var(--text-dim);
+}
+
+.waterfall-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+
+.waterfall-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* Losses and pressure are drawn in the same weight as the stages rather than in
+   a warning colour. Most of what lands in the largest of them is a validator
+   forwarding transactions it was never meant to execute, and colouring that as
+   a fault would make the ordinary state of a healthy node look alarming. */
+.waterfall-row.is-loss .waterfall-fill,
+.waterfall-row.is-note .waterfall-fill {
+  background: var(--text-faint);
+}
+
+.waterfall-share {
+  text-align: right;
+  font-size: 9.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Each section restarts its bars at full against a total of its own, so it
+   needs a rule and a name above it. Without them the card reads as one cascade
+   that keeps climbing back to a hundred percent. */
+.waterfall-section + .waterfall-section {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.waterfall-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.waterfall-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.waterfall-section-note {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* The same rows again inside an expanded produced block, one slot's worth
+   rather than a rolling window. Separated from the figures above it by a rule
+   rather than a heading alone, because the two are counting different things:
+   the grid is what landed in the block, this is everything that was offered. */
+.produced-waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.produced-waterfall-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+@media (max-width: 700px) {
+  /* The bar is down to its forty-pixel floor by here and conveys nothing at
+     that size, while five of the labels have started to ellipsise. Drop it and
+     give the room to the words, which is the half that still reads. */
+  .waterfall-row {
+    grid-template-columns: minmax(0, 1fr) 5em 3.4em;
+  }
+
+  .waterfall-bar {
+    display: none;
+  }
+}
+
+/* ---- program cache ---- */
+
+.cache-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Drawn whether or not an eviction has been seen, so the card holds its height
+   on a validator quiet enough never to have evicted anything. */
+.cache-storage {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cache-storage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cache-storage-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.cache-storage-value {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.cache-storage-limit {
+  color: var(--text-faint);
+}
+
+/* A group of figures inside a cache card, under a heading of its own. The
+   groups count different things — reads, writes, what is on disk — and running
+   them together as one grid read as one list of unrelated numbers. */
+.cache-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.cache-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
 /* ---- socket ingest ---- */
 
 .ingest-body {
@@ -1358,6 +1678,30 @@ body {
   text-align: right;
 }
 
+/* The share sits under its figure rather than beside it. The card is three
+   hundred pixels at its narrowest and the four columns already leave the name
+   ellipsised, so there is no width to give a second value on the same line. */
+.ingest-recent,
+.ingest-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+
+/* Always occupied, empty or not. Three of the rows never have a share and the
+   rest lose theirs whenever the window clears, and a line that came and went
+   would leave the six rows changing height against each other every minute. */
+.ingest-share {
+  /* Matched to the line-height, not merely close to it: an empty line a
+     fraction shorter than a filled one leaves the rows a pixel out of step. */
+  line-height: 1.2;
+  min-height: 1.2em;
+  font-size: 9.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .ingest-queued {
   color: var(--text-faint);
 }
@@ -1393,5 +1737,245 @@ body {
   .validators-body,
   .network-body {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ---- pages ---- */
+
+.nav {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-tab {
+  padding: 6px 12px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+.nav-tab:hover {
+  color: var(--text-dim);
+}
+
+.nav-tab.is-current {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.nav-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---- schedule ---- */
+
+/* Fills the column and scrolls its list rather than scrolling the page, so
+   the filter above stays put and new leader groups arriving at the top do not
+   push the rows being read down the screen. */
+.schedule {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--gap);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Scrolls what has been produced, newest first, with the live edge at the top.
+   The same arrangement as the slot list down the side, and handled the same
+   way. */
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--gap);
+  min-height: 0;
+  overflow-y: auto;
+  /* As in the slot list: on a long list the bar is a sliver, and the way back
+     is the button that appears when it is needed. */
+  scrollbar-width: none;
+}
+
+.schedule-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* A flex stack with a gap gives even a zero-height item one. Pulled back so
+   the button costs no space. */
+.schedule-list > .scroll-top-anchor {
+  margin-bottom: calc(-1 * var(--gap));
+}
+
+.schedule-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.schedule-search {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.schedule-search:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.schedule-group {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.schedule-leader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.schedule-leader-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.schedule-leader-key {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.schedule-mine {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--panel);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* One line, always, whether or not the peer table has reached this leader yet.
+   Wrapping or collapsing would change the height of a turn after it was drawn,
+   which moves every turn below it. */
+.schedule-leader-meta {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px 10px;
+  min-height: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-version {
+  color: var(--text-dim);
+}
+
+.schedule-share {
+  margin-left: 5px;
+}
+
+.schedule-ip {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
+.schedule-slots {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* A leader's turn is a handful of slots, so the table scrolls sideways on a
+     narrow screen rather than wrapping into something unreadable. */
+  overflow-x: auto;
+}
+
+.schedule-row {
+  display: grid;
+  grid-template-columns: 150px repeat(5, minmax(70px, 1fr));
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.schedule-row > span:not(.schedule-slot) {
+  text-align: right;
+}
+
+.schedule-head {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.schedule-slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.schedule-level {
+  width: 4px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--level-incomplete);
+}
+
+.schedule-level.level-completed {
+  background: var(--level-completed);
+}
+.schedule-level.level-optimistically_confirmed {
+  background: var(--level-optimistically_confirmed);
+}
+.schedule-level.level-rooted {
+  background: var(--level-rooted);
+}
+.schedule-level.level-finalized {
+  background: var(--level-finalized);
+}
+.schedule-level.level-skipped {
+  background: var(--level-skipped);
+}
+.schedule-level.level-scheduled {
+  background: none;
+  border: 1px solid var(--border);
+}
+
+.schedule-fill {
+  margin-left: 6px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 700px) {
+  .schedule-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 }

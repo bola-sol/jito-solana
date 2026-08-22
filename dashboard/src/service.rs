@@ -18,6 +18,7 @@ use {
         config::DashboardConfig,
         context::{DashboardContext, StartupProgressFn},
         meters::{METER_INTERVAL, Meters},
+        metrics_tap::MetricsTap,
         proto::Publisher,
         server,
         startup::StartupPublisher,
@@ -57,22 +58,6 @@ const BOOT_POLL: Duration = Duration::from_millis(250);
 /// which is what the slot ring depends on.
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
-/// How far behind this validator's own last vote may be for the accounts scan
-/// to consider it caught up. The same threshold the RPC layer calls delinquent.
-const CAUGHT_UP_SLOTS: u64 = 128;
-
-/// How often the info thread checks whether the validator has caught up.
-const CATCH_UP_POLL: Duration = Duration::from_secs(5);
-
-/// How long the validator info scan waits for that before giving up and running
-/// anyway.
-///
-/// A node restarted from an old snapshot can take an hour to catch up, and one
-/// that is unstaked or not voting never satisfies the check at all. Without a
-/// ceiling those dashboards would show truncated pubkeys forever, which is a
-/// worse outcome than a badly timed scan.
-const CATCH_UP_WAIT: Duration = Duration::from_secs(15 * 60);
-
 pub struct DashboardService {
     /// The dashboard's own stop signal.
     ///
@@ -88,6 +73,9 @@ pub struct DashboardService {
     /// caller supplies it once. The validator cannot supply it a second time
     /// anyway: translating its startup enum lives in the binary that owns it.
     startup_progress: StartupProgressFn,
+    /// Counters lifted from the measurements the validator submits about
+    /// itself, watched from `start` so the boot sequence is counted too.
+    metrics_tap: Arc<MetricsTap>,
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
@@ -109,6 +97,11 @@ impl DashboardService {
     ) -> io::Result<Self> {
         let publisher = Arc::new(Publisher::new());
         let exit = Arc::new(AtomicBool::new(false));
+        // Installed with the service rather than with the collector, so that
+        // the points submitted during the boot sequence — which is most of a
+        // cold start — are counted too. A validator with no dashboard installs
+        // nothing and the hook stays empty.
+        let metrics_tap = MetricsTap::install();
         let attached = Arc::new(AtomicBool::new(false));
 
         let runtime = Builder::new_multi_thread()
@@ -167,6 +160,7 @@ impl DashboardService {
             attached,
             publisher,
             startup_progress,
+            metrics_tap,
             server: Some(server),
             boot: Some(boot),
             collector: None,
@@ -187,48 +181,28 @@ impl DashboardService {
     ) -> io::Result<()> {
         let info_cache = Arc::new(RwLock::new(ValidatorInfoCache::default()));
 
-        // The one-time scan of validator info accounts walks the whole accounts
-        // database and takes minutes. It runs off the collector's timer, and
-        // the cache lock is taken only to merge the result, never across the
-        // scan itself, or the collector would block behind it.
+        // Validator names are read once here rather than on the collector's
+        // timer. The read is a secondary index lookup returning a few thousand
+        // accounts, so it costs about what any other account load costs, but it
+        // is kept off the collector's thread anyway: the cache lock is taken
+        // only to merge the result, never across the read, or the collector
+        // would block behind it.
         //
-        // It also waits for the validator to catch up first. This runs at the
-        // end of validator startup, which is exactly when the node begins
-        // replaying hard toward the cluster tip — the busiest the accounts
-        // database ever gets. Waiting costs nothing but the delay before names
-        // replace pubkeys on the page.
+        // Whether it finds anything at all depends on how the validator was
+        // started, which `scan_all` explains in the log rather than here.
         self.info_loader = Some({
             let context = context.clone();
             let info_cache = info_cache.clone();
-            let exit = self.exit.clone();
-            let validator_exit = validator_exit.clone();
             thread::Builder::new()
                 .name("solDashInfo".to_string())
                 .spawn(move || {
-                    let began = std::time::Instant::now();
-                    while !caught_up(&context) && began.elapsed() < CATCH_UP_WAIT {
-                        // Checked here and not only around the scan: without
-                        // this, shutting down during the wait would block the
-                        // validator's join for the rest of it.
-                        if exit.load(Ordering::Relaxed) || validator_exit.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        thread::sleep(CATCH_UP_POLL);
-                    }
-
-                    let waited = began.elapsed();
-
-                    // Taken after the wait, not before: a bank picked up at
-                    // attach time would be a quarter of an hour stale by now,
-                    // and holding it would have kept it from being dropped.
                     let bank = context.bank_forks.read().unwrap().root_bank();
                     let started = std::time::Instant::now();
                     let entries = crate::validator_info::scan_all(&bank);
                     let found = entries.len();
                     let loaded = info_cache.write().unwrap().merge(entries);
                     log::info!(
-                        "dashboard: waited {waited:?} to catch up, then scanned validator info in \
-                         {:?}, {found} accounts, {loaded} cached",
+                        "dashboard: read validator info in {:?}, {found} accounts, {loaded} cached",
                         started.elapsed()
                     );
                 })?
@@ -240,10 +214,11 @@ impl DashboardService {
             let startup_progress = self.startup_progress.clone();
             let context = context.clone();
             let validator_exit = validator_exit.clone();
+            let metrics_tap = self.metrics_tap.clone();
             thread::Builder::new()
                 .name("solDashMeter".to_string())
                 .spawn(move || {
-                    let mut meters = Meters::new(context, publisher, startup_progress);
+                    let mut meters = Meters::new(context, publisher, startup_progress, metrics_tap);
                     while !exit.load(Ordering::Relaxed) && !validator_exit.load(Ordering::Relaxed) {
                         meters.tick();
                         thread::sleep(METER_INTERVAL);
@@ -299,25 +274,6 @@ impl Drop for DashboardService {
     fn drop(&mut self) {
         self.exit.store(true, Ordering::Relaxed);
     }
-}
-
-/// Whether this validator is voting close enough to the tip to count as caught
-/// up, and so to be a good moment for a full accounts scan.
-///
-/// Deliberately not the collector's health check, which only runs while someone
-/// has the page open. A validator nobody is watching still deserves its scan at
-/// the right moment rather than at the fifteen-minute fallback.
-///
-/// One hash lookup in the stakes cache, so polling it costs nothing.
-fn caught_up(context: &DashboardContext) -> bool {
-    let bank = context.bank_forks.read().unwrap().working_bank();
-    let Some(vote_account) = bank.get_vote_account(&context.vote_account) else {
-        return false;
-    };
-    let Some(last_vote) = vote_account.vote_state_view().last_voted_slot() else {
-        return false;
-    };
-    bank.slot().saturating_sub(last_vote) < CAUGHT_UP_SLOTS
 }
 
 async fn wait_for_exit(exit: Arc<AtomicBool>, validator_exit: Arc<AtomicBool>) {

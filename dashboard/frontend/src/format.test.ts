@@ -32,6 +32,49 @@ describe("missing values", () => {
   });
 });
 
+describe("cached formatters", () => {
+  // The formatters are built once rather than per call, which is worth about
+  // twelve microseconds each. Compared against toLocaleString rather than
+  // against literal strings, so this holds in any locale — what is being
+  // pinned is that caching did not change the output.
+  it("format numbers exactly as toLocaleString does", () => {
+    for (const value of [0, 7, 1234, 340_000_000, -42, 1e15]) {
+      expect(count(value)).toBe(value.toLocaleString());
+    }
+  });
+
+  it("honour the digits they are asked for", () => {
+    const opts = (digits: number) => ({
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    expect(decimal(1234.5678)).toBe((1234.5678).toLocaleString(undefined, opts(2)));
+    expect(decimal(1234.5678, 0)).toBe((1234.5678).toLocaleString(undefined, opts(0)));
+    expect(decimal(1234.5678, 4)).toBe((1234.5678).toLocaleString(undefined, opts(4)));
+  });
+
+  it("keep one formatter per digit count rather than one for all", () => {
+    // The cache is keyed by digits. Keyed by nothing, whichever precision was
+    // asked for first would be fixed for every later caller — so asking for
+    // four digits after asking for zero has to still give four.
+    expect(decimal(1.23456, 0)).toBe("1");
+    expect(decimal(1.23456, 4)).toBe(
+      (1.23456).toLocaleString(undefined, {
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 4,
+      }),
+    );
+    expect(decimal(1.23456, 0)).toBe("1");
+  });
+
+  it("convert lamports before formatting, not after", () => {
+    expect(sol(1_500_000_000)).toBe((1.5).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }));
+  });
+});
+
 describe("duration", () => {
   it("drops to the three largest units that apply", () => {
     expect(duration(45_000)).toBe("45s");

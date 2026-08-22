@@ -39,6 +39,35 @@ pub struct StartupProgress {
     /// from. Internal to the crate; the client is sent the fraction.
     #[serde(skip)]
     pub replay_slots: Option<(Slot, Slot)>,
+
+    /// Share of the cluster's stake this validator can currently see in gossip,
+    /// from 0 to 1, while it is waiting for a supermajority.
+    ///
+    /// The one phase besides replay that can say how far along it is. `None`
+    /// everywhere else, including on a validator that never waits — most do
+    /// not, the wait being for a restart rather than an ordinary boot.
+    pub stake_percent: Option<f64>,
+
+    /// How long the validator has been in this phase, and how long each phase
+    /// before it took.
+    ///
+    /// Most of the boot sequence can say nothing about how far through it is —
+    /// there is no count of accounts left to index or archive left to unpack —
+    /// so what is offered instead is how long it has been going. On a boot that
+    /// has stopped somewhere, that is the figure an operator is actually after.
+    ///
+    /// Both are filled in by the dashboard, which watches the phase change. The
+    /// validator reports which phase it is in and nothing about when it got
+    /// there.
+    pub phase_elapsed_nanos: u64,
+    pub phases_taken: Vec<PhaseTiming>,
+}
+
+/// How long one phase of the boot sequence took.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PhaseTiming {
+    pub phase: String,
+    pub elapsed_nanos: u64,
 }
 
 /// Supplies the current startup phase on demand.

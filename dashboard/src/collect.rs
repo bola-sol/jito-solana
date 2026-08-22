@@ -17,8 +17,8 @@ use {
     crate::{
         context::{DashboardContext, StartupProgressFn},
         produced::{ProducedBlock, ProducedRing},
-        proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_SLOT, TOPIC_SUMMARY},
-        slots::{SlotEntry, SlotLevel, SlotRing},
+        proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
+        slots::{BlockDetail, SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
         validator_info::{self, ValidatorInfoCache},
     },
@@ -55,12 +55,23 @@ const MAX_VERSIONS_REPORTED: usize = 5;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
+/// Slots of the leader schedule published ahead of the tip.
+///
+/// Eight leader turns, about thirteen seconds. The page shows the next two and
+/// the rest is headroom: the list is published on the slow tier, so by the time
+/// a client reads it several of the leading entries have already happened, and
+/// a search may want a turn further out than the two on screen.
+///
+/// On the slow tier rather than every tick because the list shifts by a couple
+/// of slots a second, and republishing it that often would spend more on the
+/// wire than the seconds it describes are worth.
+const UPCOMING_SLOTS: u64 = 32;
+
 /// Produced blocks kept for the block detail panel. A validator leads about
 /// four slots in every eight hundred, so this is hours of them.
 const PRODUCED_BLOCKS: usize = 64;
 
-/// Slots of arrival times kept, about five minutes of them. Matches
-/// Firedancer, whose dashboard averages over the same 750.
+/// Slots of arrival times kept, about five minutes of them.
 ///
 /// This is what is retained, not what is reported. Readings are taken over
 /// spans of it: the strip's readout wants a figure that follows the cluster
@@ -78,8 +89,7 @@ const SLOT_TIME_WINDOW_SLOTS: usize = 750;
 const SLOT_READOUT_SPAN_MS: u64 = 60_000;
 
 /// How near the highest slot held replay must come before this validator is
-/// following the cluster rather than replaying towards it. Firedancer uses the
-/// same few slots against its highest turbine slot.
+/// following the cluster rather than replaying towards it.
 const CAUGHT_UP_SLOT_DISTANCE: u64 = 4;
 
 /// Samples the window must already hold before that distance is believed.
@@ -88,8 +98,7 @@ const CAUGHT_UP_SLOT_DISTANCE: u64 = 4;
 /// snapshot and received nothing sits at zero distance, and would mark itself
 /// caught up immediately before replaying half a million slots. Requiring the
 /// window to have filled first means the distance is only read once slots have
-/// been arriving for a while, which is what Firedancer's full-turbine-history
-/// condition does for the same reason.
+/// been arriving for a while.
 const CAUGHT_UP_MIN_SAMPLES: usize = 64;
 
 /// Slots skipped past when the marker is set, so that the interval straddling
@@ -163,6 +172,42 @@ pub struct VersionShare {
     pub other: bool,
 }
 
+/// What is known about a validator beyond the name the slot rows carry.
+///
+/// Published only for the leaders on screen, so this table is bounded by what
+/// the page shows rather than by the size of the validator set. The name and
+/// icon are deliberately absent: every slot row already carries them, and
+/// repeating them here would be the largest thing in the message.
+///
+/// The gossip address is on this list because a schedule is read to work out
+/// who is producing badly and from where. It is already public — every node in
+/// the cluster has it — but this publishes it to anyone who can reach the page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Peer {
+    pub identity: String,
+    /// Client version as gossip reports it, absent for a node not being heard
+    /// from.
+    pub version: Option<String>,
+    /// Active stake this epoch, in lamports. Zero for an unstaked node.
+    pub stake: u64,
+    /// Host of the gossip address, without the port.
+    pub ip: Option<String>,
+}
+
+/// A slot the leader schedule has assigned that has not happened yet.
+///
+/// Leaner than [`SlotEntry`]: an unstarted slot has no level, no block and no
+/// duration, and saying so with nulls would cost more than leaving them out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UpcomingSlot {
+    pub slot: Slot,
+    pub leader: String,
+    pub leader_name: Option<String>,
+    pub leader_icon: Option<String>,
+    /// True when this validator is the scheduled leader.
+    pub mine: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EpochInfo {
     pub epoch: Epoch,
@@ -215,6 +260,8 @@ struct Debounces {
     health: Debounced<Health>,
     epoch: Debounced<EpochInfo>,
     epoch_remaining_nanos: Debounced<u64>,
+    upcoming: Debounced<Vec<UpcomingSlot>>,
+    peers: Debounced<Vec<Peer>>,
 }
 
 pub struct Collector {
@@ -414,6 +461,10 @@ impl Collector {
             self.collect_peers(&working_bank);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
+            // Ahead of the peer table, which covers the leaders of both the
+            // slots already sent and the ones about to be.
+            let ahead = self.collect_upcoming(&root_bank, highest_slot);
+            self.collect_peer_table(&working_bank, ahead);
         }
     }
 
@@ -556,10 +607,9 @@ impl Collector {
     /// the cluster, and averaged in they drag the epoch countdown down for as
     /// long as they stay in the window.
     ///
-    /// Firedancer solves this with a one-shot marker: `slot_caught_up` is set
-    /// when its highest turbine slot comes within a few slots of what it has
-    /// replayed, and the average is then truncated to slots after it. This is
-    /// the same shape, and deliberately so. An earlier attempt here tested the
+    /// The fix is a one-shot marker, set when the highest slot held comes
+    /// within a few slots of what has been replayed, after which the average is
+    /// truncated to the slots that follow it. An earlier attempt here tested the
     /// replay rate continuously and cleared the window whenever it looked like
     /// a burst, which fed back on itself: clearing the window shortened it,
     /// a shorter window is more easily tripped, and the reading never settled.
@@ -661,6 +711,111 @@ impl Collector {
         );
     }
 
+    /// Publishes who leads the slots that have not happened yet.
+    ///
+    /// The schedule is known an epoch ahead, so this is a lookup rather than a
+    /// prediction. It stops where the schedule stops: near an epoch boundary
+    /// the next epoch's leaders may not be derived yet, and a short list is a
+    /// better answer than none.
+    ///
+    /// Anchored on the highest slot bank forks holds rather than on the last
+    /// one replayed, so that the list starts past the slot being worked on
+    /// instead of repeating it.
+    /// Returns the leaders it published, for the peer table to describe.
+    fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<String> {
+        let me = self.ctx.identity();
+        let first = highest_slot.saturating_add(1);
+        let last = highest_slot.saturating_add(UPCOMING_SLOTS);
+
+        let mut upcoming = Vec::new();
+        for slot in first..=last {
+            let Some(leader) = self
+                .ctx
+                .leader_schedule_cache
+                .slot_leader_at(slot, Some(root_bank))
+            else {
+                break;
+            };
+            let (leader_name, leader_icon) = self.peer_display(&leader.id);
+            upcoming.push(UpcomingSlot {
+                slot,
+                leader: leader.id.to_string(),
+                leader_name,
+                leader_icon,
+                mine: leader.id == me,
+            });
+        }
+
+        let leaders = upcoming
+            .iter()
+            .map(|slot| slot.leader.clone())
+            .collect::<HashSet<_>>();
+        self.debounces
+            .upcoming
+            .publish(&self.publisher, TOPIC_SLOT, "upcoming", upcoming);
+        leaders
+    }
+
+    /// Publishes stake, client version and address for the leaders on screen.
+    ///
+    /// Restricted to those leaders rather than the whole validator set: the
+    /// schedule only ever shows the slots a client is holding, and a table of
+    /// every node in the cluster would be the largest message the dashboard
+    /// sends, on a page that has no authentication in front of it.
+    ///
+    /// Sorted by identity so that the debounce has a stable value to compare.
+    /// Collected through a set, whose iteration order is not stable, and an
+    /// unsorted list would look different on every tick and republish itself
+    /// for no reason.
+    fn collect_peer_table(&mut self, bank: &Bank, mut leaders: HashSet<String>) {
+        leaders.extend(self.slots.recent_leaders(SLOT_OVERVIEW_LEN));
+
+        let mut stakes: HashMap<String, u64> = HashMap::new();
+        for (stake, account) in bank.vote_accounts().values() {
+            if *stake == 0 {
+                continue;
+            }
+            let identity = account.node_pubkey().to_string();
+            if leaders.contains(&identity) {
+                let total = stakes.entry(identity).or_insert(0);
+                *total = total.saturating_add(*stake);
+            }
+        }
+
+        let mut gossip: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        for (contact_info, _) in self.ctx.cluster_info.all_peers() {
+            let identity = contact_info.pubkey().to_string();
+            if !leaders.contains(&identity) {
+                continue;
+            }
+            gossip.insert(
+                identity,
+                (
+                    Some(contact_info.version().to_string()),
+                    contact_info.gossip().map(|addr| addr.ip().to_string()),
+                ),
+            );
+        }
+
+        let mut peers: Vec<Peer> = leaders
+            .into_iter()
+            .map(|identity| {
+                let (version, ip) = gossip.get(&identity).cloned().unwrap_or_default();
+                Peer {
+                    stake: stakes.get(&identity).copied().unwrap_or(0),
+                    version,
+                    ip,
+                    identity,
+                }
+            })
+            .collect();
+        peers.sort_by(|a, b| a.identity.cmp(&b.identity));
+
+        self.debounces
+            .peers
+            .publish(&self.publisher, TOPIC_PEERS, "all", peers);
+    }
+
     fn collect_slot_levels(&mut self, root_bank: &Bank, frozen: &[(Slot, Arc<Bank>)]) {
         let commitment = self.ctx.block_commitment_cache.read().unwrap();
         let (confirmed, finalized) = (
@@ -695,15 +850,25 @@ impl Collector {
                         .saturating_sub(parent.non_vote_transaction_count_since_restart()),
                 )
             });
-            // Our own blocks are read here and nowhere else. The cost tracker
-            // and the collected fees live on the bank, so they go with it when
-            // it is dropped after rooting. A bank stays frozen for many ticks,
-            // and the ring keeps the first sighting only.
-            if let Some((total, non_vote)) = counts
-                && !self.produced.contains(slot)
+            // Read once, at the first sighting of a frozen bank, and for every
+            // block rather than only our own. The cost tracker and the
+            // collected fees live on the bank, so they go with it when it is
+            // dropped after rooting; a bank stays frozen for many ticks, and
+            // reading it again would only spend work on the same answer.
+            let fresh = self
+                .slots
+                .get(slot)
+                .is_none_or(|entry| entry.block.is_none());
+            let detail = counts
+                .filter(|_| fresh)
+                .map(|(total, non_vote)| block_detail(bank, total, non_vote));
+
+            // Our own blocks carry a blockhash and a start time on top of that,
+            // which the block panel shows and nothing else needs.
+            if let Some(detail) = &detail
                 && self.slots.get(slot).is_some_and(|entry| entry.mine)
             {
-                let block = self.capture_block(slot, bank, total, non_vote);
+                let block = self.capture_block(slot, bank, detail);
                 if self.produced.insert(block) {
                     captured = true;
                 }
@@ -712,9 +877,8 @@ impl Collector {
             let level = level_for(slot, root, confirmed, finalized);
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.level = level;
-                if let Some((total, non_vote)) = counts {
-                    entry.transactions = Some(total);
-                    entry.non_vote_transactions = Some(non_vote);
+                if let Some(detail) = &detail {
+                    entry.block = Some(detail.clone());
                 }
             }) {
                 changed.push(entry);
@@ -745,40 +909,31 @@ impl Collector {
         }
     }
 
-    /// Reads a frozen bank's own figures for the block detail panel.
+    /// Adds what only our own blocks report to what every block reports.
     ///
+    /// The blockhash and the start time are here rather than on every slot
+    /// because five hundred slots are sent to each client at once and a
+    /// blockhash is forty-four characters that only the block panel reads.
+    ///
+    /// Historical note on the rest, which now lives in [`block_detail`]:
     /// `transactions` and `non_vote` are already differenced against the
-    /// parent by the caller. Everything taken here is the bank's own: the
+    /// parent by the caller. Everything taken there is the bank's own: the
     /// error and entry counters are reset for each bank rather than inherited
     /// from the parent, so differencing them would subtract the wrong thing.
-    fn capture_block(
-        &self,
-        slot: Slot,
-        bank: &Bank,
-        transactions: u64,
-        non_vote: u64,
-    ) -> ProducedBlock {
-        // Poisoned only if a replay thread panicked while holding it, in which
-        // case the validator has more pressing problems than a missing bar.
-        let (block_cost, block_cost_limit) = match bank.read_cost_tracker() {
-            Ok(tracker) => (tracker.block_cost(), tracker.get_block_limit()),
-            Err(_) => (0, 0),
-        };
-        let fees = bank.get_collector_fee_details();
-
+    fn capture_block(&self, slot: Slot, bank: &Bank, detail: &BlockDetail) -> ProducedBlock {
         ProducedBlock {
             slot,
             slot_time_millis: self.first_shred_time(slot),
             blockhash: bank.last_blockhash().to_string(),
             duration_nanos: self.slots.get(slot).and_then(|entry| entry.duration_nanos),
-            transactions,
-            non_vote_transactions: non_vote,
-            failed_transactions: bank.transaction_error_count(),
-            entries: bank.transaction_entries_count(),
-            block_cost,
-            block_cost_limit,
-            total_fees: fees.total_transaction_fee(),
-            priority_fees: fees.total_priority_fee(),
+            transactions: detail.transactions,
+            non_vote_transactions: detail.non_vote_transactions,
+            failed_transactions: detail.failed_transactions,
+            entries: detail.entries,
+            block_cost: detail.block_cost,
+            block_cost_limit: detail.block_cost_limit,
+            total_fees: detail.total_fees,
+            priority_fees: detail.priority_fees,
         }
     }
 
@@ -1497,6 +1652,33 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
     Some(nanos as u64)
 }
 
+/// Reads a frozen bank's own figures for one block.
+///
+/// `transactions` and `non_vote` are already differenced against the parent by
+/// the caller. Everything taken here is the bank's own: the error and entry
+/// counters are reset for each bank rather than inherited from the parent, so
+/// differencing them would subtract the wrong thing.
+fn block_detail(bank: &Bank, transactions: u64, non_vote: u64) -> BlockDetail {
+    // Poisoned only if a replay thread panicked while holding it, in which case
+    // the validator has more pressing problems than a missing bar.
+    let (block_cost, block_cost_limit) = match bank.read_cost_tracker() {
+        Ok(tracker) => (tracker.block_cost(), tracker.get_block_limit()),
+        Err(_) => (0, 0),
+    };
+    let fees = bank.get_collector_fee_details();
+
+    BlockDetail {
+        transactions,
+        non_vote_transactions: non_vote,
+        failed_transactions: bank.transaction_error_count(),
+        entries: bank.transaction_entries_count(),
+        block_cost,
+        block_cost_limit,
+        total_fees: fees.total_transaction_fee(),
+        priority_fees: fees.total_priority_fee(),
+    }
+}
+
 /// The rate this epoch has actually run at, from the cluster's own clock.
 ///
 /// `epoch_start_timestamp` is fixed for the epoch and `unix_timestamp` is the
@@ -1904,6 +2086,60 @@ mod tests {
             Some(500_000_000)
         );
         assert!(windowed_mean_nanos(&samples, u64::MAX).unwrap() < 420_000_000);
+    }
+
+    // ---- upcoming leaders -----------------------------------------------
+
+    /// The slot numbers of the published upcoming list, in order.
+    fn upcoming_slots(harness: &crate::fixture::Fixture) -> Vec<u64> {
+        let published = harness
+            .published_key("slot", "upcoming")
+            .expect("upcoming is published");
+        let envelope: serde_json::Value = serde_json::from_str(&published).unwrap();
+        envelope["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["slot"].as_u64().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn test_upcoming_starts_past_the_tip_and_runs_contiguously() {
+        let harness = fixture();
+        harness.advance_to(64);
+        let mut collector = harness.collector();
+        let root_bank = harness.bank_forks.read().unwrap().root_bank();
+
+        collector.collect_upcoming(&root_bank, 64);
+        let slots = upcoming_slots(&harness);
+
+        assert!(!slots.is_empty(), "the schedule for this epoch is known");
+        assert_eq!(slots[0], 65, "starts past the slot being worked on");
+        let contiguous: Vec<u64> = (0..slots.len() as u64)
+            .map(|index| index.saturating_add(65))
+            .collect();
+        assert_eq!(slots, contiguous, "no gaps");
+        assert!(
+            slots.len() as u64 <= UPCOMING_SLOTS,
+            "bounded at {UPCOMING_SLOTS}"
+        );
+    }
+
+    #[test]
+    fn test_upcoming_marks_our_own_slots() {
+        // The fixture stakes this validator alone, so it leads every slot.
+        let harness = fixture();
+        harness.advance_to(8);
+        let mut collector = harness.collector();
+        let root_bank = harness.bank_forks.read().unwrap().root_bank();
+
+        collector.collect_upcoming(&root_bank, 8);
+        let published = harness.published_key("slot", "upcoming").unwrap();
+        assert!(
+            published.contains(r#""mine":true"#),
+            "the only staked leader should be marked as ours"
+        );
     }
 
     // ---- epoch countdown ------------------------------------------------

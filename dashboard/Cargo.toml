@@ -24,11 +24,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 soketto = { workspace = true }
 solana-account = { workspace = true }
+solana-accounts-db = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-config-interface = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
+solana-metrics = { workspace = true }
+solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -48,6 +51,17 @@ agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
 # Re-declared with their test features so `src/fixture.rs` can build a bank, a
 # blockstore and a cluster info. Cargo unifies these with the entries above for
 # the test build; the shipped crate is unaffected.
+#
+# WARNING: that unification means `cargo test -p agave-dashboard` compiles this
+# crate's own library with `dev-context-only-utils` switched on, and the real
+# build does not. Anything in `src/` that calls an API gated behind that feature
+# compiles and passes its tests here, then fails to build the validator. A green
+# test run is therefore not evidence that this crate builds:
+#
+#     cargo check -p agave-dashboard
+#
+# is the check that is, and it is worth running before every commit that touches
+# `src/`.
 solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-leader-schedule = { workspace = true }

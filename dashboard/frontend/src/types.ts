@@ -346,6 +346,48 @@ export interface SlotWaterfall extends Waterfall {
   slot: number;
 }
 
+/**
+ * What replay did with the last few hundred slots.
+ *
+ * Every figure is microseconds. All but the two peaks are means for one slot,
+ * because what one slot costs is what compares against how long a slot lasts.
+ *
+ * The three groups are measured in three different ways and cannot be mixed.
+ * `fetch`, `confirming` and `completing` are disjoint spans of replay's own
+ * thread and add up. `poh_verify`, `tx_verify` and `dispatch` are sums of
+ * overlapping asynchronous jobs and are worth only relative to each other.
+ * Everything from `execute` down is thread time summed across the workers, so
+ * it partitions cleanly and routinely exceeds the slot it describes.
+ */
+export interface ReplayWindow {
+  /** Slots behind the figures, which is short until the window has filled. */
+  slots: number;
+  transactions: number;
+
+  fetch: number;
+  confirming: number;
+  completing: number;
+  /** The worst single slot's total, not the largest each field reached. */
+  serial_peak: number;
+
+  poh_verify: number;
+  tx_verify: number;
+  dispatch: number;
+
+  execute: number;
+  bytecode: number;
+  serialising: number;
+  deserialising: number;
+  load: number;
+  store: number;
+  program_cache: number;
+  compiling: number;
+  program_cache_peak: number;
+  checking: number;
+  other: number;
+  cpu_peak: number;
+}
+
 export interface IngestSummary {
   window_seconds: number;
   paths: IngestPath[];

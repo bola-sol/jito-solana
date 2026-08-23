@@ -6,6 +6,7 @@ import {
   bytes,
   count,
   decimal,
+  micros,
   duration,
   percent,
   release,
@@ -184,6 +185,26 @@ describe("buildLabel", () => {
 
   it("is empty before the first message, so the header shows no stray v", () => {
     expect(buildLabel(undefined, undefined)).toBe("");
+  });
+});
+
+describe("micros", () => {
+  it("reads microseconds as milliseconds", () => {
+    expect(micros(205648)).toBe("205.6 ms");
+    expect(micros(835)).toBe("0.8 ms");
+  });
+
+  it("keeps one decimal at every size, so a column lines up", () => {
+    // These sit together and span three orders of magnitude; varying the
+    // precision by size is what stops a column of numbers being readable.
+    expect(micros(414498)).toBe("414.5 ms");
+    expect(micros(1)).toBe("0.0 ms");
+  });
+
+  it("says nothing rather than NaN", () => {
+    expect(micros(null)).toBe("—");
+    expect(micros(undefined)).toBe("—");
+    expect(micros(Number.NaN)).toBe("—");
   });
 });
 

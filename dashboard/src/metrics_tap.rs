@@ -135,8 +135,30 @@ const WORKER_COUNTS: &str = "banking_stage_worker_counts";
 /// nothing to show against them.
 const SCHEDULER_SLOT_COUNTS: &str = "banking_stage_scheduler_slot_counts";
 
+/// Every slot's replay, timed.
+///
+/// Reported once per slot replayed — every slot, not only the ones this node
+/// led — so unlike the scheduler's per-slot point this arrives continuously.
+/// It is the only place the time replay spends keeping up with the cluster is
+/// measured, and the whole of it is agave's own: no other client has this
+/// pipeline to instrument.
+///
+/// Behind the info-log gate, unlike the scheduler points, because it is sent
+/// with `datapoint_info!` rather than through `solana_metrics::submit`. The
+/// default filter is `solana=info`, so it arrives unless a validator has been
+/// configured to say less than the default.
+const REPLAY_SLOT_STATS: &str = "replay-slot-stats";
+
 /// The field naming the slot a point covers.
 const SLOT: &str = "slot";
+
+/// Replayed slots kept, from which the panel's means and peaks are taken.
+///
+/// About a minute and a half of a healthy cluster. Long enough that the means
+/// settle — a twenty-slot sample of the program cache missed its true mean by a
+/// third, because compilation arrives in bursts — and short enough to still be
+/// describing now.
+const REPLAY_SLOTS: usize = 256;
 
 /// Leader slots kept. Matched to the produced block panel's own retention, so
 /// every block it can show has its waterfall for as long as it is shown.
@@ -339,6 +361,15 @@ pub struct MetricsTap {
     /// this reads without locking anything — and held only long enough to push
     /// a struct of counts or to copy the queue out.
     slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
+
+    /// The last few hundred replayed slots, timed.
+    ///
+    /// Kept as arrivals rather than accumulated, for the same reason as the
+    /// waterfalls above: each point already describes one slot and nothing
+    /// else. Held as a queue rather than as running totals because the panel
+    /// wants the worst slot as well as the ordinary one, and a maximum cannot
+    /// be recovered by differencing two totals.
+    replay_slots: Mutex<VecDeque<ReplaySlotTimes>>,
 }
 
 /// One leader slot's waterfall.
@@ -348,6 +379,74 @@ pub struct SlotWaterfall {
     pub source: SchedulerSource,
     #[serde(flatten)]
     pub counts: SchedulerTotals,
+}
+
+/// One replayed slot's timings, in microseconds.
+///
+/// Three different kinds of measurement, which is why the panel keeps them in
+/// three sections rather than one column:
+///
+/// - `fetch`, `confirming` and `completing` are single spans on replay's own
+///   thread, measured one after another. They are disjoint, they add up, and
+///   they are the figure to compare against the slot time.
+/// - `poh_verify`, `tx_verify` and `dispatch` are sums of asynchronous job
+///   durations. The jobs overlap each other and each is parallel inside, so
+///   these routinely exceed the window they happened in and are worth only
+///   relative to one another.
+/// - everything from `execute` down is thread time accumulated across the
+///   worker threads, summed by the scheduler and handed back. Those partition
+///   cleanly, and their total is the CPU one slot costs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReplaySlotTimes {
+    // Replay's own thread, sequential.
+    pub fetch: u64,
+    pub confirming: u64,
+    pub completing: u64,
+
+    // Verification jobs, concurrent. Relative only.
+    pub poh_verify: u64,
+    pub tx_verify: u64,
+    pub dispatch: u64,
+
+    // Thread time across the workers.
+    pub execute: u64,
+    pub bytecode: u64,
+    pub serialising: u64,
+    pub deserialising: u64,
+    pub creating_vms: u64,
+    pub load: u64,
+    pub store: u64,
+    pub program_cache: u64,
+    pub compiling: u64,
+    pub checking: u64,
+    pub other: u64,
+
+    pub transactions: u64,
+}
+
+impl ReplaySlotTimes {
+    /// What replay's own thread spent on this slot.
+    ///
+    /// The three are disjoint spans measured in sequence, so this sum is a real
+    /// duration, and it is the one to hold against the slot time. Wall clock
+    /// from first sight of the slot is deliberately not used: replay works
+    /// several slots at once and does much else between visits, so the gap
+    /// between the two is not attributable to anything in particular.
+    pub fn serial(&self) -> u64 {
+        self.fetch
+            .saturating_add(self.confirming)
+            .saturating_add(self.completing)
+    }
+
+    /// Thread time the slot cost across every worker.
+    pub fn cpu(&self) -> u64 {
+        self.execute
+            .saturating_add(self.load)
+            .saturating_add(self.store)
+            .saturating_add(self.program_cache)
+            .saturating_add(self.checking)
+            .saturating_add(self.other)
+    }
 }
 
 /// Which of the process's schedulers built a slot, and therefore what its
@@ -620,6 +719,7 @@ impl MetricsTap {
             TPU_VOTE_RECEIVER => self.add_packets(&self.packets_tpu_vote, point),
             SCHEDULER_COUNTS => self.scheduler.add_point(point),
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
+            REPLAY_SLOT_STATS => self.remember_replay(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
             PROGRAM_CACHE => self.program_cache.add_point(point),
             QUIC_TPU => self.quic.add_point(point),
@@ -695,6 +795,97 @@ impl MetricsTap {
         while slots.len() > SLOT_WATERFALLS {
             slots.pop_front();
         }
+    }
+
+    /// Records one replayed slot's timings.
+    ///
+    /// Every field is read by name against what the validator sends. Two are
+    /// easy to get wrong from the outside and are worth stating: the confirm
+    /// and dispatch spans are reported as `confirmation_without_replay_us` and
+    /// `task_submission_us` rather than `confirmation_time_us` and
+    /// `replay_time`, because the unified scheduler is the only block
+    /// verification method this tree has and those are the names it reports
+    /// under; and `update_transaction_statuses` carries no `_us` suffix where
+    /// every figure around it does.
+    fn remember_replay(&self, point: &DataPoint) {
+        let mut slot = ReplaySlotTimes::default();
+        let mut seen = false;
+        for (name, value) in &point.fields {
+            let Some(micros) = field_u64(value) else {
+                continue;
+            };
+            let field = match *name {
+                "fetch_entries_time" => &mut slot.fetch,
+                "confirmation_without_replay_us" => &mut slot.confirming,
+                "bank_complete_time_us" => &mut slot.completing,
+
+                "entry_poh_verification_time" => &mut slot.poh_verify,
+                "entry_transaction_verification_time" => &mut slot.tx_verify,
+                "task_submission_us" => &mut slot.dispatch,
+
+                "execute_us" => &mut slot.execute,
+                "execute_details_execute_inner_us" => &mut slot.bytecode,
+                "execute_details_serialize_us" => &mut slot.serialising,
+                "execute_details_deserialize_us" => &mut slot.deserialising,
+                "execute_details_create_vm_us" => &mut slot.creating_vms,
+                "load_us" => &mut slot.load,
+                "store_us" => &mut slot.store,
+                "program_cache_us" => &mut slot.program_cache,
+                "total_transactions" => &mut slot.transactions,
+
+                // The cost of compiling a program that was not in the cache,
+                // which is nearly the whole of what the cache costs when it
+                // misses. Summed rather than kept apart: an operator reading
+                // this wants what a miss cost, not which third of the compiler
+                // it went to.
+                "execute_details_create_executor_load_elf_us"
+                | "execute_details_create_executor_verify_code_us"
+                | "execute_details_create_executor_jit_compile_us" => &mut slot.compiling,
+
+                // The checks at the door, before a transaction is handed to a
+                // worker at all.
+                "validate_transactions_us" | "validate_fees_us" | "filter_executable_us" => {
+                    &mut slot.checking
+                }
+
+                // Bookkeeping around execution. Small on any validator, and
+                // smaller still on one with transaction history switched off,
+                // where the two collectors and the status writer have almost
+                // nothing to do.
+                "collect_balances_us"
+                | "collect_logs_us"
+                | "update_stakes_cache_us"
+                | "update_transaction_statuses"
+                | "check_block_limits_us" => &mut slot.other,
+
+                _ => continue,
+            };
+            *field = field.saturating_add(micros);
+            seen = true;
+        }
+
+        // A point that named nothing this reads is not a slot that took no
+        // time, it is a point this does not understand. Keeping it would drag
+        // every mean towards nought and say the node had got faster.
+        if !seen {
+            return;
+        }
+
+        let Ok(mut slots) = self.replay_slots.lock() else {
+            return;
+        };
+        slots.push_back(slot);
+        while slots.len() > REPLAY_SLOTS {
+            slots.pop_front();
+        }
+    }
+
+    /// The replayed slots held, oldest first.
+    pub fn replay_slots(&self) -> Vec<ReplaySlotTimes> {
+        self.replay_slots
+            .lock()
+            .map(|slots| slots.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// The leader slots held, oldest first.
@@ -1382,6 +1573,101 @@ mod tests {
         let mut all = vec![("slot", slot.as_str())];
         all.extend_from_slice(fields);
         named(SCHEDULER_SLOT_COUNTS, &all)
+    }
+
+    /// One replay point as the validator sends it, abridged to the fields the
+    /// tap reads. The names are taken from a real mainnet line rather than from
+    /// the source, which is what makes them worth pinning.
+    fn replay_point(fields: &[(&'static str, &str)]) -> DataPoint {
+        named(REPLAY_SLOT_STATS, fields)
+    }
+
+    #[test]
+    fn test_a_replayed_slot_is_read_field_by_field() {
+        let tap = MetricsTap::default();
+        tap.observe(&replay_point(&[
+            ("fetch_entries_time", "2034i"),
+            ("confirmation_without_replay_us", "17288i"),
+            ("bank_complete_time_us", "443i"),
+            ("entry_poh_verification_time", "28601i"),
+            ("entry_transaction_verification_time", "13644i"),
+            ("task_submission_us", "9828i"),
+            ("execute_us", "176771i"),
+            ("load_us", "26210i"),
+            ("store_us", "10150i"),
+            ("program_cache_us", "22954i"),
+            ("total_transactions", "1232i"),
+        ]));
+
+        let held = tap.replay_slots();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].confirming, 17_288);
+        assert_eq!(held[0].execute, 176_771);
+        assert_eq!(held[0].transactions, 1_232);
+        // Replay's own thread: the three sequential spans and nothing else.
+        assert_eq!(held[0].serial(), 2_034 + 17_288 + 443);
+        assert_eq!(held[0].cpu(), 176_771 + 26_210 + 10_150 + 22_954);
+    }
+
+    #[test]
+    fn test_the_names_the_unified_scheduler_reports_under() {
+        // The only block verification method this tree has, so these are the
+        // only spellings that ever arrive. A tap matching `confirmation_time_us`
+        // and `replay_time` would read nought for ever, and the panel would say
+        // replay had taken no time at all.
+        let tap = MetricsTap::default();
+        tap.observe(&replay_point(&[
+            ("confirmation_time_us", "17288i"),
+            ("replay_time", "9828i"),
+            ("execute_batches_us", "50000i"),
+        ]));
+        assert!(
+            tap.replay_slots().is_empty(),
+            "none of those names are sent by this validator"
+        );
+    }
+
+    #[test]
+    fn test_the_status_field_carries_no_micros_suffix() {
+        // Every figure around it ends `_us` and this one does not, which is
+        // exactly the sort of thing that gets tidied into a permanent nought.
+        let tap = MetricsTap::default();
+        tap.observe(&replay_point(&[("update_transaction_statuses", "1212i")]));
+        assert_eq!(tap.replay_slots()[0].other, 1_212);
+    }
+
+    #[test]
+    fn test_the_costs_of_a_program_cache_miss_are_summed() {
+        // What an operator wants from these is what a miss cost, not which
+        // third of the compiler it went to.
+        let tap = MetricsTap::default();
+        tap.observe(&replay_point(&[
+            ("execute_details_create_executor_load_elf_us", "12506i"),
+            ("execute_details_create_executor_verify_code_us", "1701i"),
+            ("execute_details_create_executor_jit_compile_us", "7486i"),
+        ]));
+        assert_eq!(tap.replay_slots()[0].compiling, 12_506 + 1_701 + 7_486);
+    }
+
+    #[test]
+    fn test_a_point_naming_nothing_this_reads_is_dropped() {
+        // Not a slot that took no time: a point this does not understand.
+        // Keeping it would drag every mean down and report the node as faster.
+        let tap = MetricsTap::default();
+        tap.observe(&replay_point(&[("some_field_from_a_later_release", "9i")]));
+        assert!(tap.replay_slots().is_empty());
+    }
+
+    #[test]
+    fn test_only_the_newest_replayed_slots_are_kept() {
+        let tap = MetricsTap::default();
+        for micros in 0..REPLAY_SLOTS.saturating_add(10) {
+            tap.observe(&replay_point(&[("execute_us", &format!("{micros}i"))]));
+        }
+
+        let held = tap.replay_slots();
+        assert_eq!(held.len(), REPLAY_SLOTS);
+        assert_eq!(held[0].execute, 10, "oldest first, the first ten dropped");
     }
 
     #[test]

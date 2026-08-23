@@ -142,6 +142,20 @@ export function buildLabel(
   return [client, version && `v${version}`].filter(Boolean).join(" ");
 }
 
+/**
+ * A duration in microseconds, read in milliseconds, e.g. `205.6 ms`.
+ *
+ * Always one decimal, whatever the size. The figures it renders sit in a column
+ * together and span three orders of magnitude, from a few hundred microseconds
+ * of bank completion to hundreds of milliseconds of execution; varying the
+ * precision by size would stop them lining up, which is most of what makes a
+ * column of numbers readable.
+ */
+export function micros(us: number | null | undefined): string {
+  if (us === null || us === undefined || Number.isNaN(us)) return "—";
+  return `${(us / 1000).toFixed(1)} ms`;
+}
+
 /** Shortened pubkey, e.g. `J5e4xh…c8FF1`. */
 export function shortKey(key: string | null | undefined, lead = 6, tail = 5): string {
   if (!key) return "—";

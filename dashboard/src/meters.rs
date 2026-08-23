@@ -18,7 +18,8 @@ use {
         context::{DashboardContext, StartupProgressFn},
         metrics_tap::{
             AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicTotals,
-            SchedulerTotals, SlotWaterfall, TapCounters, VerifyTotals, WindowedCounters,
+            ReplaySlotTimes, SchedulerTotals, SlotWaterfall, TapCounters, VerifyTotals,
+            WindowedCounters,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -285,6 +286,96 @@ pub struct IngestSummary {
     pub paths: Vec<IngestPath>,
 }
 
+/// What replay did with the last few hundred slots.
+///
+/// Every duration is microseconds, and every one but the two peaks is a mean
+/// per slot. Means rather than totals because the question is what one slot
+/// costs, which is the figure that compares against the time a slot lasts.
+///
+/// The two peaks are the largest that any single slot in the window reached,
+/// taken from the per-slot sums. Not from the largest each field reached
+/// separately: those maxima land on different slots, and adding them would
+/// describe a slot that never happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ReplayWindow {
+    /// Slots behind the figures, so the panel can name what it is showing
+    /// rather than claim a window it has not yet filled.
+    pub slots: usize,
+    pub transactions: u64,
+
+    // Replay's own thread. Disjoint spans; these add up.
+    pub fetch: u64,
+    pub confirming: u64,
+    pub completing: u64,
+    pub serial_peak: u64,
+
+    // Verification jobs. Concurrent and each parallel inside, so these are
+    // comparable to one another and to nothing else.
+    pub poh_verify: u64,
+    pub tx_verify: u64,
+    pub dispatch: u64,
+
+    // Thread time across the workers. These partition.
+    pub execute: u64,
+    pub bytecode: u64,
+    pub serialising: u64,
+    pub deserialising: u64,
+    pub load: u64,
+    pub store: u64,
+    pub program_cache: u64,
+    pub compiling: u64,
+    pub program_cache_peak: u64,
+    pub checking: u64,
+    pub other: u64,
+    pub cpu_peak: u64,
+}
+
+/// Averages a window of replayed slots, and finds its worst.
+///
+/// `None` until a slot has been replayed, so the panel stays absent rather than
+/// drawing a card of noughts on a validator whose replay has not started or
+/// whose log filter is quiet enough to keep this point from arriving at all.
+fn replay_window(slots: &[ReplaySlotTimes]) -> Option<ReplayWindow> {
+    let count = u64::try_from(slots.len()).ok().filter(|n| *n > 0)?;
+    // Checked rather than plain division. The filter above already rules the
+    // divisor out of being nought, but the workspace denies bare arithmetic and
+    // a guard three lines up is not something the lint can see.
+    let mean = |total: u64| total.checked_div(count).unwrap_or_default();
+    let sum = |pick: fn(&ReplaySlotTimes) -> u64| {
+        slots
+            .iter()
+            .fold(0u64, |total, slot| total.saturating_add(pick(slot)))
+    };
+    let peak = |pick: fn(&ReplaySlotTimes) -> u64| slots.iter().map(pick).max().unwrap_or_default();
+
+    Some(ReplayWindow {
+        slots: slots.len(),
+        transactions: mean(sum(|s| s.transactions)),
+
+        fetch: mean(sum(|s| s.fetch)),
+        confirming: mean(sum(|s| s.confirming)),
+        completing: mean(sum(|s| s.completing)),
+        serial_peak: peak(ReplaySlotTimes::serial),
+
+        poh_verify: mean(sum(|s| s.poh_verify)),
+        tx_verify: mean(sum(|s| s.tx_verify)),
+        dispatch: mean(sum(|s| s.dispatch)),
+
+        execute: mean(sum(|s| s.execute)),
+        bytecode: mean(sum(|s| s.bytecode)),
+        serialising: mean(sum(|s| s.serialising)),
+        deserialising: mean(sum(|s| s.deserialising)),
+        load: mean(sum(|s| s.load)),
+        store: mean(sum(|s| s.store)),
+        program_cache: mean(sum(|s| s.program_cache)),
+        compiling: mean(sum(|s| s.compiling)),
+        program_cache_peak: peak(|s| s.program_cache),
+        checking: mean(sum(|s| s.checking)),
+        other: mean(sum(|s| s.other)),
+        cpu_peak: peak(ReplaySlotTimes::cpu),
+    })
+}
+
 /// One row's two identities: the port the kernel counts drops against, and the
 /// validator's own count of what that port delivered where there is one.
 ///
@@ -403,6 +494,7 @@ pub struct Meters {
     executed_window: VecDeque<ExecutedTotals>,
     executed: Debounced<Option<ExecutedTotals>>,
     slot_waterfalls: Debounced<Vec<SlotWaterfall>>,
+    replay: Debounced<Option<ReplayWindow>>,
 }
 
 impl Meters {
@@ -447,6 +539,7 @@ impl Meters {
             executed_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             executed: Debounced::default(),
             slot_waterfalls: Debounced::default(),
+            replay: Debounced::default(),
         }
     }
 
@@ -651,6 +744,16 @@ impl Meters {
             TOPIC_SUMMARY,
             "slot_waterfalls",
             self.metrics_tap.slot_waterfalls(),
+        );
+
+        // Averaged over the slots held rather than over a period of seconds.
+        // Slots are the unit the work arrives in, and a window counted in them
+        // holds the same number of samples whatever the cluster's pace.
+        self.replay.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "replay",
+            replay_window(&self.metrics_tap.replay_slots()),
         );
     }
 
@@ -1053,6 +1156,76 @@ mod tests {
     /// A window of `(hits, misses, evictions)` samples.
     fn window(samples: &[(u64, u64, u64)]) -> VecDeque<(u64, u64, u64)> {
         samples.iter().copied().collect()
+    }
+
+    /// A replayed slot with only the fields a test cares about set.
+    fn replayed(set: impl Fn(&mut ReplaySlotTimes)) -> ReplaySlotTimes {
+        let mut slot = ReplaySlotTimes::default();
+        set(&mut slot);
+        slot
+    }
+
+    #[test]
+    fn test_a_replay_window_reports_the_mean_slot() {
+        // What one slot costs, which is the figure that compares against how
+        // long a slot lasts. A total over the window would not.
+        let window = replay_window(&[
+            replayed(|s| {
+                s.confirming = 10;
+                s.execute = 100;
+            }),
+            replayed(|s| {
+                s.confirming = 30;
+                s.execute = 300;
+            }),
+        ])
+        .unwrap();
+
+        assert_eq!(window.slots, 2);
+        assert_eq!(window.confirming, 20);
+        assert_eq!(window.execute, 200);
+    }
+
+    #[test]
+    fn test_a_peak_is_the_worst_slot_not_the_worst_of_each_field() {
+        // The maxima land on different slots. Adding them would describe a slot
+        // that never happened and overstate the worst case by whatever the
+        // other fields happened to be doing at the time.
+        let window = replay_window(&[
+            replayed(|s| {
+                s.fetch = 50;
+                s.confirming = 1;
+            }),
+            replayed(|s| {
+                s.fetch = 1;
+                s.confirming = 40;
+            }),
+        ])
+        .unwrap();
+
+        assert_eq!(window.serial_peak, 51, "the worse of the two slots");
+        assert_ne!(window.serial_peak, 90, "not the two maxima added");
+    }
+
+    #[test]
+    fn test_the_program_cache_carries_its_own_peak() {
+        // Compilation arrives in bursts — better than fifty times the ordinary
+        // slot on this validator — so the mean alone hides the thing worth
+        // seeing.
+        let mut slots = vec![replayed(|s| s.program_cache = 1_000); 9];
+        slots.push(replayed(|s| s.program_cache = 45_000));
+        let window = replay_window(&slots).unwrap();
+
+        assert_eq!(window.program_cache, 5_400);
+        assert_eq!(window.program_cache_peak, 45_000);
+    }
+
+    #[test]
+    fn test_no_replayed_slots_is_no_panel() {
+        // Absent rather than a card of noughts, which is what a validator whose
+        // replay has not started would otherwise show, and what one whose log
+        // filter keeps this point away would show for ever.
+        assert!(replay_window(&[]).is_none());
     }
 
     #[test]

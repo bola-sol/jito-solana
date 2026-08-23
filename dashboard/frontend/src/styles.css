@@ -1598,6 +1598,103 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* ---- replay ---- */
+
+.replay-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.replay-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.replay-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+/* Says the section's figures are comparable only to each other. Carries the
+   accent because it changes what every row beneath it means. */
+.replay-note {
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.replay-total {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-row {
+  display: grid;
+  /* Same shape as the waterfall's rows: the bar takes the free space, the
+     label is capped and ellipsises. */
+  grid-template-columns: minmax(0, 16em) 5.5em minmax(40px, 1fr) 7em;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.replay-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-row.is-phase .replay-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.replay-row.is-phase {
+  margin-top: 4px;
+}
+
+/* Parts of the phase above them, indented to say so. */
+.replay-row.is-part .replay-label {
+  padding-left: 12px;
+  color: var(--text-dim);
+}
+
+.replay-value,
+.replay-share {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.replay-row.is-part .replay-value,
+.replay-share {
+  color: var(--text-dim);
+}
+
+.replay-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+
+.replay-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.replay-row.is-part .replay-fill {
+  background: var(--text-faint);
+}
+
 .produced-waterfall-head {
   display: flex;
   align-items: baseline;
@@ -1630,6 +1727,16 @@ body {
   }
 
   .waterfall-bar {
+    display: none;
+  }
+
+  /* Same trade for the same reason: at this width the bar is down to its floor
+     and the labels have begun to ellipsise. */
+  .replay-row {
+    grid-template-columns: minmax(0, 1fr) 5.5em 7em;
+  }
+
+  .replay-bar {
     display: none;
   }
 }

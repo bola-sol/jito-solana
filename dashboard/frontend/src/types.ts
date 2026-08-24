@@ -233,6 +233,15 @@ export interface ProducedBlock {
 }
 
 /**
+ * Which of the process's schedulers built a slot.
+ *
+ * A stock validator runs one and always reports `scheduler`. jito runs a second
+ * beside it for BAM, which builds the block itself whenever it is connected,
+ * and counts what arrived in a different unit.
+ */
+export type SchedulerSource = "scheduler" | "bam";
+
+/**
  * Where the transactions handed to the banking stage went, over the window.
  *
  * Counts of what happened inside the window, not a queue depth: the scheduler
@@ -243,16 +252,12 @@ export interface ProducedBlock {
  * every loss from `not_held` through `nonce_conflict`. The later stretches are
  * not, and cannot be, because the queue holds a standing population: what was
  * scheduled in this window was largely buffered in an earlier one.
- */
-/**
- * Which of the process's schedulers built a slot.
  *
- * A stock validator runs one and always reports `scheduler`. jito runs a second
- * beside it for BAM, which builds the block itself whenever it is connected,
- * and counts what arrived in a different unit.
+ * None of that first stretch holds on a slot BAM built. It counts what it
+ * rejected before parsing in batches and everything it rejected after parsing
+ * in transactions, so `received` and `not_held` are in a unit of their own and
+ * add up to nothing alongside the rest.
  */
-export type SchedulerSource = "scheduler" | "bam";
-
 export interface Waterfall {
   received: number;
 
@@ -262,7 +267,14 @@ export interface Waterfall {
    */
   source?: SchedulerSource;
 
-  /** Lost at the door, before ever being queued. These plus `buffered` are `received`. */
+  /**
+   * Lost at the door, before ever being queued. These plus `buffered` are
+   * `received` — on a slot the validator's own scheduler built.
+   *
+   * On a BAM slot none of that holds. `not_held` is fed by a different check
+   * there and counts batches BAM sent past their own deadline, so it is neither
+   * in the same unit as the rest nor part of any identity with them.
+   */
   not_held: number;
   check_queue_full: number;
   unparsable: number;
@@ -322,6 +334,31 @@ export interface ExecutedStage {
   expired_bank: number;
   processed: number;
   succeeded: number;
+
+  /**
+   * Why a transaction the workers took up never reached the block, from the
+   * error counters the same worker reports beside the counts above.
+   *
+   * Only the reasons that end a transaction are here. The ones that hand it
+   * back — account in use, and the four cost-limit errors — are already drawn
+   * as retries, and an instruction error is a transaction that did reach the
+   * block having failed, which is drawn as that. Counting any of them again
+   * here would be counting the same transaction twice.
+   *
+   * These do not sum to the whole of the loss: the long tail of rarer errors is
+   * gathered into a derived row rather than given one each.
+   */
+  too_many_locks: number;
+  account_missing: number;
+  fee_payer_broke: number;
+  fee_payer_invalid: number;
+  blockhash_missing: number;
+  blockhash_old: number;
+  already_processed: number;
+  bad_compute_budget: number;
+  account_data_too_large: number;
+  program_not_executable: number;
+  program_restricted: number;
 }
 
 /**

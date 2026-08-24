@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { blockStamp, blockTime, count, percent, sol } from "../format";
+import { blockAverages } from "../produced";
 import type { ProducedBlock, SlotWaterfall } from "../types";
 import { useStore } from "../useStore";
 import { waterfallRows } from "../waterfall";
@@ -50,6 +51,7 @@ export function SlotDetailsPage() {
   return (
     <section className="slot-details">
       <div className="produced">
+        <AveragesRow blocks={blocks} />
         {newest.map((block) => (
           <BlockRow
             key={block.slot}
@@ -65,6 +67,53 @@ export function SlotDetailsPage() {
         to fall off.
       </div>
     </section>
+  );
+}
+
+/**
+ * The mean of each column, at the head of the column it averages.
+ *
+ * The rows below are a record rather than a series — a validator leads in
+ * bursts of four and then not for an hour — so scanning them for whether a
+ * block was ordinary means holding the last dozen in your head. This is that
+ * comparison, on the same grid so the figures sit directly above the ones they
+ * are the average of.
+ *
+ * Over the blocks held, which is what the page shows and what the footnote
+ * counts. It is not an average over the epoch and does not claim to be.
+ */
+function AveragesRow({ blocks }: { blocks: ProducedBlock[] }) {
+  const avg = blockAverages(blocks);
+  return (
+    <div className="produced-averages">
+      <span className="produced-id">
+        <Explain
+          className="produced-avg-label"
+          text={`The mean of each column over the ${count(avg.blocks)} blocks held on this page. Blocks missing a figure are left out of its average rather than counted as nought, so a column can be averaged over fewer blocks than the one beside it.`}
+        >
+          avg
+        </Explain>
+      </span>
+      <span className="produced-txns">
+        {avg.transactions === null ? "—" : `${count(Math.round(avg.transactions))} txns`}
+      </span>
+      <span className="produced-fill">
+        {avg.filled === null ? "—" : `${percent(avg.filled, 1)} full`}
+      </span>
+      <span className="produced-fees">
+        {avg.fees === null ? (
+          "—"
+        ) : (
+          <>
+            {sol(avg.fees, 5)}
+            <span className="produced-fees-unit"> SOL</span>
+          </>
+        )}
+      </span>
+      <span className="produced-ms">
+        {avg.durationMillis === null ? "—" : `${Math.round(avg.durationMillis)} ms`}
+      </span>
+    </div>
   );
 }
 

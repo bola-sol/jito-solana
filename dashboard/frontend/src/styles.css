@@ -1274,7 +1274,11 @@ body {
   gap: 4px;
 }
 
-.produced-head {
+/* The averages row shares every rule that lays the columns out, so it cannot
+   drift out of step with the rows it sits above — including at the two widths
+   where the grid loses a column. */
+.produced-head,
+.produced-averages {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 6em 5.5em 8em 5em;
   align-items: baseline;
@@ -1303,6 +1307,23 @@ body {
 .produced-block.is-open .produced-head {
   background: var(--panel-raised);
   color: var(--text);
+}
+
+/* Faint and ruled off, so it reads as the head of the columns rather than as
+   the most recent block. No hover or focus treatment: there is nothing to open.
+   The padding matches a row's so the figures line up with the column, not just
+   with the column's edge. */
+.produced-averages {
+  padding: 5px 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+}
+
+.produced-avg-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .produced-slot {
@@ -1412,7 +1433,8 @@ body {
 }
 
 @media (max-width: 560px) {
-  .produced-head {
+  .produced-head,
+  .produced-averages {
     grid-template-columns: minmax(0, 1fr) 5.5em 6.5em 4.5em;
   }
 
@@ -1425,7 +1447,8 @@ body {
    goes rather than a figure: fees on this page are only ever in SOL, and the
    detail under an opened row says so. */
 @media (max-width: 344px) {
-  .produced-head {
+  .produced-head,
+  .produced-averages {
     grid-template-columns: minmax(0, 1fr) 5em 4.5em 4em;
     gap: 6px;
   }

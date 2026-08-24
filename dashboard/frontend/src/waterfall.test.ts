@@ -124,6 +124,8 @@ describe("a slot BAM built", () => {
     return quiet({
       source: "bam",
       received: 40,
+      // Fed by a different check on this path: batches past their own slot.
+      not_held: 5,
       unparsable: 3,
       buffered: 700,
       scheduled: 738,
@@ -159,12 +161,47 @@ describe("a slot BAM built", () => {
     expect(received.over).toBe(false);
   });
 
+  it("does not call a late batch a forwarded transaction", () => {
+    // Same counter, different check, different unit, different meaning. On
+    // this path it holds batches BAM sent that had already missed the slot
+    // they named — the one figure on a BAM slot worth acting on, and the last
+    // thing that should read as ordinary forwarding.
+    const notHeld = waterfallRows(bamSlot()).find((r) => r.key === "not_held")!;
+    expect(notHeld.label).toBe("batches too late to schedule");
+    expect(notHeld.kind).toBe("count");
+    expect(notHeld.count).toBe(5);
+    expect(notHeld.share).toBe(0);
+  });
+
+  it("changes nothing at all for a validator not running BAM", () => {
+    // The whole BAM branch hangs off one field. A stock validator never sends
+    // it, and a jito validator sends "scheduler" whenever BAM is not the one
+    // building — so the ordinary reading has to survive both spellings
+    // untouched, row for row.
+    const numbers = { received: 1000, not_held: 5, buffered: 700, finished: 500 };
+    const absent = waterfallRows(quiet(numbers));
+    const named = waterfallRows(quiet({ ...numbers, source: "scheduler" }));
+    expect(named).toEqual(absent);
+
+    // And it is the same reading it always was: every row a share of received.
+    expect(absent.find((r) => r.key === "received")!.label).toBe("Received");
+    expect(absent.find((r) => r.key === "not_held")!.label).toBe("forwarding, not held");
+    expect(absent.every((r) => r.kind !== "count" || r.key === "verify_evicted")).toBe(true);
+    expect(absent.find((r) => r.key === "buffered")!.share).toBeCloseTo(0.7, 5);
+  });
+
   it("leaves a slot the validator built alone", () => {
     // Same numbers, no source: the ordinary reading, drawn against received.
-    const rows = waterfallRows(quiet({ received: 1000, buffered: 700, finished: 500 }));
+    const rows = waterfallRows(
+      quiet({ received: 1000, not_held: 5, buffered: 700, finished: 500 }),
+    );
     const received = rows.find((r) => r.key === "received")!;
     expect(received.label).toBe("Received");
     expect(received.kind).toBe("stage");
+    const notHeld = rows.find((r) => r.key === "not_held")!;
+    expect(notHeld.label).toBe("forwarding, not held");
+    expect(notHeld.kind).toBe("loss");
+    expect(notHeld.share).toBeCloseTo(5 / 1000, 5);
     expect(rows.find((r) => r.key === "finished")!.share).toBeCloseTo(0.5, 5);
   });
 });
@@ -258,7 +295,63 @@ describe("executedRows", () => {
     expired_bank: 0,
     processed: 0,
     succeeded: 0,
+    too_many_locks: 0,
+    account_missing: 0,
+    fee_payer_broke: 0,
+    fee_payer_invalid: 0,
+    blockhash_missing: 0,
+    blockhash_old: 0,
+    already_processed: 0,
+    bad_compute_budget: 0,
+    account_data_too_large: 0,
+    program_not_executable: 0,
+    program_restricted: 0,
     ...over,
+  });
+
+  it("accounts for everything the workers took up", () => {
+    // The reading from testnet that started this: a hundred and one attempted,
+    // thirteen handed back, sixty-three committed, and twenty-five in no row at
+    // all — a quarter of the section, under a footnote promising it added up.
+    const rows = executedRows(
+      stage({ attempted: 101, retryable: 13, processed: 63, succeeded: 63 }),
+    );
+    const dropped = rowOf(rows, "exec_dropped");
+    expect(dropped.count).toBe(25);
+    expect(dropped.share).toBeCloseTo(25 / 101, 10);
+
+    // With no reasons reported, the whole of it falls to the gathered row
+    // rather than vanishing.
+    expect(rowOf(rows, "exec_other_reasons").count).toBe(25);
+  });
+
+  it("names the reasons it has and gathers the rest", () => {
+    const rows = executedRows(
+      stage({
+        attempted: 100,
+        retryable: 10,
+        processed: 60,
+        succeeded: 60,
+        blockhash_missing: 12,
+        fee_payer_broke: 8,
+        already_processed: 4,
+      }),
+    );
+    expect(rowOf(rows, "exec_dropped").count).toBe(30);
+    expect(rowOf(rows, "exec_blockhash_missing").count).toBe(12);
+    expect(rowOf(rows, "exec_fee_payer_broke").count).toBe(8);
+    // Thirty lost, twenty-four named, six left over.
+    expect(rowOf(rows, "exec_other_reasons").count).toBe(6);
+  });
+
+  it("does not go negative when the two points disagree", () => {
+    // The outcomes and the reasons are reported separately, so a window can
+    // catch more reasons than it caught loss. Nought, not a negative row.
+    const rows = executedRows(
+      stage({ attempted: 10, retryable: 0, processed: 10, succeeded: 10, account_missing: 4 }),
+    );
+    expect(rowOf(rows, "exec_dropped").count).toBe(0);
+    expect(rowOf(rows, "exec_other_reasons").count).toBe(0);
   });
 
   it("derives the failures from committed less succeeded", () => {

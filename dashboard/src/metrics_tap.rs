@@ -30,7 +30,7 @@ use {
         collections::VecDeque,
         sync::{
             Arc, Mutex,
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
 };
@@ -77,6 +77,10 @@ const PACKETS_COUNT: &str = "packets_count";
 /// it is not behind the info-logging check and arrives whatever the operator
 /// has set their log level to.
 const SCHEDULER_COUNTS: &str = "banking_stage_scheduler_counts";
+/// Why a worker's transaction never reached the block. Reported by the same
+/// worker, on the same tick and under the same `id`, as the counts point above,
+/// so the two are read into one set of counters and windowed together.
+const WORKER_ERROR_METRICS: &str = "banking_stage_worker_error_metrics";
 
 /// Where the accounts database served reads from, and what it wrote.
 ///
@@ -297,6 +301,23 @@ pub struct ExecutedCounters {
     /// Of those, the ones whose result was success. The rest landed in the
     /// block having failed, which still costs their fee.
     pub succeeded: AtomicU64,
+
+    // Why a transaction the worker took up never reached the block, from the
+    // error point. Only the reasons that end a transaction are read: the ones
+    // that hand it back — `account_in_use` and the four cost-limit errors — are
+    // already drawn as retries, and `instruction_error` is a transaction that
+    // did reach the block having failed, which is drawn as that.
+    pub too_many_locks: AtomicU64,
+    pub account_missing: AtomicU64,
+    pub fee_payer_broke: AtomicU64,
+    pub fee_payer_invalid: AtomicU64,
+    pub blockhash_missing: AtomicU64,
+    pub blockhash_old: AtomicU64,
+    pub already_processed: AtomicU64,
+    pub bad_compute_budget: AtomicU64,
+    pub account_data_too_large: AtomicU64,
+    pub program_not_executable: AtomicU64,
+    pub program_restricted: AtomicU64,
 }
 
 /// Running totals of the counters worth watching.
@@ -361,6 +382,15 @@ pub struct MetricsTap {
     /// this reads without locking anything — and held only long enough to push
     /// a struct of counts or to copy the queue out.
     slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
+
+    /// Which scheduler sent the interval counts above, from the same tag the
+    /// per-slot points carry.
+    ///
+    /// Only one scheduler reports the interval point — a build running two
+    /// gates that report on whichever of them is enabled — so unlike the
+    /// per-slot points there is nothing here to choose between. What there is
+    /// to say is which one it was, because it decides what `received` counts.
+    scheduler_is_bam: AtomicBool,
 
     /// The last few hundred replayed slots, timed.
     ///
@@ -620,6 +650,17 @@ pub struct ExecutedTotals {
     pub expired_bank: u64,
     pub processed: u64,
     pub succeeded: u64,
+    pub too_many_locks: u64,
+    pub account_missing: u64,
+    pub fee_payer_broke: u64,
+    pub fee_payer_invalid: u64,
+    pub blockhash_missing: u64,
+    pub blockhash_old: u64,
+    pub already_processed: u64,
+    pub bad_compute_budget: u64,
+    pub account_data_too_large: u64,
+    pub program_not_executable: u64,
+    pub program_restricted: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -717,14 +758,20 @@ impl MetricsTap {
             SHREDS_REPAIR => self.add_packets(&self.shreds_repair, point),
             GOSSIP_RECEIVER => self.add_packets(&self.packets_gossip, point),
             TPU_VOTE_RECEIVER => self.add_packets(&self.packets_tpu_vote, point),
-            SCHEDULER_COUNTS => self.scheduler.add_point(point),
+            SCHEDULER_COUNTS => {
+                self.scheduler_is_bam.store(
+                    scheduler_source(point) == SchedulerSource::Bam,
+                    Ordering::Relaxed,
+                );
+                self.scheduler.add_point(point)
+            }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
             PROGRAM_CACHE => self.program_cache.add_point(point),
             QUIC_TPU => self.quic.add_point(point),
             TPU_VERIFIER => self.verify.add_point(point),
-            WORKER_COUNTS => self.executed.add_point(point),
+            WORKER_COUNTS | WORKER_ERROR_METRICS => self.executed.add_point(point),
             _ => (),
         }
     }
@@ -886,6 +933,15 @@ impl MetricsTap {
             .lock()
             .map(|slots| slots.iter().copied().collect())
             .unwrap_or_default()
+    }
+
+    /// Which scheduler the interval counts last came from.
+    pub fn scheduler_source(&self) -> SchedulerSource {
+        if self.scheduler_is_bam.load(Ordering::Relaxed) {
+            SchedulerSource::Bam
+        } else {
+            SchedulerSource::Scheduler
+        }
     }
 
     /// The leader slots held, oldest first.
@@ -1089,8 +1145,24 @@ impl ExecutedCounters {
                 "retryable_expired_bank_count" => &self.expired_bank,
                 "processed_transactions_count" => &self.processed,
                 "processed_with_successful_result_count" => &self.succeeded,
+                // And from the error point beside it. No name is shared with
+                // the counts point, so both are read here.
+                "too_many_account_locks" => &self.too_many_locks,
+                "account_not_found" => &self.account_missing,
+                "insufficient_funds" => &self.fee_payer_broke,
+                "invalid_account_for_fee" => &self.fee_payer_invalid,
+                "blockhash_not_found" => &self.blockhash_missing,
+                "blockhash_too_old" => &self.blockhash_old,
+                "already_processed" => &self.already_processed,
+                "invalid_compute_budget" => &self.bad_compute_budget,
+                "max_loaded_accounts_data_size_exceeded" => &self.account_data_too_large,
+                "invalid_program_for_execution" => &self.program_not_executable,
+                "program_execution_temporarily_restricted" => &self.program_restricted,
                 // `max_queue_len` is a gauge and `num_messages_processed`
-                // counts batches rather than transactions.
+                // counts batches rather than transactions. `total` sums every
+                // error including the ones drawn elsewhere, so it is no use as
+                // a figure of its own. The rest of the error point is reasons
+                // rare enough to be left to the row that gathers them.
                 _ => continue,
             };
             add_field(counter, value);
@@ -1105,6 +1177,17 @@ impl ExecutedCounters {
             expired_bank: self.expired_bank.load(Ordering::Relaxed),
             processed: self.processed.load(Ordering::Relaxed),
             succeeded: self.succeeded.load(Ordering::Relaxed),
+            too_many_locks: self.too_many_locks.load(Ordering::Relaxed),
+            account_missing: self.account_missing.load(Ordering::Relaxed),
+            fee_payer_broke: self.fee_payer_broke.load(Ordering::Relaxed),
+            fee_payer_invalid: self.fee_payer_invalid.load(Ordering::Relaxed),
+            blockhash_missing: self.blockhash_missing.load(Ordering::Relaxed),
+            blockhash_old: self.blockhash_old.load(Ordering::Relaxed),
+            already_processed: self.already_processed.load(Ordering::Relaxed),
+            bad_compute_budget: self.bad_compute_budget.load(Ordering::Relaxed),
+            account_data_too_large: self.account_data_too_large.load(Ordering::Relaxed),
+            program_not_executable: self.program_not_executable.load(Ordering::Relaxed),
+            program_restricted: self.program_restricted.load(Ordering::Relaxed),
         }
     }
 }
@@ -1263,6 +1346,17 @@ counter_arithmetic!(ExecutedTotals {
     expired_bank,
     processed,
     succeeded,
+    too_many_locks,
+    account_missing,
+    fee_payer_broke,
+    fee_payer_invalid,
+    blockhash_missing,
+    blockhash_old,
+    already_processed,
+    bad_compute_budget,
+    account_data_too_large,
+    program_not_executable,
+    program_restricted,
 });
 
 counter_arithmetic!(SchedulerTotals {
@@ -1769,6 +1863,34 @@ mod tests {
     }
 
     #[test]
+    fn test_the_interval_counts_say_which_scheduler_sent_them() {
+        // Only one scheduler reports this point, so there is nothing to choose
+        // between — but which one it was decides whether `received` is packets
+        // or batches, and the live card cannot draw itself without knowing.
+        let tap = MetricsTap::default();
+        assert_eq!(
+            tap.scheduler_source(),
+            SchedulerSource::Scheduler,
+            "a validator running one scheduler, before any point arrives"
+        );
+
+        let mut bam = named(SCHEDULER_COUNTS, &[("num_received", "5i")]);
+        bam.tags.push((SCHEDULER_ID, "10000".to_string()));
+        tap.observe(&bam);
+        assert_eq!(tap.scheduler_source(), SchedulerSource::Bam);
+
+        // And back, as it goes when BAM drops and the validator takes over.
+        let mut own = named(SCHEDULER_COUNTS, &[("num_received", "5i")]);
+        own.tags.push((SCHEDULER_ID, "0".to_string()));
+        tap.observe(&own);
+        assert_eq!(tap.scheduler_source(), SchedulerSource::Scheduler);
+
+        // Untagged, as every stock validator sends it.
+        tap.observe(&named(SCHEDULER_COUNTS, &[("num_received", "5i")]));
+        assert_eq!(tap.scheduler_source(), SchedulerSource::Scheduler);
+    }
+
+    #[test]
     fn test_the_scheduler_that_built_the_slot_is_named() {
         // Which one built the block is worth reading on its own, and the panel
         // needs it: the two count what arrived in different units, so the rows
@@ -1991,6 +2113,53 @@ mod tests {
         assert_eq!(executed.attempted, 400);
         assert_eq!(executed.processed, 360);
         assert_eq!(executed.succeeded, 320);
+    }
+
+    #[test]
+    fn test_the_reasons_a_worker_dropped_a_transaction_join_its_counts() {
+        // Two points, reported by the same worker on the same tick under the
+        // same id: one says what became of the work, the other says why. Read
+        // into one set of counters because the panel draws them as one stage —
+        // and because the reasons only mean anything against the outcomes they
+        // are the difference between.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            WORKER_COUNTS,
+            &[
+                ("transactions_attempted_processing_count", "101i"),
+                ("retryable_transaction_count", "13i"),
+                ("processed_transactions_count", "63i"),
+                ("processed_with_successful_result_count", "63i"),
+            ],
+        ));
+        tap.observe(&named(
+            WORKER_ERROR_METRICS,
+            &[
+                ("blockhash_not_found", "12i"),
+                ("insufficient_funds", "8i"),
+                ("already_processed", "4i"),
+                // Counted, but drawn as a retry rather than as a loss, so it
+                // must not land in one of the reasons above.
+                ("account_in_use", "13i"),
+                // The sum of every error including the ones drawn elsewhere.
+                // Reading it as a figure of its own would double the section.
+                ("total", "37i"),
+            ],
+        ));
+
+        let executed = tap.counters().executed;
+        assert_eq!(executed.attempted, 101);
+        assert_eq!(executed.retryable, 13);
+        assert_eq!(executed.processed, 63);
+        assert_eq!(executed.blockhash_missing, 12);
+        assert_eq!(executed.fee_payer_broke, 8);
+        assert_eq!(executed.already_processed, 4);
+        // Neither of the two fields that would double-count reached a counter.
+        assert_eq!(
+            executed.attempted.saturating_sub(executed.processed),
+            38,
+            "nothing from the error point was added to the outcomes"
+        );
     }
 
     #[test]

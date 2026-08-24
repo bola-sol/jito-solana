@@ -18,8 +18,8 @@ use {
         context::{DashboardContext, StartupProgressFn},
         metrics_tap::{
             AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicTotals,
-            ReplaySlotTimes, SchedulerTotals, SlotWaterfall, TapCounters, VerifyTotals,
-            WindowedCounters,
+            ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotWaterfall, TapCounters,
+            VerifyTotals, WindowedCounters,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -296,6 +296,18 @@ pub struct IngestSummary {
 /// taken from the per-slot sums. Not from the largest each field reached
 /// separately: those maxima land on different slots, and adding them would
 /// describe a slot that never happened.
+/// The live waterfall, and which scheduler produced the counts in it.
+///
+/// The source is carried for the same reason the per-slot waterfalls carry it:
+/// it decides what `received` is counting, and therefore whether the rows below
+/// can be drawn as shares of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct WaterfallWindow {
+    #[serde(flatten)]
+    pub counts: SchedulerTotals,
+    pub source: SchedulerSource,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ReplayWindow {
     /// Slots behind the figures, so the panel can name what it is showing
@@ -486,7 +498,10 @@ pub struct Meters {
     /// consistent; run together as one chain they would imply an arithmetic
     /// that does not hold.
     waterfall_window: VecDeque<SchedulerTotals>,
-    waterfall: Debounced<Option<SchedulerTotals>>,
+    waterfall: Debounced<Option<WaterfallWindow>>,
+    /// Which scheduler the samples in that window came from, so that a
+    /// changeover can be noticed rather than summed through.
+    waterfall_source: SchedulerSource,
     quic_window: VecDeque<QuicTotals>,
     quic: Debounced<Option<QuicTotals>>,
     verify_window: VecDeque<VerifyTotals>,
@@ -532,6 +547,7 @@ impl Meters {
             shreds: Debounced::default(),
             waterfall_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             waterfall: Debounced::default(),
+            waterfall_source: SchedulerSource::default(),
             quic_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic: Debounced::default(),
             verify_window: VecDeque::with_capacity(WATERFALL_WINDOW),
@@ -681,6 +697,18 @@ impl Meters {
         // say, so an empty window is a stage nothing has been sent — which is
         // not the same as one throwing everything away, and a panel of zeroes
         // reads as the second.
+        // Started over when the scheduler behind these changes, which on a
+        // build running two of them means one handed the block production over
+        // to the other. Their `received` is not the same measurement — one
+        // counts packets, the other the batches it was sent — so a window
+        // spanning the changeover would add two units and label the total as
+        // whichever reported last. Five minutes of that is worse than five
+        // minutes of refilling.
+        let source = self.metrics_tap.scheduler_source();
+        if source != self.waterfall_source {
+            self.waterfall_window.clear();
+            self.waterfall_source = source;
+        }
         let scheduler = windowed(
             &mut self.waterfall_window,
             current.scheduler.since(&previous.scheduler),
@@ -690,7 +718,10 @@ impl Meters {
             &self.publisher,
             TOPIC_SUMMARY,
             "waterfall",
-            (scheduler.received > 0).then_some(scheduler),
+            (scheduler.received > 0).then_some(WaterfallWindow {
+                counts: scheduler,
+                source,
+            }),
         );
 
         let quic = windowed(
@@ -1348,6 +1379,45 @@ mod tests {
 
         let published = harness.published_key("summary", "waterfall").unwrap();
         assert!(published.contains(r#""value":null"#), "{published}");
+    }
+
+    #[test]
+    fn test_a_changeover_restarts_the_waterfall_window() {
+        // The two schedulers do not measure `received` the same way — one
+        // counts packets off the wire, the other the batches it was sent — so a
+        // window spanning a handover would add two units together and label the
+        // total as whichever reported last.
+        let harness = fixture();
+        let mut meters = harness.meters();
+
+        // Three samples under the scheduler the fixture's tap reports.
+        let mut previous = SchedulerTotals::default();
+        for step in 1..=3u64 {
+            let current = SchedulerTotals {
+                received: step.saturating_mul(10),
+                ..SchedulerTotals::default()
+            };
+            meters.collect_waterfall(&tap(previous), &tap(current));
+            previous = current;
+        }
+        assert_eq!(meters.waterfall_window.len(), 3);
+
+        // Now say those three were BAM's. The tap still reports the validator's
+        // own scheduler, so the next tick is a handover and the window starts
+        // again from the sample taken after it.
+        meters.waterfall_source = SchedulerSource::Bam;
+        let current = SchedulerTotals {
+            received: 145,
+            ..SchedulerTotals::default()
+        };
+        meters.collect_waterfall(&tap(previous), &tap(current));
+
+        assert_eq!(meters.waterfall_window.len(), 1);
+        assert_eq!(meters.waterfall_source, SchedulerSource::Scheduler);
+        let published = harness.published_key("summary", "waterfall").unwrap();
+        assert!(published.contains(r#""source":"scheduler""#), "{published}");
+        // 145 against a previous reading of 30: the one sample, not the four.
+        assert!(published.contains(r#""received":115"#), "{published}");
     }
 
     #[test]

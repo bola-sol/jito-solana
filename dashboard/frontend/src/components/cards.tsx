@@ -1,4 +1,6 @@
+import type { CSSProperties } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
+import { STAKE_TICKS, stakeTicks } from "../stake";
 import type {
   EpochInfo,
   Health,
@@ -9,7 +11,7 @@ import type {
   ValidatorCounts,
 } from "../types";
 import { useStore } from "../useStore";
-import { Card, Donut, Meter, Stat } from "./primitives";
+import { Card, Meter, Stat } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 import { TpsChart } from "./TpsChart";
 
@@ -128,6 +130,46 @@ export function StatusCard() {
   );
 }
 
+/**
+ * Staked SOL as fifty ticks, with the delinquent share eating them from the
+ * right.
+ *
+ * A ring drawn at this ratio was unreadable: healthy stake sits between 98 and
+ * 100 percent, and an arc at 99 percent is the same picture as an arc at 100.
+ * Counting marks separates the two, because a share too small to see as an
+ * angle is still a visible part of one tick, and severity reads as how far the
+ * red has travelled rather than as a curve that was already closed.
+ *
+ * It grows from the right so the boundary between the two colours starts in
+ * one place and moves in one direction.
+ */
+function StakeStrip({ delinquent, total }: { delinquent: number; total: number }) {
+  const { full, partial } = stakeTicks(delinquent, total);
+
+  return (
+    <div className="stake-strip" aria-hidden="true">
+      {Array.from({ length: STAKE_TICKS }, (_unused, index) => {
+        const fromRight = STAKE_TICKS - 1 - index;
+        if (fromRight < full) return <i key={index} className="is-delinquent" />;
+        if (fromRight === full && partial > 0) {
+          return (
+            <i
+              key={index}
+              className="is-part"
+              // Filled upwards from the base rather than in from the side: at
+              // the card's narrow width a tick is a few pixels across, and a
+              // fraction of that is a smudge, where a fraction of its height
+              // is still a mark.
+              style={{ "--fill": `${partial * 100}%` } as CSSProperties}
+            />
+          );
+        }
+        return <i key={index} />;
+      })}
+    </div>
+  );
+}
+
 export function ValidatorsCard() {
   const store = useStore();
   const counts = store.get<ValidatorCounts>("summary", "validator_counts");
@@ -139,29 +181,47 @@ export function ValidatorsCard() {
   return (
     <Card title="Validators" className="validators-body">
       <div className="stat-grid">
+        <Stat label="Active Stake" value={solCompact(counts.non_delinquent_stake)} sub="SOL" />
         <Stat
-          label="Active Validators"
-          value={count(counts.total - counts.delinquent)}
-          sub={`${count(counts.total)} staked`}
-        />
-        <Stat
-          label="Delinquent"
-          value={count(counts.delinquent)}
-          sub={`${solCompact(counts.delinquent_stake)} SOL`}
-          tone={counts.delinquent > 0 ? "bad" : undefined}
-        />
-        <Stat
-          label="Active Stake"
-          value={solCompact(counts.non_delinquent_stake)}
+          label="Delinquent Stake"
+          value={solCompact(counts.delinquent_stake)}
           sub="SOL"
+          tone={counts.delinquent_stake > 0 ? "bad" : undefined}
+          explain="Stake behind validators that have not voted recently, which is the figure consensus weighs. Measured against this validator's own bank, so if this node falls behind, the cluster is what appears delinquent: the giveaway is the count and the stake climbing together."
         />
-        <Stat label="RPC Nodes" value={count(counts.rpc_nodes)} />
+        <Stat
+          label="Validators"
+          value={
+            <>
+              {count(counts.total - counts.delinquent)}{" "}
+              <small className="stat-of">/ {count(counts.total)}</small>
+            </>
+          }
+          sub={`${count(counts.delinquent)} delinquent`}
+        />
+        <Stat
+          label="RPC Nodes"
+          value={count(counts.rpc_nodes)}
+          sub="advertising RPC"
+          explain="Peers advertising an RPC address in gossip on this shred version. Nodes started with --private-rpc never publish one, so they are indistinguishable here from nodes running no RPC at all, and an advertised address is not a promise that it answers."
+        />
       </div>
-      <Donut
-        fraction={healthy}
-        label={percent(healthy)}
-        sublabel={percent(1 - healthy)}
-      />
+      <div className="stake-share">
+        <div className="stake-share-head">
+          <span>Stake active</span>
+          <b>{percent(healthy)}</b>
+        </div>
+        <StakeStrip delinquent={counts.delinquent_stake} total={total} />
+        <div className="stake-share-key">
+          Each tick 2% of staked SOL
+          {counts.delinquent_stake > 0 && (
+            <>
+              {" · "}
+              <em>{percent(1 - healthy)} delinquent</em>
+            </>
+          )}
+        </div>
+      </div>
     </Card>
   );
 }

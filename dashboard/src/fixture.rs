@@ -45,7 +45,7 @@ use {
     solana_signer::Signer,
     std::{
         collections::HashSet,
-        sync::{Arc, RwLock},
+        sync::{Arc, Mutex, RwLock},
         time::SystemTime,
     },
     tempfile::TempDir,
@@ -65,12 +65,22 @@ pub struct Fixture {
     /// This validator's identity, which is also the staked leader.
     pub identity: Pubkey,
     pub vote_account: Pubkey,
+    /// The cluster's tip as the context's closure will report it. Shared with
+    /// that closure so a test can move the cluster on without rebuilding the
+    /// fixture.
+    cluster_tip: Arc<Mutex<Option<Slot>>>,
     /// Held, not used. Dropping it deletes the directory the blockstore has
     /// open, and the failures that follow look like blockstore bugs.
     _ledger: TempDir,
 }
 
 impl Fixture {
+    /// Puts the cluster ahead of this validator, as a node that has fallen
+    /// behind would see it.
+    pub fn set_cluster_tip(&self, slot: Option<Slot>) {
+        *self.cluster_tip.lock().unwrap() = slot;
+    }
+
     /// The bank at the tip.
     pub fn working_bank(&self) -> Arc<Bank> {
         self.bank_forks.read().unwrap().working_bank()
@@ -171,6 +181,7 @@ fn running() -> StartupProgressFn {
 pub fn fixture() -> Fixture {
     let keypair = Arc::new(Keypair::new());
     let identity = keypair.pubkey();
+    let cluster_tip: Arc<Mutex<Option<Slot>>> = Arc::new(Mutex::new(None));
 
     let GenesisConfigInfo {
         genesis_config,
@@ -229,7 +240,15 @@ pub fn fixture() -> Fixture {
             vote_account,
             cluster_type,
             start_time: SystemTime::now(),
+            // The tests drive this through `Fixture::set_cluster_tip` where
+            // they care; a fixture with no cluster to speak of reports none,
+            // which is what a validator that has seen no certificate does.
+            cluster_tip: {
+                let tip = cluster_tip.clone();
+                Arc::new(move || *tip.lock().unwrap())
+            },
         },
+        cluster_tip,
         publisher: Arc::new(Publisher::new()),
         bank_forks,
         identity,

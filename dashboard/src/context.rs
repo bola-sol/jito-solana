@@ -73,6 +73,16 @@ pub struct PhaseTiming {
 /// Supplies the current startup phase on demand.
 pub type StartupProgressFn = Arc<dyn Fn() -> StartupProgress + Send + Sync>;
 
+/// The highest slot the cluster has finalized, as far as this node can tell.
+///
+/// A closure rather than a handle, so the dashboard needs neither the
+/// certificate type nor the crate it lives in, and so the rule for what counts
+/// as the cluster's tip stays with the validator that already decides it.
+///
+/// `None` before the node has seen anything to go on, which on a fresh start is
+/// until the first certificate arrives.
+pub type ClusterTipFn = Arc<dyn Fn() -> Option<Slot> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct DashboardContext {
     pub cluster_info: Arc<ClusterInfo>,
@@ -88,6 +98,15 @@ pub struct DashboardContext {
     pub cluster_type: ClusterType,
     /// When the validator process started, for the uptime readout.
     pub start_time: SystemTime,
+    /// How far the cluster has got, which is the one figure here that does not
+    /// move with this node's own replay.
+    ///
+    /// Everything else the dashboard measures is taken from this validator's
+    /// view of the chain, and that view lags when replay lags, so every
+    /// self-referential reading keeps agreeing with itself. A node hundreds of
+    /// slots behind votes promptly on what it has replayed and reports perfect
+    /// health by every other rule.
+    pub cluster_tip: ClusterTipFn,
 }
 
 impl DashboardContext {

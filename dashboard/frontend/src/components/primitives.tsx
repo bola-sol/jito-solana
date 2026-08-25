@@ -193,7 +193,7 @@ export function Stat({
   label: ReactNode;
   value: ReactNode;
   sub?: ReactNode;
-  tone?: "good" | "bad" | "muted";
+  tone?: "good" | "bad" | "warn" | "muted";
   /** Explanation for a figure whose label cannot say enough on its own. */
   explain?: string;
 }) {

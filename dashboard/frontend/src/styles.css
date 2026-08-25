@@ -381,6 +381,13 @@ body {
 .tone-bad {
   color: var(--bad);
 }
+/* A state that is deliberate rather than broken, but still wants noticing: a
+   validator on its backup identity is where it is meant to be, and an operator
+   who thinks it is voting needs to see that it is not. */
+.tone-warn {
+  color: var(--warn);
+}
+
 .tone-muted {
   color: var(--text-dim);
 }

@@ -245,7 +245,7 @@ struct Debounces {
     completed_slot: Debounced<Slot>,
     estimated_slot: Debounced<Slot>,
     vote_slot: Debounced<Option<Slot>>,
-    vote_distance: Debounced<Option<u64>>,
+    behind_cluster: Debounced<Option<u64>>,
     identity_balance: Debounced<u64>,
     vote_balance: Debounced<u64>,
     vote_commission: Debounced<Option<u8>>,
@@ -322,6 +322,10 @@ pub struct Collector {
     /// estimate. See [`EPOCH_END_DRIFT_DIVISOR`].
     epoch_end: Option<(Epoch, SystemTime)>,
     last_vote_advance: Instant,
+    /// Whether this process is the identity allowed to vote with the configured
+    /// vote account. False on a validator running its backup identity, and on
+    /// one started without a vote account at all.
+    voting: bool,
     last_slow_tick: Instant,
     /// Viewers attached as of the last tick, kept only so that pausing and
     /// resuming are logged once rather than on every tick.
@@ -362,6 +366,9 @@ impl Collector {
             replayed_behind: false,
             epoch_end: None,
             last_vote_advance: now,
+            // Nothing is known until the first bank is read, and claiming to be
+            // voting before then would flash the wrong status on startup.
+            voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             subscribers: 0,
         }
@@ -1008,13 +1015,29 @@ impl Collector {
         let mine = vote_accounts.get(&self.ctx.vote_account);
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
 
-        let (activated_stake, commission, last_vote) = match mine {
+        // Whether this process is the one allowed to vote with that account.
+        //
+        // The two do not move together. The identity is the running one and
+        // changes under `set-identity`; the vote account is fixed at startup
+        // from `--vote-account`. After a failover the account carries on being
+        // voted from wherever the voting identity now runs, so reading its last
+        // vote and calling it ours reports the health of a different machine.
+        let identity = self.ctx.identity();
+        let voting = mine.is_some_and(|(_, account)| *account.node_pubkey() == identity);
+        self.voting = voting;
+
+        let (activated_stake, commission, voter_vote) = match mine {
             Some((stake, account)) => {
                 let view = account.vote_state_view();
                 (*stake, Some(view.commission()), view.last_voted_slot())
             }
             None => (0, None, None),
         };
+
+        // Published only while this process is the voter. Otherwise it is
+        // another node's progress, and the distance below would be measured
+        // from a vote this one never cast.
+        let last_vote = if voting { voter_vote } else { None };
 
         self.debounces.vote_commission.publish(
             &self.publisher,
@@ -1044,20 +1067,25 @@ impl Collector {
             .vote_slot
             .publish(&self.publisher, TOPIC_SUMMARY, "vote_slot", last_vote);
 
-        // Measured against the completed slot, which is the same value the
-        // strip's Voted delta is taken from, so the two figures always agree.
+        // How far this node's replay trails the cluster.
         //
-        // Deliberately not the working bank, which sits a slot ahead: a
-        // validator votes on frozen banks, so counting a slot it could not yet
-        // have voted on made a caught-up validator read as one behind.
-        // `collect_slot_positions` runs earlier in the same tick, so this is
-        // already current.
-        let distance = last_vote.map(|vote| self.last_completed_slot.saturating_sub(vote));
-        self.debounces.vote_distance.publish(
+        // The only figure here not taken from this validator's own view of the
+        // chain. Everything else — the vote distance this replaced, the
+        // delinquency counts, the slot deltas on the strip — is measured
+        // against banks this node has replayed, and that view lags when replay
+        // lags. A node hundreds of slots back sees a chain whose tip is stale,
+        // votes promptly on it, and passes every one of those checks while the
+        // rest of the cluster counts it delinquent.
+        //
+        // `collect_slot_positions` runs earlier in the same tick, so the
+        // completed slot is already current.
+        let behind_cluster =
+            (self.ctx.cluster_tip)().map(|tip| tip.saturating_sub(self.last_completed_slot));
+        self.debounces.behind_cluster.publish(
             &self.publisher,
             TOPIC_SUMMARY,
-            "vote_distance",
-            distance,
+            "behind_cluster",
+            behind_cluster,
         );
     }
 
@@ -1371,8 +1399,17 @@ impl Collector {
         let health = health_of(
             self.last_completed_at.elapsed(),
             self.last_completed_slot,
+            self.voting,
             self.debounces.vote_slot.last().copied().flatten(),
-            self.debounces.vote_distance.last().copied().flatten(),
+            // Still the vote's own distance, which is what the delinquency
+            // rules are about. The cluster distance is a different question and
+            // is reported on its own.
+            self.debounces
+                .vote_slot
+                .last()
+                .copied()
+                .flatten()
+                .map(|vote| self.last_completed_slot.saturating_sub(vote)),
             self.last_vote_advance.elapsed(),
         );
         self.debounces
@@ -1534,6 +1571,7 @@ const VOTE_STALL_AFTER: Duration = Duration::from_secs(60);
 fn health_of(
     since_completed: Duration,
     completed_slot: Slot,
+    voting: bool,
     vote_slot: Option<Slot>,
     behind: Option<u64>,
     since_vote_advance: Duration,
@@ -1546,14 +1584,25 @@ fn health_of(
         "running"
     };
 
-    // A vote can be delinquent two ways: far behind the tip, or not moving at
-    // all. The second catches a node whose vote is close but frozen, which the
-    // distance alone reports as healthy right up until it drifts.
-    let vote = match (vote_slot, behind) {
-        (None, _) => "not_started",
-        (Some(_), Some(behind)) if behind > VOTE_BEHIND_LIMIT => "delinquent",
-        _ if since_vote_advance > VOTE_STALL_AFTER => "delinquent",
-        _ => "voting",
+    // Checked before anything about how the votes are going, because a node
+    // that is not the voter has none of its own. Its vote account keeps being
+    // voted from wherever the voting identity now runs, so every rule below
+    // would read that other machine's health and report it as this one's.
+    //
+    // Not a fault. A validator on its backup identity is meant to be here, and
+    // an operator who has just failed over wants to see that it took.
+    let vote = if !voting {
+        "not_voting"
+    } else {
+        // A vote can be delinquent two ways: far behind the tip, or not moving
+        // at all. The second catches a node whose vote is close but frozen,
+        // which the distance alone reports as healthy right up until it drifts.
+        match (vote_slot, behind) {
+            (None, _) => "not_started",
+            (Some(_), Some(behind)) if behind > VOTE_BEHIND_LIMIT => "delinquent",
+            _ if since_vote_advance > VOTE_STALL_AFTER => "delinquent",
+            _ => "voting",
+        }
     };
 
     Health { replay, vote }
@@ -1769,7 +1818,10 @@ pub(crate) fn system_time_nanos(time: SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::fixture::fixture};
+    use {
+        super::*,
+        crate::fixture::{Fixture, fixture},
+    };
 
     /// The arrival window as the collector holds it.
     fn window(samples: &[(Slot, u64)]) -> VecDeque<(Slot, u64)> {
@@ -2035,11 +2087,11 @@ mod tests {
     #[test]
     fn test_replay_is_stalled_when_no_slot_completes() {
         assert_eq!(
-            health_of(Duration::from_secs(13), 100, Some(99), Some(1), FRESH).replay,
+            health_of(Duration::from_secs(13), 100, true, Some(99), Some(1), FRESH).replay,
             "stalled"
         );
         assert_eq!(
-            health_of(FRESH, 100, Some(99), Some(1), FRESH).replay,
+            health_of(FRESH, 100, true, Some(99), Some(1), FRESH).replay,
             "running"
         );
     }
@@ -2047,17 +2099,124 @@ mod tests {
     #[test]
     fn test_replay_has_not_started_before_the_first_slot() {
         // Slot zero means nothing has completed yet, which is not a stall.
-        assert_eq!(health_of(FRESH, 0, None, None, FRESH).replay, "not_started");
+        assert_eq!(
+            health_of(FRESH, 0, true, None, None, FRESH).replay,
+            "not_started"
+        );
+    }
+
+    /// The integer a summary key was published with, if it carried one.
+    fn published_number(harness: &Fixture, key: &str) -> Option<u64> {
+        let message = harness.published_key("summary", key)?;
+        let after = message.rsplit_once(r#""value":"#)?.1;
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    }
+
+    #[test]
+    fn test_the_cluster_distance_is_measured_against_the_cluster() {
+        // The figure this replaced was our replay against our own vote, and a
+        // node that has fallen behind votes promptly on what it has replayed,
+        // so it read nought however far back the node was.
+        let harness = fixture();
+        harness.advance_to(64);
+        harness.set_cluster_tip(Some(10_000));
+        harness.collector().tick();
+
+        let completed = published_number(&harness, "completed_slot").unwrap();
+        assert_eq!(
+            published_number(&harness, "behind_cluster"),
+            Some(10_000 - completed),
+            "the distance is the cluster's tip less what this node has replayed"
+        );
+    }
+
+    #[test]
+    fn test_a_node_the_cluster_has_not_outrun_is_not_behind() {
+        // Saturating rather than negative. Being ahead of the last certificate
+        // seen is ordinary, and is not a distance.
+        let harness = fixture();
+        harness.advance_to(64);
+        harness.set_cluster_tip(Some(1));
+        harness.collector().tick();
+
+        assert_eq!(published_number(&harness, "behind_cluster"), Some(0));
+    }
+
+    #[test]
+    fn test_nothing_is_claimed_before_a_certificate_arrives() {
+        // On a fresh start there is nothing to measure against, and nought
+        // would say this node was in step with a cluster it has not yet heard
+        // from.
+        let harness = fixture();
+        harness.advance_to(64);
+        harness.collector().tick();
+
+        let published = harness.published_key("summary", "behind_cluster").unwrap();
+        assert!(published.contains(r#""value":null"#), "got {published}");
+    }
+
+    #[test]
+    fn test_a_validator_on_its_backup_identity_is_not_voting() {
+        // The vote account carries on being voted from wherever the voting
+        // identity now runs, so its last vote looks healthy and can even sit
+        // ahead of this node's replay. Every rule below would read that other
+        // machine and call it this one.
+        assert_eq!(
+            health_of(FRESH, 100, false, Some(99), Some(1), FRESH).vote,
+            "not_voting"
+        );
+    }
+
+    #[test]
+    fn test_not_voting_outranks_every_other_reading() {
+        // Including the two that would otherwise call it delinquent: a node
+        // that is not the voter has no votes of its own to be late with, and
+        // reporting a fault would send an operator looking for one.
+        assert_eq!(
+            health_of(
+                FRESH,
+                100,
+                false,
+                Some(50),
+                Some(VOTE_BEHIND_LIMIT + 1),
+                FRESH
+            )
+            .vote,
+            "not_voting"
+        );
+        assert_eq!(
+            health_of(FRESH, 100, false, None, None, Duration::from_secs(3_600)).vote,
+            "not_voting"
+        );
+    }
+
+    #[test]
+    fn test_replay_is_reported_whether_or_not_this_node_votes() {
+        // A backup still replays, and an operator watching a failover wants to
+        // know it is keeping up before handing the identity back.
+        assert_eq!(
+            health_of(FRESH, 100, false, None, None, FRESH).replay,
+            "running"
+        );
     }
 
     #[test]
     fn test_a_vote_far_behind_the_tip_is_delinquent() {
         assert_eq!(
-            health_of(FRESH, 100, Some(50), Some(VOTE_BEHIND_LIMIT + 1), FRESH).vote,
+            health_of(
+                FRESH,
+                100,
+                true,
+                Some(50),
+                Some(VOTE_BEHIND_LIMIT + 1),
+                FRESH
+            )
+            .vote,
             "delinquent"
         );
         assert_eq!(
-            health_of(FRESH, 100, Some(50), Some(VOTE_BEHIND_LIMIT), FRESH).vote,
+            health_of(FRESH, 100, true, Some(50), Some(VOTE_BEHIND_LIMIT), FRESH).vote,
             "voting"
         );
     }
@@ -2068,7 +2227,7 @@ mod tests {
         // has not moved in a minute, which reads as healthy right up until it
         // drifts far enough to trip the other arm.
         assert_eq!(
-            health_of(FRESH, 100, Some(99), Some(1), Duration::from_secs(61)).vote,
+            health_of(FRESH, 100, true, Some(99), Some(1), Duration::from_secs(61)).vote,
             "delinquent"
         );
     }
@@ -2077,7 +2236,7 @@ mod tests {
     fn test_a_node_that_has_never_voted_is_not_delinquent() {
         // An unstaked node is not a failing one, however long it sits there.
         assert_eq!(
-            health_of(FRESH, 100, None, None, Duration::from_secs(3_600)).vote,
+            health_of(FRESH, 100, true, None, None, Duration::from_secs(3_600)).vote,
             "not_started"
         );
     }

@@ -50,7 +50,7 @@ export function StatusCard() {
   const blockHeight = store.get<number>("summary", "block_height");
   const nextLeader = store.get<number | null>("summary", "next_leader_slot");
   const health = store.get<Health>("summary", "health");
-  const voteDistance = store.get<number | null>("summary", "vote_distance");
+  const behindCluster = store.get<number | null>("summary", "behind_cluster");
   const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
   const startup = store.get<StartupProgress>("summary", "startup_progress");
   const skip = store.get<SkipRate>("summary", "skip_rate");
@@ -79,9 +79,32 @@ export function StatusCard() {
         <Stat label="Block height" value={count(blockHeight)} />
         <Stat
           label="Vote Status"
-          value={health?.vote ?? "—"}
-          sub={voteDistance === null || voteDistance === undefined ? undefined : `${voteDistance} behind`}
-          tone={health?.vote === "voting" ? "good" : health?.vote === "delinquent" ? "bad" : "muted"}
+          value={health?.vote === "not_voting" ? "not voting" : (health?.vote ?? "—")}
+          // How far replay trails the cluster, which reads whether or not this
+          // node votes. Named rather than left as a bare "behind": the figure
+          // this replaced said only that, and nobody could tell behind what,
+          // which is how it went years reporting another machine's progress.
+          //
+          // Deliberately untoned. The status word above carries the colour, and
+          // amber on both would be shouting the same thing twice.
+          sub={
+            behindCluster === null || behindCluster === undefined
+              ? undefined
+              : `${count(behindCluster)} behind cluster`
+          }
+          // Amber rather than red. A validator on its backup identity is meant
+          // to be here, so this is not a fault; it is worth noticing, which
+          // grey would not manage on an operator who thinks they are voting.
+          tone={
+            health?.vote === "voting"
+              ? "good"
+              : health?.vote === "delinquent"
+                ? "bad"
+                : health?.vote === "not_voting"
+                  ? "warn"
+                  : "muted"
+          }
+          explain="Whether this process is voting. A validator running its backup identity reports 'not voting': the vote account carries on being voted from wherever the voting identity now runs, and its progress belongs to that machine rather than this one."
         />
         <Stat
           label="Next leader slot"

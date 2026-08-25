@@ -7,10 +7,9 @@ import {
   ValidatorsCard,
 } from "./components/cards";
 import { Header } from "./components/Header";
-import { AccountsCard } from "./components/AccountsCard";
+import { CachesCard } from "./components/CachesCard";
 import { IngestCard } from "./components/IngestCard";
 import { NetworkCard } from "./components/NetworkCard";
-import { ProgramCacheCard } from "./components/ProgramCacheCard";
 import { ReplayCard } from "./components/ReplayCard";
 import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
@@ -98,13 +97,10 @@ function Overview() {
       </div>
       {/* What replay does, then the two things it spends that time waiting
           on. Loading programs and loading accounts are rows on the first card
-          and whole panels on the other two, so they read downwards: how long,
+          and sections of the one under it, so they read downwards: how long,
           then how well each of the two is going. */}
       <ReplayCard />
-      <div className="grid">
-        <ProgramCacheCard />
-        <AccountsCard />
-      </div>
+      <CachesCard />
       {/* Picks the same traffic up where the socket card leaves it: those two
           count what reached the host, this counts what became of it once the
           banking stage had it. */}

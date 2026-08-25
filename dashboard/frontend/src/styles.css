@@ -1977,16 +1977,149 @@ body {
   }
 }
 
-/* ---- program cache ---- */
+/* ---- caches and storage ---- */
 
-.cache-body {
+/* The two subsystems replay waits on, folded into one card. Ruled apart rather
+   than spaced apart, so a folded section still reads as a section and not as a
+   line of the one above it. */
+.caches {
+  display: flex;
+  flex-direction: column;
+}
+
+.cache-group {
+  border-top: 1px solid var(--border);
+}
+
+.cache-group:first-child {
+  border-top: 0;
+  margin-top: -4px;
+}
+
+/* The same treatment the produced blocks on the slot page use, because it is
+   the same gesture. Hover raises the row and nothing else: no border, no
+   brightening of the text, and the raised panel colour rather than anything
+   lighter. Deliberately not kept while open, which is where this parts company
+   with the produced blocks: there one row of many is open and the shading says
+   which, here both are open to begin with and shading both would light the
+   whole card. */
+.cache-head {
+  display: grid;
+  grid-template-columns: minmax(9.4em, auto) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 18px;
+  padding: 9px 6px;
+  margin: 2px 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.cache-head:hover {
+  background: var(--panel-raised);
+}
+
+.cache-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Says at a glance what the rate says in full, for when the section is folded
+   and the rate is the only thing on the row. Takes its colour from the same
+   tone the rate does, so the two can never disagree. */
+.cache-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+
+.cache-rate {
+  font-family: ui-monospace, monospace;
+  font-size: 25px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Separate parts rather than one sentence, so a narrow screen can drop the
+   later ones whole instead of cutting the line mid-figure. */
+.cache-gloss {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 7px;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.cache-gloss i {
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.cache-gloss i + i::before {
+  content: "·";
+  margin-right: 7px;
+  color: var(--text-faint);
+}
+
+.cache-fold {
+  width: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cache-fold:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cache-open {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  padding: 4px 6px 16px;
 }
 
-/* Drawn whether or not an eviction has been seen, so the card holds its height
-   on a validator quiet enough never to have evicted anything. */
+/* auto-fill rather than auto-fit, and capped at four. The on-disk pair sits in
+   its own grid under the four reads, and auto-fit collapses the tracks it does
+   not fill: two figures became two half-width columns, so "storage files"
+   landed at the midpoint of the card instead of under the third heading above
+   it. Keeping the empty tracks keeps the columns of both grids in line. A
+   quarter of the width is also the widest a track may be, which is what stops
+   auto-fill opening a fifth and sixth column on a wide screen and squeezing
+   four figures into the left half of the card. */
+.cache-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(170px, (100% - 66px) / 4), 1fr));
+  gap: 16px 22px;
+}
+
+/* Names a group of figures inside an open section. The groups count different
+   things, reads and writes and what is on disk, and running them together as
+   one grid read as one list of unrelated numbers. */
+.cache-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-bottom: -6px;
+}
+
+/* Drawn whether or not an eviction has been seen, so the section holds its
+   height on a validator quiet enough never to have evicted anything. */
 .cache-storage {
   display: flex;
   flex-direction: column;
@@ -2016,22 +2149,46 @@ body {
   color: var(--text-faint);
 }
 
-/* A group of figures inside a cache card, under a heading of its own. The
-   groups count different things — reads, writes, what is on disk — and running
-   them together as one grid read as one list of unrelated numbers. */
-.cache-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+.cache-footnote {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
 }
 
-.cache-section-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
+/* Below here the four columns of the heading cannot all hold their width, and
+   the summary is the one that gives: squeezed, it was the only cell that lost
+   anything, and it lost it to an ellipsis mid-figure. Stacked under the name it
+   keeps whole figures, and the last two are dropped rather than cut. */
+@media (max-width: 700px) {
+  .cache-head {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 0 12px;
+  }
+
+  .cache-name {
+    grid-area: 1 / 1 / 2 / 2;
+  }
+
+  .cache-gloss {
+    grid-area: 2 / 1 / 3 / 2;
+    margin-top: 2px;
+  }
+
+  .cache-gloss i:nth-child(n + 3) {
+    display: none;
+  }
+
+  /* Both span the two rows the left-hand column now takes, so they stay
+     centred against the pair rather than against the name alone. */
+  .cache-rate {
+    grid-area: 1 / 2 / 3 / 3;
+    font-size: 20px;
+  }
+
+  .cache-fold {
+    grid-area: 1 / 3 / 3 / 4;
+  }
 }
 
 /* ---- socket ingest ---- */

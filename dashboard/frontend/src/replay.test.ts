@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cpuRows, serialRows, verifyRows } from "./replay";
+import { cpuRows, parts, serialRows, verifyRows } from "./replay";
 import type { ReplayWindow } from "./types";
 
 /** A window shaped like a real mainnet one, to be overridden a field at a time. */
@@ -69,30 +69,23 @@ describe("verifyRows", () => {
 });
 
 describe("cpuRows", () => {
-  it("partitions the phases and leaves the parts inside them", () => {
-    // The phases are sequential within a thread, so they add up. The `part`
-    // rows sit inside `execute` and are drawn against the same total, so they
-    // are deliberately not in that sum.
+  it("partitions the six phases", () => {
+    // Sequential within a thread, so they add up and their total is what one
+    // slot costs the machine.
     const rows = cpuRows(window());
-    const phases = rows.filter((row) => row.kind === "phase");
-    expect(phases.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(1, 10);
+    expect(rows.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(1, 10);
     expect(rowOf(rows, "execute").share).toBeGreaterThan(0.7);
   });
 
-  it("keeps the parts of execution inside it", () => {
-    const rows = cpuRows(window());
-    const parts = ["bytecode", "serialising", "deserialising"].map((key) => rowOf(rows, key));
-    const inside = parts.reduce((sum, row) => sum + row.micros, 0);
-    expect(inside).toBeLessThan(window().execute);
-    expect(parts.every((row) => row.kind === "part")).toBe(true);
-  });
-
-  it("carries a peak on compiling and on nothing else", () => {
-    // The one row whose spread is worth more than its average: on this
-    // validator the worst slot compiles for five times the ordinary one.
-    const rows = cpuRows(window());
-    expect(rowOf(rows, "compiling").peak).toBe(44546);
-    expect(rows.filter((row) => row.peak !== undefined)).toHaveLength(1);
+  it("leaves the nested figures out of the phases entirely", () => {
+    // They are already counted inside `execute` and `program_cache`. A segment
+    // for any of them would draw the same microseconds twice and leave the bar
+    // claiming more than the slot cost.
+    const keys = cpuRows(window()).map((row) => row.key);
+    expect(keys).not.toContain("bytecode");
+    expect(keys).not.toContain("serialising");
+    expect(keys).not.toContain("deserialising");
+    expect(keys).not.toContain("compiling");
   });
 
   it("divides nothing by nothing on a validator that has done none of it", () => {
@@ -100,5 +93,32 @@ describe("cpuRows", () => {
       window({ execute: 0, load: 0, store: 0, program_cache: 0, checking: 0, other: 0 }),
     );
     expect(rows.every((row) => row.share === 0)).toBe(true);
+  });
+});
+
+describe("parts", () => {
+  it("keeps the parts of execution inside it", () => {
+    const w = window();
+    const inside = parts(w);
+    const sum = inside.bytecode.micros + inside.serialising.micros + inside.deserialising.micros;
+    expect(sum).toBeLessThan(w.execute);
+  });
+
+  it("carries a peak on compiling and on nothing else", () => {
+    // The one figure whose spread is worth more than its average: on this
+    // validator the worst slot compiles for five times the ordinary one.
+    const inside = parts(window());
+    expect(inside.compiling.peak).toBe(44546);
+    expect(inside.bytecode.peak).toBeUndefined();
+    expect(inside.serialising.peak).toBeUndefined();
+    expect(inside.deserialising.peak).toBeUndefined();
+  });
+
+  it("names every figure in lower case, because each is read inside a sentence", () => {
+    const inside = parts(window());
+    for (const part of Object.values(inside)) {
+      expect(part.label).toBe(part.label.toLowerCase());
+      expect(part.explain.length).toBeGreaterThan(0);
+    }
   });
 });

@@ -308,6 +308,23 @@ body {
 }
 
 /* Always the first row of the card, never a cell in the body's own layout. */
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* A card-level figure rather than a heading, so it is set in the figures' face
+   and given the heading's weight only in colour. */
+.card-aside {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .card-title {
   margin: 0;
   font-size: 13px;
@@ -1664,69 +1681,138 @@ body {
 
 /* ---- replay ---- */
 
-.replay-section {
+.replay-body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 18px;
 }
 
-.replay-head {
+/* Four figures. Two or three columns on a narrow screen, one row on a wide
+   one, which is where the card spends most of its life: it is the only
+   full-width card on the page. Transactions per slot is not among them. It is
+   the denominator all four are averages over rather than a timing, and it sits
+   beside the heading. */
+.replay-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 14px 22px;
+}
+
+.replay-figure {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 3px;
+  flex-direction: column;
+  min-width: 0;
 }
 
-.replay-title {
+.replay-figure-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
 }
 
-/* Says the section's figures are comparable only to each other. Carries the
-   accent because it changes what every row beneath it means. */
-.replay-note {
-  font-size: 10px;
-  color: var(--accent);
+.replay-figure-value {
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-figure-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Wrapping rather than a breakpoint. Measured down to a 320px card the title
+   and the total share the line at every width, so a rule that moved the total
+   below it would never have fired; wrapping covers the case a longer figure
+   would create without guessing where that is. */
+.replay-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  margin-bottom: 7px;
+}
+
+.replay-title {
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .replay-total {
   margin-left: auto;
-  font-size: 11px;
-  color: var(--text-dim);
+  font-size: 10.5px;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.replay-row {
+/* One bar per section, cut into its phases. */
+.replay-bar {
+  display: flex;
+  height: 20px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--panel-raised);
+}
+
+.replay-bar i {
+  display: block;
+  height: 100%;
+  /* A phase worth a fraction of a percent still leaves a mark. The share is
+     printed in the legend, so nothing is lost by refusing to draw a segment
+     thinner than the eye can find. */
+  min-width: 2px;
+}
+
+/* Held apart, for a section whose figures do not partition anything. The three
+   verification sums overlap one another and each runs across the thread pool,
+   so they come to several times the span they happened in. One continuous bar
+   would say they are parts of a whole; the breaks keep the proportions without
+   making that claim. */
+.replay-bar.is-broken {
+  gap: 3px;
+  background: none;
+  overflow: visible;
+}
+
+.replay-bar.is-broken i {
+  border-radius: 2px;
+}
+
+/* A grid rather than a flowing row. Flowed, the durations scatter across the
+   width and the six execution phases can only be compared by reading each one;
+   in columns they line up under each other at every width the card takes. */
+.replay-legend {
   display: grid;
-  /* Same shape as the waterfall's rows: the bar takes the free space, the
-     label is capped and ellipsises. */
-  grid-template-columns: minmax(0, 16em) 5.5em minmax(40px, 1fr) 7em;
+  /* Never more than three across, whatever the width. Left to fit as many as
+     it can, a wide card gave the execution section five columns and left the
+     sixth phase alone on a second row; a third of the width is the widest a
+     column is allowed to be, so three, two and one are the only shapes it
+     takes and six items always come out even. */
+  grid-template-columns: repeat(auto-fit, minmax(max(250px, (100% - 48px) / 3), 1fr));
+  gap: 4px 24px;
+  margin-top: 10px;
+}
+
+.replay-item {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) 5.4em 2.8em;
   align-items: center;
   gap: 8px;
   font-size: 11.5px;
 }
 
-.replay-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.replay-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
 }
 
-.replay-row.is-phase .replay-label {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.replay-row.is-phase {
-  margin-top: 4px;
-}
-
-/* Parts of the phase above them, indented to say so. */
-.replay-row.is-part .replay-label {
-  padding-left: 12px;
+.replay-name {
   color: var(--text-dim);
+  min-width: 0;
 }
 
 .replay-value,
@@ -1736,27 +1822,20 @@ body {
   white-space: nowrap;
 }
 
-.replay-row.is-part .replay-value,
 .replay-share {
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
-.replay-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--panel-raised);
-  overflow: hidden;
-}
-
-.replay-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-
-.replay-row.is-part .replay-fill {
-  background: var(--text-faint);
+/* The figures that sit inside a phase above rather than beside it, said in a
+   sentence because a segment for any of them would draw the same microseconds
+   twice. */
+.replay-parts {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
 }
 
 /* ---- what a block cost ---- */
@@ -1894,16 +1973,6 @@ body {
   }
 
   .waterfall-bar {
-    display: none;
-  }
-
-  /* Same trade for the same reason: at this width the bar is down to its floor
-     and the labels have begun to ellipsise. */
-  .replay-row {
-    grid-template-columns: minmax(0, 1fr) 5.5em 7em;
-  }
-
-  .replay-bar {
     display: none;
   }
 }

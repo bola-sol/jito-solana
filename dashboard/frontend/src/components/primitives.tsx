@@ -166,10 +166,18 @@ export function Explain({
 
 export function Card({
   title,
+  aside,
   children,
   className,
 }: {
   title?: string;
+  /**
+   * A figure that belongs to the card rather than to any row in it, set beside
+   * the heading. The replay panel's transactions per slot is the denominator
+   * every timing below it is an average over, which makes it the wrong shape
+   * for the grid those timings sit in.
+   */
+  aside?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
@@ -177,7 +185,12 @@ export function Card({
   // grid without the heading becoming one of the cells.
   return (
     <section className="card">
-      {title && <h2 className="card-title">{title}</h2>}
+      {(title || aside) && (
+        <div className="card-head">
+          {title && <h2 className="card-title">{title}</h2>}
+          {aside && <span className="card-aside">{aside}</span>}
+        </div>
+      )}
       <div className={`card-body${className ? ` ${className}` : ""}`}>{children}</div>
     </section>
   );

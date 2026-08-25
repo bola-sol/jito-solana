@@ -43,6 +43,9 @@ pub struct ProducedBlock {
     /// against.
     pub block_cost: u64,
     pub block_cost_limit: u64,
+    /// The most compute any one account may be charged in a block, which is
+    /// what the costliest account is read against.
+    pub account_cost_limit: u64,
 
     /// Fees this block collected, in lamports. Held per bank rather than
     /// accumulated along the fork, so neither is differenced.
@@ -116,6 +119,7 @@ mod tests {
             entries: 0,
             block_cost: 0,
             block_cost_limit: 0,
+            account_cost_limit: 0,
             total_fees: 0,
             priority_fees: 0,
         }

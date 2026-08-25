@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { blockStamp, blockTime, count, percent, sol } from "../format";
+import { blockStamp, blockTime, bytes, count, percent, sol, units } from "../format";
+import { recurrence } from "../cost";
 import { blockAverages } from "../produced";
-import type { ProducedBlock, SlotWaterfall } from "../types";
+import type { ProducedBlock, SlotCost, SlotWaterfall } from "../types";
 import { useStore } from "../useStore";
 import { waterfallRows } from "../waterfall";
 import { Copyable } from "./Copyable";
@@ -25,6 +26,7 @@ export function SlotDetailsPage() {
   const store = useStore();
   const blocks = store.get<ProducedBlock[]>("summary", "produced_blocks");
   const waterfalls = store.get<SlotWaterfall[]>("summary", "slot_waterfalls");
+  const costs = store.get<SlotCost[]>("summary", "slot_costs");
   const [open, setOpen] = useState<number | null>(null);
 
   // Joined by slot rather than nested on the block, because the two are built
@@ -33,6 +35,10 @@ export function SlotDetailsPage() {
   const bySlot = useMemo(
     () => new Map((waterfalls ?? []).map((slot) => [slot.slot, slot])),
     [waterfalls],
+  );
+  const costBySlot = useMemo(
+    () => new Map((costs ?? []).map((cost) => [cost.slot, cost])),
+    [costs],
   );
 
   if (!blocks || blocks.length === 0) {
@@ -57,6 +63,8 @@ export function SlotDetailsPage() {
             key={block.slot}
             block={block}
             waterfall={bySlot.get(block.slot)}
+            cost={costBySlot.get(block.slot)}
+            costs={costs ?? []}
             open={open === block.slot}
             onToggle={() => setOpen(open === block.slot ? null : block.slot)}
           />
@@ -120,11 +128,16 @@ function AveragesRow({ blocks }: { blocks: ProducedBlock[] }) {
 function BlockRow({
   block,
   waterfall,
+  cost,
+  costs,
   open,
   onToggle,
 }: {
   block: ProducedBlock;
   waterfall: SlotWaterfall | undefined;
+  cost: SlotCost | undefined;
+  /** Every produced block's cost, for reading this one against the rest. */
+  costs: SlotCost[];
   open: boolean;
   onToggle: () => void;
 }) {
@@ -179,6 +192,7 @@ function BlockRow({
             <Figure label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
           </div>
           {waterfall && <SlotWaterfallDetail waterfall={waterfall} />}
+          {cost && <BlockCostDetail block={block} cost={cost} costs={costs} />}
 
           {/* The block's identity, together: which slot, when, and its hash.
               The slot stays in the row above as well, since that is the only
@@ -233,6 +247,85 @@ function SlotWaterfallDetail({ waterfall }: { waterfall: SlotWaterfall }) {
         )}
       </div>
       <WaterfallRows rows={waterfallRows(waterfall)} />
+    </div>
+  );
+}
+
+/**
+ * What limited this block, if anything did.
+ *
+ * A block can be half empty and still unable to take another transaction: every
+ * account has its own compute ceiling within a block, and one busy account
+ * reaches it long before the block limit is anywhere near. That is the
+ * difference between a validator short of work and one throttled by a single
+ * account, and nothing else on this page distinguishes them.
+ *
+ * The block's own total is deliberately not repeated here. The row above the
+ * fold already carries compute units against the block limit, which is where
+ * someone glancing at a list of blocks will read it.
+ */
+function BlockCostDetail({
+  block,
+  cost,
+  costs,
+}: {
+  block: ProducedBlock;
+  cost: SlotCost;
+  costs: SlotCost[];
+}) {
+  const ofLimit =
+    block.account_cost_limit > 0 ? cost.costliest_cost / block.account_cost_limit : 0;
+  const ofBlock = cost.block_cost > 0 ? cost.costliest_cost / cost.block_cost : 0;
+  const seen = recurrence(costs, cost.costliest_account);
+
+  return (
+    <div className="produced-waterfall">
+      <div className="produced-waterfall-head">
+        <Explain text="What the cost tracker made of this block. Every account has its own compute ceiling within a block, well below the block's own, so one busy account can stop a half-empty block taking any more transactions that touch it.">
+          <span className="produced-waterfall-title">Block cost</span>
+        </Explain>
+      </div>
+
+      <div className="cost-hot">
+        <div className="cost-hot-who">
+          <div className="cost-hot-label">Costliest account</div>
+          <Copyable text={cost.costliest_account} className="cost-hot-key" />
+        </div>
+        <div className="cost-hot-value">{units(cost.costliest_cost)} CU</div>
+        <div className="cost-meter">
+          <span className="cost-track" aria-hidden="true">
+            <span className="cost-fill" style={{ width: `${Math.min(100, ofLimit * 100)}%` }} />
+          </span>
+          <span className="cost-of">
+            {percent(ofLimit, 0)} of the {units(block.account_cost_limit)} account limit ·{" "}
+            {percent(ofBlock, 0)} of this block
+          </span>
+        </div>
+      </div>
+
+      {/* Only when it has topped more than this one block. On its own it says
+          nothing: something has to be the largest. */}
+      {seen && seen.blocks > 1 && (
+        <div className="cost-again">
+          Costliest in{" "}
+          <b>
+            {seen.blocks} of the last {seen.of} blocks
+          </b>
+          , peaking at {units(seen.peakCost)} CU in slot{" "}
+          <Copyable
+            text={String(seen.peakSlot)}
+            label={count(seen.peakSlot)}
+            className="cost-again-slot"
+          />
+        </div>
+      )}
+
+      <div className="produced-figures">
+        <Figure label="Accounts written" value={count(cost.accounts)} />
+        <Figure label="Contended" value={count(cost.contended)} />
+        <Figure label="New account data" value={bytes(cost.new_account_data)} />
+        <Figure label="In flight" value={count(cost.in_flight)} />
+      </div>
     </div>
   );
 }

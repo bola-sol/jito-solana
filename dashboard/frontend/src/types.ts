@@ -142,6 +142,8 @@ export interface BlockDetail {
   entries: number;
   block_cost: number;
   block_cost_limit: number;
+  /** The most compute any one account may be charged in a block. */
+  account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
 }
@@ -228,6 +230,8 @@ export interface ProducedBlock {
   entries: number;
   block_cost: number;
   block_cost_limit: number;
+  /** The most compute any one account may be charged in a block. */
+  account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
 }
@@ -423,6 +427,30 @@ export interface ReplayWindow {
   checking: number;
   other: number;
   cpu_peak: number;
+}
+
+/**
+ * What one block this validator produced cost, and which account took the most
+ * of it.
+ *
+ * Sent as its own list and joined to produced blocks by slot, because the cost
+ * tracker reports as the bank freezes while the block is captured on another
+ * thread, so either can arrive first. Only blocks this validator built are
+ * sent; the point arrives for every slot replayed, and other people's blocks
+ * are not this operator's to act on.
+ */
+export interface SlotCost {
+  slot: number;
+  /** Pubkey of the account that consumed the most compute in this block. */
+  costliest_account: string;
+  costliest_cost: number;
+  /** The block's total as the cost tracker counted it. */
+  block_cost: number;
+  accounts: number;
+  /** Accounts within five percent of the per-account ceiling. */
+  contended: number;
+  new_account_data: number;
+  in_flight: number;
 }
 
 export interface IngestSummary {

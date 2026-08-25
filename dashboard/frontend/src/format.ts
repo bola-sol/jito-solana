@@ -40,6 +40,20 @@ export function solCompact(lamports: number | undefined): string {
   return amount.toFixed(1);
 }
 
+/**
+ * Compute units, abbreviated: `11.8M`.
+ *
+ * Blocks are measured in tens of millions of these, and the exact figure never
+ * matters. What matters is the size against the limit beside it, which reads
+ * faster with two significant digits than with eight and a row of separators.
+ */
+export function units(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
 export function count(value: number | undefined): string {
   return value === undefined ? "—" : PLAIN.format(value);
 }

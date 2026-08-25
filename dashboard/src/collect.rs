@@ -941,6 +941,7 @@ impl Collector {
             entries: detail.entries,
             block_cost: detail.block_cost,
             block_cost_limit: detail.block_cost_limit,
+            account_cost_limit: detail.account_cost_limit,
             total_fees: detail.total_fees,
             priority_fees: detail.priority_fees,
         }
@@ -1670,9 +1671,13 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
 fn block_detail(bank: &Bank, transactions: u64, non_vote: u64) -> BlockDetail {
     // Poisoned only if a replay thread panicked while holding it, in which case
     // the validator has more pressing problems than a missing bar.
-    let (block_cost, block_cost_limit) = match bank.read_cost_tracker() {
-        Ok(tracker) => (tracker.block_cost(), tracker.get_block_limit()),
-        Err(_) => (0, 0),
+    let (block_cost, block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
+        Ok(tracker) => (
+            tracker.block_cost(),
+            tracker.get_block_limit(),
+            tracker.get_account_limit(),
+        ),
+        Err(_) => (0, 0, 0),
     };
     let fees = bank.get_collector_fee_details();
 
@@ -1683,6 +1688,7 @@ fn block_detail(bank: &Bank, transactions: u64, non_vote: u64) -> BlockDetail {
         entries: bank.transaction_entries_count(),
         block_cost,
         block_cost_limit,
+        account_cost_limit,
         total_fees: fees.total_transaction_fee(),
         priority_fees: fees.total_priority_fee(),
     }

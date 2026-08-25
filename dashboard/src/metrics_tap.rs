@@ -153,6 +153,18 @@ const SCHEDULER_SLOT_COUNTS: &str = "banking_stage_scheduler_slot_counts";
 /// configured to say less than the default.
 const REPLAY_SLOT_STATS: &str = "replay-slot-stats";
 
+/// What the cost tracker made of a block: its total, and the account that took
+/// the largest share of it.
+///
+/// Reported for every slot, ours and everyone else's, and tagged with which it
+/// was. Only the blocks this validator produced are kept: the point of the
+/// panel is what limited a block we built, and a block someone else built is
+/// not ours to do anything about.
+const COST_TRACKER: &str = "cost_tracker_stats";
+
+/// The tag saying whether the reporting node produced the block.
+const IS_LEADER: &str = "is_leader";
+
 /// The field naming the slot a point covers.
 const SLOT: &str = "slot";
 
@@ -392,6 +404,12 @@ pub struct MetricsTap {
     /// to say is which one it was, because it decides what `received` counts.
     scheduler_is_bam: AtomicBool,
 
+    /// What each block this validator produced cost, newest last.
+    ///
+    /// Bounded to the same depth as the waterfalls, so every block the panel
+    /// can show still has its costs for as long as it is shown.
+    slot_costs: Mutex<VecDeque<SlotCost>>,
+
     /// The last few hundred replayed slots, timed.
     ///
     /// Kept as arrivals rather than accumulated, for the same reason as the
@@ -409,6 +427,29 @@ pub struct SlotWaterfall {
     pub source: SchedulerSource,
     #[serde(flatten)]
     pub counts: SchedulerTotals,
+}
+
+/// What one block cost, and which account took the most of it.
+///
+/// The per-account ceiling this is read against is not in the point. It is a
+/// consensus limit that moves with feature activation, so the panel takes it
+/// from the bank rather than holding a number here that would quietly go stale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SlotCost {
+    pub slot: Slot,
+    /// The account that consumed the most compute in this block.
+    pub costliest_account: String,
+    pub costliest_cost: u64,
+    /// The block's total, as the cost tracker counted it. Kept so the costliest
+    /// account can be read as a share of its own block as well as of the
+    /// per-account limit.
+    pub block_cost: u64,
+    pub accounts: u64,
+    /// Accounts more than one transaction wanted to write. The cost tracker's
+    /// own definition: within five percent of the per-account ceiling.
+    pub contended: u64,
+    pub new_account_data: u64,
+    pub in_flight: u64,
 }
 
 /// One replayed slot's timings, in microseconds.
@@ -767,6 +808,7 @@ impl MetricsTap {
             }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
+            COST_TRACKER => self.remember_cost(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
             PROGRAM_CACHE => self.program_cache.add_point(point),
             QUIC_TPU => self.quic.add_point(point),
@@ -925,6 +967,79 @@ impl MetricsTap {
         while slots.len() > REPLAY_SLOTS {
             slots.pop_front();
         }
+    }
+
+    /// Records what one of this validator's own blocks cost.
+    ///
+    /// Points for other validators' blocks are dropped on the `is_leader` tag.
+    /// They arrive for every slot the node replays, which is all of them, and
+    /// none of them describe a block this operator can do anything about.
+    fn remember_cost(&self, point: &DataPoint) {
+        let is_leader = point
+            .tags
+            .iter()
+            .any(|(name, value)| *name == IS_LEADER && value == "true");
+        if !is_leader {
+            return;
+        }
+
+        let mut slot = None;
+        let mut cost = SlotCost {
+            slot: 0,
+            costliest_account: String::new(),
+            costliest_cost: 0,
+            block_cost: 0,
+            accounts: 0,
+            contended: 0,
+            new_account_data: 0,
+            in_flight: 0,
+        };
+        for (name, value) in &point.fields {
+            match *name {
+                // A pubkey, and the only field here that is not a number.
+                "costliest_account" => cost.costliest_account = value.trim_matches('"').to_string(),
+                "bank_slot" => slot = field_u64(value),
+                "costliest_account_cost" => cost.costliest_cost = field_u64(value).unwrap_or(0),
+                "block_cost" => cost.block_cost = field_u64(value).unwrap_or(0),
+                "number_of_accounts" => cost.accounts = field_u64(value).unwrap_or(0),
+                "number_of_contended_accounts" => cost.contended = field_u64(value).unwrap_or(0),
+                "allocated_accounts_data_size" => {
+                    cost.new_account_data = field_u64(value).unwrap_or(0)
+                }
+                "inflight_transaction_count" => cost.in_flight = field_u64(value).unwrap_or(0),
+                _ => continue,
+            }
+        }
+
+        // Without a slot it cannot be joined to the block it describes, which
+        // is the only place it is shown.
+        let Some(slot_number) = slot else {
+            return;
+        };
+        cost.slot = slot_number;
+
+        let Ok(mut costs) = self.slot_costs.lock() else {
+            return;
+        };
+        // Replaced rather than appended if the slot is already held. The
+        // tracker reports a slot once, but a repeat would otherwise leave two
+        // rows for one block and push a real one off the end.
+        if let Some(held) = costs.iter_mut().find(|held| held.slot == slot_number) {
+            *held = cost;
+            return;
+        }
+        costs.push_back(cost);
+        while costs.len() > SLOT_WATERFALLS {
+            costs.pop_front();
+        }
+    }
+
+    /// What this validator's recent blocks cost, oldest first.
+    pub fn slot_costs(&self) -> Vec<SlotCost> {
+        self.slot_costs
+            .lock()
+            .map(|costs| costs.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// The replayed slots held, oldest first.
@@ -1667,6 +1782,83 @@ mod tests {
         let mut all = vec![("slot", slot.as_str())];
         all.extend_from_slice(fields);
         named(SCHEDULER_SLOT_COUNTS, &all)
+    }
+
+    // ---- what a block cost ----------------------------------------------
+
+    /// A cost tracker point as the validator sends it, tagged with whether this
+    /// node produced the block.
+    fn cost_point(is_leader: bool, fields: &[(&'static str, &str)]) -> DataPoint {
+        let mut point = named(COST_TRACKER, fields);
+        point.tags.push((IS_LEADER, is_leader.to_string()));
+        point
+    }
+
+    #[test]
+    fn test_a_block_this_validator_produced_is_kept() {
+        let tap = MetricsTap::default();
+        tap.observe(&cost_point(
+            true,
+            &[
+                ("bank_slot", "441034909i"),
+                ("block_cost", "42574937i"),
+                (
+                    "costliest_account",
+                    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                ),
+                ("costliest_account_cost", "11842006i"),
+                ("number_of_accounts", "3847i"),
+                ("number_of_contended_accounts", "412i"),
+                ("allocated_accounts_data_size", "421888i"),
+                ("inflight_transaction_count", "0i"),
+            ],
+        ));
+
+        let held = tap.slot_costs();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].slot, 441_034_909);
+        assert_eq!(
+            held[0].costliest_account,
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        );
+        assert_eq!(held[0].costliest_cost, 11_842_006);
+        assert_eq!(held[0].contended, 412);
+    }
+
+    #[test]
+    fn test_other_validators_blocks_are_dropped() {
+        // This point arrives for every slot the node replays, which is all of
+        // them. Only the blocks we built are ours to do anything about, and
+        // keeping the rest would push them off the end of the queue.
+        let tap = MetricsTap::default();
+        tap.observe(&cost_point(
+            false,
+            &[("bank_slot", "441034910i"), ("block_cost", "1i")],
+        ));
+        assert!(tap.slot_costs().is_empty());
+    }
+
+    #[test]
+    fn test_a_cost_point_with_no_slot_is_dropped() {
+        // It has nowhere to be shown: the panel joins these to blocks by slot.
+        let tap = MetricsTap::default();
+        tap.observe(&cost_point(true, &[("block_cost", "42574937i")]));
+        assert!(tap.slot_costs().is_empty());
+    }
+
+    #[test]
+    fn test_the_leader_tag_is_read_as_a_tag_not_a_field() {
+        // `is_leader` is added with `=>` rather than as a value, so it lands in
+        // the point's tags. Looking for it among the fields would drop every
+        // block this validator produced.
+        let tap = MetricsTap::default();
+        let mut point = named(COST_TRACKER, &[("bank_slot", "441034909i")]);
+        point.fields.push((IS_LEADER, "true".to_string()));
+        tap.observe(&point);
+        assert!(
+            tap.slot_costs().is_empty(),
+            "the validator does not send it as a field"
+        );
     }
 
     /// One replay point as the validator sends it, abridged to the fields the

@@ -1588,11 +1588,6 @@ impl Validator {
         let highest_parent_ready = Arc::new(RwLock::default());
         // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
         let highest_finalized = Arc::new(RwLock::new(None));
-        // The dashboard reads it as well, to say how far replay trails the
-        // cluster. Cloned here rather than where it is used, because the handle
-        // itself is moved into the TPU below and the dashboard is assembled
-        // after that.
-        let dashboard_highest_finalized = highest_finalized.clone();
         // This channel growing > ~1 indicates problems, so bound channel at a
         // small (but highly overprovisioned) number for performance and easier
         // debug if things go off the rails.
@@ -1917,15 +1912,22 @@ impl Validator {
                 // `start_time` is an `Instant`; the dashboard reports an
                 // absolute uptime, so translate it to wall-clock.
                 start_time: SystemTime::now() - start_time.elapsed(),
-                // The same certificate the RPC health check measures against.
-                // A finalization certificate is the cluster's work rather than
-                // this node's, so it keeps moving while replay is catching up,
-                // which is what makes it the one honest yardstick for how far
-                // behind this validator has fallen.
-                cluster_tip: Arc::new(move || {
-                    let cert = dashboard_highest_finalized.read().ok()?;
-                    cert.as_ref().map(|cert| cert.block().slot)
-                }),
+                // The same source the RPC health check measures against on
+                // this branch, and deliberately the same rather than a second
+                // opinion. The blockstore's optimistic slots are recorded from
+                // votes seen in gossip, so they say what the cluster has
+                // confirmed rather than what this node has replayed, and they
+                // keep moving while it is catching up.
+                cluster_tip: {
+                    let blockstore = blockstore.clone();
+                    Arc::new(move || {
+                        blockstore
+                            .get_latest_optimistic_slots(1)
+                            .ok()?
+                            .pop()
+                            .map(|(slot, _, _)| slot)
+                    })
+                },
             };
             dashboard_service
                 .attach(context, exit.clone())

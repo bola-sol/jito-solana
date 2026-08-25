@@ -1718,6 +1718,109 @@ body {
   background: var(--text-faint);
 }
 
+/* ---- what a block cost ---- */
+
+/* Lifted onto the raised panel because it is the one figure here that is a
+   diagnosis rather than a reading. */
+.cost-hot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 14px;
+  align-items: baseline;
+  padding: 9px 11px;
+  margin: 2px 0 4px;
+  border-radius: 6px;
+  background: var(--panel-raised);
+}
+
+.cost-hot-who {
+  min-width: 0;
+}
+
+.cost-hot-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.cost-hot-key {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.cost-hot-value {
+  font-size: 16px;
+  font-weight: 500;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cost-meter {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(40px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+/* Against the panel rather than the raised panel, since the track sits on the
+   raised one and would otherwise vanish into it. */
+.cost-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.cost-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.cost-of {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-again {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0 0 8px 2px;
+}
+
+.cost-again b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Inline with the sentence around it, so it reads as part of the text rather
+   than as a control dropped into it. */
+.cost-again-slot {
+  display: inline;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-again-slot:hover {
+  color: var(--text);
+}
+
+/* The account key is the widest thing in the box and the first to run out of
+   room, so it loses the fixed columns before anything else does. */
+@media (max-width: 560px) {
+  .cost-of {
+    white-space: normal;
+  }
+}
+
 .produced-waterfall-head {
   display: flex;
   align-items: baseline;

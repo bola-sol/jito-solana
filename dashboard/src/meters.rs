@@ -18,8 +18,8 @@ use {
         context::{DashboardContext, StartupProgressFn},
         metrics_tap::{
             AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicTotals,
-            ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotWaterfall, TapCounters,
-            VerifyTotals, WindowedCounters,
+            ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost, SlotWaterfall,
+            TapCounters, VerifyTotals, WindowedCounters,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -509,6 +509,7 @@ pub struct Meters {
     executed_window: VecDeque<ExecutedTotals>,
     executed: Debounced<Option<ExecutedTotals>>,
     slot_waterfalls: Debounced<Vec<SlotWaterfall>>,
+    slot_costs: Debounced<Vec<SlotCost>>,
     replay: Debounced<Option<ReplayWindow>>,
 }
 
@@ -555,6 +556,7 @@ impl Meters {
             executed_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             executed: Debounced::default(),
             slot_waterfalls: Debounced::default(),
+            slot_costs: Debounced::default(),
             replay: Debounced::default(),
         }
     }
@@ -775,6 +777,17 @@ impl Meters {
             TOPIC_SUMMARY,
             "slot_waterfalls",
             self.metrics_tap.slot_waterfalls(),
+        );
+
+        // Sent as its own list and joined by slot in the browser, the same way
+        // the waterfalls are, and for the same reason: the cost tracker reports
+        // as the bank freezes while the produced block is captured on another
+        // thread, so either can arrive first.
+        self.slot_costs.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "slot_costs",
+            self.metrics_tap.slot_costs(),
         );
 
         // Averaged over the slots held rather than over a period of seconds.

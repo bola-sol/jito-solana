@@ -75,6 +75,13 @@ pub struct BlockDetail {
     /// against.
     pub block_cost: u64,
     pub block_cost_limit: u64,
+    /// The most compute any one account may be charged in a block.
+    ///
+    /// Taken from the bank rather than held as a constant here, because it is a
+    /// consensus limit that moves with feature activation. A block can be far
+    /// short of the block limit and still be unable to take another transaction
+    /// touching an account that has reached this one.
+    pub account_cost_limit: u64,
     /// Fees this block collected, in lamports. Held per bank rather than
     /// accumulated along the fork, so neither is differenced.
     ///
@@ -406,6 +413,7 @@ mod tests {
                     entries: u64::MAX,
                     block_cost: u64::MAX,
                     block_cost_limit: u64::MAX,
+                    account_cost_limit: u64::MAX,
                     total_fees: u64::MAX,
                     priority_fees: u64::MAX,
                 }),

@@ -15,6 +15,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     entries: 0,
     block_cost: 0,
     block_cost_limit: 0,
+    account_cost_limit: 0,
     total_fees: 0,
     priority_fees: 0,
     ...over,

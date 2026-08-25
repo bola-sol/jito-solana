@@ -1962,15 +1962,33 @@ impl Validator {
                 // `start_time` is an `Instant`; the dashboard reports an
                 // absolute uptime, so translate it to wall-clock.
                 start_time: SystemTime::now() - start_time.elapsed(),
-                // The same certificate the RPC health check measures against.
-                // A finalization certificate is the cluster's work rather than
-                // this node's, so it keeps moving while replay is catching up,
-                // which is what makes it the one honest yardstick for how far
-                // behind this validator has fallen.
-                cluster_tip: Arc::new(move || {
-                    let cert = dashboard_highest_finalized.read().ok()?;
-                    cert.as_ref().map(|cert| cert.block().slot)
-                }),
+                // The same rule the RPC health check uses, and deliberately
+                // the same rather than a second opinion. Both sources are the
+                // cluster's own work rather than this node's, so they keep
+                // moving while replay is catching up, which is what makes
+                // either an honest yardstick for how far behind it has fallen.
+                //
+                // Which one applies turns on the migration. Votor writes the
+                // certificate and only once Alpenglow consensus is live, so
+                // before that it is empty and the blockstore's optimistic
+                // slots, recorded from votes seen in gossip, are what the
+                // cluster has confirmed.
+                cluster_tip: {
+                    let migration_status = migration_status.clone();
+                    let blockstore = blockstore.clone();
+                    Arc::new(move || {
+                        if migration_status.is_alpenglow_enabled() {
+                            let cert = dashboard_highest_finalized.read().ok()?;
+                            cert.as_ref().map(|cert| cert.block().slot)
+                        } else {
+                            blockstore
+                                .get_latest_optimistic_slots(1)
+                                .ok()?
+                                .pop()
+                                .map(|(slot, _, _)| slot)
+                        }
+                    })
+                },
             };
             dashboard_service
                 .attach(context, exit.clone())

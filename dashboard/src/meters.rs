@@ -16,6 +16,7 @@ use {
     crate::{
         collect::{CATCH_UP_SLOTS_PER_SECOND, system_time_nanos},
         context::{DashboardContext, StartupProgressFn},
+        host_stats::{self, HostSnapshot},
         metrics_tap::{
             AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicTotals,
             ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost, SlotWaterfall,
@@ -31,7 +32,8 @@ use {
     solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT,
     solana_runtime::bank::Bank,
     std::{
-        collections::{HashMap, VecDeque},
+        collections::{BTreeMap, HashMap, HashSet, VecDeque},
+        path::PathBuf,
         sync::Arc,
         time::{Duration, Instant, SystemTime},
     },
@@ -230,6 +232,72 @@ pub struct Network {
     pub sent_per_second: u64,
 }
 
+/// The host the validator is running on.
+///
+/// Three different questions, kept apart because a machine can be in trouble on
+/// one while the others read healthy. Load and memory are what the process has
+/// to work with, `filesystems` is what will run out of room, and `devices` is
+/// what will run out of throughput.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Host {
+    pub cores: usize,
+    pub load_one: f64,
+    pub load_five: f64,
+    pub load_fifteen: f64,
+    pub threads: u64,
+    pub running: u64,
+
+    pub memory_total: u64,
+    pub memory_available: u64,
+    /// The part of what is in use that the kernel will hand back on demand.
+    /// Reported separately because "used" counts it, and a validator holding
+    /// sixty gigabytes of page cache is not a validator short of memory.
+    pub memory_reclaimable: u64,
+    /// Untouched. With `memory_reclaimable` this gives what is genuinely spoken
+    /// for, which is smaller than `total - available` and much smaller than the
+    /// figure most tools print as "used".
+    pub memory_free: u64,
+    /// Absent where `SwapTotal` is nought. A machine with no swap has nothing
+    /// to report and nothing to warn about.
+    pub swap: Option<Swap>,
+
+    pub filesystems: Vec<FilesystemUsage>,
+    pub devices: Vec<DeviceLoad>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Swap {
+    pub total: u64,
+    pub used: u64,
+}
+
+/// How full one filesystem is. A level, so nothing here is a rate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FilesystemUsage {
+    /// What the validator uses it for, which is what an operator recognises it
+    /// by. One filesystem holding several accounts directories is named once.
+    pub name: String,
+    pub path: String,
+    pub total: u64,
+    pub available: u64,
+}
+
+/// How hard one block device is being worked, over the last sample.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DeviceLoad {
+    pub device: String,
+    /// The roles whose paths resolve to this device, joined for the label. Two
+    /// mounts on one disk share its queue, so they share one row.
+    pub roles: Vec<String>,
+    /// Share of the sample the device had a request in flight, in `[0, 1]`.
+    pub busy: f64,
+    /// Mean milliseconds a request waited, absent where none did.
+    pub wait_ms: Option<f64>,
+    pub operations_per_second: u64,
+    pub read_per_second: u64,
+    pub write_per_second: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NetworkSample {
     pub timestamp_nanos: u64,
@@ -425,6 +493,112 @@ impl TxnCounters {
     }
 }
 
+/// One path the validator writes to, and what it is for.
+#[derive(Debug, Clone, PartialEq)]
+struct HostPath {
+    name: String,
+    path: PathBuf,
+}
+
+/// The paths worth reporting, one row per filesystem rather than one per path.
+///
+/// A validator is commonly given several accounts directories, and where they
+/// sit on one mount they are one filesystem with one lot of free space.
+/// Reported per path they would appear several times, each claiming the whole
+/// of it, and an operator watching for a disk filling would see the same figure
+/// four times and read it as four disks.
+fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
+    let mut paths = Vec::new();
+    let mut seen = HashSet::new();
+
+    let ledger = ctx.blockstore.ledger_path().clone();
+    if let Ok(id) = host_stats::filesystem_id(&ledger) {
+        seen.insert(id);
+        paths.push(HostPath {
+            name: "ledger".to_owned(),
+            path: ledger,
+        });
+    }
+
+    let mut accounts = Vec::new();
+    for path in &ctx.account_paths {
+        let Ok(id) = host_stats::filesystem_id(path) else {
+            continue;
+        };
+        if seen.insert(id) {
+            accounts.push(path.clone());
+        }
+    }
+    // Numbered only when there is more than one to tell apart. A single
+    // "accounts 1" reads as though something is missing.
+    let numbered = accounts.len() > 1;
+    for (index, path) in accounts.into_iter().enumerate() {
+        let ordinal = index.saturating_add(1);
+        paths.push(HostPath {
+            name: if numbered {
+                format!("accounts {ordinal}")
+            } else {
+                "accounts".to_owned()
+            },
+            path,
+        });
+    }
+
+    paths
+}
+
+/// What each device behind those paths did over the sample.
+///
+/// Grouped by device rather than by path: two mounts on one disk compete for
+/// the same queue, so they are one row naming both roles. A path on a partition
+/// is charged to the whole disk, since that is what saturates.
+fn device_loads(
+    paths: &[HostPath],
+    current: &HostSnapshot,
+    previous: &HostSnapshot,
+    interval_ms: f64,
+    seconds: f64,
+) -> Vec<DeviceLoad> {
+    let mut roles: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for path in paths {
+        // `Ok(None)` is a filesystem with no block device under it, which is
+        // what accounts on tmpfs looks like. It has capacity but nothing to be
+        // worked hard, so it belongs in the rows above and not in these.
+        if let Ok(Some(device)) = host_stats::device_for(&path.path) {
+            roles.entry(device).or_default().push(path.name.clone());
+        }
+    }
+
+    roles
+        .into_iter()
+        .filter_map(|(device, roles)| {
+            let now = current.disks.get(&device)?;
+            let before = previous.disks.get(&device)?;
+            let delta = now.since(before)?;
+            Some(DeviceLoad {
+                device,
+                roles,
+                busy: delta.busy(interval_ms).unwrap_or_default(),
+                wait_ms: delta.wait_ms(),
+                operations_per_second: (delta.operations() as f64 / seconds) as u64,
+                read_per_second: (delta.read_bytes() as f64 / seconds) as u64,
+                write_per_second: (delta.write_bytes() as f64 / seconds) as u64,
+            })
+        })
+        .collect()
+}
+
+/// Cores the machine has, for reading load average against.
+///
+/// Load is not a share of anything and has no ceiling, so this is context
+/// rather than a denominator: a figure of 12 means one thing on eight cores and
+/// another on ninety-six.
+fn num_cpus() -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+}
+
 pub struct Meters {
     ctx: DashboardContext,
     publisher: Arc<Publisher>,
@@ -440,6 +614,14 @@ pub struct Meters {
     /// Set once the counters prove unreadable, so the failure is logged once
     /// rather than every second.
     net_unavailable: bool,
+
+    last_host: Option<(HostSnapshot, Instant)>,
+    /// Set once `/proc` proves unreadable, so the failure is logged once rather
+    /// than every second.
+    host_unavailable: bool,
+    /// Resolved once at the first sample rather than every second: a mount does
+    /// not move, and `statvfs` on a hung filesystem would block the meter.
+    host_paths: Option<Vec<HostPath>>,
 
     /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: PortWindow,
@@ -527,6 +709,9 @@ impl Meters {
             last_counters: None,
             tps_history: Vec::with_capacity(CHART_HISTORY),
             last_net: None,
+            last_host: None,
+            host_unavailable: false,
+            host_paths: None,
             net_history: Vec::new(),
             net_unavailable: false,
             drops_window: PortWindow::new(DROPS_WINDOW),
@@ -578,6 +763,7 @@ impl Meters {
         }
 
         self.collect_network();
+        self.collect_host();
         self.collect_ingest_paths();
         self.collect_from_metrics();
     }
@@ -980,6 +1166,74 @@ impl Meters {
             &self.publisher,
             "network_history",
         );
+    }
+
+    /// Load, memory, filesystem capacity and disk saturation.
+    ///
+    /// Publishes nothing when `/proc` cannot be read, so the panel is absent
+    /// rather than showing a healthy-looking idle machine.
+    fn collect_host(&mut self) {
+        if self.host_unavailable {
+            return;
+        }
+        let current = match host_stats::read() {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                self.host_unavailable = true;
+                log::info!("dashboard: host counters unavailable, panel disabled: {err}");
+                return;
+            }
+        };
+        let now = Instant::now();
+        let paths = self
+            .host_paths
+            .get_or_insert_with(|| resolve_host_paths(&self.ctx))
+            .clone();
+
+        let Some((previous, sampled_at)) = self.last_host.replace((current.clone(), now)) else {
+            return;
+        };
+        let interval_ms = now.duration_since(sampled_at).as_secs_f64() * 1000.0;
+        if interval_ms <= 0.0 {
+            return;
+        }
+        let seconds = interval_ms / 1000.0;
+
+        let swap_used = current
+            .memory
+            .swap_total
+            .saturating_sub(current.memory.swap_free);
+        let host = Host {
+            cores: num_cpus(),
+            load_one: current.load.one,
+            load_five: current.load.five,
+            load_fifteen: current.load.fifteen,
+            threads: current.load.threads,
+            running: current.load.running,
+            memory_total: current.memory.total,
+            memory_available: current.memory.available,
+            memory_reclaimable: current.memory.reclaimable,
+            memory_free: current.memory.free,
+            // Absent rather than a permanent nought where none is configured.
+            swap: (current.memory.swap_total > 0).then_some(Swap {
+                total: current.memory.swap_total,
+                used: swap_used,
+            }),
+            filesystems: paths
+                .iter()
+                .filter_map(|path| {
+                    let usage = host_stats::filesystem(&path.path).ok()?;
+                    Some(FilesystemUsage {
+                        name: path.name.clone(),
+                        path: path.path.to_string_lossy().into_owned(),
+                        total: usage.total,
+                        available: usage.available,
+                    })
+                })
+                .collect(),
+            devices: device_loads(&paths, &current, &previous, interval_ms, seconds),
+        };
+        self.publisher.publish(TOPIC_SUMMARY, "host", &host);
     }
 
     /// This validator's own UDP ports, in the order the panel lists them.

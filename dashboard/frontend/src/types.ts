@@ -400,6 +400,58 @@ export interface SlotWaterfall extends Waterfall {
  * Everything from `execute` down is thread time summed across the workers, so
  * it partitions cleanly and routinely exceeds the slot it describes.
  */
+/**
+ * The machine the validator runs on, sampled once a second from /proc.
+ *
+ * Three questions that must not be run together. Load and memory are what the
+ * process has to work with, `filesystems` is what will run out of room, and
+ * `devices` is what will run out of throughput. A box can be in trouble on any
+ * one of them while the other two read perfectly healthy.
+ */
+export interface Host {
+  cores: number;
+  load_one: number;
+  load_five: number;
+  load_fifteen: number;
+  threads: number;
+  running: number;
+
+  memory_total: number;
+  memory_available: number;
+  /** Page cache and buffers: used, but handed back the moment it is wanted. */
+  memory_reclaimable: number;
+  memory_free: number;
+  /** Absent where the machine has no swap configured at all. */
+  swap: { total: number; used: number } | null;
+
+  filesystems: FilesystemUsage[];
+  devices: DeviceLoad[];
+}
+
+/** How full one filesystem is. A level, so nothing here is a rate. */
+export interface FilesystemUsage {
+  name: string;
+  path: string;
+  total: number;
+  available: number;
+}
+
+/** How hard one block device was worked over the last second. */
+export interface DeviceLoad {
+  device: string;
+  /** Every role whose path is on this device. Two mounts on one disk share a
+   *  queue, so they share a row. */
+  roles: string[];
+  /** Share of the sample the device had a request in flight, in `[0, 1]`. Not
+   *  a fill: a device can sit at 1 with the filesystem nearly empty. */
+  busy: number;
+  /** Mean milliseconds a request waited, null where none did. */
+  wait_ms: number | null;
+  operations_per_second: number;
+  read_per_second: number;
+  write_per_second: number;
+}
+
 export interface ReplayWindow {
   /** Slots behind the figures, which is short until the window has filled. */
   slots: number;

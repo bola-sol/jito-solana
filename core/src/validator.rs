@@ -1928,6 +1928,10 @@ impl Validator {
                             .map(|(slot, _, _)| slot)
                     })
                 },
+                // Where the accounts database writes, for the host panel's
+                // capacity and device rows. The ledger path is not passed: the
+                // blockstore already carries it.
+                account_paths: config.account_paths.clone(),
             };
             dashboard_service
                 .attach(context, exit.clone())

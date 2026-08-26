@@ -19,6 +19,7 @@ agave-unstable-api = []
 
 [dependencies]
 bincode = { workspace = true }
+libc = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

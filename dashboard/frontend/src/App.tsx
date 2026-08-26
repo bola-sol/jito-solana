@@ -8,6 +8,7 @@ import {
 } from "./components/cards";
 import { Header } from "./components/Header";
 import { CachesCard } from "./components/CachesCard";
+import { HostCard } from "./components/HostCard";
 import { IngestCard } from "./components/IngestCard";
 import { NetworkCard } from "./components/NetworkCard";
 import { ReplayCard } from "./components/ReplayCard";
@@ -95,6 +96,11 @@ function Overview() {
         <NetworkCard />
         <IngestCard />
       </div>
+      {/* The machine the three cards above are running on. Last of the host
+          group rather than first: an operator comes to this page for the
+          validator, and reaches for the box only once something here says the
+          validator is struggling. */}
+      <HostCard />
       {/* What replay does, then the two things it spends that time waiting
           on. Loading programs and loading accounts are rows on the first card
           and sections of the one under it, so they read downwards: how long,

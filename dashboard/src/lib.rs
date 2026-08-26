@@ -13,6 +13,7 @@ pub mod context;
 /// rather than being rebuilt inside each `mod tests`.
 #[cfg(test)]
 pub(crate) mod fixture;
+pub mod host_stats;
 pub mod meters;
 pub mod metrics_tap;
 pub mod net_stats;

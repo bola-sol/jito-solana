@@ -25,7 +25,12 @@
   --good: #6fcf3f;
   --warn: #e0a422;
   --bad: #f2564a;
-  --vote: #8ba362;
+  /* Vote traffic on the transactions matrix. Deliberately off the green axis
+     the rest of the palette sits on: it is stacked directly against success
+     green and failure red, and a third green would be told apart by saturation
+     alone at the size of a four-pixel dot. Neutral is also the honest reading,
+     since vote traffic is the constant background and is neither good nor bad. */
+  --vote: #7d8a99;
 
   --level-incomplete: #38412a;
   --level-completed: #7fa5e8;
@@ -51,7 +56,7 @@
   --good: #3f7d1f;
   --warn: #8a5a06;
   --bad: #c0392b;
-  --vote: #7d9b53;
+  --vote: #4f6172;
 
   --level-incomplete: #c4cdb0;
   --level-completed: #4a6fa8;
@@ -224,6 +229,143 @@ body {
   flex-wrap: wrap;
 }
 
+/* ---- header, held in a hand ---- */
+
+/* Two rows of about 68px, against the 313px the full arrangement came to at
+   this width. The brand and the two controls share the top row; the name and
+   the stake share the one under it. Everything else is behind the name.
+
+   `flex-wrap` and the 24px gap belong to the wide arrangement and are undone
+   here rather than made conditional, because the two layouts share only the
+   element they hang from. */
+.header.is-narrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 12px;
+}
+
+/* The brand lies down: at this width a stacked cluster and version cost a row
+   the header cannot spare, and side by side they fit in one. */
+.header.is-narrow .header-brand {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  grid-column: 1 / 3;
+}
+
+.header.is-narrow .header-identity {
+  grid-column: 1 / -1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Inherits the heading's face so the control is the name rather than a thing
+   beside it, and takes the logo with it, which doubles the target. */
+.header-name.is-trigger {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+/* On the word alone, not on the logo, so the hint reads as a hint rather than
+   as a box around the picture. */
+.header-name.is-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.header-name.is-trigger:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.header-stake {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+/* Hung from the identity row rather than from the header, so it opens under the
+   name whatever else is on the line. Full width of the card less its padding:
+   the identity key inside is forty-four characters and wants every pixel. */
+.header-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+.header-panel-key {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Wraps rather than ellipsising, unlike the same key in the wide header. There
+   it sits in a row that has to hold its height; here the panel is already open
+   and the whole point of opening it was to read the thing. */
+.header-panel-key .copyable {
+  white-space: normal;
+  overflow: visible;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.header-panel-label {
+  display: block;
+  margin-bottom: 3px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.header-panel-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.header-panel-rows dt {
+  color: var(--text-faint);
+}
+
+.header-panel-rows dd {
+  margin: 0;
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
 .header-stat-label {
   color: var(--text-faint);
   font-size: 10px;
@@ -356,10 +498,6 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px 20px;
   align-content: start;
-}
-
-.stat-grid-tight {
-  gap: 8px 16px;
 }
 
 /* Stacked stats need explicit spacing; on their own they sit flush. */
@@ -1221,98 +1359,306 @@ body {
 
 /* ---- transactions ---- */
 
+/* Readout beside the matrix, the way an instrument reads: the numbers are what
+   is true now, the grid is how it got here. */
 .transactions-body {
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
-  gap: 24px;
-  align-items: center;
+  grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: stretch;
 }
 
-.transactions-figures {
+.tps-readout {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.network-body {
-  display: grid;
-  grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
-  gap: 24px;
-  align-items: center;
-}
-
-/* Ties each figure to its line, so the chart reads without checking numbers. */
-.swatch {
-  display: inline-block;
-  width: 8px;
-  height: 2px;
-  margin-right: 6px;
-  vertical-align: middle;
-  border-radius: 1px;
-}
-
-.swatch-ingress {
-  background: var(--level-optimistically_confirmed);
-}
-
-.swatch-egress {
-  background: var(--warn);
-}
-
-.chart-ingress,
-.chart-egress {
-  fill: none;
-  stroke-width: 1.5;
-}
-
-.chart-ingress {
-  stroke: var(--level-optimistically_confirmed);
-}
-
-.chart-egress {
-  stroke: var(--warn);
-}
-
-.chart {
+  gap: 14px;
   min-width: 0;
 }
 
-/* Holds the plot alone, so the peak line's percentage is a share of the drawing
-   and not of the drawing plus its axis labels. */
-.chart-plot {
-  position: relative;
-}
-
-.chart svg {
-  width: 100%;
-  height: 120px;
-  display: block;
-}
-
-.chart-total {
-  fill: color-mix(in srgb, var(--accent) 35%, transparent);
-  stroke: var(--accent);
-  stroke-width: 1;
-}
-
-.chart-vote {
-  fill: color-mix(in srgb, var(--vote) 55%, transparent);
-  stroke: none;
-}
-
-.chart-axis {
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-faint);
+.tps-total-label {
   font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+
+.tps-total-value {
+  font-family: ui-monospace, monospace;
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tps-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tps-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* The peak is not one of the series, so it is ruled off from them. */
+.tps-row.is-peak {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.tps-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+  min-width: 0;
+}
+
+.tps-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* The figure is the key. Each carries the colour its series is lit in, which is
+   what the stacked areas here before never had: two bands, nothing saying which
+   was which, and a success figure toned in a green that was not the green in
+   the chart. */
+.tps-swatch.is-vote {
+  background: var(--vote);
+}
+
+.tps-swatch.is-failed {
+  background: var(--bad);
+}
+
+.tps-swatch.is-success {
+  background: var(--good);
+}
+
+.tps-value.is-vote {
+  color: var(--vote);
+}
+
+.tps-value.is-failed {
+  color: var(--bad);
+}
+
+.tps-value.is-success {
+  color: var(--good);
+}
+
+.tps-plot {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.matrix {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Drawn at a measured pixel width, so it has to be stopped from outgrowing its
+   column if that measurement goes stale. It can: the fallback for a webview
+   whose ResizeObserver never delivers is a single reading at mount, and a
+   window resized after that leaves the grid too wide. Scaled down it stays
+   square and merely shrinks; unguarded it pushes the card. */
+.matrix svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* The unlit grid is drawn rather than left out: the dark dots above the lit
+   part are what say how much headroom is left. */
+.matrix-off {
+  fill: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.matrix-vote {
+  fill: var(--vote);
+}
+
+.matrix-failed {
+  fill: var(--bad);
+}
+
+.matrix-success {
+  fill: var(--good);
+}
+
+/* The newest column, a shade up, so the leading edge reads without a marker of
+   its own. */
+.matrix-vote-live {
+  fill: color-mix(in srgb, var(--vote) 60%, var(--text));
+}
+
+.matrix-failed-live {
+  fill: color-mix(in srgb, var(--bad) 60%, var(--text));
+}
+
+.matrix-success-live {
+  fill: color-mix(in srgb, var(--good) 60%, var(--text));
+}
+
+/* ---- host network ---- */
+
+/* A row per direction, stacked rather than side by side, so each gets its own
+   line of the last minute. The scale is shared across both: see NetworkCard. */
+.network-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The rows share whatever height the card is given. This one sits in a grid
+   row beside the socket card, which is much the taller of the two, so the card
+   is stretched to match it whatever its own content needs. Left alone the
+   surplus was a block of nothing under the second row; spent on the lines it
+   makes a minute of throughput readable instead. */
+.net-row {
+  display: grid;
+  grid-template-columns: minmax(140px, auto) minmax(120px, 1fr) minmax(92px, auto);
+  align-items: center;
+  gap: 4px 18px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+  flex: 1;
+  min-height: 0;
+}
+
+.net-row:first-child {
+  border-top: 0;
   padding-top: 4px;
 }
 
-.chart-empty {
+.net-label {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-faint);
+}
+
+.net-swatch {
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  flex: none;
+}
+
+.net-value {
+  grid-column: 1;
+  font-family: ui-monospace, monospace;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-value small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* Spans the label and the value, so the line is as tall as the pair beside it
+   rather than sitting against one of them. */
+.net-spark {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: stretch;
+  min-width: 0;
+  /* A range rather than a fixed height. The row grows when the card is
+     stretched to match a taller neighbour, and the line grows with it, but only
+     so far: the viewBox is drawn without preserving its ratio, so past about
+     this height the wash under the line becomes a slab with a jagged top and
+     stops reading as a minute of anything. Surplus past the cap becomes room
+     around the rows instead. */
+  min-height: 38px;
+  max-height: 72px;
+}
+
+.net-spark svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.net-collecting {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 38px;
+}
+
+.net-meta {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  text-align: right;
+  font-family: ui-monospace, monospace;
   font-size: 11px;
-  padding: 40px 0;
-  text-align: center;
+  color: var(--text-faint);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-meta b {
+  display: block;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.net-meta em {
+  font-style: normal;
+}
+
+/* The two directions keep the colours they have always had here. Both are drawn
+   the same way: a line over a wash of the same hue. Given a fill on one and not
+   the other, two halves of one measurement read as different kinds of thing. */
+.net-swatch.is-ingress,
+.net-line.is-ingress {
+  background: var(--level-optimistically_confirmed);
+  stroke: var(--level-optimistically_confirmed);
+}
+
+.net-swatch.is-egress,
+.net-line.is-egress {
+  background: var(--warn);
+  stroke: var(--warn);
+}
+
+.net-line {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.net-fill {
+  stroke: none;
+}
+
+/* The wash under each line is set by eye rather than by one number, because
+   the two hues do not carry equally on this ground: amber at the teal's share
+   reads as the loudest thing on the card, which is a lot of weight for the
+   direction that is merely larger. */
+.net-fill.is-ingress {
+  fill: color-mix(in srgb, var(--level-optimistically_confirmed) 15%, transparent);
+}
+
+.net-fill.is-egress {
+  fill: color-mix(in srgb, var(--warn) 9%, transparent);
 }
 
 /* ---- produced blocks ---- */
@@ -1977,6 +2323,207 @@ body {
   }
 }
 
+/* ---- host ---- */
+
+.host-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Load, memory and swap across the top. Swap is absent on a machine without
+   any, so the row is sized by what is there rather than by three fixed
+   columns. */
+.host-top {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px 26px;
+}
+
+.host-label {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.host-value {
+  font-family: ui-monospace, monospace;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.host-value small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.host-sub {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  margin-top: 3px;
+  line-height: 1.5;
+}
+
+.host-faint {
+  color: var(--text-faint);
+}
+
+.host-trend.is-rising {
+  color: var(--warn);
+}
+
+/* Two segments of one bar: what is committed, and the page cache beside it.
+   Drawn together because the question the bar answers is how much of this
+   machine's memory is spoken for, and the second segment is the part of the
+   answer that is only borrowed. */
+.host-memory {
+  display: flex;
+  height: 11px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--panel-raised);
+  margin-top: 6px;
+}
+
+.host-memory i {
+  display: block;
+  height: 100%;
+}
+
+.host-memory .is-used {
+  background: color-mix(in srgb, var(--accent) 80%, transparent);
+}
+
+.host-memory .is-cache {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.host-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 16px 0 7px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.host-group em {
+  font-style: normal;
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+}
+
+/* A filesystem is a container that can fill, so it gets a fill bar. */
+.host-capacity {
+  display: grid;
+  grid-template-columns: minmax(0, 15em) minmax(80px, 1fr) 3.4em 7em;
+  align-items: center;
+  gap: 9px 14px;
+  font-size: 11.5px;
+  padding: 4px 0;
+}
+
+.host-mount {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.host-mount b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.host-mount s,
+.host-dev s {
+  text-decoration: none;
+  color: var(--text-faint);
+  margin-left: 7px;
+  font-size: 10.5px;
+}
+
+.host-track {
+  height: 11px;
+  border-radius: 2px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+
+.host-track i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.tone-fill-good {
+  background: color-mix(in srgb, var(--accent) 78%, transparent);
+}
+
+.tone-fill-warn {
+  background: var(--warn);
+}
+
+.tone-fill-bad {
+  background: var(--bad);
+}
+
+/* A device is a duty cycle, not a container, so there is no bar here at all.
+   Two rows of figures read fine by eye, and an identical shape beside the
+   capacity bars above is exactly what makes people read a busy device as a
+   full one. */
+.host-device {
+  display: grid;
+  grid-template-columns: minmax(0, 15em) 5.4em 5.6em 5em 8.4em;
+  align-items: baseline;
+  gap: 5px 14px;
+  font-size: 11.5px;
+  padding: 4px 0;
+}
+
+.host-device.is-head {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-bottom: 1px;
+}
+
+.host-dev {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-dev b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.host-n,
+.host-free {
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.host-free {
+  color: var(--text-dim);
+}
+
 /* ---- caches and storage ---- */
 
 /* The two subsystems replay waits on, folded into one card. Ruled apart rather
@@ -2161,6 +2708,38 @@ body {
    anything, and it lost it to an ellipsis mid-figure. Stacked under the name it
    keeps whole figures, and the last two are dropped rather than cut. */
 @media (max-width: 700px) {
+  /* The two figures that decide something keep their columns; throughput and
+     iops are the detail behind them and go. The mount path goes with them: at
+     this width it is longer than the name it qualifies. */
+  .host-capacity {
+    grid-template-columns: minmax(0, 1fr) 3.4em;
+  }
+
+  .host-capacity .host-track {
+    grid-column: 1 / 3;
+    order: 3;
+    margin-top: 3px;
+  }
+
+  .host-capacity .host-free {
+    grid-column: 1 / 3;
+    order: 4;
+    text-align: left;
+  }
+
+  .host-device {
+    grid-template-columns: minmax(0, 1fr) 5.4em 5.6em;
+  }
+
+  .host-device .is-io,
+  .host-device .is-tp {
+    display: none;
+  }
+
+  .host-mount s {
+    display: none;
+  }
+
   .cache-head {
     grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 0 12px;
@@ -2304,10 +2883,52 @@ body {
     display: none;
   }
 
+  /* Both are two-column grids above this width. The network card is not in
+     this list any more: its body is a flex column at every width, and its rows
+     do their own rearranging below. */
   .transactions-body,
-  .validators-body,
-  .network-body {
+  .validators-body {
     grid-template-columns: 1fr;
+  }
+
+  /* The sparkline gives up its width first: the two figures are what gets
+     read, and the line is the shape behind them. */
+  .net-row {
+    grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+    gap: 2px 12px;
+  }
+
+  .net-label {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .net-value {
+    grid-column: 1;
+    grid-row: 2;
+    font-size: 20px;
+  }
+
+  .net-meta {
+    grid-column: 2;
+    grid-row: 1;
+    line-height: 1.4;
+  }
+
+  /* Both on one line here, so they need something between them. */
+  .net-meta b {
+    display: inline;
+  }
+
+  .net-meta b::after {
+    content: " · ";
+    color: var(--border);
+  }
+
+  .net-spark {
+    grid-column: 2;
+    grid-row: 2;
+    height: 30px;
   }
 }
 

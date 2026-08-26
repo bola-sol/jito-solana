@@ -1,4 +1,6 @@
-import { buildLabel, percent, sol, solCompact, duration } from "../format";
+import { useEffect, useId, useRef, useState } from "react";
+import { buildLabel, duration, percent, sol, solCompact } from "../format";
+import { useNarrow } from "../narrow";
 import type { StakeSummary } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
@@ -6,6 +8,20 @@ import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
+/**
+ * Who this validator is, what it runs, and what it is worth.
+ *
+ * Laid out two ways rather than one that bends. On a screen everything is on
+ * show, which at 1400px costs 81px of height. On a phone the same header came
+ * to 313px, nearly two fifths of an 812px screen before a single card, because
+ * six stats wrapped into a grid and the identity key ran off the edge unread.
+ * The narrow arrangement keeps the five things worth a glance and puts the rest
+ * behind the name.
+ *
+ * The branch is in JavaScript rather than in CSS so that the name is a button
+ * only where pressing it does something, and so that every figure is rendered
+ * once instead of once per layout. See `useNarrow`.
+ */
 export function Header() {
   const store = useStore();
   const identity = store.get<string>("summary", "identity_key");
@@ -19,23 +35,57 @@ export function Header() {
   const client = store.get<string>("summary", "client");
   const shredVersion = store.get<number>("summary", "shred_version");
   const connection = store.getConnection();
+  const narrow = useNarrow();
 
   const name = store.get<string | null>("summary", "identity_name") ?? "Private";
   const icon = store.get<string | null>("summary", "identity_icon") ?? null;
   const build = buildLabel(client, version);
 
+  const figures = {
+    stakeAmount: `${solCompact(stake?.activated_stake)} SOL`,
+    share: percent(stake?.share, 4),
+    commission: commission === null || commission === undefined ? "—" : `${commission} %`,
+    identityBalance: `${sol(identityBalance)} SOL`,
+    voteBalance: `${sol(voteBalance)} SOL`,
+    uptime: duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6),
+    shred: shredVersion === undefined ? "—" : String(shredVersion),
+  };
+
+  const cluster_ = <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>;
+  const buildLabel_ = build && (
+    <Explain
+      className="version"
+      text="Which client this validator runs, and its version. A fork carries the version number of the release it follows, so the number alone does not say which client it is."
+    >
+      {build}
+    </Explain>
+  );
+
+  if (narrow) {
+    return (
+      <header className="header is-narrow">
+        <div className="header-brand">
+          {cluster_}
+          {buildLabel_}
+        </div>
+        <Connection state={connection} showLabel={connection !== "open"} />
+        <ThemeToggle />
+        <Identity
+          name={name}
+          icon={icon}
+          stake={figures.stakeAmount}
+          identity={identity}
+          figures={figures}
+        />
+      </header>
+    );
+  }
+
   return (
     <header className="header">
       <div className="header-brand">
-        <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
-        {build && (
-          <Explain
-            className="version"
-            text="Which client this validator runs, and its version. A fork carries the version number of the release it follows, so the number alone does not say which client it is."
-          >
-            {build}
-          </Explain>
-        )}
+        {cluster_}
+        {buildLabel_}
         {shredVersion !== undefined && (
           <Explain className="version" text="Shred version. Nodes only gossip with matching versions.">
             shred {shredVersion}
@@ -56,24 +106,121 @@ export function Header() {
       </div>
 
       <div className="header-stats">
-        <HeaderStat label="Stake Amount" value={`${solCompact(stake?.activated_stake)} SOL`} />
-        <HeaderStat label="Stake %" value={percent(stake?.share, 4)} />
-        <HeaderStat
-          label="Commission"
-          value={commission === null || commission === undefined ? "—" : `${commission} %`}
-        />
-        <HeaderStat label="Identity Balance" value={`${sol(identityBalance)} SOL`} />
-        <HeaderStat label="Vote Balance" value={`${sol(voteBalance)} SOL`} />
-        <HeaderStat label="Uptime" value={duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6)} />
+        <HeaderStat label="Stake Amount" value={figures.stakeAmount} />
+        <HeaderStat label="Stake %" value={figures.share} />
+        <HeaderStat label="Commission" value={figures.commission} />
+        <HeaderStat label="Identity Balance" value={figures.identityBalance} />
+        <HeaderStat label="Vote Balance" value={figures.voteBalance} />
+        <HeaderStat label="Uptime" value={figures.uptime} />
       </div>
 
-      <div className={`connection connection-${connection}`} title={`websocket ${connection}`}>
-        <span className="connection-dot" />
-        {connection}
-      </div>
-
+      <Connection state={connection} showLabel />
       <ThemeToggle />
     </header>
+  );
+}
+
+/**
+ * The name, the stake, and everything else behind a press.
+ *
+ * The panel is not an `Explain`. That one opens on hover and its bubble takes
+ * no pointer events, both of which are right for a sentence and wrong for this:
+ * there is no hover on a phone, and the identity key inside has to be reachable
+ * to be copied.
+ */
+function Identity({
+  name,
+  icon,
+  stake,
+  identity,
+  figures,
+}: {
+  name: string;
+  icon: string | null;
+  stake: string;
+  identity: string | undefined;
+  figures: Record<string, string>;
+}) {
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
+
+  // Dismissed by pressing anywhere else or by Escape, which is what a panel
+  // opened over the page owes whoever opened it. Copying the key closes it too,
+  // since that press lands outside nothing.
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => {
+      if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  return (
+    <div className="header-identity" ref={wrapper}>
+      <button
+        type="button"
+        className="header-name is-trigger"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((was) => !was)}
+      >
+        <Logo url={icon} size={20} />
+        <span>{name}</span>
+      </button>
+      <span className="header-stake">{stake}</span>
+
+      {open && (
+        <div className="header-panel" id={panelId}>
+          <div className="header-panel-key">
+            <span className="header-panel-label">Identity</span>
+            {identity ? <Copyable text={identity} /> : "—"}
+          </div>
+          <dl className="header-panel-rows">
+            <PanelRow label="Stake share" value={figures.share} />
+            <PanelRow label="Commission" value={figures.commission} />
+            <PanelRow label="Identity balance" value={figures.identityBalance} />
+            <PanelRow label="Vote balance" value={figures.voteBalance} />
+            <PanelRow label="Uptime" value={figures.uptime} />
+            <PanelRow label="Shred version" value={figures.shred} />
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PanelRow({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </>
+  );
+}
+
+/**
+ * The websocket's state.
+ *
+ * The word is dropped once the connection is open, where a green dot says the
+ * same thing in a tenth of the width. It comes back the moment it is anything
+ * else, because a bare amber dot in a corner is not enough to notice that the
+ * figures on the page have stopped moving.
+ */
+function Connection({ state, showLabel }: { state: string; showLabel: boolean }) {
+  return (
+    <div className={`connection connection-${state}`} title={`websocket ${state}`}>
+      <span className="connection-dot" />
+      {showLabel && state}
+    </div>
   );
 }
 

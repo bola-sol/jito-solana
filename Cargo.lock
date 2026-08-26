@@ -142,6 +142,7 @@ version = "4.3.0-beta.2"
 dependencies = [
  "agave-dashboard",
  "bincode",
+ "libc",
  "log",
  "serde",
  "serde_json",

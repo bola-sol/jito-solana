@@ -10,10 +10,11 @@ import type {
   Tps,
   ValidatorCounts,
 } from "../types";
+import { useNarrow } from "../narrow";
 import { useStore } from "../useStore";
-import { Card, Meter, Stat } from "./primitives";
+import { Card, Explain, Meter, Stat } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
-import { TpsChart } from "./TpsChart";
+import { TpsMatrix } from "./TpsMatrix";
 
 export function EpochCard() {
   const store = useStore();
@@ -226,23 +227,79 @@ export function ValidatorsCard() {
   );
 }
 
+/**
+ * Throughput now, and the shape of the last minute.
+ *
+ * The figures are the chart's key. Each carries the colour its series is lit in
+ * beside it, which is what the stacked areas this replaced never had: two bands
+ * with nothing anywhere saying which was which, and a green success figure that
+ * was not the green in the chart.
+ *
+ * The window's peak is a figure rather than a line across the grid. A line
+ * would have to sit between two rows of dots and would read as one of them.
+ */
 export function TransactionsCard() {
   const store = useStore();
   const tps = store.get<Tps>("summary", "estimated_tps");
   const samples = store.getTps();
+  const narrow = useNarrow();
+  const peak = samples.length > 0 ? Math.max(...samples.map((sample) => sample.total)) : null;
+
+  const figures = (
+    <div className="tps-rows">
+      <SeriesRow label="Vote" series="vote" value={decimal(tps?.vote)} />
+      <SeriesRow label="Non-vote failed" series="failed" value={decimal(tps?.non_vote_failed)} />
+      <SeriesRow label="Non-vote ok" series="success" value={decimal(tps?.non_vote_success)} />
+      <div className="tps-row is-peak">
+        <span className="tps-name">
+          <Explain text="The busiest second in the window, and the top of the grid: the scale is set a tenth above it. Fixed rather than fitted to each frame, so the shape of the last minute does not rescale every time a spike arrives and leaves.">
+            60s peak
+          </Explain>
+        </span>
+        <span className="tps-value">{peak === null ? "—" : decimal(peak, 0)}</span>
+      </div>
+    </div>
+  );
 
   return (
-    <Card title="Transactions" className="transactions-body">
-      <div className="transactions-figures">
-        <Stat label="Total TPS" value={decimal(tps?.total)} />
-        <div className="stat-grid stat-grid-tight">
-          <Stat label="Non-vote TPS Success" value={decimal(tps?.non_vote_success)} tone="good" />
-          <Stat label="Non-vote TPS Fail" value={decimal(tps?.non_vote_failed)} tone="bad" />
-          <Stat label="Vote TPS" value={decimal(tps?.vote)} tone="muted" />
+    <Card title="Transactions" aside="last 60s" className="transactions-body">
+      <div className="tps-readout">
+        <div className="tps-total">
+          <div className="tps-total-label">
+            <Explain text="Every transaction the cluster is confirming per second, votes included. Votes are consensus traffic rather than user traffic, so they are drawn as the base of each column rather than mixed in with it: how much of the total each accounts for depends on the cluster and on what is being asked of it, and separating them lets either be read without the other moving it.">
+              Total TPS
+            </Explain>
+          </div>
+          <div className="tps-total-value">{decimal(tps?.total)}</div>
         </div>
+        {!narrow && figures}
       </div>
-      <TpsChart samples={samples} />
+      <div className="tps-plot">
+        <TpsMatrix samples={samples} short={narrow} />
+      </div>
+      {narrow && figures}
     </Card>
+  );
+}
+
+/** One series, named in the colour it is lit in. */
+function SeriesRow({
+  label,
+  series,
+  value,
+}: {
+  label: string;
+  series: "vote" | "failed" | "success";
+  value: string;
+}) {
+  return (
+    <div className="tps-row">
+      <span className="tps-name">
+        <i className={`tps-swatch is-${series}`} aria-hidden="true" />
+        {label}
+      </span>
+      <span className={`tps-value is-${series}`}>{value}</span>
+    </div>
   );
 }
 

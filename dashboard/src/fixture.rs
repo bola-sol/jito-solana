@@ -247,6 +247,10 @@ pub fn fixture() -> Fixture {
                 let tip = cluster_tip.clone();
                 Arc::new(move || *tip.lock().unwrap())
             },
+            // Nothing in the tests reads the host panel, and the fixture's
+            // ledger is a temporary directory that would report the machine
+            // running the tests.
+            account_paths: Vec::new(),
         },
         cluster_tip,
         publisher: Arc::new(Publisher::new()),

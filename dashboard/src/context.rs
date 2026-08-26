@@ -15,6 +15,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank_forks::BankForks, commitment::BlockCommitmentCache},
     std::{
+        path::PathBuf,
         sync::{Arc, RwLock},
         time::SystemTime,
     },
@@ -107,6 +108,12 @@ pub struct DashboardContext {
     /// slots behind votes promptly on what it has replayed and reports perfect
     /// health by every other rule.
     pub cluster_tip: ClusterTipFn,
+    /// Where the accounts database keeps its storage files.
+    ///
+    /// Several, commonly, because an operator striping accounts across disks
+    /// passes `--accounts` more than once. The ledger path is not here: the
+    /// blockstore above already knows it.
+    pub account_paths: Vec<PathBuf>,
 }
 
 impl DashboardContext {

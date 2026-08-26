@@ -2492,12 +2492,21 @@ body {
   padding: 4px 0;
 }
 
+/* The smaller size goes on the cells, not on the row. The template above is in
+   em, which resolves against whichever element carries it, so shrinking the row
+   itself shrank every column with it: at the wide arrangement the headers ended
+   up between thirty and seventy-nine pixels left of the figures they name, and
+   the drift grew across the row. `.produced-averages` sizes its labels the same
+   way for the same reason. */
 .host-device.is-head {
+  color: var(--text-faint);
+  padding-bottom: 1px;
+}
+
+.host-device.is-head > * {
   font-size: 9.5px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text-faint);
-  padding-bottom: 1px;
 }
 
 .host-dev {
@@ -2793,14 +2802,20 @@ body {
   font-size: 11.5px;
 }
 
+/* The smaller size goes on the cells rather than the row, because the template
+   above is in em and would otherwise be measured against this size instead of a
+   row's. See `.host-device.is-head`, which had the same fault. */
 .ingest-row.is-head {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--text-faint);
   padding-bottom: 3px;
   margin-bottom: 1px;
   border-bottom: 1px solid var(--border);
+}
+
+.ingest-row.is-head > * {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .ingest-row.is-head span:not(:first-child) {

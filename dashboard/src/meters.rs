@@ -18,9 +18,9 @@ use {
         context::{DashboardContext, StartupProgressFn},
         host_stats::{self, HostSnapshot},
         metrics_tap::{
-            AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals,
-            ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost, SlotWaterfall,
-            TapCounters, VerifyTotals, WindowedCounters,
+            AccountsTotals, BundleTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals,
+            QuicLevels, QuicTotals, ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost,
+            SlotWaterfall, TapCounters, VerifyTotals, WindowedCounters,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -456,12 +456,16 @@ struct EpochPosition {
     slots_in_epoch: u64,
 }
 
-/// Verify and Executed, summed from the start of the epoch.
+/// Verify, Executed and the bundles, summed from the start of the epoch.
 ///
-/// One structure holding both rather than an accumulator each, because they
-/// share an epoch and a starting slot and are added to on the same tick. Split
-/// in two they would carry two copies of the same span, which is two chances
-/// for the panel to be told different things about what it is drawing.
+/// One structure holding all three rather than an accumulator each, because
+/// they share an epoch and a starting slot and are added to on the same tick.
+/// Split apart they would carry three copies of the same span, which is three
+/// chances for the panel to be told different things about what it is drawing.
+///
+/// The bundles are here for a stricter reason than the other two. They are
+/// printed on the same line as Executed, and two figures on one line covering
+/// different spans is not a comparison but a trap.
 #[derive(Debug, Clone, Copy, Default)]
 struct LeaderTotals {
     /// The epoch these cover. `None` until the first sample lands.
@@ -471,19 +475,28 @@ struct LeaderTotals {
     from_slot: Slot,
     verify: VerifyTotals,
     executed: ExecutedTotals,
+    bundles: BundleTotals,
 }
 
 impl LeaderTotals {
     /// Adds one interval's work, starting over where the epoch has turned.
-    fn add(&mut self, at: EpochPosition, verify: VerifyTotals, executed: ExecutedTotals) {
+    fn add(
+        &mut self,
+        at: EpochPosition,
+        verify: VerifyTotals,
+        executed: ExecutedTotals,
+        bundles: BundleTotals,
+    ) {
         if self.epoch != Some(at.epoch) {
             self.epoch = Some(at.epoch);
             self.from_slot = at.slot;
             self.verify = VerifyTotals::default();
             self.executed = ExecutedTotals::default();
+            self.bundles = BundleTotals::default();
         }
         self.verify = self.verify.plus(&verify);
         self.executed = self.executed.plus(&executed);
+        self.bundles = self.bundles.plus(&bundles);
     }
 
     /// What the totals cover, as of the position they were last added at.
@@ -850,6 +863,7 @@ pub struct Meters {
     epoch_span: Debounced<Option<EpochSpan>>,
     verify: Debounced<Option<VerifyTotals>>,
     executed: Debounced<Option<ExecutedTotals>>,
+    bundles: Debounced<Option<BundleTotals>>,
     slot_waterfalls: Debounced<Vec<SlotWaterfall>>,
     slot_costs: Debounced<Vec<SlotCost>>,
     replay: Debounced<Option<ReplayWindow>>,
@@ -905,6 +919,7 @@ impl Meters {
             epoch_span: Debounced::default(),
             verify: Debounced::default(),
             executed: Debounced::default(),
+            bundles: Debounced::default(),
             slot_waterfalls: Debounced::default(),
             slot_costs: Debounced::default(),
             replay: Debounced::default(),
@@ -1195,9 +1210,13 @@ impl Meters {
                 at,
                 current.verify.since(&previous.verify),
                 current.executed.since(&previous.executed),
+                current.bundles.since(&previous.bundles),
             );
             let LeaderTotals {
-                verify, executed, ..
+                verify,
+                executed,
+                bundles,
+                ..
             } = self.leader_totals;
             let span = self.leader_totals.span(at);
 
@@ -1209,7 +1228,8 @@ impl Meters {
                 &self.publisher,
                 TOPIC_SUMMARY,
                 "epoch_span",
-                (verify.received > 0 || executed.attempted > 0).then_some(span),
+                (verify.received > 0 || executed.attempted > 0 || bundles.received > 0)
+                    .then_some(span),
             );
             self.verify.publish(
                 &self.publisher,
@@ -1222,6 +1242,18 @@ impl Meters {
                 TOPIC_SUMMARY,
                 "executed",
                 (executed.attempted > 0).then_some(executed),
+            );
+            // A note on what Executed is made of rather than a stage of its
+            // own, so it is published beside that section and drawn on its
+            // heading. Absent where no bundle arrived, which on a validator
+            // with no block engine — or one running BAM, which supersedes that
+            // path — is always, and the section it annotates is unchanged by
+            // its absence.
+            self.bundles.publish(
+                &self.publisher,
+                TOPIC_SUMMARY,
+                "bundles",
+                (bundles.received > 0).then_some(bundles),
             );
         }
 
@@ -2091,15 +2123,67 @@ mod tests {
         }
     }
 
+    fn bundled(received: u64, packets: u64) -> BundleTotals {
+        BundleTotals { received, packets }
+    }
+
+    #[test]
+    fn test_the_bundles_are_summed_over_the_epoch_beside_the_stage_they_annotate() {
+        // They are printed on Executed's heading, so they have to cover what
+        // Executed covers. Summed over a window while the section under them
+        // ran to the epoch, the line would compare a leader slot's bundles
+        // against an epoch's transactions and read as a rounding error.
+        let mut totals = LeaderTotals::default();
+        totals.add(at(842, 10), verified(100), attempted(40), bundled(6, 21));
+        totals.add(at(842, 20), verified(0), attempted(0), bundled(0, 0));
+        totals.add(at(842, 30), verified(70), attempted(25), bundled(4, 9));
+
+        assert_eq!(totals.bundles, bundled(10, 30));
+        assert_eq!(totals.executed.attempted, 65);
+    }
+
+    #[test]
+    fn test_the_bundles_start_over_with_the_stage_they_are_printed_against() {
+        // Reset on the same tick and against the same epoch. A bundle total
+        // carried across a turn would sit under a heading naming the new epoch
+        // while counting the last one's work.
+        let mut totals = LeaderTotals::default();
+        totals.add(
+            at(842, 400_000),
+            verified(900),
+            attempted(300),
+            bundled(80, 240),
+        );
+        totals.add(at(843, 3), verified(11), attempted(4), bundled(1, 2));
+
+        assert_eq!(totals.bundles, bundled(1, 2));
+        assert_eq!(totals.epoch, Some(843));
+    }
+
     #[test]
     fn test_the_leader_totals_add_every_sample_of_the_epoch_rather_than_a_window() {
         // The whole point of the change. A stage that fires for a few slots
         // every few hours has nothing to say about the last five minutes, so
         // the samples are kept for as long as the schedule that produced them.
         let mut totals = LeaderTotals::default();
-        totals.add(at(842, 10), verified(100), attempted(40));
-        totals.add(at(842, 20), verified(0), attempted(0));
-        totals.add(at(842, 30), verified(70), attempted(25));
+        totals.add(
+            at(842, 10),
+            verified(100),
+            attempted(40),
+            BundleTotals::default(),
+        );
+        totals.add(
+            at(842, 20),
+            verified(0),
+            attempted(0),
+            BundleTotals::default(),
+        );
+        totals.add(
+            at(842, 30),
+            verified(70),
+            attempted(25),
+            BundleTotals::default(),
+        );
 
         assert_eq!(totals.verify.received, 170);
         assert_eq!(totals.executed.attempted, 65);
@@ -2114,8 +2198,18 @@ mod tests {
         // it are both drawn per epoch: a total spanning two of them is a total
         // of two different schedules.
         let mut totals = LeaderTotals::default();
-        totals.add(at(842, 400_000), verified(900), attempted(300));
-        totals.add(at(843, 3), verified(11), attempted(4));
+        totals.add(
+            at(842, 400_000),
+            verified(900),
+            attempted(300),
+            BundleTotals::default(),
+        );
+        totals.add(
+            at(843, 3),
+            verified(11),
+            attempted(4),
+            BundleTotals::default(),
+        );
 
         assert_eq!(totals.epoch, Some(843));
         assert_eq!(totals.verify.received, 11);
@@ -2132,7 +2226,12 @@ mod tests {
         // pair of figures a quiet epoch and one watched for its last hour read
         // exactly alike.
         let mut totals = LeaderTotals::default();
-        totals.add(at(842, 300_000), verified(5), attempted(2));
+        totals.add(
+            at(842, 300_000),
+            verified(5),
+            attempted(2),
+            BundleTotals::default(),
+        );
         let span = totals.span(at(842, 320_000));
 
         assert_eq!(span.elapsed_slots, 320_001);

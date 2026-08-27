@@ -121,6 +121,25 @@ const QUIC_TPU_VOTE: &str = "quic_streamer_tpu_vote";
 /// that could never account for them.
 const TPU_VERIFIER: &str = "tpu-verifier";
 
+/// The bundle stage's own loop, on builds that have one.
+///
+/// Bundles reach a jito validator over gRPC from the block engine and go into
+/// their own stage, so they touch none of the QUIC ports above and none of the
+/// signature verification beside them. Two figures are read: how many bundles
+/// arrived and how many transactions rode in them. Counted where they arrive
+/// rather than where they execute, which is why the panel says "arrived".
+///
+/// The transactions themselves are already inside `WORKER_COUNTS`. The bundle
+/// stage runs its own pool of consume workers reporting under that same name,
+/// so what this adds is not another total but a note on the composition of one
+/// the card already draws. It is deliberately not a stage of its own.
+///
+/// Silent on a build with no bundle stage, and on one whose bundle stage has
+/// nothing to do: the reporter checks that it has data before submitting, so an
+/// idle stage sends no point rather than a point of noughts. Absent for that
+/// reason too on a validator running BAM, which supersedes this path.
+const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
+
 /// The worker threads, which is where a scheduled transaction is executed.
 ///
 /// One point per worker, all under this name and distinguished by an `id` tag.
@@ -456,6 +475,7 @@ pub struct MetricsTap {
     pub quic_vote: QuicCounters,
     pub verify: VerifyCounters,
     pub executed: ExecutedCounters,
+    pub bundles: BundleCounters,
 
     /// Where the transactions handed to the banking stage ended up.
     pub scheduler: SchedulerCounters,
@@ -798,6 +818,30 @@ pub struct QuicLevels {
     pub active_streams: u64,
 }
 
+/// Bundles the block engine sent, and the transactions inside them.
+///
+/// Two counters where the point carries eighteen. The rest describe a funnel
+/// this dashboard does not draw — six reasons a bundle was dropped, the buffer
+/// it waits in, the bundles that made it through — and reading them would put
+/// fields in this struct that nothing renders, which reads as measured and is
+/// not. If a bundle section is ever built they are there to be picked up.
+#[derive(Debug, Default)]
+pub struct BundleCounters {
+    /// Bundles handed to the stage over the interval.
+    pub received: AtomicU64,
+    /// Transactions carried in them, which is the figure worth having: it is in
+    /// the same unit as the section this annotates, even though it is measured
+    /// at a different point in their journey.
+    pub packets: AtomicU64,
+}
+
+/// One epoch's worth of what the block engine sent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct BundleTotals {
+    pub received: u64,
+    pub packets: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct VerifyTotals {
     pub received: u64,
@@ -885,6 +929,7 @@ pub struct TapCounters {
     pub quic_vote_levels: QuicLevels,
     pub verify: VerifyTotals,
     pub executed: ExecutedTotals,
+    pub bundles: BundleTotals,
 }
 
 impl MetricsTap {
@@ -946,6 +991,7 @@ impl MetricsTap {
             QUIC_TPU_FORWARDS => self.quic_forwards.add_point(point),
             QUIC_TPU_VOTE => self.quic_vote.add_point(point),
             TPU_VERIFIER => self.verify.add_point(point),
+            BUNDLE_STAGE => self.bundles.add_point(point),
             WORKER_COUNTS | WORKER_ERROR_METRICS => self.executed.add_point(point),
             _ => (),
         }
@@ -1227,6 +1273,7 @@ impl MetricsTap {
             quic_forwards_levels: self.quic_forwards.levels(),
             quic_vote_levels: self.quic_vote.levels(),
             verify: self.verify.totals(),
+            bundles: self.bundles.totals(),
             executed: self.executed.totals(),
         }
     }
@@ -1424,6 +1471,31 @@ impl QuicCounters {
         QuicLevels {
             open: self.open.load(Ordering::Relaxed),
             active_streams: self.active_streams.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl BundleCounters {
+    fn add_point(&self, point: &DataPoint) {
+        for (name, value) in &point.fields {
+            let counter = match *name {
+                "num_bundles_received" => &self.received,
+                "num_packets_received" => &self.packets,
+                // The drop reasons, the buffer levels and the timings. Every
+                // one of these is reset by the reporter after it submits, like
+                // the two above, so any of them could be added here as it
+                // stands — except the two `current_buffered_*`, which are
+                // levels and would need storing rather than adding.
+                _ => continue,
+            };
+            add_field(counter, value);
+        }
+    }
+
+    fn totals(&self) -> BundleTotals {
+        BundleTotals {
+            received: self.received.load(Ordering::Relaxed),
+            packets: self.packets.load(Ordering::Relaxed),
         }
     }
 }
@@ -1670,6 +1742,8 @@ counter_arithmetic!(QuicTotals {
     queue_full,
     disconnected,
 });
+
+counter_arithmetic!(BundleTotals { received, packets });
 
 counter_arithmetic!(VerifyTotals {
     received,

@@ -16,7 +16,7 @@ import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
 import { Sidebar } from "./components/Sidebar";
 import { VersionsCard } from "./components/VersionsCard";
-import { WaterfallCard } from "./components/WaterfallCard";
+import { TpuPathCard } from "./components/TpuPathCard";
 import { SlotStrip } from "./components/SlotStrip";
 import { usePage, type Page } from "./route";
 import { useStore } from "./useStore";
@@ -107,10 +107,11 @@ function Overview() {
           then how well each of the two is going. */}
       <ReplayCard />
       <CachesCard />
-      {/* Picks the same traffic up where the socket card leaves it: those two
-          count what reached the host, this counts what became of it once the
-          banking stage had it. */}
-      <WaterfallCard />
+      {/* Picks the same traffic up where the socket card leaves it. That one
+          counts the datagrams the kernel never handed over; this one counts
+          what the QUIC listener above it made of the rest, and carries the
+          three QUIC ports the socket card therefore does not draw. */}
+      <TpuPathCard />
     </>
   );
 }

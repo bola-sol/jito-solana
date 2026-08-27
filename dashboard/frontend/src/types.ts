@@ -211,12 +211,21 @@ export interface IngestPath {
    * Packets the port delivered, over the same window and from the same instant
    * as the drops beside them, so that one can be divided by their sum.
    *
-   * Null for a port whose traffic nothing counts in datagrams: the two QUIC
+   * Null for a port whose traffic nothing counts in datagrams: the three QUIC
    * ports, whose counters count transactions pulled out of streams, and serve
    * repair, whose receiver keeps counters that nothing reports.
    */
   received_recent: number | null;
   received_total: number | null;
+  /**
+   * Whether the port speaks QUIC, which decides which card draws it.
+   *
+   * The socket card takes the ports that do not, where a drop count has a
+   * delivered count to be a share of. The TPU path card takes the ones that do,
+   * where the listener's own account of what it admitted stands in for the
+   * share this list cannot give them.
+   */
+  quic: boolean;
 }
 
 export interface ProducedBlock {
@@ -316,10 +325,65 @@ export interface Waterfall {
  * receive, so a single chain across them would imply an arithmetic that does not
  * hold. Each section balances against itself and nothing else.
  */
-export interface QuicStage {
+/**
+ * One QUIC listener's account of the traffic offered to it.
+ *
+ * Three groups of figure in one object, and they are not interchangeable. The
+ * first eight are the connection funnel, and they very nearly partition the
+ * offer: the listener sheds at each gate in turn and moves on, so an attempt is
+ * shed, or fails its handshake, or is admitted. The next six are streams opened
+ * on connections that were admitted. The four after that are what came out
+ * towards verification.
+ *
+ * `open` and `active_streams` are levels rather than counts. They say how the
+ * port stands at the instant of the last reading and mean nothing summed over
+ * the window the rest of this covers.
+ */
+export interface QuicPort {
+  /** Matches the socket row of the same name on the ingest list. */
+  name: string;
+
+  offered: number;
+  shed_all: number;
+  shed_address: number;
+  refused_full: number;
+  handshake_timeout: number;
+  handshake_error: number;
+  add_failed: number;
+  admitted_staked: number;
+  admitted_unstaked: number;
+
+  streams: number;
+  throttled_staked: number;
+  throttled_unstaked: number;
+  read_timeouts: number;
+  read_errors: number;
+  invalid_size: number;
+
   handed_on: number;
+  bytes_handed_on: number;
   queue_full: number;
   disconnected: number;
+
+  open: number;
+  active_streams: number;
+
+  /**
+   * Datagrams the kernel discarded on this port, over the same span as the
+   * counts above.
+   *
+   * Null where the port was not found among the bound sockets, which is not the
+   * same as a port that dropped nothing. Counted in datagrams while everything
+   * else here is connections or transactions, so it is drawn without a bar and
+   * never added to anything.
+   */
+  kernel_drops: number | null;
+}
+
+export interface QuicPaths {
+  /** What the counts above actually span, which is short until it has filled. */
+  window_seconds: number;
+  ports: QuicPort[];
 }
 
 export interface VerifyStage {

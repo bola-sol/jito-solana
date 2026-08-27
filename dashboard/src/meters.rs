@@ -18,7 +18,7 @@ use {
         context::{DashboardContext, StartupProgressFn},
         host_stats::{self, HostSnapshot},
         metrics_tap::{
-            AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicTotals,
+            AccountsTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals,
             ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost, SlotWaterfall,
             TapCounters, VerifyTotals, WindowedCounters,
         },
@@ -326,9 +326,10 @@ pub struct IngestPath {
     ///
     /// Missing rather than zero for a port with no receiver reporting one, and
     /// the difference matters: nought received alongside drops would say every
-    /// packet was lost. Three of the six ports are in that position — the two
-    /// QUIC ones, whose counters count transactions rather than datagrams, and
-    /// serve repair, whose receiver keeps counters nothing reports.
+    /// packet was lost. Four of the seven ports are in that position — the
+    /// three QUIC ones, whose counters count transactions rather than
+    /// datagrams, and serve repair, whose receiver keeps counters nothing
+    /// reports.
     ///
     /// Sent so the panel can show a share of the traffic. Drops and received
     /// are disjoint — a dropped datagram never reached the receiver — so their
@@ -343,6 +344,44 @@ pub struct IngestPath {
     /// actually counted.
     pub received_recent: Option<u64>,
     pub received_total: Option<u64>,
+
+    /// Whether this port speaks QUIC.
+    ///
+    /// The socket panel shows the ports that do not, and the TPU path panel
+    /// shows the ones that do, joined to what the QUIC listener behind them
+    /// made of the traffic. Both draw from this one list, because there is one
+    /// truth about a socket and it should not be read twice.
+    pub quic: bool,
+}
+
+/// One QUIC port's own account of what was offered to it and what got through.
+///
+/// Sent per port rather than summed across the three. They are separate
+/// listeners on separate sockets with separate limits, and a peer hammering
+/// forwards says something quite different from the same peer hammering the
+/// TPU port.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QuicPort {
+    /// The same name the socket list uses for this port.
+    pub name: &'static str,
+    #[serde(flatten)]
+    pub counts: QuicTotals,
+    #[serde(flatten)]
+    pub levels: QuicLevels,
+    /// Datagrams the kernel discarded on this port, over the same span as the
+    /// counts beside them.
+    ///
+    /// Carried here rather than read off the socket list, whose own figure
+    /// covers a minute against this card's five. Sent in whole datagrams while
+    /// everything else here is connections or transactions, so it is drawn
+    /// without a bar and never added to anything.
+    pub kernel_drops: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QuicPaths {
+    pub window_seconds: f64,
+    pub ports: Vec<QuicPort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -467,6 +506,7 @@ struct IngestPort {
     /// Running total of packets delivered, or `None` for a port whose traffic
     /// nothing counts in datagrams.
     received: Option<u64>,
+    quic: bool,
 }
 
 /// Cumulative transaction counters read off a bank, used to derive per-slot
@@ -625,6 +665,16 @@ pub struct Meters {
 
     /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: PortWindow,
+    /// The same drops again over the longer window the QUIC counters use.
+    ///
+    /// A second window rather than a second reading: the TPU path card draws
+    /// the kernel's drops above the listener's own figures, and one of the two
+    /// covering a minute while the other covers five would make the whole
+    /// column a comparison between different spans.
+    quic_drops_window: PortWindow,
+    /// What that window last worked out, per port name, for the tick's later
+    /// pass over the metrics counters to pick up.
+    quic_kernel_drops: HashMap<&'static str, u64>,
     /// Per-port drops as of the moment the validator finished starting.
     ///
     /// Reported totals are counted from here. Most of a validator's drops
@@ -638,7 +688,7 @@ pub struct Meters {
     ///
     /// Kept apart from the drop figures rather than folded in beside them
     /// because they come from a different source and cover a different set of
-    /// ports: three of the six have no count at all, and a single structure
+    /// ports: four of the seven have no count at all, and a single structure
     /// would have to carry a hole for them.
     received_window: PortWindow,
     received_baseline: Option<HashMap<u16, u64>>,
@@ -685,7 +735,9 @@ pub struct Meters {
     /// changeover can be noticed rather than summed through.
     waterfall_source: SchedulerSource,
     quic_window: VecDeque<QuicTotals>,
-    quic: Debounced<Option<QuicTotals>>,
+    quic_forwards_window: VecDeque<QuicTotals>,
+    quic_vote_window: VecDeque<QuicTotals>,
+    quic_paths: Debounced<Option<QuicPaths>>,
     verify_window: VecDeque<VerifyTotals>,
     verify: Debounced<Option<VerifyTotals>>,
     executed_window: VecDeque<ExecutedTotals>,
@@ -715,6 +767,8 @@ impl Meters {
             net_history: Vec::new(),
             net_unavailable: false,
             drops_window: PortWindow::new(DROPS_WINDOW),
+            quic_drops_window: PortWindow::new(Duration::from_secs(WATERFALL_WINDOW as u64)),
+            quic_kernel_drops: HashMap::new(),
             drops_baseline: None,
             received_window: PortWindow::new(DROPS_WINDOW),
             received_baseline: None,
@@ -735,7 +789,9 @@ impl Meters {
             waterfall: Debounced::default(),
             waterfall_source: SchedulerSource::default(),
             quic_window: VecDeque::with_capacity(WATERFALL_WINDOW),
-            quic: Debounced::default(),
+            quic_forwards_window: VecDeque::with_capacity(WATERFALL_WINDOW),
+            quic_vote_window: VecDeque::with_capacity(WATERFALL_WINDOW),
+            quic_paths: Debounced::default(),
             verify_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             verify: Debounced::default(),
             executed_window: VecDeque::with_capacity(WATERFALL_WINDOW),
@@ -912,16 +968,63 @@ impl Meters {
             }),
         );
 
-        let quic = windowed(
-            &mut self.quic_window,
-            current.quic.since(&previous.quic),
-            WATERFALL_WINDOW,
-        );
-        self.quic.publish(
+        // One row per QUIC port, each windowed on its own. Sent as a list
+        // rather than three keys so the panel can draw the ports it was given
+        // and no more: a validator with no vote endpoint advertised should show
+        // two rows, not a third reading nought.
+        //
+        // Present as soon as any port has been offered anything, which on a
+        // validator with an open TPU port is immediately and permanently. The
+        // stages further down go quiet between leader slots, and a panel that
+        // left the grid whenever they did would be one an operator with few
+        // slots could rarely open at all.
+        // Read before the windows are borrowed below, so the two do not have to
+        // be disjoint.
+        let kernel_drops = self.quic_kernel_drops.clone();
+        let ports: Vec<QuicPort> = [
+            (
+                "tpu",
+                &mut self.quic_window,
+                current.quic.since(&previous.quic),
+                current.quic_levels,
+            ),
+            (
+                "tpu forwards",
+                &mut self.quic_forwards_window,
+                current.quic_forwards.since(&previous.quic_forwards),
+                current.quic_forwards_levels,
+            ),
+            (
+                "tpu vote quic",
+                &mut self.quic_vote_window,
+                current.quic_vote.since(&previous.quic_vote),
+                current.quic_vote_levels,
+            ),
+        ]
+        .into_iter()
+        .map(|(name, window, sample, levels)| QuicPort {
+            name,
+            counts: windowed(window, sample, WATERFALL_WINDOW),
+            levels,
+            // Absent where the socket read found no such port, which is not the
+            // same as a port that dropped nothing. Nought against a listener
+            // that admitted nothing would read as a clean floor under a broken
+            // door.
+            kernel_drops: kernel_drops.get(name).copied(),
+        })
+        .collect();
+        let offered = ports.iter().any(|port| port.counts.offered > 0);
+        // Every port's window is pushed on the same tick and trimmed to the
+        // same length, so any one of them says how much time the figures cover.
+        let window_seconds = (self.quic_window.len() as f64) * METER_INTERVAL.as_secs_f64();
+        self.quic_paths.publish(
             &self.publisher,
             TOPIC_SUMMARY,
-            "quic",
-            (quic.handed_on > 0 || quic.queue_full > 0).then_some(quic),
+            "quic_paths",
+            offered.then_some(QuicPaths {
+                window_seconds,
+                ports,
+            }),
         );
 
         let verify = windowed(
@@ -1257,31 +1360,55 @@ impl Meters {
         [
             // Everything arriving on the TVU port is a shred, so the count the
             // shred receiver keeps is the count of what the port delivered.
-            ("turbine", info.tvu(Protocol::UDP), Some(tap.shreds_turbine)),
+            (
+                "turbine",
+                info.tvu(Protocol::UDP),
+                Some(tap.shreds_turbine),
+                false,
+            ),
             // QUIC. The stream layer counts transactions it managed to pull out
             // of a connection, which is neither one datagram nor a whole number
             // of them, and adding that to a datagram drop count would produce a
-            // ratio between two different things.
-            ("tpu", info.tpu(Protocol::QUIC), None),
-            ("tpu forwards", info.tpu_forwards(Protocol::QUIC), None),
+            // ratio between two different things. These three are drawn on the
+            // TPU path panel instead, where the listener's own account of what
+            // it admitted stands in for the share this cannot give them.
+            ("tpu", info.tpu(Protocol::QUIC), None, true),
+            (
+                "tpu forwards",
+                info.tpu_forwards(Protocol::QUIC),
+                None,
+                true,
+            ),
+            // The UDP vote port, which does have a receiver counting datagrams
+            // and stays on the socket panel. The QUIC vote port below is a
+            // different socket on a different number, and until now neither the
+            // socket panel nor anything else showed it.
             (
                 "tpu vote",
                 info.tpu_vote(Protocol::UDP),
                 Some(tap.packets_tpu_vote),
+                false,
             ),
-            ("gossip", info.gossip(), Some(tap.packets_gossip)),
+            ("tpu vote quic", info.tpu_vote(Protocol::QUIC), None, true),
+            ("gossip", info.gossip(), Some(tap.packets_gossip), false),
             // The one port that could have a count and does not. Its receiver
             // keeps the same counters as the others and nothing ever reports
             // them, so they are accumulated on every packet and thrown away
             // when the service ends. Reaching them means a change to `core`.
-            ("serve repair", info.serve_repair(Protocol::UDP), None),
+            (
+                "serve repair",
+                info.serve_repair(Protocol::UDP),
+                None,
+                false,
+            ),
         ]
         .into_iter()
-        .filter_map(|(name, addr, received)| {
+        .filter_map(|(name, addr, received, quic)| {
             Some(IngestPort {
                 name,
                 port: addr?.port(),
                 received,
+                quic,
             })
         })
         .collect()
@@ -1300,6 +1427,10 @@ impl Meters {
             Ok(ports) => ports,
             Err(err) => {
                 self.drops_unavailable = true;
+                // Emptied rather than left as it was. This latches, so a
+                // reading kept here would be shown on the TPU path card for the
+                // rest of the process's life as though it were current.
+                self.quic_kernel_drops.clear();
                 log::info!("dashboard: socket counters unavailable, panel disabled: {err}");
                 return;
             }
@@ -1347,8 +1478,24 @@ impl Meters {
             self.drops_baseline = Some(drops.clone());
             self.received_baseline = Some(received.clone());
         }
-        self.drops_window.push(now, drops);
+        self.drops_window.push(now, drops.clone());
         self.received_window.push(now, received);
+        self.quic_drops_window.push(now, drops);
+        // Into a local and then assigned, rather than built in place: the
+        // expression reads two other fields of `self` and writing it directly
+        // into a third leans on disjoint borrows for no gain in clarity.
+        let quic_drops: HashMap<&'static str, u64> = ports
+            .iter()
+            .filter(|port| port.quic)
+            .filter_map(|port| {
+                let counters = self.known_sockets.get(&port.port)?;
+                Some((
+                    port.name,
+                    self.quic_drops_window.since(port.port, counters.drops),
+                ))
+            })
+            .collect();
+        self.quic_kernel_drops = quic_drops;
 
         let paths: Vec<IngestPath> = ports
             .iter()
@@ -1368,6 +1515,7 @@ impl Meters {
                         .received
                         .map(|total| self.received_window.since(port.port, total)),
                     received_total: port.received.map(|total| total.saturating_sub(received_by)),
+                    quic: port.quic,
                 })
             })
             .collect();
@@ -1588,6 +1736,29 @@ mod tests {
             by_name["serve repair"], None,
             "its receiver keeps counters that nothing reports"
         );
+    }
+
+    #[test]
+    fn test_the_quic_ports_are_flagged_and_the_udp_vote_port_is_not() {
+        // Two panels read this one list and split it on this flag, so a port on
+        // the wrong side of it appears on the wrong card. The vote ports are
+        // the pair worth pinning: `tpu_vote` is UDP with a receiver counting
+        // datagrams and belongs on the socket card, and the QUIC vote endpoint
+        // is a different socket on a different number.
+        let harness = fixture();
+        let meters = harness.meters();
+        let ports = meters.ingest_ports(&TapCounters::default());
+        let quic: HashMap<&str, bool> = ports.iter().map(|port| (port.name, port.quic)).collect();
+
+        assert_eq!(quic.get("tpu"), Some(&true));
+        assert_eq!(quic.get("tpu forwards"), Some(&true));
+        assert_eq!(quic.get("tpu vote"), Some(&false));
+        assert_eq!(quic.get("turbine"), Some(&false));
+        assert_eq!(quic.get("gossip"), Some(&false));
+        assert_eq!(quic.get("serve repair"), Some(&false));
+        // Present only where the node advertises one, which is why this is
+        // checked for absence rather than asserted into existence.
+        assert_ne!(quic.get("tpu vote quic"), Some(&false));
     }
 
     #[test]

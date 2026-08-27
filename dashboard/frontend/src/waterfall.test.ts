@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
-import { executedRows, quicRows, scheduledShare, verifyRows, waterfallRows } from "./waterfall";
+import { executedRows, scheduledShare, verifyRows, waterfallRows } from "./waterfall";
 
 /** A window in which nothing happened, to be overridden a field at a time. */
 function quiet(over: Partial<Waterfall> = {}): Waterfall {
@@ -278,15 +278,6 @@ describe("verifyRows", () => {
   });
 });
 
-describe("quicRows", () => {
-  it("makes the total from the outcomes, having no count of its own", () => {
-    const rows = quicRows({ handed_on: 900, queue_full: 80, disconnected: 20 });
-    expect(rowOf(rows, "quic_offered").count).toBe(1000);
-    expect(rowOf(rows, "quic_offered").share).toBe(1);
-    expect(rowOf(rows, "quic_queue_full").share).toBeCloseTo(0.08, 10);
-  });
-});
-
 describe("executedRows", () => {
   const stage = (over: Partial<ExecutedStage> = {}): ExecutedStage => ({
     attempted: 0,
@@ -364,25 +355,6 @@ describe("executedRows", () => {
   it("does not go negative if succeeded outruns committed across a reset", () => {
     const rows = executedRows(stage({ attempted: 10, processed: 5, succeeded: 9 }));
     expect(rowOf(rows, "exec_failed").count).toBe(0);
-  });
-});
-
-describe("each section is drawn against its own total", () => {
-  it("does not measure one stage against another's denominator", () => {
-    // The whole reason these are four sections. QUIC handing on nine hundred
-    // and verify receiving a thousand is ordinary — they are measured either
-    // side of the fetch stage's buffering — and the bars must not imply that
-    // verify received more than everything.
-    const quic = quicRows({ handed_on: 900, queue_full: 0, disconnected: 0 });
-    const verify = verifyRows({
-      received: 1000,
-      duplicate: 0,
-      below_floor: 0,
-      verified: 1000,
-      evicted_batches: 0,
-    });
-    expect(rowOf(quic, "quic_handed_on").share).toBe(1);
-    expect(rowOf(verify, "verify_received").share).toBe(1);
   });
 });
 

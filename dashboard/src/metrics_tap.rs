@@ -102,11 +102,16 @@ const ACCOUNTS_FLUSH: &str = "accounts_db-flush_accounts_cache";
 /// the rest. The point is emitted at every reset, so nothing is missed.
 const PROGRAM_CACHE: &str = "loaded-programs-cache-stats";
 
-/// The QUIC listener on the TPU port, the stage before verification.
+/// The QUIC listeners, one point per port under its own name.
 ///
-/// Only the one port. Forwards and vote have listeners of their own reporting
-/// under their own names, and neither feeds the scheduler this card follows.
+/// All three are read. Only the TPU one feeds verification and the scheduler,
+/// but the connection and stream figures are worth having for each: a port
+/// being hammered is worth seeing whether or not anything downstream of it
+/// cares, and forwards and vote are where an operator would never otherwise
+/// look.
 const QUIC_TPU: &str = "quic_streamer_tpu";
+const QUIC_TPU_FORWARDS: &str = "quic_streamer_tpu_forwards";
+const QUIC_TPU_VOTE: &str = "quic_streamer_tpu_vote";
 
 /// Signature verification and deduplication for everything that is not a vote.
 ///
@@ -262,20 +267,65 @@ pub struct ProgramCacheCounters {
     pub water_level: AtomicU64,
 }
 
-/// What the QUIC listener did with the transactions it pulled off the wire.
+/// One QUIC port: who was let in, what they sent, and what got through.
 ///
-/// The narrowest of the four stages. QUIC keeps no count of what arrived, only
-/// of what it managed to hand on and what it had to throw away, so the total
-/// offered is the sum of the three rather than a figure of its own.
+/// Three kinds of figure arrive on this point and they cannot be treated alike.
+/// Most fields are reported with `swap(0)`, so each point carries one interval's
+/// work and they are accumulated here. `total_incoming_connection_attempts` is
+/// reported with `load` instead, so it arrives already cumulative and is stored
+/// rather than added — differenced later like the rest, since both end up as
+/// totals that only climb. The last two are levels and are neither added nor
+/// differenced.
+///
+/// That inconsistency is upstream's and is easy to miss: accumulating the
+/// cumulative one would square it within a minute, and it is the denominator
+/// the whole first section is drawn against.
 #[derive(Debug, Default)]
 pub struct QuicCounters {
+    /// Connections offered, cumulative on the wire. The denominator for
+    /// everything else in this group.
+    pub offered: AtomicU64,
+    /// Shed before the handshake because the port was over its overall rate.
+    pub shed_all: AtomicU64,
+    /// Shed before the handshake because one address was over its rate.
+    pub shed_address: AtomicU64,
+    /// Refused because the endpoint already held all the connections it may.
+    pub refused_full: AtomicU64,
+    /// Reached the handshake and ran out of time.
+    pub handshake_timeout: AtomicU64,
+    /// Reached the handshake and failed it.
+    pub handshake_error: AtomicU64,
+    /// Handshook and then refused a place in the connection table.
+    pub add_failed: AtomicU64,
+    /// Admitted, from a peer with stake.
+    pub admitted_staked: AtomicU64,
+    /// Admitted, from a peer without.
+    pub admitted_unstaked: AtomicU64,
+
+    /// Streams opened on connections that were admitted.
+    pub streams: AtomicU64,
+    /// Held back by the per-stake stream limiter.
+    pub throttled_staked: AtomicU64,
+    pub throttled_unstaked: AtomicU64,
+    /// Opened and then never finished arriving.
+    pub read_timeouts: AtomicU64,
+    pub read_errors: AtomicU64,
+    /// Refused for describing a transaction that could not be one.
+    pub invalid_size: AtomicU64,
+
     /// Handed on towards verification.
     pub handed_on: AtomicU64,
+    pub bytes_handed_on: AtomicU64,
     /// Thrown away because the queue towards verification was full. The one
     /// row here that means this validator could not keep up.
     pub queue_full: AtomicU64,
     /// Thrown away because that queue had gone.
     pub disconnected: AtomicU64,
+
+    /// Connections open at the moment of the last point. A level.
+    pub open: AtomicU64,
+    /// Streams in flight at that same moment. A level.
+    pub active_streams: AtomicU64,
 }
 
 /// What signature verification and deduplication did with what QUIC handed on.
@@ -380,6 +430,11 @@ pub struct MetricsTap {
     /// population the next one does not quite receive. Summed into a single
     /// chain they would look authoritative and be quietly wrong.
     pub quic: QuicCounters,
+    /// The other two QUIC ports. Neither feeds verification or the scheduler,
+    /// so neither joins the chain above; both are read for the same connection
+    /// and stream figures the TPU port keeps.
+    pub quic_forwards: QuicCounters,
+    pub quic_vote: QuicCounters,
     pub verify: VerifyCounters,
     pub executed: ExecutedCounters,
 
@@ -669,9 +724,36 @@ pub struct ProgramCacheTotals {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicTotals {
+    pub offered: u64,
+    pub shed_all: u64,
+    pub shed_address: u64,
+    pub refused_full: u64,
+    pub handshake_timeout: u64,
+    pub handshake_error: u64,
+    pub add_failed: u64,
+    pub admitted_staked: u64,
+    pub admitted_unstaked: u64,
+    pub streams: u64,
+    pub throttled_staked: u64,
+    pub throttled_unstaked: u64,
+    pub read_timeouts: u64,
+    pub read_errors: u64,
+    pub invalid_size: u64,
     pub handed_on: u64,
+    pub bytes_handed_on: u64,
     pub queue_full: u64,
     pub disconnected: u64,
+}
+
+/// How one QUIC port stands at this instant, rather than what it did.
+///
+/// Apart from the counters because a window of levels is meaningless: summed
+/// they give a number twelve times too large, and differenced they give the
+/// change rather than the reading.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct QuicLevels {
+    pub open: u64,
+    pub active_streams: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -752,6 +834,13 @@ pub struct TapCounters {
     /// stands rather than differenced.
     pub program_cache_water_level: u64,
     pub quic: QuicTotals,
+    pub quic_forwards: QuicTotals,
+    pub quic_vote: QuicTotals,
+    /// Levels rather than counts, one set per port, in the same order the
+    /// totals above are named.
+    pub quic_levels: QuicLevels,
+    pub quic_forwards_levels: QuicLevels,
+    pub quic_vote_levels: QuicLevels,
     pub verify: VerifyTotals,
     pub executed: ExecutedTotals,
 }
@@ -812,6 +901,8 @@ impl MetricsTap {
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
             PROGRAM_CACHE => self.program_cache.add_point(point),
             QUIC_TPU => self.quic.add_point(point),
+            QUIC_TPU_FORWARDS => self.quic_forwards.add_point(point),
+            QUIC_TPU_VOTE => self.quic_vote.add_point(point),
             TPU_VERIFIER => self.verify.add_point(point),
             WORKER_COUNTS | WORKER_ERROR_METRICS => self.executed.add_point(point),
             _ => (),
@@ -1088,6 +1179,11 @@ impl MetricsTap {
             program_cache: self.program_cache.totals(),
             program_cache_water_level: self.program_cache.water_level.load(Ordering::Relaxed),
             quic: self.quic.totals(),
+            quic_forwards: self.quic_forwards.totals(),
+            quic_vote: self.quic_vote.totals(),
+            quic_levels: self.quic.levels(),
+            quic_forwards_levels: self.quic_forwards.levels(),
+            quic_vote_levels: self.quic_vote.levels(),
             verify: self.verify.totals(),
             executed: self.executed.totals(),
         }
@@ -1197,17 +1293,47 @@ impl ProgramCacheCounters {
 impl QuicCounters {
     fn add_point(&self, point: &DataPoint) {
         for (name, value) in &point.fields {
+            // Cumulative on the wire rather than one interval's worth, unlike
+            // every counter beside it. Stored, not added.
+            if *name == "total_incoming_connection_attempts" {
+                set_field(&self.offered, value);
+                continue;
+            }
+            // Levels, and the only two read here. `peak_open_staked_connections`
+            // looks like a third but is a peak reset to the current reading as
+            // it is reported, which is neither a level nor a count and would
+            // need a third treatment to mean anything over a window.
+            if *name == "open_connections" {
+                set_field(&self.open, value);
+                continue;
+            }
+            if *name == "active_streams" {
+                set_field(&self.active_streams, value);
+                continue;
+            }
             let counter = match *name {
+                "connection_rate_limited_across_all" => &self.shed_all,
+                "connection_rate_limited_per_ipaddr" => &self.shed_address,
+                "refused_connections_too_many_open_connections" => &self.refused_full,
+                "connection_setup_timeout" => &self.handshake_timeout,
+                "connection_setup_error" => &self.handshake_error,
+                "connection_add_failed" => &self.add_failed,
+                "connection_added_from_staked_peer" => &self.admitted_staked,
+                "connection_added_from_unstaked_peer" => &self.admitted_unstaked,
+                "new_streams" => &self.streams,
+                "throttled_staked_streams" => &self.throttled_staked,
+                "throttled_unstaked_streams" => &self.throttled_unstaked,
+                "stream_read_timeouts" => &self.read_timeouts,
+                "stream_read_errors" => &self.read_errors,
+                "invalid_stream_size" => &self.invalid_size,
                 // Named for the counter, not for the field it is reported
                 // under: the struct calls this `total_packets_sent_to_consumer`
                 // and the point calls it this. Matching the struct's name reads
                 // nought for ever and takes the whole section with it.
                 "packets_sent_to_consumer" => &self.handed_on,
+                "bytes_sent_to_consumer" => &self.bytes_handed_on,
                 "total_handle_chunk_to_packet_send_full_err" => &self.queue_full,
                 "total_handle_chunk_to_packet_send_disconnected_err" => &self.disconnected,
-                // The rest of that point is connections, streams and stream
-                // throttling: gauges and connection-level counts that say
-                // nothing about how many transactions got through.
                 _ => continue,
             };
             add_field(counter, value);
@@ -1215,10 +1341,35 @@ impl QuicCounters {
     }
 
     fn totals(&self) -> QuicTotals {
+        let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         QuicTotals {
-            handed_on: self.handed_on.load(Ordering::Relaxed),
-            queue_full: self.queue_full.load(Ordering::Relaxed),
-            disconnected: self.disconnected.load(Ordering::Relaxed),
+            offered: read(&self.offered),
+            shed_all: read(&self.shed_all),
+            shed_address: read(&self.shed_address),
+            refused_full: read(&self.refused_full),
+            handshake_timeout: read(&self.handshake_timeout),
+            handshake_error: read(&self.handshake_error),
+            add_failed: read(&self.add_failed),
+            admitted_staked: read(&self.admitted_staked),
+            admitted_unstaked: read(&self.admitted_unstaked),
+            streams: read(&self.streams),
+            throttled_staked: read(&self.throttled_staked),
+            throttled_unstaked: read(&self.throttled_unstaked),
+            read_timeouts: read(&self.read_timeouts),
+            read_errors: read(&self.read_errors),
+            invalid_size: read(&self.invalid_size),
+            handed_on: read(&self.handed_on),
+            bytes_handed_on: read(&self.bytes_handed_on),
+            queue_full: read(&self.queue_full),
+            disconnected: read(&self.disconnected),
+        }
+    }
+
+    /// The two levels, which are read as they stand and never windowed.
+    fn levels(&self) -> QuicLevels {
+        QuicLevels {
+            open: self.open.load(Ordering::Relaxed),
+            active_streams: self.active_streams.load(Ordering::Relaxed),
         }
     }
 }
@@ -1441,7 +1592,23 @@ counter_arithmetic!(ProgramCacheTotals {
 });
 
 counter_arithmetic!(QuicTotals {
+    offered,
+    shed_all,
+    shed_address,
+    refused_full,
+    handshake_timeout,
+    handshake_error,
+    add_failed,
+    admitted_staked,
+    admitted_unstaked,
+    streams,
+    throttled_staked,
+    throttled_unstaked,
+    read_timeouts,
+    read_errors,
+    invalid_size,
     handed_on,
+    bytes_handed_on,
     queue_full,
     disconnected,
 });
@@ -2156,26 +2323,160 @@ mod tests {
         }
     }
 
+    /// Every field the QUIC panel reads, spelled as the point spells it.
+    const QUIC_POINT: &[(&str, &str)] = &[
+        ("total_incoming_connection_attempts", "18420i"),
+        ("connection_rate_limited_across_all", "2140i"),
+        ("connection_rate_limited_per_ipaddr", "6880i"),
+        ("refused_connections_too_many_open_connections", "412i"),
+        ("connection_setup_timeout", "1205i"),
+        ("connection_setup_error", "338i"),
+        ("connection_add_failed", "7i"),
+        ("connection_added_from_staked_peer", "1890i"),
+        ("connection_added_from_unstaked_peer", "5548i"),
+        ("new_streams", "42880i"),
+        ("throttled_staked_streams", "0i"),
+        ("throttled_unstaked_streams", "3412i"),
+        ("stream_read_timeouts", "288i"),
+        ("stream_read_errors", "41i"),
+        ("invalid_stream_size", "12i"),
+        ("packets_sent_to_consumer", "900i"),
+        ("bytes_sent_to_consumer", "64000i"),
+        ("total_handle_chunk_to_packet_send_full_err", "8i"),
+        ("total_handle_chunk_to_packet_send_disconnected_err", "1i"),
+        ("open_connections", "1284i"),
+        ("active_streams", "46i"),
+    ];
+
     #[test]
     fn test_the_quic_fields_are_the_ones_the_point_carries() {
-        // Two of these are named after the counter behind them and one is not,
-        // which is not guessable and was wrong once. A field name taken from
-        // the struct rather than from the wire matches nothing, reads nought
-        // for ever, and takes its whole section down with it.
+        // Several of these are named after the counter behind them and several
+        // are not, which is not guessable and was wrong once. A field name
+        // taken from the struct rather than from the wire matches nothing,
+        // reads nought for ever, and takes its whole section down with it.
+        let tap = MetricsTap::default();
+        tap.observe(&named(QUIC_TPU, QUIC_POINT));
+
+        let read = tap.counters();
+        let quic = read.quic;
+        assert_eq!(quic.offered, 18_420);
+        assert_eq!(quic.shed_all, 2_140);
+        assert_eq!(quic.shed_address, 6_880);
+        assert_eq!(quic.refused_full, 412);
+        assert_eq!(quic.handshake_timeout, 1_205);
+        assert_eq!(quic.handshake_error, 338);
+        assert_eq!(quic.add_failed, 7);
+        assert_eq!(quic.admitted_staked, 1_890);
+        assert_eq!(quic.admitted_unstaked, 5_548);
+        assert_eq!(quic.streams, 42_880);
+        assert_eq!(quic.throttled_staked, 0);
+        assert_eq!(quic.throttled_unstaked, 3_412);
+        assert_eq!(quic.read_timeouts, 288);
+        assert_eq!(quic.read_errors, 41);
+        assert_eq!(quic.invalid_size, 12);
+        assert_eq!(quic.handed_on, 900);
+        assert_eq!(quic.bytes_handed_on, 64_000);
+        assert_eq!(quic.queue_full, 8);
+        assert_eq!(quic.disconnected, 1);
+        assert_eq!(read.quic_levels.open, 1_284);
+        assert_eq!(read.quic_levels.active_streams, 46);
+    }
+
+    #[test]
+    fn test_the_shed_connections_account_for_the_offer() {
+        // The listener sheds in order and moves on after each, so every attempt
+        // is shed at one of the gates, fails the handshake, or is admitted.
+        // That is what lets the section be drawn against its own total rather
+        // than against a sum of its rows, and it is why this one is closer to a
+        // partition than any other section on the dashboard.
+        //
+        // Closer, not equal. A connection can be shed by the rate limiter a
+        // second time after the handshake, which counts against a gate it has
+        // already passed, and an `accept()` that fails outright is counted
+        // nowhere. So the rows can run slightly over the offer or slightly
+        // under it, and the panel has to tolerate both. This pins the
+        // arithmetic on a clean sample; the tolerance is tested in the browser.
+        let tap = MetricsTap::default();
+        tap.observe(&named(QUIC_TPU, QUIC_POINT));
+
+        let quic = tap.counters().quic;
+        // Saturating rather than bare addition: the workspace denies
+        // `arithmetic_side_effects`, and unlike the sums of literals elsewhere
+        // in these tests these are runtime values the lint cannot prove safe.
+        let accounted = [
+            quic.shed_all,
+            quic.shed_address,
+            quic.refused_full,
+            quic.handshake_timeout,
+            quic.handshake_error,
+            quic.add_failed,
+            quic.admitted_staked,
+            quic.admitted_unstaked,
+        ]
+        .into_iter()
+        .fold(0u64, u64::saturating_add);
+        assert_eq!(accounted, quic.offered);
+    }
+
+    #[test]
+    fn test_the_cumulative_offer_is_stored_rather_than_added() {
+        // Every counter on this point is reported with `swap`, so each point
+        // carries one interval and they accumulate. The offer is reported with
+        // `load` and arrives already cumulative. Added like its neighbours it
+        // would square inside a minute, and it is the denominator the whole
+        // section is drawn against.
         let tap = MetricsTap::default();
         tap.observe(&named(
             QUIC_TPU,
             &[
-                ("packets_sent_to_consumer", "900i"),
-                ("total_handle_chunk_to_packet_send_full_err", "8i"),
-                ("total_handle_chunk_to_packet_send_disconnected_err", "1i"),
+                ("total_incoming_connection_attempts", "1000i"),
+                ("new_streams", "10i"),
+            ],
+        ));
+        tap.observe(&named(
+            QUIC_TPU,
+            &[
+                ("total_incoming_connection_attempts", "1600i"),
+                ("new_streams", "10i"),
             ],
         ));
 
         let quic = tap.counters().quic;
-        assert_eq!(quic.handed_on, 900);
-        assert_eq!(quic.queue_full, 8);
-        assert_eq!(quic.disconnected, 1);
+        assert_eq!(quic.offered, 1_600);
+        assert_eq!(quic.streams, 20);
+    }
+
+    #[test]
+    fn test_the_levels_are_the_latest_reading_rather_than_a_sum() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            QUIC_TPU,
+            &[("open_connections", "900i"), ("active_streams", "12i")],
+        ));
+        tap.observe(&named(
+            QUIC_TPU,
+            &[("open_connections", "870i"), ("active_streams", "9i")],
+        ));
+
+        let levels = tap.counters().quic_levels;
+        assert_eq!(levels.open, 870);
+        assert_eq!(levels.active_streams, 9);
+    }
+
+    #[test]
+    fn test_each_quic_port_counts_into_its_own_set() {
+        // Three listeners reporting the same field names under three point
+        // names. Summed together the panel would say one port was doing what
+        // all three were, and the busiest of them would hide the other two.
+        let tap = MetricsTap::default();
+        tap.observe(&named(QUIC_TPU, &[("new_streams", "900i")]));
+        tap.observe(&named(QUIC_TPU_FORWARDS, &[("new_streams", "40i")]));
+        tap.observe(&named(QUIC_TPU_VOTE, &[("new_streams", "70i")]));
+
+        let read = tap.counters();
+        assert_eq!(read.quic.streams, 900);
+        assert_eq!(read.quic_forwards.streams, 40);
+        assert_eq!(read.quic_vote.streams, 70);
     }
 
     #[test]

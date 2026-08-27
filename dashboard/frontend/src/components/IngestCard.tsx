@@ -1,5 +1,5 @@
 import { bytes, count, percent } from "../format";
-import type { IngestPath, IngestSummary } from "../types";
+import type { IngestPath, IngestSummary, QuicPaths } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
@@ -10,8 +10,16 @@ import { Card, Explain } from "./primitives";
  * happen after a packet is already in userspace. A full receive buffer is the
  * usual way a validator loses shreds, and nothing inside the process sees it.
  *
- * Reading `/proc/net/udp` also reaches the QUIC ports, since QUIC runs over UDP
- * and the TPU's own figures count transactions rather than datagrams.
+ * Reading `/proc/net/udp` reaches the QUIC ports too, since QUIC runs over UDP,
+ * and those rows are drawn on the TPU path card rather than here whenever that
+ * card is there to draw them. They are the ports with no datagram count to be a
+ * share of, and there they can sit above the listener's own account of what it
+ * admitted, which answers the same question in a unit that port does have.
+ *
+ * That card is fed by the metrics tap and this one is not, so on a validator
+ * logging below info it is absent and these rows come back here. A drop figure
+ * without a share is worth less than one with, and worth a great deal more than
+ * no figure at all.
  *
  * Where the validator does count a port's traffic in datagrams, that count is
  * sent alongside and the row shows a share as well as a figure. Drops and
@@ -27,7 +35,20 @@ import { Card, Explain } from "./primitives";
 export function IngestCard() {
   const store = useStore();
   const summary = store.get<IngestSummary>("summary", "ingest_paths");
-  if (!summary || summary.paths.length === 0) return null;
+  // The QUIC ports move to the TPU path card, where the listener's own account
+  // of what it admitted stands in for the share this list cannot give them.
+  // What is left here is the ports where a drop count has a delivered count to
+  // be a share of, or in serve repair's case ought to have one.
+  //
+  // Only where that card is actually going to draw them. Its figures come from
+  // the metrics tap and a validator logging below info submits no points at
+  // all, so the card is absent on such a node — while these drop figures, which
+  // are read straight from /proc, are not. Filtering unconditionally would
+  // leave the busiest ports on the validator unwatched on exactly the nodes
+  // whose operator had turned the logging down.
+  const elsewhere = store.get<QuicPaths | null>("summary", "quic_paths") !== null;
+  const paths = (summary?.paths ?? []).filter((path) => !path.quic || !elsewhere);
+  if (!summary || paths.length === 0) return null;
 
   return (
     <Card title="Socket Ingest" className="ingest-body">
@@ -44,16 +65,17 @@ export function IngestCard() {
             Total
           </Explain>
         </div>
-        {summary.paths.map((path) => (
+        {paths.map((path) => (
           <IngestRow key={path.name} path={path} />
         ))}
       </div>
       <div className="card-footnote">
         Dropped packets per UDP port, shown as a share of everything that
-        arrived wherever the traffic is counted in whole packets. The two QUIC
-        ports and serve repair have no such count, and their rows are drop
-        figures alone.{" "}
-        <Explain text="Drops come from /proc/net/udp, which has a counter for what each socket discarded but none for what it handed over. The delivered half comes from the validator's own receivers, which report a packet count for turbine, gossip and TPU vote. The QUIC ports count transactions pulled out of streams rather than datagrams off the wire, so there is nothing there to add to a drop count. Serve repair keeps the right counter and never reports it, which would take a change to the validator itself to fix.">
+        arrived wherever the traffic is counted in whole packets.{" "}
+        {elsewhere
+          ? "Serve repair is the one row without that share, and the QUIC ports are on the TPU path card instead."
+          : "Serve repair and the QUIC ports have no such count, and their rows are drop figures alone."}{" "}
+        <Explain text="Drops come from /proc/net/udp, which has a counter for what each socket discarded but none for what it handed over. The delivered half comes from the validator's own receivers, which report a packet count for turbine, gossip and the UDP vote port. Serve repair keeps the same counter and never reports it, so its row is a drop figure alone, and reaching it would take a change to the validator itself. The QUIC ports have no datagram count at all, since their counters count transactions pulled out of streams, which is why they are drawn beside what their listeners admitted rather than beside a share they cannot have.">
           Why?
         </Explain>
       </div>
@@ -67,9 +89,10 @@ export function IngestCard() {
  * The share answers half of what stopped this being marked before — an absolute
  * figure could not be judged — but not the other half: the paths differ too much
  * in consequence for one threshold to serve them. Gossip is redundant and
- * re-requests what it loses; a dropped vote is not. And three rows still have no
- * share at all, so a colour scale would mark half the card and leave the rest
- * looking healthy for want of a measurement rather than for want of a fault.
+ * re-requests what it loses; a dropped vote is not. And serve repair still has
+ * no share at all, nor have the QUIC ports on the nodes where they appear here,
+ * so a colour scale would leave those rows looking healthy for want of a
+ * measurement rather than for want of a fault.
  */
 function IngestRow({ path }: { path: IngestPath }) {
   return (

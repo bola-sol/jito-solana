@@ -423,6 +423,20 @@ export interface QuicPaths {
  * difference between a quiet epoch and one that was only watched for its last
  * hour.
  */
+/**
+ * Bundles the block engine sent this epoch, and the transactions in them.
+ *
+ * Counted where they arrive rather than where they execute, so this is an
+ * upper bound on how much of the executed section came in this way rather than
+ * an exact share of it: some are dropped before a worker ever sees them, and
+ * the executed subset is not reported apart. Absent on a validator with no
+ * block engine, and on one running BAM, which supersedes that path.
+ */
+export interface BundleStage {
+  received: number;
+  packets: number;
+}
+
 export interface EpochSpan {
   epoch: number;
   /** Slots of this epoch that have happened. */

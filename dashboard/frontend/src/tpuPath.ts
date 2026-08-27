@@ -1,5 +1,11 @@
-import { percent } from "./format";
-import type { EpochSpan, ExecutedStage, QuicPort, VerifyStage } from "./types";
+import { count, percent } from "./format";
+import type {
+  BundleStage,
+  EpochSpan,
+  ExecutedStage,
+  QuicPort,
+  VerifyStage,
+} from "./types";
 import { executedRows, verifyRows, type WaterfallRow } from "./waterfall";
 
 /**
@@ -505,7 +511,10 @@ const LOAD_REASONS: Array<[key: string, label: string]> = [
  * rows rather than beside it, and are kept out of the bar, where they would be
  * counted a second time.
  */
-export function executedSection(e: ExecutedStage): PathSection {
+export function executedSection(
+  e: ExecutedStage,
+  bundles: BundleStage | null,
+): PathSection {
   const rows = executedRows(e);
   const attempted = pick(rows, "exec_attempted");
   const { losses, zeros } = sorted(attempted, [
@@ -568,7 +577,23 @@ export function executedSection(e: ExecutedStage): PathSection {
     losses,
     detail,
     zeros: zeros + (LOAD_REASONS.length - detail.length),
-    aside: null,
+    // What the bar above is partly made of, rather than a share of it. Bundles
+    // reach the workers by their own path and their transactions are already
+    // inside the figures here, so this is a note on the composition of the
+    // section and not a stage of it: no segment, no percentage, nothing to
+    // subtract. Absent where nothing sent any, which leaves the section exactly
+    // as it stood rather than adding a row of noughts.
+    aside:
+      bundles === null
+        ? null
+        : {
+            label: `${count(bundles.received)} bundles arrived, carrying`,
+            count: bundles.packets,
+            unit: "transactions",
+            warn: false,
+            explain:
+              "Bundles the block engine sent over this epoch, and the transactions inside them. They arrive over their own connection into their own stage, so they pass none of the sections above: not the port, not the streams, not signature verification. Their transactions are already counted in the figures beside this line, which is why it carries no percentage — it says what part of the bar arrived this way, not what was lost. Counted where the bundles arrive rather than where they execute, so it is an upper bound: some are dropped before a worker sees them, and the executed share of them is not reported apart.",
+          },
   };
 }
 
@@ -604,7 +629,8 @@ export function epochSpanLabel(span: EpochSpan): string {
   if (span.slots_in_epoch <= 0) return `Epoch ${span.epoch}`;
   const elapsed = percent(span.elapsed_slots / span.slots_in_epoch, 0);
   const missed = span.elapsed_slots - span.counted_slots;
-  if (missed <= EPOCH_START_SLACK) return `Epoch ${span.epoch}, ${elapsed} elapsed`;
+  if (missed <= EPOCH_START_SLACK)
+    return `Epoch ${span.epoch}, ${elapsed} elapsed`;
   const from = percent(missed / span.slots_in_epoch, 0);
   return `Epoch ${span.epoch}, ${elapsed} elapsed · counted from ${from}`;
 }

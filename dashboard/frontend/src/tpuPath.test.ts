@@ -341,6 +341,7 @@ describe("executedSection", () => {
         succeeded: 850,
         blockhash_old: 60,
       }),
+      null,
     );
     expect(keys(section.losses)).not.toContain("exec_blockhash_old");
     expect(keys(section.detail)).toContain("exec_blockhash_old");
@@ -354,6 +355,7 @@ describe("executedSection", () => {
         succeeded: 900,
         blockhash_old: 100,
       }),
+      null,
     );
     const reason = section.detail.find(
       (loss) => loss.key === "exec_blockhash_old",
@@ -361,9 +363,39 @@ describe("executedSection", () => {
     expect(reason?.share).toBeCloseTo(1, 10);
   });
 
+  it("notes the bundles on the heading without making them a share of the bar", () => {
+    // Their transactions are already inside the figures beside it, so a
+    // segment or a percentage would be counting the same work twice. It is a
+    // statement about what the bar is made of, in a unit the bar is not drawn
+    // in, which is what an aside is for.
+    const section = executedSection(
+      stage({ attempted: 1000, processed: 900, succeeded: 850 }),
+      { received: 1284, packets: 4617 },
+    );
+    expect(section.aside?.label).toContain("1,284 bundles");
+    expect(section.aside?.count).toBe(4617);
+    expect(section.aside?.unit).toBe("transactions");
+    expect(section.aside?.warn).toBe(false);
+    expect(keys(section.losses)).not.toContain("exec_bundles");
+    expect(keys(section.detail)).not.toContain("exec_bundles");
+    expect(section.total).toBe(1000);
+  });
+
+  it("says nothing at all where no bundle arrived", () => {
+    // Not nought. A validator with no block engine, or one running BAM, has
+    // no bundle stage reporting rather than a bundle stage reporting nothing,
+    // and the section is left exactly as it stands.
+    const section = executedSection(
+      stage({ attempted: 1000, processed: 900, succeeded: 850 }),
+      null,
+    );
+    expect(section.aside).toBeNull();
+  });
+
   it("counts a load reason at nought among the quiet counters", () => {
     const section = executedSection(
       stage({ attempted: 10, processed: 10, succeeded: 10 }),
+      null,
     );
     expect(section.detail).toHaveLength(0);
     expect(section.zeros).toBeGreaterThanOrEqual(12);

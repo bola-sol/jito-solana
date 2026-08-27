@@ -26,6 +26,7 @@ import {
   type PathSection,
 } from "../tpuPath";
 import type {
+  BundleStage,
   EpochSpan,
   ExecutedStage,
   QuicPaths,
@@ -74,6 +75,7 @@ export function TpuPathCard() {
   const paths = store.get<QuicPaths | null>("summary", "quic_paths");
   const verify = store.get<VerifyStage | null>("summary", "verify");
   const executed = store.get<ExecutedStage | null>("summary", "executed");
+  const bundles = store.get<BundleStage | null>("summary", "bundles") ?? null;
   const span = store.get<EpochSpan | null>("summary", "epoch_span");
   const [open, setOpen] = useState(readOpenPorts);
   useEffect(() => writeOpenPorts(open), [open]);
@@ -89,7 +91,7 @@ export function TpuPathCard() {
       span={span ?? null}
       sections={[
         ...(verify ? [verifySection(verify)] : []),
-        ...(executed ? [executedSection(executed)] : []),
+        ...(executed ? [executedSection(executed, bundles)] : []),
       ]}
     />
   );

@@ -423,6 +423,15 @@ export interface QuicPaths {
  * difference between a quiet epoch and one that was only watched for its last
  * hour.
  */
+export interface EpochSpan {
+  epoch: number;
+  /** Slots of this epoch that have happened. */
+  elapsed_slots: number;
+  /** Slots of this epoch the totals were actually summed over. */
+  counted_slots: number;
+  slots_in_epoch: number;
+}
+
 /**
  * Bundles the block engine sent this epoch, and the transactions in them.
  *
@@ -435,15 +444,6 @@ export interface QuicPaths {
 export interface BundleStage {
   received: number;
   packets: number;
-}
-
-export interface EpochSpan {
-  epoch: number;
-  /** Slots of this epoch that have happened. */
-  elapsed_slots: number;
-  /** Slots of this epoch the totals were actually summed over. */
-  counted_slots: number;
-  slots_in_epoch: number;
 }
 
 export interface VerifyStage {

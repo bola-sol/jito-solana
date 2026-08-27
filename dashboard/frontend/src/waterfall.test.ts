@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
-import { executedRows, scheduledShare, verifyRows, waterfallRows } from "./waterfall";
+import { executedRows, verifyRows, waterfallRows } from "./waterfall";
 
 /** A window in which nothing happened, to be overridden a field at a time. */
 function quiet(over: Partial<Waterfall> = {}): Waterfall {
@@ -203,29 +203,6 @@ describe("a slot BAM built", () => {
     expect(notHeld.kind).toBe("loss");
     expect(notHeld.share).toBeCloseTo(5 / 1000, 5);
     expect(rows.find((r) => r.key === "finished")!.share).toBeCloseTo(0.5, 5);
-  });
-});
-
-describe("scheduledShare", () => {
-  it("measures against what the validator kept, not what reached it", () => {
-    // Against received it would read 6%, which is a statement about how much of
-    // the cluster's traffic this node was due to execute rather than about the
-    // node. Against what it held it is 75%, which is about the node.
-    expect(scheduledShare(busy())).toBeCloseTo(60 / 80, 10);
-  });
-
-  it("says nothing when the validator has held nothing", () => {
-    // The ordinary state of a node that has not been leader recently, not a
-    // failure to schedule.
-    expect(scheduledShare(quiet())).toBeNull();
-    expect(scheduledShare(quiet({ received: 5000, not_held: 5000 }))).toBeNull();
-  });
-
-  it("does not report more scheduled than held", () => {
-    // The two counts are different populations a window apart, so a queue
-    // draining faster than it fills genuinely reports it. Over 100% reads as a
-    // bug in the page rather than as a queue draining.
-    expect(scheduledShare(quiet({ buffered: 10, scheduled: 40 }))).toBe(1);
   });
 });
 

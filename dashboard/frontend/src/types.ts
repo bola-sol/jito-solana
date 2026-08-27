@@ -349,7 +349,19 @@ export interface QuicPort {
   refused_full: number;
   handshake_timeout: number;
   handshake_error: number;
+  /** Cleared the handshake and the rate limiters' second look. A checkpoint. */
+  handshook: number;
+  /**
+   * Refused a place in the connection table, under four overlapping names.
+   *
+   * One refusal can raise two of these — the unstaked path runs through the
+   * same insert that raises `add_failed` — so they are never added together.
+   * `refusedTable` in `tpuPath.ts` is where they are reconciled.
+   */
   add_failed: number;
+  add_failed_staked: number;
+  add_failed_unstaked: number;
+  add_failed_banned: number;
   admitted_staked: number;
   admitted_unstaked: number;
 
@@ -384,6 +396,35 @@ export interface QuicPaths {
   /** What the counts above actually span, which is short until it has filled. */
   window_seconds: number;
   ports: QuicPort[];
+  /**
+   * Whether the TPU address this validator advertises is a socket on this host.
+   *
+   * It is not, behind a relayer or a block-assembly proxy: those overwrite the
+   * advertised address, so the cluster connects to them and this host's own
+   * listener sees almost nothing. True says the address is answered somewhere
+   * else and never by what, because the validator cannot tell which of them it
+   * is and a guess printed as fact is worse than the silence.
+   */
+  tpu_offhost: boolean;
+}
+
+/**
+ * What the two per-epoch sections of the TPU path card cover.
+ *
+ * In slots rather than as a fraction, so the wording is the panel's own. Two
+ * figures rather than one because an epoch is only counted whole where the
+ * validator was up for the whole of it: `counted_slots` short of
+ * `elapsed_slots` is a restart part way through, and saying so is the
+ * difference between a quiet epoch and one that was only watched for its last
+ * hour.
+ */
+export interface EpochSpan {
+  epoch: number;
+  /** Slots of this epoch that have happened. */
+  elapsed_slots: number;
+  /** Slots of this epoch the totals were actually summed over. */
+  counted_slots: number;
+  slots_in_epoch: number;
 }
 
 export interface VerifyStage {

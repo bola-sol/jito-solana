@@ -1927,6 +1927,31 @@ body {
   flex-direction: column;
 }
 
+/* Said once, at the top, where the advertised TPU address is answered off this
+   host and the ports below it therefore have almost nothing to report.
+
+   Slate rather than amber, and bordered rather than filled. A validator behind
+   a relayer or a proxy is configured, not broken, and the one thing this must
+   not do is read as a fault: the operator put it there. The colour is the same
+   neutral the vote series carries on the transactions matrix, chosen there for
+   the same reason — a constant background that is neither good nor bad. */
+.path-notice {
+  padding: 9px 12px;
+  margin-bottom: 11px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--vote);
+  border-radius: 5px;
+  background: var(--panel-raised);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.path-notice b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* The two figures worth reading at a glance, kept out of the sections so they
    are not two rows among forty. */
 .path-headline {
@@ -1956,6 +1981,33 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
+}
+
+/* The two stages counted over the epoch, bracketed off from the sections
+   counted over the window.
+   Bracketed down the left rather than ruled off above, because a rule with the
+   span written on it reads as governing everything below it and what follows
+   this is the port list, which is back on the window. A left rule says where
+   the different span starts and, more to the point, where it stops. */
+.path-epoch {
+  margin-top: 11px;
+  padding: 11px 0 3px 11px;
+  border-left: 1px solid var(--border);
+}
+
+/* The bracket is the boundary, so the first section inside it must not draw a
+   rule of its own a dozen pixels under the caption. */
+.path-epoch .path-section:first-of-type {
+  margin-top: 0;
+  padding-top: 9px;
+}
+
+/* Set as a caption and not as a heading. It sits directly above a section
+   title, and at the titles' own size, case and colour the two read as one
+   heading of two lines rather than as a label and the thing it labels. */
+.path-span {
+  font-size: 10px;
+  color: var(--text-dim);
 }
 
 .path-section {

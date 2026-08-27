@@ -295,8 +295,27 @@ pub struct QuicCounters {
     pub handshake_timeout: AtomicU64,
     /// Reached the handshake and failed it.
     pub handshake_error: AtomicU64,
+    /// Completed the handshake and cleared the rate limiters a second time.
+    ///
+    /// Neither a loss nor an outcome: the one checkpoint the listener reports
+    /// between the offer and the connection table. It is here because two
+    /// separate branches drop a connection without counting it anywhere, one
+    /// either side of the handshake, and without this figure the two are a
+    /// single gap that cannot be told apart. See `QuicTotals`.
+    pub handshook: AtomicU64,
     /// Handshook and then refused a place in the connection table.
+    ///
+    /// Four counters for one event, and they overlap: the unstaked path runs
+    /// through the same insert that raises `add_failed`, so one refusal there
+    /// raises two of these. They are never added together — see `refusedTable`
+    /// in `tpuPath.ts` for what is done with them instead.
     pub add_failed: AtomicU64,
+    /// Refused by the stake-weighted listener with the staked table full.
+    pub add_failed_staked: AtomicU64,
+    /// Refused by the stake-weighted listener with the unstaked table full.
+    pub add_failed_unstaked: AtomicU64,
+    /// Refused because the peer's identity is on the vote listener's banlist.
+    pub add_failed_banned: AtomicU64,
     /// Admitted, from a peer with stake.
     pub admitted_staked: AtomicU64,
     /// Admitted, from a peer without.
@@ -722,6 +741,25 @@ pub struct ProgramCacheTotals {
     pub empty_entries: u64,
 }
 
+/// One window of a QUIC port's counters.
+///
+/// These do not partition the offer, and cannot be made to. The listener drops
+/// a connection without counting it anywhere in two places: an `accept()` that
+/// returns an error before the handshake, and a QoS that declines a connection
+/// by returning nothing after it. Both are silent upstream — no counter, only a
+/// debug log — so no amount of reading fields here recovers them.
+///
+/// What `handshook` buys is telling the two apart. The rate limiters are
+/// charged either side of the handshake and share one counter each, so their
+/// split is unknowable, but that split cancels in the total:
+///
+/// ```text
+/// before = offered - (shed_all + shed_address + refused_full
+///                     + handshake_timeout + handshake_error + handshook)
+/// after  = handshook - (refused a table place + admitted)
+/// ```
+///
+/// Each of those is exact, and each maps to exactly one of the two silences.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicTotals {
     pub offered: u64,
@@ -730,7 +768,11 @@ pub struct QuicTotals {
     pub refused_full: u64,
     pub handshake_timeout: u64,
     pub handshake_error: u64,
+    pub handshook: u64,
     pub add_failed: u64,
+    pub add_failed_staked: u64,
+    pub add_failed_unstaked: u64,
+    pub add_failed_banned: u64,
     pub admitted_staked: u64,
     pub admitted_unstaked: u64,
     pub streams: u64,
@@ -1317,7 +1359,15 @@ impl QuicCounters {
                 "refused_connections_too_many_open_connections" => &self.refused_full,
                 "connection_setup_timeout" => &self.handshake_timeout,
                 "connection_setup_error" => &self.handshake_error,
+                "new_connections" => &self.handshook,
                 "connection_add_failed" => &self.add_failed,
+                "connection_add_failed_staked_node" => &self.add_failed_staked,
+                "connection_add_failed_unstaked_node" => &self.add_failed_unstaked,
+                "connection_add_failed_banned" => &self.add_failed_banned,
+                // `connection_add_failed_on_pruning` is deliberately absent. It
+                // is raised two lines from `..._staked_node` on the same
+                // refusal and means the same thing, so reading it would be
+                // reading one event twice.
                 "connection_added_from_staked_peer" => &self.admitted_staked,
                 "connection_added_from_unstaked_peer" => &self.admitted_unstaked,
                 "new_streams" => &self.streams,
@@ -1349,7 +1399,11 @@ impl QuicCounters {
             refused_full: read(&self.refused_full),
             handshake_timeout: read(&self.handshake_timeout),
             handshake_error: read(&self.handshake_error),
+            handshook: read(&self.handshook),
             add_failed: read(&self.add_failed),
+            add_failed_staked: read(&self.add_failed_staked),
+            add_failed_unstaked: read(&self.add_failed_unstaked),
+            add_failed_banned: read(&self.add_failed_banned),
             admitted_staked: read(&self.admitted_staked),
             admitted_unstaked: read(&self.admitted_unstaked),
             streams: read(&self.streams),
@@ -1598,7 +1652,11 @@ counter_arithmetic!(QuicTotals {
     refused_full,
     handshake_timeout,
     handshake_error,
+    handshook,
     add_failed,
+    add_failed_staked,
+    add_failed_unstaked,
+    add_failed_banned,
     admitted_staked,
     admitted_unstaked,
     streams,
@@ -2331,6 +2389,7 @@ mod tests {
         ("refused_connections_too_many_open_connections", "412i"),
         ("connection_setup_timeout", "1205i"),
         ("connection_setup_error", "338i"),
+        ("new_connections", "7445i"),
         ("connection_add_failed", "7i"),
         ("connection_added_from_staked_peer", "1890i"),
         ("connection_added_from_unstaked_peer", "5548i"),
@@ -2396,6 +2455,11 @@ mod tests {
         // nowhere. So the rows can run slightly over the offer or slightly
         // under it, and the panel has to tolerate both. This pins the
         // arithmetic on a clean sample; the tolerance is tested in the browser.
+        //
+        // The sample is clean in a way a real port is not: it is built so that
+        // nothing falls into either uncounted branch, which is what lets the
+        // gates add up to the offer at all. `handshook` is what measures the
+        // two branches when they are not empty.
         let tap = MetricsTap::default();
         tap.observe(&named(QUIC_TPU, QUIC_POINT));
 
@@ -2416,6 +2480,74 @@ mod tests {
         .into_iter()
         .fold(0u64, u64::saturating_add);
         assert_eq!(accounted, quic.offered);
+    }
+
+    #[test]
+    fn test_the_handshake_checkpoint_is_read() {
+        // The one figure that tells the two uncounted branches apart, and the
+        // clean sample is built so both come out at nought: everything that
+        // cleared the gates handshook, and everything that handshook was
+        // either refused a table place or admitted.
+        let tap = MetricsTap::default();
+        tap.observe(&named(QUIC_TPU, QUIC_POINT));
+
+        let quic = tap.counters().quic;
+        assert_eq!(quic.handshook, 7_445);
+        let after = [
+            quic.add_failed,
+            quic.admitted_staked,
+            quic.admitted_unstaked,
+        ]
+        .into_iter()
+        .fold(0u64, u64::saturating_add);
+        assert_eq!(after, quic.handshook);
+    }
+
+    #[test]
+    fn test_the_refusal_counters_are_kept_apart_rather_than_summed() {
+        // Four names for one refusal, and they overlap: the unstaked path runs
+        // through the same insert that raises `connection_add_failed`, so a
+        // single refusal there raises two of them. The tap reads them apart and
+        // leaves the reconciling to the panel, which takes the larger reading
+        // rather than the sum.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            QUIC_TPU,
+            &[
+                ("connection_add_failed", "40i"),
+                ("connection_add_failed_staked_node", "3i"),
+                ("connection_add_failed_unstaked_node", "40i"),
+                ("connection_add_failed_banned", "2i"),
+            ],
+        ));
+
+        let quic = tap.counters().quic;
+        assert_eq!(quic.add_failed, 40);
+        assert_eq!(quic.add_failed_staked, 3);
+        assert_eq!(quic.add_failed_unstaked, 40);
+        assert_eq!(quic.add_failed_banned, 2);
+    }
+
+    #[test]
+    fn test_the_pruning_alias_is_left_out_of_the_refusals() {
+        // `connection_add_failed_on_pruning` is raised on the same refusal as
+        // `..._staked_node`, two lines apart in the listener, and means the
+        // same thing. It is exactly the field someone extends this match with
+        // later by reading the point rather than the listener.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            QUIC_TPU,
+            &[
+                ("connection_add_failed_on_pruning", "9i"),
+                ("connection_add_failed_staked_node", "9i"),
+            ],
+        ));
+
+        let quic = tap.counters().quic;
+        assert_eq!(quic.add_failed_staked, 9);
+        assert_eq!(quic.add_failed, 0);
+        assert_eq!(quic.add_failed_unstaked, 0);
+        assert_eq!(quic.add_failed_banned, 0);
     }
 
     #[test]

@@ -295,34 +295,15 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
 }
 
 /**
- * How much of what this validator kept actually got scheduled.
- *
- * The headline the card leads with, because the received count on its own says
- * more about the cluster than about this node — it is dominated by traffic the
- * validator was never going to execute. Against what it did hold, the figure
- * says whether it is keeping up.
- *
- * Null when it held nothing at all in the window, which is the normal state of
- * a validator that has not been leader recently rather than a failure to
- * schedule.
- */
-export function scheduledShare(w: Waterfall): number | null {
-  if (w.buffered <= 0) return null;
-  // Capped: the two counts are different populations a window apart, so a
-  // queue draining faster than it fills genuinely reports more scheduled than
-  // buffered, and a figure above 100% reads as a bug rather than as a drain.
-  return Math.min(1, w.scheduled / w.buffered);
-}
-
-/**
  * Building the rows for a stage, against a denominator of its own.
  *
- * Every section is drawn against what *it* was given rather than against a
- * figure from the section above. That is the whole reason these are four
- * sections and not one flow: what QUIC hands on is not what verify receives, and
- * a bar drawn against the wrong stage's total would be a quiet lie.
+ * Every stage is measured against what *it* was given rather than against a
+ * figure from the stage before. That is why the panels drawing these keep them
+ * as separate sections rather than one flow: what the listener hands on is not
+ * what verify receives, and a bar drawn against the wrong stage's total would
+ * be a quiet lie.
  */
-export function rowsOf(
+function rowsOf(
   total: number,
   rows: Array<[key: string, label: string, kind: RowKind, count: number, explain: string]>,
 ): WaterfallRow[] {

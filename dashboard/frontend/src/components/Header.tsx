@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { buildLabel, duration, percent, sol, solCompact } from "../format";
 import { useNarrow } from "../narrow";
 import type { StakeSummary } from "../types";
@@ -25,6 +25,7 @@ import { ThemeToggle } from "./ThemeToggle";
 export function Header() {
   const store = useStore();
   const identity = store.get<string>("summary", "identity_key");
+  const voteKey = store.get<string>("summary", "vote_key");
   const stake = store.get<StakeSummary>("summary", "stake");
   const commission = store.get<number | null>("summary", "vote_commission");
   const identityBalance = store.get<number>("summary", "identity_balance");
@@ -75,6 +76,7 @@ export function Header() {
           icon={icon}
           stake={figures.stakeAmount}
           identity={identity}
+          voteKey={voteKey}
           figures={figures}
         />
       </header>
@@ -106,7 +108,21 @@ export function Header() {
       </div>
 
       <div className="header-stats">
-        <HeaderStat label="Stake Amount" value={figures.stakeAmount} />
+        {/* The vote account has nowhere of its own to live and does not earn a
+            column of its own, so it hangs off the figure it belongs to: the
+            stake is the stake delegated to that account. */}
+        <HeaderStat
+          label="Stake Amount"
+          value={figures.stakeAmount}
+          detail={
+            voteKey ? (
+              <>
+                <span className="header-panel-label">Vote account</span>
+                <Copyable text={voteKey} />
+              </>
+            ) : undefined
+          }
+        />
         <HeaderStat label="Stake %" value={figures.share} />
         <HeaderStat label="Commission" value={figures.commission} />
         <HeaderStat label="Identity Balance" value={figures.identityBalance} />
@@ -133,12 +149,14 @@ function Identity({
   icon,
   stake,
   identity,
+  voteKey,
   figures,
 }: {
   name: string;
   icon: string | null;
   stake: string;
   identity: string | undefined;
+  voteKey: string | undefined;
   figures: Record<string, string>;
 }) {
   const panelId = useId();
@@ -184,6 +202,12 @@ function Identity({
             <span className="header-panel-label">Identity</span>
             {identity ? <Copyable text={identity} /> : "—"}
           </div>
+          {voteKey && (
+            <div className="header-panel-key">
+              <span className="header-panel-label">Vote account</span>
+              <Copyable text={voteKey} />
+            </div>
+          )}
           <dl className="header-panel-rows">
             <PanelRow label="Stake share" value={figures.share} />
             <PanelRow label="Commission" value={figures.commission} />
@@ -224,11 +248,36 @@ function Connection({ state, showLabel }: { state: string; showLabel: boolean })
   );
 }
 
-function HeaderStat({ label, value }: { label: string; value: string }) {
+/**
+ * One figure, with an optional something behind it.
+ *
+ * Where there is a detail the value carries the dotted underline the rest of
+ * the page uses for "there is more here", and the bubble takes the pointer so
+ * that what is inside can be copied. Where there is not, the value is plain
+ * text with no affordance, because a figure that looks like it explains itself
+ * and then does not is worse than one that never offered.
+ */
+function HeaderStat({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: ReactNode;
+}) {
   return (
     <div className="header-stat">
       <div className="header-stat-label">{label}</div>
-      <div className="header-stat-value">{value}</div>
+      <div className="header-stat-value">
+        {detail === undefined ? (
+          value
+        ) : (
+          <Explain interactive className="header-stat-detail" text={detail}>
+            {value}
+          </Explain>
+        )}
+      </div>
     </div>
   );
 }

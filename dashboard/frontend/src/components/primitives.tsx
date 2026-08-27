@@ -99,10 +99,24 @@ export function Explain({
   text,
   children,
   className,
+  interactive = false,
 }: {
-  text: string;
+  text: ReactNode;
   children: ReactNode;
   className?: string;
+  /**
+   * Whether the bubble can be reached with the pointer and the keyboard.
+   *
+   * Off by default, and that default is the right one for an explanation: a
+   * bubble that took the pointer would swallow clicks meant for whatever it
+   * happens to cover. It is turned on for the few that hold something to be
+   * copied, where a bubble you cannot reach is only half of what was wanted.
+   *
+   * An interactive bubble is not a tooltip in the ARIA sense, since a tooltip
+   * may not contain a control, so it drops the role and the trigger says
+   * whether it is open instead.
+   */
+  interactive?: boolean;
 }) {
   const id = useId();
   const bubble = useRef<HTMLSpanElement>(null);
@@ -144,17 +158,32 @@ export function Explain({
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
+      // Focus moving from the trigger to a control inside the bubble is focus
+      // staying within this, and closing on it would take the control away in
+      // the moment it was reached for.
+      onBlur={(event) => {
+        const next = event.relatedTarget;
+        if (interactive && next instanceof Node && event.currentTarget.contains(next)) return;
+        setFocused(false);
+      }}
     >
-      <button type="button" className="explain-trigger" aria-describedby={id}>
+      <button
+        type="button"
+        className="explain-trigger"
+        aria-describedby={interactive ? undefined : id}
+        aria-expanded={interactive ? open : undefined}
+        aria-controls={interactive ? id : undefined}
+      >
         {children}
       </button>
       {/* Outside the button so its text does not become part of the button's
           own name, and tied back to it by id instead. */}
       <span
         ref={bubble}
-        className={`explain-bubble${open ? " is-open" : ""}${above ? " is-above" : ""}`}
-        role="tooltip"
+        className={`explain-bubble${open ? " is-open" : ""}${above ? " is-above" : ""}${
+          interactive ? " is-interactive" : ""
+        }`}
+        role={interactive ? undefined : "tooltip"}
         id={id}
         style={shift ? { transform: `translateX(${shift}px)` } : undefined}
       >

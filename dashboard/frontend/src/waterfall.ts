@@ -5,7 +5,7 @@
  * as the turn folding and the bar scale.
  */
 
-import type { ExecutedStage, QuicStage, VerifyStage, Waterfall } from "./types";
+import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
 
 /**
  * A count as a share of the stage's total, capped at the whole of it.
@@ -307,7 +307,7 @@ export function scheduledShare(w: Waterfall): number | null {
  * sections and not one flow: what QUIC hands on is not what verify receives, and
  * a bar drawn against the wrong stage's total would be a quiet lie.
  */
-function rowsOf(
+export function rowsOf(
   total: number,
   rows: Array<[key: string, label: string, kind: RowKind, count: number, explain: string]>,
 ): WaterfallRow[] {
@@ -319,43 +319,6 @@ function rowsOf(
     ...shareOf(kind, total, count),
     explain,
   }));
-}
-
-/** What the QUIC listener on the TPU port did with what it pulled off the wire. */
-export function quicRows(q: QuicStage): WaterfallRow[] {
-  // QUIC keeps no count of what arrived, only of what it got rid of and how, so
-  // the total offered is the sum of the outcomes rather than a figure of its own.
-  const offered = q.handed_on + q.queue_full + q.disconnected;
-  return rowsOf(offered, [
-    [
-      "quic_offered",
-      "Read from streams",
-      "stage",
-      offered,
-      "Transactions QUIC finished assembling out of its streams on the TPU port. Not a count of packets: QUIC reassembles a transaction from however many datagrams carried it, so this figure and the datagram counts on the socket panel for the same port measure different things and will not agree. QUIC keeps no total of its own, so this is the three outcomes below added together — everything it finished reading either went on or was thrown away.",
-    ],
-    [
-      "quic_queue_full",
-      "fetch queue full",
-      "loss",
-      q.queue_full,
-      "Read successfully and then dropped, because the queue towards signature verification had no room. This is the row that means the validator could not keep up with what was being sent to it.",
-    ],
-    [
-      "quic_disconnected",
-      "queue closed",
-      "loss",
-      q.disconnected,
-      "Dropped because the queue onward had been closed rather than merely full. In practice this is a validator shutting down, and a figure here at any other time is worth asking about.",
-    ],
-    [
-      "quic_handed_on",
-      "Passed to verify",
-      "stage",
-      q.handed_on,
-      "Went on to signature verification. This is the section below's input, though not exactly its received count: the two are measured either side of the fetch stage's own buffering, so they should be close rather than equal.",
-    ],
-  ]);
 }
 
 /** What signature verification and deduplication did with it. */

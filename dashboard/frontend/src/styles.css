@@ -32,6 +32,22 @@
      since vote traffic is the constant background and is neither good nor bad. */
   --vote: #7d8a99;
 
+  /* The TPU path card's loss segments: one hue stepped by lightness, in the
+     order the losses are listed. Slate for the same reason the vote series
+     above is slate — it sits beside the success green and must not be told
+     apart from it by saturation alone — and stepped rather than coloured
+     separately because these are parts of one quantity, not six severities. A
+     colour per loss reads as a scale of badness that does not exist: shedding a
+     connection at a rate limiter is the port working. Severity is carried by
+     the figures instead, where it can be applied to the two or three rows that
+     have earned it. */
+  --path-1: #b9c3ce;
+  --path-2: #a6b1bd;
+  --path-3: #94a0ac;
+  --path-4: #828e9b;
+  --path-5: #717d8a;
+  --path-6: #616e7c;
+
   --level-incomplete: #38412a;
   --level-completed: #7fa5e8;
   --level-optimistically_confirmed: #3fb9a4;
@@ -57,6 +73,15 @@
   --warn: #8a5a06;
   --bad: #c0392b;
   --vote: #4f6172;
+
+  /* Stepped the other way against a light panel: the first is the lightest that
+     still clears the panel, and each step darkens rather than lightens. */
+  --path-1: #7b8896;
+  --path-2: #6c7887;
+  --path-3: #5d6978;
+  --path-4: #4e5a69;
+  --path-5: #404b5a;
+  --path-6: #333e4c;
 
   --level-incomplete: #c4cdb0;
   --level-completed: #4a6fa8;
@@ -376,6 +401,16 @@ body {
 .header-stat-value {
   font-size: 14px;
   font-weight: 500;
+}
+
+/* The bubble inherits the figure's size and weight otherwise, which makes a
+   forty-four character key into a headline. */
+.header-stat-detail .explain-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .connection {
@@ -975,6 +1010,29 @@ body {
   white-space: normal;
   box-shadow: 0 4px 14px rgb(0 0 0 / 35%);
   pointer-events: none;
+}
+
+/* Reachable, for the bubbles that hold something to copy. */
+.explain-bubble.is-interactive {
+  pointer-events: auto;
+}
+
+/* The bubble sits six pixels clear of its trigger, and a pointer crossing that
+   gap is over neither, which fires the leave and closes the thing being reached
+   for. This bridges it. Only on the interactive ones: for a bubble that takes no
+   pointer events there is nothing to reach and the gap costs nothing. */
+.explain-bubble.is-interactive::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -7px;
+  height: 7px;
+}
+
+.explain-bubble.is-interactive.is-above::before {
+  top: auto;
+  bottom: -7px;
 }
 
 /* Opens upwards when there is no room below. Hanging off the foot of the page
@@ -1864,33 +1922,341 @@ body {
 
 /* ---- transaction waterfall ---- */
 
-.waterfall-body {
+.path-body {
   display: flex;
   flex-direction: column;
 }
 
-/* The one figure worth reading at a glance, kept out of the list so it is not
-   one row among twenty. */
-.waterfall-headline {
+/* The two figures worth reading at a glance, kept out of the sections so they
+   are not two rows among forty. */
+.path-headline {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 10px;
-  margin-bottom: 2px;
+  gap: 26px;
+  padding-bottom: 11px;
   border-bottom: 1px solid var(--border);
 }
 
-.waterfall-headline-label {
+.path-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.path-figure-value {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.path-figure-value.is-through {
+  color: var(--good);
+}
+
+.path-figure-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
 }
 
-.waterfall-headline-value {
-  font-size: 20px;
+.path-section {
+  padding-top: 12px;
+  margin-top: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.path-section:first-of-type {
+  border-top: 0;
+}
+
+.path-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.path-section-title {
+  white-space: nowrap;
+}
+
+.path-section-note {
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What the section was given and what came out of it, which is the whole
+   section in one line for anyone not reading the rest of it. */
+.path-section-flow {
+  margin-left: auto;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A figure in a different unit from the bar, which is why it is above the bar
+   and not in it. */
+.path-aside {
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.path-bar {
+  display: flex;
+  gap: 1px;
+  height: 14px;
+  margin-top: 7px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--panel-raised);
+}
+
+.path-seg {
+  display: block;
+  height: 100%;
+  /* No floor. A segment worth a twentieth of a percent is drawn as nothing,
+     which is right: the figure beside it says what happened, and widening it to
+     be visible would misstate the one thing a bar is for. This is the opposite
+     call from the transaction matrix, where a series with no dot would have
+     read as a series that never fired and there was no figure to correct it. */
+  background: var(--path-6);
+}
+
+/* What keys a legend row to its segment is the order, not the colour. Six steps
+   of one hue cannot be told apart individually: every step has to clear three to
+   one against the panel, and the range left above that floor divides into steps
+   about a quarter apart, which is below what the eye separates at the size of an
+   eight-pixel swatch. Widening it is not available — five gaps at a legible
+   ratio would need a range wider than white on this panel. So the ramp says
+   rank, the list is in the same order as the bar, and the figures say the rest.
+   Measured, both themes: 9.7 down to 3.3 against the panel dark, 3.4 up to 10.2
+   light. */
+
+.path-seg.is-through {
+  background: var(--good);
+}
+
+.path-seg.is-1 {
+  background: var(--path-1);
+}
+
+.path-seg.is-2 {
+  background: var(--path-2);
+}
+
+.path-seg.is-3 {
+  background: var(--path-3);
+}
+
+.path-seg.is-4 {
+  background: var(--path-4);
+}
+
+.path-seg.is-5 {
+  background: var(--path-5);
+}
+
+.path-seg.is-6 {
+  background: var(--path-6);
+}
+
+/* Two columns, because the rows are short and the card was twice as tall as it
+   needed to be. One column below the breakpoint, where two would leave the
+   labels ellipsised to nothing. */
+.path-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px 26px;
+  margin-top: 8px;
+}
+
+.path-loss {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto 3.4em;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.path-loss.is-detail {
+  padding-left: 16px;
+}
+
+.path-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--path-6);
+}
+
+.path-swatch.is-1 {
+  background: var(--path-1);
+}
+
+.path-swatch.is-2 {
+  background: var(--path-2);
+}
+
+.path-swatch.is-3 {
+  background: var(--path-3);
+}
+
+.path-swatch.is-4 {
+  background: var(--path-4);
+}
+
+.path-swatch.is-5 {
+  background: var(--path-5);
+}
+
+.path-swatch.is-6 {
+  background: var(--path-6);
+}
+
+/* A reason behind one of the rows above rather than beside it, so it has no
+   segment in the bar and no swatch to key it to one. */
+.path-loss.is-detail .path-swatch {
+  background: none;
+  border: 1px solid var(--border);
+}
+
+/* The truncation goes on the trigger inside, never on this element.
+   `Explain` puts the class it is given on its own wrapper, and that wrapper is
+   the bubble's containing block, so `overflow: hidden` here clips the bubble to
+   the height of a line of text and nothing of it is ever drawn. The label keeps
+   its help cursor and its dotted underline, so the row reads as though it
+   explains itself and then does not, which is worse than not offering. */
+.path-loss-label {
+  color: var(--text-dim);
+  min-width: 0;
+}
+
+.path-loss-label .explain-trigger,
+.waterfall-label .explain-trigger {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-loss-count,
+.path-loss-share {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.path-loss-share {
+  color: var(--text-faint);
+}
+
+.path-quiet {
+  display: flex;
+  gap: 14px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* A solid underline and a pointer, not the dotted underline and help cursor the
+   explanations use. On this dashboard a dotted underline means there is
+   something to read on hover, and wearing it for a control that instead does
+   something on click promises the wrong thing. */
+.path-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.path-more:hover {
+  color: var(--text);
+}
+
+.path-more:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- the quieter QUIC ports ---- */
+
+.path-port {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+/* The same gesture as the caches panel, so it is the same treatment: hover
+   raises the row and nothing else. Folded is the resting state for both of
+   these, unlike the caches sections, because on most validators neither port
+   has anything to say and the line saying so is the whole of what is wanted. */
+.path-port-head {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0 14px;
+  padding: 8px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.path-port-head:hover {
+  background: var(--panel-raised);
+}
+
+.path-port-name {
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.path-port-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.path-port-fold {
+  width: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.path-port-fold:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.path-port-open {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 4px;
 }
 
 .waterfall {
@@ -1912,10 +2278,11 @@ body {
   font-size: 11.5px;
 }
 
+/* Truncated on the trigger rather than here, for the reason given at
+   `.path-loss-label`: this element is the bubble's containing block and
+   clipping it hides every explanation on the row. */
 .waterfall-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Stages carry the eye down the card; the reasons under them are subordinate
@@ -1988,34 +2355,6 @@ body {
 /* Each section restarts its bars at full against a total of its own, so it
    needs a rule and a name above it. Without them the card reads as one cascade
    that keeps climbing back to a hundred percent. */
-.waterfall-section + .waterfall-section {
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.waterfall-section-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.waterfall-section-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-}
-
-.waterfall-section-note {
-  font-size: 10px;
-  color: var(--text-faint);
-}
-
-/* The same rows again inside an expanded produced block, one slot's worth
-   rather than a rolling window. Separated from the figures above it by a rule
-   rather than a heading alone, because the two are counting different things:
-   the grid is what landed in the block, this is everything that was offered. */
 .produced-waterfall {
   display: flex;
   flex-direction: column;
@@ -2316,6 +2655,14 @@ body {
      give the room to the words, which is the half that still reads. */
   .waterfall-row {
     grid-template-columns: minmax(0, 1fr) 5em 3.4em;
+  }
+
+  .path-legend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .path-headline {
+    gap: 18px;
   }
 
   .waterfall-bar {

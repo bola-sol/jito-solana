@@ -17,6 +17,7 @@ use {
         collect::Collector,
         config::DashboardConfig,
         context::{DashboardContext, StartupProgressFn},
+        history::{PACKED_SLOTS, SlotHistory},
         meters::{METER_INTERVAL, Meters},
         metrics_tap::MetricsTap,
         proto::Publisher,
@@ -76,6 +77,13 @@ pub struct DashboardService {
     /// Counters lifted from the measurements the validator submits about
     /// itself, watched from `start` so the boot sequence is counted too.
     metrics_tap: Arc<MetricsTap>,
+    /// The packed slot history, shared between the collector that fills it and
+    /// the server that answers range queries out of it.
+    ///
+    /// Allocated here rather than with the collector because the server starts
+    /// first: a request that arrives before the validator has finished booting
+    /// gets an empty history rather than a connection that cannot answer.
+    history: Arc<RwLock<SlotHistory>>,
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
@@ -102,6 +110,7 @@ impl DashboardService {
         // cold start — are counted too. A validator with no dashboard installs
         // nothing and the hook stays empty.
         let metrics_tap = MetricsTap::install();
+        let history = Arc::new(RwLock::new(SlotHistory::new(PACKED_SLOTS)));
         let attached = Arc::new(AtomicBool::new(false));
 
         let runtime = Builder::new_multi_thread()
@@ -120,6 +129,7 @@ impl DashboardService {
 
         let server = {
             let publisher = publisher.clone();
+            let history = history.clone();
             let exit = exit.clone();
             let validator_exit = validator_exit.clone();
             thread::Builder::new()
@@ -127,7 +137,7 @@ impl DashboardService {
                 .spawn(move || {
                     runtime.block_on(async move {
                         tokio::select! {
-                            _ = server::serve(listener, publisher, allowed_hosts) => {}
+                            _ = server::serve(listener, publisher, history, allowed_hosts) => {}
                             _ = wait_for_exit(exit, validator_exit) => {}
                         }
                     });
@@ -161,6 +171,7 @@ impl DashboardService {
             publisher,
             startup_progress,
             metrics_tap,
+            history,
             server: Some(server),
             boot: Some(boot),
             collector: None,
@@ -229,12 +240,13 @@ impl DashboardService {
         self.collector = Some({
             let exit = self.exit.clone();
             let publisher = self.publisher.clone();
+            let history = self.history.clone();
             let startup_progress = self.startup_progress.clone();
             thread::Builder::new()
                 .name("solDashColl".to_string())
                 .spawn(move || {
                     let mut collector =
-                        Collector::new(context, publisher, info_cache, startup_progress);
+                        Collector::new(context, publisher, info_cache, history, startup_progress);
                     collector.publish_static();
                     while !exit.load(Ordering::Relaxed) && !validator_exit.load(Ordering::Relaxed) {
                         collector.tick();

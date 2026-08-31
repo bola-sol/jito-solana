@@ -215,9 +215,13 @@ const SLOT: &str = "slot";
 /// describing now.
 const REPLAY_SLOTS: usize = 256;
 
-/// Leader slots kept. Matched to the produced block panel's own retention, so
-/// every block it can show has its waterfall for as long as it is shown.
-const SLOT_WATERFALLS: usize = 64;
+/// Leader slots kept, for both the per-slot waterfalls and the per-slot costs.
+///
+/// Matched to the produced block panel's own retention, so every block it can
+/// show has its waterfall and its cost breakdown for as long as it is shown. A
+/// block whose detail page had lost half its sections would look like a slot
+/// that had gone wrong rather than one that had simply aged.
+const SLOT_WATERFALLS: usize = 500;
 
 /// The tag naming which scheduler reported a point.
 ///

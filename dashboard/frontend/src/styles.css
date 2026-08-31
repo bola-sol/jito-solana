@@ -3756,6 +3756,37 @@ body {
   scrollbar-width: none;
 }
 
+/* The way further back than the live window reaches. A control rather than a
+   scroll trigger: the list is not virtualised, so what is fetched is what gets
+   rendered, and the reader asking is what decides how much is worth the DOM. */
+.schedule-older {
+  align-self: center;
+  margin: 4px 0 var(--gap);
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.schedule-older:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.schedule-older:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.schedule-older:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .schedule-list::-webkit-scrollbar {
   display: none;
 }

@@ -14,6 +14,7 @@ use {
     crate::{
         collect::Collector,
         context::{DashboardContext, StartupProgress, StartupProgressFn},
+        history::{PACKED_SLOTS, SlotHistory},
         meters::Meters,
         metrics_tap::MetricsTap,
         proto::Publisher,
@@ -65,6 +66,9 @@ pub struct Fixture {
     /// This validator's identity, which is also the staked leader.
     pub identity: Pubkey,
     pub vote_account: Pubkey,
+    /// The packed history the collector fills, exposed so a test can read back
+    /// what a tick recorded without going through the server.
+    pub history: Arc<RwLock<SlotHistory>>,
     /// The cluster's tip as the context's closure will report it. Shared with
     /// that closure so a test can move the cluster on without rebuilding the
     /// fixture.
@@ -145,6 +149,7 @@ impl Fixture {
             self.ctx.clone(),
             self.publisher.clone(),
             Arc::new(RwLock::new(ValidatorInfoCache::default())),
+            self.history.clone(),
             running(),
         )
     }
@@ -257,6 +262,7 @@ pub fn fixture() -> Fixture {
         bank_forks,
         identity,
         vote_account,
+        history: Arc::new(RwLock::new(SlotHistory::new(PACKED_SLOTS))),
         _ledger: ledger,
     }
 }

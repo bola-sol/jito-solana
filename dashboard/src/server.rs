@@ -7,9 +7,17 @@
 //! nothing consumed.
 
 use {
-    crate::proto::{MAX_MESSAGE, Message, Publisher, Request, encode_with_id},
+    crate::{
+        history::SlotHistory,
+        proto::{MAX_MESSAGE, Message, Publisher, Request, encode_with_id},
+    },
     soketto::handshake::{Server, server},
-    std::{io, net::IpAddr, sync::Arc},
+    solana_clock::Slot,
+    std::{
+        io,
+        net::IpAddr,
+        sync::{Arc, RwLock},
+    },
     thiserror::Error,
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -113,7 +121,12 @@ enum ConnectionError {
     Oversized(usize),
 }
 
-pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hosts: Arc<[String]>) {
+pub async fn serve(
+    listener: TcpListener,
+    publisher: Arc<Publisher>,
+    history: Arc<RwLock<SlotHistory>>,
+    allowed_hosts: Arc<[String]>,
+) {
     let limits = Limits::new();
     loop {
         let (socket, peer) = match listener.accept().await {
@@ -124,10 +137,11 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hos
             }
         };
         let publisher = publisher.clone();
+        let history = history.clone();
         let limits = limits.clone();
         let allowed_hosts = allowed_hosts.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(socket, publisher, limits, &allowed_hosts).await {
+            if let Err(err) = handle(socket, publisher, history, limits, &allowed_hosts).await {
                 log::debug!("dashboard: connection from {peer} ended: {err}");
             }
         });
@@ -137,6 +151,7 @@ pub async fn serve(listener: TcpListener, publisher: Arc<Publisher>, allowed_hos
 async fn handle(
     mut socket: TcpStream,
     publisher: Arc<Publisher>,
+    history: Arc<RwLock<SlotHistory>>,
     limits: Limits,
     allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
@@ -183,7 +198,7 @@ async fn handle(
             return refuse(socket, head_len, 503, b"too many dashboard clients").await;
         };
         let path = request_path(&head).to_string();
-        serve_websocket(socket, publisher, &path).await
+        serve_websocket(socket, publisher, history, &path).await
     } else {
         // Consume the bytes that were only peeked at. Closing a socket that
         // still has unread data makes the kernel send RST rather than FIN,
@@ -462,6 +477,7 @@ macro_rules! send_or_timeout {
 async fn serve_websocket(
     socket: TcpStream,
     publisher: Arc<Publisher>,
+    history: Arc<RwLock<SlotHistory>>,
     path: &str,
 ) -> Result<(), ConnectionError> {
     let mut server = Server::new(socket.compat());
@@ -572,7 +588,7 @@ async fn serve_websocket(
         if incoming.len() > MAX_CLIENT_MESSAGE {
             return Err(ConnectionError::Oversized(incoming.len()));
         }
-        if let Some(reply) = respond(&incoming) {
+        if let Some(reply) = respond(&incoming, &history) {
             send_or_timeout!(sender.send_text(&*reply));
             send_or_timeout!(sender.flush());
         }
@@ -605,13 +621,42 @@ fn for_logging(value: &str) -> String {
     out
 }
 
+/// What a `slot.range` request asks for.
+#[derive(serde::Deserialize)]
+struct SlotRangeParams {
+    first_slot: Slot,
+    /// Slots wanted from there on, oldest first. Clamped by the history rather
+    /// than refused, so a client that asks for too many gets what fits.
+    count: usize,
+}
+
 /// Handles a client request. Even unknown requests get an answer, so a client
 /// is never left waiting on an id that will never come back.
-fn respond(payload: &[u8]) -> Option<Message> {
+fn respond(payload: &[u8], history: &RwLock<SlotHistory>) -> Option<Message> {
     let request: Request = serde_json::from_slice(payload).ok()?;
     let id = request.id;
     match (request.topic.as_str(), request.key.as_str()) {
         ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
+        ("slot", "range") => {
+            // Malformed parameters are answered rather than dropped, for the
+            // same reason an unknown request is: a client left waiting on an id
+            // that never comes back has no way to tell that from a slow one.
+            let Ok(params) = serde_json::from_value::<SlotRangeParams>(request.params) else {
+                return Some(encode_with_id(
+                    "slot",
+                    "range",
+                    id,
+                    &serde_json::json!({ "error": "range needs a first_slot and a count" }),
+                ));
+            };
+            // Poisoned only if a collector thread panicked while holding it, in
+            // which case the validator has larger problems than a blank list.
+            let range = match history.read() {
+                Ok(history) => history.range(params.first_slot, params.count),
+                Err(_) => return Some(encode_with_id("slot", "range", id, &())),
+            };
+            Some(encode_with_id("slot", "range", id, &range))
+        }
         (topic, key) => {
             log::debug!(
                 "dashboard: unhandled request {:?}.{:?}",
@@ -635,6 +680,42 @@ mod tests {
         soketto::handshake::{Client, ServerResponse},
         tokio_util::compat::Compat,
     };
+
+    /// A history with nothing in it, which is what every test here wants: none
+    /// of them is about the slots, and an empty one still answers a range.
+    fn empty() -> RwLock<SlotHistory> {
+        RwLock::new(SlotHistory::new(16))
+    }
+
+    fn empty_history() -> Arc<RwLock<SlotHistory>> {
+        Arc::new(empty())
+    }
+
+    #[test]
+    fn test_a_range_request_is_answered_with_its_own_id() {
+        let history = empty();
+        let reply = respond(
+            br#"{"topic":"slot","key":"range","id":9,"params":{"first_slot":4,"count":2}}"#,
+            &history,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":9"#), "{reply}");
+        assert!(reply.contains(r#""first_slot":4"#), "{reply}");
+        assert!(reply.contains(r#""rows":[null,null]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_a_range_with_unusable_parameters_is_answered_rather_than_dropped() {
+        // Silence and a slow answer look the same to a client waiting on an id,
+        // so every request that parses as one gets something back.
+        let reply = respond(
+            br#"{"topic":"slot","key":"range","id":3,"params":{"first_slot":"soon"}}"#,
+            &empty(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":3"#), "{reply}");
+        assert!(reply.contains("error"), "{reply}");
+    }
 
     #[test]
     fn test_detects_a_websocket_upgrade() {
@@ -792,7 +873,7 @@ mod tests {
             let limits = limits.clone();
             async move {
                 let (socket, _) = listener.accept().await.unwrap();
-                handle(socket, publisher, limits, &allowed_hosts).await
+                handle(socket, publisher, empty_history(), limits, &allowed_hosts).await
             }
         });
 
@@ -813,7 +894,7 @@ mod tests {
         let limits = Limits::new();
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            handle(socket, publisher, limits, &allowed_hosts).await
+            handle(socket, publisher, empty_history(), limits, &allowed_hosts).await
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
@@ -895,7 +976,7 @@ mod tests {
             let limits = limits.clone();
             async move {
                 let (socket, _) = listener.accept().await.unwrap();
-                handle(socket, publisher, limits, &allowed_hosts).await
+                handle(socket, publisher, empty_history(), limits, &allowed_hosts).await
             }
         });
 
@@ -1033,19 +1114,19 @@ mod tests {
 
     #[test]
     fn test_ping_is_answered_with_its_id() {
-        let reply = respond(br#"{"topic":"summary","key":"ping","id":7}"#).unwrap();
+        let reply = respond(br#"{"topic":"summary","key":"ping","id":7}"#, &empty()).unwrap();
         assert!(reply.contains(r#""id":7"#));
     }
 
     #[test]
     fn test_unknown_requests_still_get_a_reply() {
-        let reply = respond(br#"{"topic":"nope","key":"nope","id":1}"#).unwrap();
+        let reply = respond(br#"{"topic":"nope","key":"nope","id":1}"#, &empty()).unwrap();
         assert!(reply.contains("unsupported request"));
     }
 
     #[test]
     fn test_malformed_requests_are_ignored() {
-        assert!(respond(b"not json").is_none());
+        assert!(respond(b"not json", &empty()).is_none());
     }
 
     #[test]
@@ -1138,7 +1219,14 @@ mod tests {
         let server = tokio::spawn(async move {
             let allowed_hosts = vec!["x".to_string()];
             let (socket, _) = listener.accept().await.unwrap();
-            handle(socket, publisher, Limits::new(), &allowed_hosts).await
+            handle(
+                socket,
+                publisher,
+                empty_history(),
+                Limits::new(),
+                &allowed_hosts,
+            )
+            .await
         });
         (addr, server)
     }

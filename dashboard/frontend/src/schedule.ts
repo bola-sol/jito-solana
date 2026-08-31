@@ -5,7 +5,7 @@
  * as the bar scale and the chart windowing.
  */
 
-import type { SlotEntry } from "./types";
+import type { EpochInfo, SlotEntry } from "./types";
 
 /**
  * Slots the leader schedule hands out at a time.
@@ -18,6 +18,33 @@ import type { SlotEntry } from "./types";
  * heights has no fixed position to hold.
  */
 export const SLOTS_PER_TURN = 4;
+
+/** Who leads a slot, and what the page can call them. */
+export interface LeaderRef {
+  key: string | null;
+  name: string | null;
+  icon: string | null;
+}
+
+/** Nobody, for a slot outside any epoch the page has the schedule for. */
+export const NO_LEADER: LeaderRef = { key: null, name: null, icon: null };
+
+/**
+ * Who leads a slot, from the epoch's turn array.
+ *
+ * The array holds one index per run of consecutive slots, so this is two
+ * lookups and no search. Null outside the epoch the arrays describe, and null
+ * where the validator could not derive the schedule, which it sends as an empty
+ * array rather than as a wrong one.
+ */
+export function leaderAt(epoch: EpochInfo | undefined, slot: number): string | null {
+  if (!epoch || epoch.turns.length === 0) return null;
+  if (slot < epoch.start_slot || slot > epoch.end_slot) return null;
+  const turn = Math.floor((slot - epoch.start_slot) / SLOTS_PER_TURN);
+  const index = epoch.turns[turn];
+  if (index === undefined) return null;
+  return epoch.leaders[index] ?? null;
+}
 
 /** One slot of a turn: what replay found, or nothing yet. */
 export interface TurnSlot {
@@ -48,7 +75,10 @@ export interface Turn {
  * begins part way through keeps the slots there are, rather than inventing
  * rows for slots that happened before anything was being watched.
  */
-export function turnsOf(held: SlotEntry[]): Turn[] {
+export function turnsOf(
+  held: SlotEntry[],
+  leaderOf: (slot: number) => LeaderRef,
+): Turn[] {
   const byTurn = new Map<number, SlotEntry[]>();
   for (const entry of held) {
     const turn = Math.floor(entry.slot / SLOTS_PER_TURN);
@@ -60,18 +90,18 @@ export function turnsOf(held: SlotEntry[]): Turn[] {
   return [...byTurn.entries()]
     .sort(([a], [b]) => b - a)
     .map(([turn, entries]) => {
-      // Any of them will do for the leader, but the schedule is not always
-      // known for every slot, so the first that has one wins.
-      const named = entries.find((entry) => entry.leader !== null) ?? entries[0];
+      // Asked once for the turn rather than once per slot: all four share a
+      // leader by definition, which is what a turn is.
+      const leader = leaderOf(turn * SLOTS_PER_TURN);
       const first = Math.min(...entries.map((entry) => entry.slot));
       const slots: TurnSlot[] = [];
       for (let slot = turn * SLOTS_PER_TURN + SLOTS_PER_TURN - 1; slot >= first; slot--) {
         slots.push({ slot, entry: entries.find((entry) => entry.slot === slot) ?? null });
       }
       return {
-        leader: named.leader,
-        leader_icon: named.leader_icon,
-        leader_name: named.leader_name,
+        leader: leader.key,
+        leader_icon: leader.icon,
+        leader_name: leader.name,
         mine: entries.some((entry) => entry.mine),
         slots,
       };

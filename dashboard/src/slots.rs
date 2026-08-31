@@ -3,8 +3,7 @@
 use {
     serde::Serialize,
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
-    std::collections::{BTreeMap, HashSet, btree_map::Entry},
+    std::collections::{BTreeMap, btree_map::Entry},
 };
 
 /// How far a slot has progressed through consensus, ordered from least to most
@@ -30,14 +29,17 @@ pub enum SlotLevel {
 pub struct SlotEntry {
     pub slot: Slot,
     pub level: SlotLevel,
-    /// Base58 identity of the scheduled leader, when the schedule is known.
-    pub leader: Option<String>,
-    /// The leader's display name, carried here so the client needs no copy of
-    /// the cluster's peer table just to label a row.
-    pub leader_name: Option<String>,
-    /// The leader's on-chain icon URL, when it published one.
-    pub leader_icon: Option<String>,
     /// True when this validator was the scheduled leader.
+    ///
+    /// The leader itself is not here. It was three strings on every slot, and
+    /// across a window of them the same key, name and icon repeated for all
+    /// four slots of a turn: about a hundred bytes a slot, and a quarter of
+    /// what a client was sent on connect. The key now comes from the epoch's
+    /// turn array and the name and icon from the peer table, each holding one
+    /// copy per leader instead of one per slot.
+    ///
+    /// `mine` stays because it cannot be worked out from those without the
+    /// epoch arrays, which arrive on their own message and may not have yet.
     pub mine: bool,
     /// What replay found in the block. `None` until the slot freezes, and for
     /// a slot that was skipped or never replayed.
@@ -97,9 +99,6 @@ impl SlotEntry {
         Self {
             slot,
             level: SlotLevel::Incomplete,
-            leader: None,
-            leader_name: None,
-            leader_icon: None,
             mine: false,
             block: None,
             duration_nanos: None,
@@ -114,12 +113,19 @@ impl SlotEntry {
 /// still receives them; pruned with everything else, the sidebar's own-slots
 /// view would be empty on every reload.
 ///
+/// Five hundred of them, which at four slots in every eight hundred is about a
+/// hundred thousand slots of cluster history, or eleven hours. That is the
+/// depth an operator wants when they come back to a shift they were not
+/// watching, and it is what the figure is sized for rather than any property
+/// of the ring.
+///
 /// They occupy the ring's capacity rather than extending it, so the oldest
-/// ordinary slots make way for them. Expected to stay well under that capacity,
-/// which at sixty-four against four thousand it comfortably is. Matches the
+/// ordinary slots make way for them. Five hundred against four thousand leaves
+/// the ordinary window about twenty-four minutes deep, which is still far more
+/// than the five hundred and twelve slots a client is ever sent. Matches the
 /// browser's own retention, so a reload restores what was on screen rather than
 /// some other depth.
-const OWN_SLOTS_KEPT: usize = 64;
+const OWN_SLOTS_KEPT: usize = 500;
 
 /// A bounded, slot-keyed history. Slots more than `capacity` behind the highest
 /// one seen are dropped, except for this validator's own.
@@ -148,37 +154,29 @@ impl SlotRing {
         self.entries.values().skip(skip).cloned().collect()
     }
 
-    /// The distinct leaders of the most recent `count` slots.
-    ///
-    /// What the schedule page needs metadata for, and no more. Bounded by the
-    /// slots a client is actually holding rather than by the size of the
-    /// cluster, so the table that goes with it does not grow with a validator
-    /// set the page never shows.
-    pub fn recent_leaders(&self, count: usize) -> HashSet<String> {
-        let skip = self.entries.len().saturating_sub(count);
-        self.entries
-            .values()
-            .skip(skip)
-            .filter_map(|entry| entry.leader.clone())
-            .collect()
-    }
-
     /// What a newly connected client is sent: the most recent `count` slots,
     /// preceded by this validator's own from further back.
     ///
     /// Without the second part a reload lost every leader slot on screen, since
     /// the recent window almost never contains one.
-    pub fn overview(&self, count: usize) -> Vec<SlotEntry> {
-        let recent = self.recent(count);
-        let floor = recent.first().map_or(Slot::MAX, |entry| entry.slot);
-        let mut overview: Vec<SlotEntry> = self
-            .entries
+    ///
+    /// The two parts go out as two messages rather than one. Five hundred of
+    /// our own slots and five hundred and twelve recent ones, each carrying a
+    /// name and an icon as long as a validator-info account can hold, put a
+    /// single message past the frame ceiling; split, neither half is close to
+    /// it. The client clears on the recent half and merges on this one, which
+    /// is safe because the retained map is keyed and ordered, and `overview`
+    /// sorts before `own`.
+    pub fn own_before_window(&self, count: usize) -> Vec<SlotEntry> {
+        // The same slot `recent` would start at, found without cloning the
+        // window to look at its first entry.
+        let skip = self.entries.len().saturating_sub(count);
+        let floor = self.entries.keys().nth(skip).copied().unwrap_or(Slot::MAX);
+        self.entries
             .values()
             .filter(|entry| entry.mine && entry.slot < floor)
             .cloned()
-            .collect();
-        overview.extend(recent);
-        overview
+            .collect()
     }
 
     /// Applies `update` to the entry for `slot`, creating it if needed, and
@@ -282,43 +280,12 @@ impl SlotRing {
             .collect()
     }
 
-    /// Slots that know their leader but have no name for it yet, as
-    /// `(slot, leader)` pairs.
-    pub fn leaders_without_names(&self) -> Vec<(Slot, String)> {
-        self.entries
-            .values()
-            .filter(|entry| entry.leader_name.is_none())
-            .filter_map(|entry| entry.leader.clone().map(|leader| (entry.slot, leader)))
-            .collect()
-    }
-
-    pub fn set_leader_display(
-        &mut self,
-        slot: Slot,
-        name: Option<String>,
-        icon: Option<String>,
-    ) -> Option<SlotEntry> {
-        self.update(slot, |entry| {
-            entry.leader_name = name;
-            entry.leader_icon = icon;
-        })
-    }
-
-    pub fn set_leader(
-        &mut self,
-        slot: Slot,
-        leader: &Pubkey,
-        name: Option<String>,
-        icon: Option<String>,
-        mine: bool,
-    ) -> Option<SlotEntry> {
-        let leader = leader.to_string();
-        self.update(slot, |entry| {
-            entry.leader = Some(leader);
-            entry.leader_name = name;
-            entry.leader_icon = icon;
-            entry.mine = mine;
-        })
+    /// Records that this validator leads `slot`.
+    ///
+    /// The only thing about a leader a slot still carries. Everything else the
+    /// page shows about them is one copy per leader elsewhere.
+    pub fn set_mine(&mut self, slot: Slot, mine: bool) -> Option<SlotEntry> {
+        self.update(slot, |entry| entry.mine = mine)
     }
 }
 
@@ -326,108 +293,85 @@ impl SlotRing {
 mod tests {
     use super::*;
 
-    fn leader(seed: u8) -> Pubkey {
-        Pubkey::new_from_array([seed; 32])
-    }
-
     #[test]
-    fn test_setting_a_leader_records_who_and_whether_it_is_ours() {
+    fn test_a_slot_records_only_whether_it_is_ours() {
         let mut ring = SlotRing::new(16);
-        let entry = ring
-            .set_leader(7, &leader(1), Some("Lantern".into()), None, true)
-            .expect("a new leader is a change");
-        assert_eq!(
-            entry.leader.as_deref(),
-            Some(leader(1).to_string().as_str())
-        );
-        assert_eq!(entry.leader_name.as_deref(), Some("Lantern"));
+        let entry = ring.set_mine(7, true).expect("a change");
         assert!(entry.mine);
     }
 
     #[test]
-    fn test_setting_the_same_leader_twice_reports_no_change() {
+    fn test_marking_the_same_slot_ours_twice_reports_no_change() {
         // The schedule is walked forwards on every tick, so a slot is labelled
         // repeatedly. Republishing each time would put the strip's whole window
         // on the wire five times a second.
         let mut ring = SlotRing::new(16);
-        assert!(ring.set_leader(7, &leader(1), None, None, false).is_some());
-        assert!(ring.set_leader(7, &leader(1), None, None, false).is_none());
+        assert!(ring.set_mine(7, true).is_some());
+        assert!(ring.set_mine(7, true).is_none());
     }
 
-    #[test]
-    fn test_a_slot_awaits_a_name_only_while_it_has_none() {
-        let mut ring = SlotRing::new(16);
-        ring.set_leader(7, &leader(1), None, None, false);
-        ring.set_leader(8, &leader(2), Some("Known".into()), None, false);
-        // Slot 9 has no leader at all, so there is nothing to look up for it.
-        ring.update(9, |entry| entry.level = SlotLevel::Completed);
-
-        let waiting = ring.leaders_without_names();
-        assert_eq!(waiting.len(), 1);
-        assert_eq!(waiting[0].0, 7);
-        assert_eq!(waiting[0].1, leader(1).to_string());
-    }
-
-    #[test]
-    fn test_a_name_arriving_late_fills_the_slot_in() {
-        // The validator info scan takes minutes, so slots seen before it lands
-        // carry a raw pubkey until it does.
-        let mut ring = SlotRing::new(16);
-        ring.set_leader(7, &leader(1), None, None, false);
-        let entry = ring
-            .set_leader_display(7, Some("Lantern".into()), Some("https://i".into()))
-            .expect("a name where there was none is a change");
-        assert_eq!(entry.leader_name.as_deref(), Some("Lantern"));
-        assert_eq!(entry.leader_icon.as_deref(), Some("https://i"));
-        assert!(
-            ring.leaders_without_names().is_empty(),
-            "and it stops asking"
-        );
-    }
-
-    /// The slot overview is the largest message the server sends, and the
-    /// websocket ceiling is sized from it. If a field is added here, or the
-    /// overview grows, this is what notices before a client is cut off
+    /// The two slot snapshots are the largest messages the server sends, and
+    /// the websocket ceiling is sized from them. If a field is added here, or
+    /// either grows, this is what notices before a client is cut off
     /// mid-snapshot in production.
+    ///
+    /// Checked separately because they are sent separately. Added together
+    /// they are over the ceiling, which is why they were split, and asserting
+    /// on the sum would fail for a shape that ships perfectly well.
     #[test]
-    fn test_largest_overview_fits_the_message_ceiling() {
-        // Worst case throughout: a full ring, every slot with a leader, and a
-        // name and icon as long as a validator-info account can carry.
+    fn test_the_largest_slot_snapshots_fit_the_message_ceiling() {
+        // Worst case throughout: a full ring, every counter at its ceiling.
+        // Far smaller than it was, the leader's key, name and icon having moved
+        // off the slot; the check stays because what bounds the frame is still
+        // this message and a field added here is what would grow it.
         //
         // The 512 mirrors `SLOT_OVERVIEW_LEN` in `collect`, which this module
-        // cannot see. The overview carries our own slots ahead of that window,
-        // so the largest it can be is the two added together.
-        let long = "x".repeat(300);
-        let entries: Vec<SlotEntry> = (0..512 + OWN_SLOTS_KEPT as u64)
-            .map(|index| SlotEntry {
-                slot: 428_804_675 + index,
-                level: SlotLevel::OptimisticallyConfirmed,
-                leader: Some("J7v9KQ8s3XjLpQmR4tVnW2yZ6bC1dE5fG8hJ3kL7mN9p".to_string()),
-                leader_name: Some(long.clone()),
-                leader_icon: Some(long.clone()),
-                mine: true,
-                block: Some(BlockDetail {
-                    transactions: u64::MAX,
-                    non_vote_transactions: u64::MAX,
-                    failed_transactions: u64::MAX,
-                    entries: u64::MAX,
-                    block_cost: u64::MAX,
-                    block_cost_limit: u64::MAX,
-                    account_cost_limit: u64::MAX,
-                    total_fees: u64::MAX,
-                    priority_fees: u64::MAX,
-                }),
-                duration_nanos: Some(u64::MAX),
-            })
-            .collect();
+        // cannot see.
+        // Built per message rather than sliced from one vector: `encode` takes
+        // a sized value, and a slice of entries is not one.
+        let worst = |count: usize| -> Vec<SlotEntry> {
+            (0..count as u64)
+                .map(|index| SlotEntry {
+                    slot: 428_804_675 + index,
+                    level: SlotLevel::OptimisticallyConfirmed,
+                    mine: true,
+                    block: Some(BlockDetail {
+                        transactions: u64::MAX,
+                        non_vote_transactions: u64::MAX,
+                        failed_transactions: u64::MAX,
+                        entries: u64::MAX,
+                        block_cost: u64::MAX,
+                        block_cost_limit: u64::MAX,
+                        account_cost_limit: u64::MAX,
+                        total_fees: u64::MAX,
+                        priority_fees: u64::MAX,
+                    }),
+                    duration_nanos: Some(u64::MAX),
+                })
+                .collect()
+        };
 
-        let encoded = crate::proto::encode("slot", "overview", &entries);
-        assert!(
-            encoded.len() < crate::proto::MAX_MESSAGE,
-            "worst-case overview is {} bytes against a {} byte ceiling",
-            encoded.len(),
-            crate::proto::MAX_MESSAGE
-        );
+        for (key, count) in [("overview", 512), ("own", OWN_SLOTS_KEPT)] {
+            let encoded = crate::proto::encode("slot", key, &worst(count));
+            assert!(
+                encoded.len() < crate::proto::MAX_MESSAGE,
+                "worst-case {key} is {} bytes against a {} byte ceiling",
+                encoded.len(),
+                crate::proto::MAX_MESSAGE
+            );
+        }
+    }
+
+    #[test]
+    fn test_the_recent_window_is_keyed_ahead_of_our_own_slots() {
+        // Load-bearing, and invisible at the call site. The client clears its
+        // slot map on "overview" and merges on "own", so a snapshot that
+        // delivered them the other way round would wipe our own slots every
+        // time a client connected. The retained map is a `BTreeMap` keyed by
+        // (topic, key), so the guarantee is alphabetical and this is all of it:
+        // renaming "own" to anything sorting before "overview" breaks it.
+        use crate::proto::TOPIC_SLOT;
+        assert!((TOPIC_SLOT, "overview") < (TOPIC_SLOT, "own"));
     }
 
     /// Every slot this validator led, oldest first.
@@ -456,17 +400,22 @@ mod tests {
 
     #[test]
     fn test_own_retention_is_bounded() {
+        // Saturating rather than bare `+`: the workspace denies
+        // `arithmetic_side_effects`, and a cast of a constant is not a literal
+        // as far as the lint is concerned.
+        let led = (OWN_SLOTS_KEPT as Slot).saturating_add(100);
         let mut ring = SlotRing::new(8);
-        for slot in 1..=100 {
+        for slot in 1..=led {
             ring.update(slot, |entry| entry.mine = true);
         }
-        for slot in 101..=300 {
+        for slot in led.saturating_add(1)..=led.saturating_add(200) {
             ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
         }
         let kept = ours(&ring);
         assert_eq!(kept.len(), OWN_SLOTS_KEPT);
         // The newest of ours, not the first we ever led.
-        assert_eq!(kept.last(), Some(&100));
+        assert_eq!(kept.last(), Some(&led));
+        assert_eq!(kept.first(), Some(&101));
     }
 
     #[test]
@@ -512,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn test_overview_carries_our_own_slots_from_before_it() {
+    fn test_the_two_snapshots_together_carry_our_own_slots_from_before_the_window() {
         let mut ring = SlotRing::new(512);
         for slot in [1, 2] {
             ring.update(slot, |entry| entry.mine = true);
@@ -520,24 +469,36 @@ mod tests {
         for slot in 3..=100 {
             ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
         }
-        let slots: Vec<Slot> = ring.overview(10).iter().map(|entry| entry.slot).collect();
-        assert_eq!(&slots[..2], &[1, 2]);
-        assert_eq!(slots.last(), Some(&100));
+        let own: Vec<Slot> = ring
+            .own_before_window(10)
+            .iter()
+            .map(|entry| entry.slot)
+            .collect();
+        let recent: Vec<Slot> = ring.recent(10).iter().map(|entry| entry.slot).collect();
+
+        assert_eq!(own, vec![1, 2]);
+        assert_eq!(recent.last(), Some(&100));
+        // Applied in order by the client, the pair is still one ordered list
+        // with nothing in it twice.
+        let together: Vec<Slot> = own.iter().chain(recent.iter()).copied().collect();
         assert!(
-            slots.windows(2).all(|pair| pair[0] < pair[1]),
-            "the overview must stay ordered and hold no duplicates: {slots:?}"
+            together.windows(2).all(|pair| pair[0] < pair[1]),
+            "the snapshots must not overlap or arrive out of order: {together:?}"
         );
     }
 
     #[test]
-    fn test_own_slot_inside_the_window_is_not_sent_twice() {
+    fn test_an_own_slot_inside_the_window_is_not_sent_twice() {
         let mut ring = SlotRing::new(512);
         for slot in 1..=20 {
             ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
         }
         ring.update(18, |entry| entry.mine = true);
-        let slots: Vec<Slot> = ring.overview(5).iter().map(|entry| entry.slot).collect();
-        assert_eq!(slots, vec![16, 17, 18, 19, 20]);
+
+        // Already in the recent half, so the own half must leave it out.
+        assert!(ring.own_before_window(5).is_empty());
+        let recent: Vec<Slot> = ring.recent(5).iter().map(|entry| entry.slot).collect();
+        assert_eq!(recent, vec![16, 17, 18, 19, 20]);
     }
 
     #[test]

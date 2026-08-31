@@ -70,6 +70,13 @@ pub struct Request {
     pub key: String,
     #[serde(default)]
     pub id: Option<u64>,
+    /// Whatever the request carries, left unparsed here.
+    ///
+    /// A `Value` rather than a typed field per request: the envelope is shared
+    /// by every request there is, and each one knows the shape of its own
+    /// parameters. Absent where a request needs none.
+    #[serde(default)]
+    pub params: serde_json::Value,
 }
 
 /// A serialized, ready-to-send message. Serialization happens once, on the

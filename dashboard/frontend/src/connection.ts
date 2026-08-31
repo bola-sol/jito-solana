@@ -94,6 +94,9 @@ export function connect(store: Store): () => void {
       if (ws !== socket) return;
       retryMs = MIN_RETRY_MS;
       lastMessageAt = Date.now();
+      // Installed before the state changes, so a caller that reacts to the
+      // connection opening can send straight away.
+      store.setSender((frame) => ws.send(frame));
       store.setConnection("open");
       stopWatchdog();
       watchdog = setInterval(() => {

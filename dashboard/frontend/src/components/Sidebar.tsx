@@ -1,6 +1,7 @@
 import { memo, useRef, useState } from "react";
 import { ScrollTop } from "./ScrollTop";
 import { count, shortKey } from "../format";
+import type { LeaderRef } from "../schedule";
 import type { SlotEntry } from "../types";
 import { useStore } from "../useStore";
 import { Logo } from "./Logo";
@@ -78,7 +79,7 @@ export function Sidebar({
             </div>
           )}
           {slots.map((entry) => (
-            <SidebarRow key={entry.slot} entry={entry} />
+            <SidebarRow key={entry.slot} entry={entry} leader={store.leaderOf(entry.slot)} />
           ))}
         </div>
       )}
@@ -109,15 +110,20 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  * holds for the rest and five hundred untouched rows are skipped rather than
  * diffed.
  */
-const SidebarRow = memo(function SidebarRow({ entry }: { entry: SlotEntry }) {
-  const name =
-    entry.leader_name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : "unknown");
+const SidebarRow = memo(function SidebarRow({
+  entry,
+  leader,
+}: {
+  entry: SlotEntry;
+  leader: LeaderRef;
+}) {
+  const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : "unknown");
 
   return (
     <div className={`sidebar-row level-${entry.level}${entry.mine ? " mine" : ""}`}>
-      <div className="sidebar-leader" title={entry.leader ?? undefined}>
+      <div className="sidebar-leader" title={leader.key ?? undefined}>
         {entry.mine && <span className="sidebar-mine-marker" aria-label="our slot" />}
-        <Logo url={entry.leader_icon} size={14} />
+        <Logo url={leader.icon} size={14} />
         {name}
       </div>
       <div className="sidebar-slot">{count(entry.slot)}</div>

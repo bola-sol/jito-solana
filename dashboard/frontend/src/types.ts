@@ -11,9 +11,14 @@ export type SlotLevel =
 export interface SlotEntry {
   slot: number;
   level: SlotLevel;
-  leader: string | null;
-  leader_name: string | null;
-  leader_icon: string | null;
+  /**
+   * True when this validator was the scheduled leader.
+   *
+   * The leader itself is not here. It was three strings on every slot, the same
+   * key, name and icon repeated for all four slots of a turn. The key now comes
+   * from the epoch's turn array and the name and icon from the peer table, each
+   * holding one copy per leader. Resolve them with `store.leaderOf`.
+   */
   mine: boolean;
   /** What replay found in the block. Null for a slot with no block. */
   block: BlockDetail | null;
@@ -118,6 +123,10 @@ export interface Peer {
   version: string | null;
   stake: number;
   ip: string | null;
+  /** Display name from the validator's on-chain info, if it published one. */
+  name: string | null;
+  /** Icon URL from the same place. */
+  icon: string | null;
 }
 
 /**
@@ -190,6 +199,23 @@ export interface EpochInfo {
   end_slot: number;
   slots_in_epoch: number;
   my_leader_slots: number[];
+
+  /** Every leader of this epoch, in the order they first take a turn. */
+  leaders: string[];
+  /**
+   * One index into `leaders` per run of consecutive slots given to a single
+   * leader, so the leader of a slot is
+   * `leaders[turns[(slot - start_slot) / 4]]`, four being the run length the
+   * cluster guarantees.
+   *
+   * Empty where the validator could not derive the schedule, which is not the
+   * same as an epoch with no leaders and must not be drawn as one.
+   */
+  turns: number[];
+
+  /** Consensus limits every block of this epoch is measured against. */
+  block_cost_limit: number;
+  account_cost_limit: number;
 }
 
 export interface Network {
@@ -627,6 +653,33 @@ export interface SlotCost {
 export interface IngestSummary {
   window_seconds: number;
   paths: IngestPath[];
+}
+
+/**
+ * How the XDP transmit path is set up, on a validator running one.
+ *
+ * Absent entirely otherwise: the validator only reports this where it was given
+ * a config. Describes the path under turbine, repair and gossip alike despite
+ * the flags being named for retransmit, and says nothing about receiving.
+ *
+ * A configuration rather than a measurement. It answers whether the flags took
+ * and on what card, not whether the path is fast. Nothing the validator reports
+ * answers that.
+ */
+export interface XdpConfig {
+  /**
+   * Whether the socket bound with zero-copy rather than copy.
+   *
+   * True is trustworthy: the flag goes straight to the bind, which fails
+   * outright on a driver that cannot do it rather than falling back, so a
+   * validator that is running and reporting this really has it.
+   */
+  zero_copy: boolean;
+  driver: string;
+  /** Both of these read "unknown" where the PCI database could not be read. */
+  vendor: string;
+  model: string;
+  kernel_version: string;
 }
 
 export interface StartupProgress {

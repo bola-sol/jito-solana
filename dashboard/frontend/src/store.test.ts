@@ -15,9 +15,6 @@ function slot(number: number, level: SlotEntry["level"] = "completed"): SlotEntr
   return {
     slot: number,
     level,
-    leader: null,
-    leader_name: null,
-    leader_icon: null,
     block: null,
     duration_nanos: null,
     mine: false,
@@ -102,18 +99,93 @@ describe("slots", () => {
     expect(ours.map((entry) => entry.slot)).toEqual([1, 2, 3, 4]);
   });
 
+  it("answers a request with the reply carrying its id", async () => {
+    const store = new Store();
+    const sent: string[] = [];
+    store.setSender((frame) => sent.push(frame));
+    store.setConnection("open");
+
+    const reply = store.request<{ rows: number[] }>("slot", "range", { first_slot: 4 });
+    const frame = JSON.parse(sent[0]) as { id: number; topic: string; params: unknown };
+    expect(frame.topic).toBe("slot");
+    expect(frame.params).toEqual({ first_slot: 4 });
+
+    store.apply({ topic: "slot", key: "range", id: frame.id, value: { rows: [1, 2] } });
+    expect(await reply).toEqual({ rows: [1, 2] });
+  });
+
+  it("does not fold a reply into the state it happens to be named after", () => {
+    // The envelope of a reply and of a push differ only by the id, so without
+    // that check a queried range would overwrite the live slot map.
+    const store = new Store();
+    store.setSender(() => {});
+    store.setConnection("open");
+    store.apply(envelope("slot", "overview", [slot(900)]));
+
+    store.apply({ topic: "slot", key: "update", id: 77, value: slot(1) });
+    expect(store.getSlots().map((entry) => entry.slot)).toEqual([900]);
+  });
+
+  it("fails the requests in flight when the connection goes", async () => {
+    // Both paths that give up on a socket set the connection state, so this is
+    // the one place that has to notice. Left pending, a caller shows a loading
+    // state that never resolves.
+    const store = new Store();
+    store.setSender(() => {});
+    store.setConnection("open");
+
+    const reply = store.request("slot", "range", {});
+    store.setConnection("closed");
+    await expect(reply).rejects.toThrow("connection lost");
+  });
+
+  it("refuses a request made with no connection rather than queueing it", async () => {
+    // Answered after the next reconnect, it would arrive against a page that
+    // has moved on.
+    const store = new Store();
+    await expect(store.request("slot", "range", {})).rejects.toThrow("not connected");
+  });
+
+  it("keeps the own-slot snapshot that arrives after the overview", () => {
+    // The connect snapshot is two messages. The first clears and fills the
+    // recent window; the second carries our own leader slots from before it
+    // and must merge into what the first left, not replace it.
+    const store = new Store();
+    store.apply(envelope("slot", "overview", [slot(900), slot(901), slot(902)]));
+    store.apply(
+      envelope("slot", "own", [
+        { ...slot(10), mine: true },
+        { ...slot(11), mine: true },
+      ]),
+    );
+
+    const held = store.getSlots().map((entry) => entry.slot);
+    expect(held).toEqual([10, 11, 900, 901, 902]);
+  });
+
+  it("clears the own slots of a previous connection when the overview arrives", () => {
+    // A reconnect resends both. The overview clearing first is what stops a
+    // stale own slot outliving the connection that delivered it.
+    const store = new Store();
+    store.apply(envelope("slot", "own", [{ ...slot(10), mine: true }]));
+    store.apply(envelope("slot", "overview", [slot(900)]));
+
+    expect(store.getSlots().map((entry) => entry.slot)).toEqual([900]);
+  });
+
   it("bounds how many of our own slots it keeps", () => {
     const store = new Store();
-    for (let number = 1; number <= 200; number += 1) {
+    for (let number = 1; number <= 600; number += 1) {
       store.apply(envelope("slot", "update", { ...slot(number), mine: true }));
     }
-    for (let number = 201; number <= 1000; number += 1) {
+    for (let number = 601; number <= 1400; number += 1) {
       store.apply(envelope("slot", "update", slot(number)));
     }
     const ours = store.getSlots().filter((entry) => entry.mine);
-    expect(ours).toHaveLength(64);
-    // The newest of ours, not the first sixty-four we ever saw.
-    expect(ours[ours.length - 1].slot).toBe(200);
+    expect(ours).toHaveLength(500);
+    // The newest five hundred of ours, not the first five hundred we ever saw.
+    expect(ours[ours.length - 1].slot).toBe(600);
+    expect(ours[0].slot).toBe(101);
   });
 
   it("does not let retained slots displace the recent window", () => {

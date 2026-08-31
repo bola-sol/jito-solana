@@ -163,6 +163,21 @@ const WORKER_COUNTS: &str = "banking_stage_worker_counts";
 /// nothing to show against them.
 const SCHEDULER_SLOT_COUNTS: &str = "banking_stage_scheduler_slot_counts";
 
+/// How the XDP transmit path is set up, on a validator running one.
+///
+/// The only point here that describes a configuration rather than counting
+/// something, and the only one read for its tags as much as its fields. It is
+/// submitted on an interval by the system monitor, and only where the validator
+/// was given an XDP config at all, so its absence is what says XDP is off. That
+/// is the whole reason it is worth reading: the flags behind it are
+/// experimental and opt-in, and nothing else the validator reports says whether
+/// they took.
+///
+/// Despite the flag names it is not only about retransmit. One transmitter is
+/// built and handed to turbine, repair and gossip alike, so this describes the
+/// path under all three. Nothing here is about receiving.
+const XDP_NETWORK_CONFIG: &str = "xdp-network-config";
+
 /// Every slot's replay, timed.
 ///
 /// Reported once per slot replayed — every slot, not only the ones this node
@@ -200,9 +215,13 @@ const SLOT: &str = "slot";
 /// describing now.
 const REPLAY_SLOTS: usize = 256;
 
-/// Leader slots kept. Matched to the produced block panel's own retention, so
-/// every block it can show has its waterfall for as long as it is shown.
-const SLOT_WATERFALLS: usize = 64;
+/// Leader slots kept, for both the per-slot waterfalls and the per-slot costs.
+///
+/// Matched to the produced block panel's own retention, so every block it can
+/// show has its waterfall and its cost breakdown for as long as it is shown. A
+/// block whose detail page had lost half its sections would look like a slot
+/// that had gone wrong rather than one that had simply aged.
+const SLOT_WATERFALLS: usize = 500;
 
 /// The tag naming which scheduler reported a point.
 ///
@@ -512,6 +531,39 @@ pub struct MetricsTap {
     /// wants the worst slot as well as the ordinary one, and a maximum cannot
     /// be recovered by differencing two totals.
     replay_slots: Mutex<VecDeque<ReplaySlotTimes>>,
+
+    /// How the XDP transmit path is configured, or nothing on a validator not
+    /// running one.
+    ///
+    /// Latched rather than windowed. It describes how the process was started
+    /// and cannot change while it runs, so the first report stands for the life
+    /// of the validator and later ones only overwrite it with the same thing.
+    /// Never cleared: a config that stopped being reported has not been turned
+    /// off, it has stopped being reported, and those want telling apart.
+    xdp: Mutex<Option<XdpConfig>>,
+}
+
+/// How the XDP transmit path is configured.
+///
+/// Strings as the validator resolved them, not as the flags were written. The
+/// driver comes from the device, and the vendor and model from the PCI database
+/// where it could be read and as raw PCI ids where it could not, so either may
+/// arrive as "unknown" on a host missing the database. Passed through as sent
+/// rather than tidied here: a guess at what "unknown" ought to say would be a
+/// guess printed as fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct XdpConfig {
+    /// Whether the socket bound with `XDP_ZEROCOPY` rather than `XDP_COPY`.
+    ///
+    /// Trustworthy in a way most reported settings are not. The flag is passed
+    /// straight to `bind`, which fails outright on a driver that cannot do it
+    /// rather than falling back, so a validator that is running and reporting
+    /// this true really is in zero-copy.
+    pub zero_copy: bool,
+    pub driver: String,
+    pub vendor: String,
+    pub model: String,
+    pub kernel_version: String,
 }
 
 /// One leader slot's waterfall.
@@ -950,6 +1002,17 @@ impl MetricsTap {
         tap
     }
 
+    /// Feeds one point in, for tests in the other modules of this crate.
+    ///
+    /// Compiled only into the test build. `observe` itself stays private: in a
+    /// running validator the only thing that may call it is the closure
+    /// `install` hands to the metrics writer, and widening it so a test in
+    /// another module can reach it would make that no longer true.
+    #[cfg(test)]
+    pub(crate) fn observe_point(&self, point: &DataPoint) {
+        self.observe(point);
+    }
+
     /// Adds what one point carries, if it is one of the few worth reading.
     ///
     /// A point this module does not want leaves after the match below, which is
@@ -984,6 +1047,7 @@ impl MetricsTap {
             }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
+            XDP_NETWORK_CONFIG => self.remember_xdp(point),
             COST_TRACKER => self.remember_cost(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
             PROGRAM_CACHE => self.program_cache.add_point(point),
@@ -1075,6 +1139,46 @@ impl MetricsTap {
     /// verification method this tree has and those are the names it reports
     /// under; and `update_transaction_statuses` carries no `_us` suffix where
     /// every figure around it does.
+    /// Latches how the XDP transmit path is set up.
+    ///
+    /// Read from the tags as much as the fields, which no other point here
+    /// needs: `driver` and `zero_copy` are tags, and the three that name the
+    /// kernel and the card are fields. The two are stored differently — a tag
+    /// keeps the value it was given and a string field arrives wrapped in
+    /// quotes — so they cannot be read the same way.
+    ///
+    /// An unparseable `zero_copy` is taken as false rather than dropping the
+    /// report. Everything else on the point is still worth having, and false is
+    /// the reading that claims least.
+    fn remember_xdp(&self, point: &DataPoint) {
+        let tag = |wanted: &str| {
+            point
+                .tags
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .map(|(_, value)| value.as_str())
+        };
+        let field = |wanted: &str| {
+            point
+                .fields
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .map(|(_, value)| field_str(value))
+                .unwrap_or_default()
+        };
+
+        let config = XdpConfig {
+            zero_copy: tag("zero_copy") == Some("true"),
+            driver: tag("driver").unwrap_or_default().to_string(),
+            vendor: field("vendor"),
+            model: field("model"),
+            kernel_version: field("kernel_version"),
+        };
+        if let Ok(mut held) = self.xdp.lock() {
+            *held = Some(config);
+        }
+    }
+
     fn remember_replay(&self, point: &DataPoint) {
         let mut slot = ReplaySlotTimes::default();
         let mut seen = false;
@@ -1219,6 +1323,11 @@ impl MetricsTap {
             .lock()
             .map(|costs| costs.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// How the XDP transmit path is configured, or nothing where it is not.
+    pub fn xdp(&self) -> Option<XdpConfig> {
+        self.xdp.lock().ok().and_then(|held| held.clone())
     }
 
     /// The replayed slots held, oldest first.
@@ -1824,6 +1933,20 @@ fn set_field(gauge: &AtomicU64, value: &str) {
 /// a boolean or a quoted string, and none of those are counters.
 fn field_u64(value: &str) -> Option<u64> {
     value.strip_suffix('i')?.parse().ok()
+}
+
+/// A string field as it was written, without the wrapper the point put round it.
+///
+/// `add_field_str` stores a string already quoted for the line protocol and with
+/// any quote inside it escaped, so what arrives here is the encoding rather than
+/// the value. One pair of quotes is taken off rather than every leading and
+/// trailing one, so a value that really did start with a quote keeps it.
+fn field_str(value: &str) -> String {
+    let inner = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value);
+    inner.replace("\\\"", "\"")
 }
 
 #[cfg(test)]
@@ -2899,5 +3022,102 @@ mod tests {
             ],
         ));
         assert_eq!(tap.counters().shreds_turbine, 900);
+    }
+
+    /// An XDP config point built through the same calls the validator's macro
+    /// makes, so the encodings under test are the real ones rather than a guess
+    /// at what they look like.
+    fn xdp_point(
+        zero_copy: bool,
+        driver: &str,
+        vendor: &str,
+        model: &str,
+        kernel: &str,
+    ) -> DataPoint {
+        let mut point = DataPoint::new(XDP_NETWORK_CONFIG);
+        point.add_tag("driver", driver);
+        point.add_tag("zero_copy", &zero_copy.to_string());
+        point.add_field_str("kernel_version", kernel);
+        point.add_field_str("vendor", vendor);
+        point.add_field_str("model", model);
+        point
+    }
+
+    #[test]
+    fn test_the_xdp_config_is_read_from_the_tags_and_the_fields_alike() {
+        // The only point here that needs both. A tag keeps the value it was
+        // given; a string field arrives wrapped in quotes for the line
+        // protocol, and reading it without unwrapping would put those quotes on
+        // the card.
+        let tap = MetricsTap::default();
+        tap.observe(&xdp_point(
+            true,
+            "ice",
+            "Intel Corporation",
+            "Ethernet Controller E810-C for QSFP",
+            "6.8.0-45-generic",
+        ));
+
+        let xdp = tap.xdp().expect("a reported config is held");
+        assert!(xdp.zero_copy);
+        assert_eq!(xdp.driver, "ice");
+        assert_eq!(xdp.vendor, "Intel Corporation");
+        assert_eq!(xdp.model, "Ethernet Controller E810-C for QSFP");
+        assert_eq!(xdp.kernel_version, "6.8.0-45-generic");
+    }
+
+    #[test]
+    fn test_there_is_no_xdp_config_where_none_was_ever_reported() {
+        // The point is only submitted where the validator was given an XDP
+        // config, so its absence is the answer rather than something to work
+        // out.
+        let tap = MetricsTap::default();
+        tap.observe(&named(SHREDS_TURBINE, &[("packets_count", "1i")]));
+        assert!(tap.xdp().is_none());
+    }
+
+    #[test]
+    fn test_a_missing_zero_copy_tag_reads_as_copy_rather_than_dropping_the_report() {
+        // Everything else on the point is still worth having, and copy is the
+        // reading that claims least.
+        let mut point = DataPoint::new(XDP_NETWORK_CONFIG);
+        point.add_tag("driver", "mlx5_core");
+        point.add_field_str("model", "MT2892 Family");
+        let tap = MetricsTap::default();
+        tap.observe(&point);
+
+        let xdp = tap
+            .xdp()
+            .expect("a config with no zero_copy tag is still a config");
+        assert!(!xdp.zero_copy);
+        assert_eq!(xdp.driver, "mlx5_core");
+        assert_eq!(xdp.kernel_version, "");
+    }
+
+    #[test]
+    fn test_the_latest_xdp_report_stands() {
+        // It is submitted on an interval and cannot change while the process
+        // runs, so this is only ever the same reading again. Overwriting rather
+        // than keeping the first means a config read late, once the PCI
+        // database was available, is not held out by one read early.
+        let tap = MetricsTap::default();
+        tap.observe(&xdp_point(false, "ice", "unknown", "unknown", "6.8.0"));
+        tap.observe(&xdp_point(
+            false,
+            "ice",
+            "Intel Corporation",
+            "Ethernet Controller E810-C for QSFP",
+            "6.8.0",
+        ));
+        assert_eq!(tap.xdp().unwrap().vendor, "Intel Corporation");
+    }
+
+    #[test]
+    fn test_a_string_field_keeps_a_quote_that_was_part_of_the_value() {
+        // The wrapper is one pair, not every quote at either end, and a quote
+        // inside the value arrives escaped.
+        assert_eq!(field_str(r#""6.8.0""#), "6.8.0");
+        assert_eq!(field_str(r#""a \"b\" c""#), r#"a "b" c"#);
+        assert_eq!(field_str("unquoted"), "unquoted");
     }
 }

@@ -1,7 +1,8 @@
 import { memo, useMemo, useRef, useState } from "react";
 import { count, percent, shortKey, sol, solCompact } from "../format";
-import { matchesQuery, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
-import type { Peer, StakeSummary } from "../types";
+import { matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
+import { entriesOf, type SlotRange } from "../slotHistory";
+import type { EpochInfo, Peer, SlotEntry, StakeSummary } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
@@ -23,6 +24,17 @@ import { ScrollTop } from "./ScrollTop";
  * arrivals are seen while the top is on screen, and held off what is being read
  * once it is not.
  */
+/**
+ * Slots asked for each time the reader wants more.
+ *
+ * Five hundred and twelve, a hundred and twenty-eight turns, which is a few
+ * screenfuls. The list is not virtualised, so this bounds the DOM as much as
+ * the request: the depth the validator retains is far past what a browser will
+ * happily render at once, and the reader asking for more is what decides how
+ * much of it is worth rendering.
+ */
+const OLDER_SPAN = 512;
+
 export function SchedulePage() {
   const store = useStore();
   const [query, setQuery] = useState("");
@@ -31,7 +43,45 @@ export function SchedulePage() {
 
   const stake = store.get<StakeSummary>("summary", "stake");
   const peers = store.get<Peer[]>("peers", "all");
-  const slots = store.getSlots();
+  const epoch = store.get<EpochInfo>("epoch", "new");
+  const identity = store.get<string>("summary", "identity_key");
+  const live = store.getSlots();
+
+  // Spans fetched from the validator's packed history, oldest first, below
+  // whatever the live window still holds. Held here rather than in the store:
+  // they are this page's working set, and putting a hundred thousand
+  // reconstructed entries into the shared slot map is the thing this design
+  // exists to avoid.
+  const [older, setOlder] = useState<SlotEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
+  const slots = useMemo(() => [...older, ...live], [older, live]);
+
+  const loadOlder = async () => {
+    if (loading) return;
+    const earliest = slots[0]?.slot;
+    if (earliest === undefined) return;
+    setLoading(true);
+    try {
+      // Aligned down to a turn boundary so a span never begins mid-turn, and
+      // clamped at nought for a cluster young enough that it could go below.
+      const first = Math.max(0, Math.floor((earliest - OLDER_SPAN) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
+      const range = await store.request<SlotRange>("slot", "range", {
+        first_slot: first,
+        count: earliest - first,
+      });
+      const fetched = entriesOf(range, epoch, identity);
+      // Nothing came back for any of it, so there is nothing older to ask for
+      // and the control stops offering.
+      if (fetched.length === 0) setExhausted(true);
+      else setOlder((held) => [...fetched, ...held]);
+    } catch {
+      // A refused or lost request leaves the page as it was. The control stays,
+      // so trying again is a click rather than a reload.
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const byIdentity = useMemo(
     () => new Map((peers ?? []).map((peer) => [peer.identity, peer])),
@@ -39,8 +89,14 @@ export function SchedulePage() {
   );
 
   const turns = useMemo(
-    () => turnsOf(slots).filter((turn) => matchesQuery(turn, query) && (!oursOnly || turn.mine)),
-    [slots, query, oursOnly],
+    () =>
+      turnsOf(slots, (slot) => store.leaderOf(slot)).filter(
+        (turn) => matchesQuery(turn, query) && (!oursOnly || turn.mine),
+      ),
+    // `store` is stable and its revision is what re-runs this; `leaderOf`
+    // answers from the epoch and peer table, both of which arrive as published
+    // values and so bump that revision when they change.
+    [store, slots, query, oursOnly],
   );
 
   return (
@@ -79,6 +135,16 @@ export function SchedulePage() {
             totalStake={stake?.total_stake}
           />
         ))}
+        {slots.length > 0 && !exhausted && (
+          <button
+            type="button"
+            className="schedule-older"
+            disabled={loading}
+            onClick={() => void loadOlder()}
+          >
+            {loading ? "loading…" : "load earlier turns"}
+          </button>
+        )}
       </div>
     </section>
   );

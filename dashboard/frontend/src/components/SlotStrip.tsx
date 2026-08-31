@@ -1,5 +1,6 @@
 import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { count, shortKey, slotDelta } from "../format";
+import type { LeaderRef } from "../schedule";
 import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
@@ -203,6 +204,7 @@ export function SlotStrip() {
           <SlotBar
             key={entry.slot}
             entry={entry}
+            leader={store.leaderOf(entry.slot)}
             active={entry.slot === cursor}
             nominalMs={nominalMs}
             onPoint={setCursor}
@@ -221,7 +223,9 @@ export function SlotStrip() {
           <i className="slot-key-swatch slot-key-mine" />
           Ours
         </Explain>
-        {pinned !== null && <SlotDetail entry={active} />}
+        {pinned !== null && (
+          <SlotDetail entry={active} leader={store.leaderOf(active?.slot ?? 0)} />
+        )}
       </div>
     </section>
   );
@@ -237,7 +241,7 @@ export function SlotStrip() {
  * `role="status"` so that arrowing along the strip is announced. The bars
  * themselves are not focusable, so their labels would otherwise never be read.
  */
-function SlotDetail({ entry }: { entry: SlotEntry | null }) {
+function SlotDetail({ entry, leader }: { entry: SlotEntry | null; leader: LeaderRef }) {
   if (!entry) {
     return (
       <span className="slot-detail is-idle" role="status">
@@ -246,16 +250,16 @@ function SlotDetail({ entry }: { entry: SlotEntry | null }) {
     );
   }
   const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
-  const leader = entry.leader_name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : null);
+  const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : null);
   return (
     <span className="slot-detail" role="status">
       <b>{count(entry.slot)}</b>
       <span>{LEVEL_NAMES.get(entry.level) ?? entry.level}</span>
       {durationMs !== null && <span>{Math.round(durationMs)} ms</span>}
-      {leader && (
+      {name && (
         <span className="slot-detail-leader">
-          <Logo url={entry.leader_icon} size={12} />
-          {leader}
+          <Logo url={leader.icon} size={12} />
+          {name}
         </span>
       )}
       {entry.block && <span>{count(entry.block.transactions)} txns</span>}
@@ -275,11 +279,13 @@ function SlotDetail({ entry }: { entry: SlotEntry | null }) {
  */
 const SlotBar = memo(function SlotBar({
   entry,
+  leader,
   active,
   nominalMs,
   onPoint,
 }: {
   entry: SlotEntry;
+  leader: LeaderRef;
   active: boolean;
   nominalMs: number;
   onPoint: (slot: number) => void;
@@ -292,12 +298,12 @@ const SlotBar = memo(function SlotBar({
   const height = barHeight(durationMs, nominalMs);
   // Named the same way the sidebar names them, so the two agree on who a slot
   // belonged to.
-  const leader = entry.leader_name ?? (entry.leader ? shortKey(entry.leader, 4, 4) : null);
+  const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : null);
   const title = [
     `slot ${entry.slot}`,
     LEVEL_NAMES.get(entry.level) ?? entry.level,
     durationMs === null ? null : `${Math.round(durationMs)} ms`,
-    leader,
+    name,
     entry.block === null ? null : `${count(entry.block.transactions)} txns`,
     entry.mine ? "our leader slot" : null,
   ]

@@ -2985,8 +2985,25 @@ body {
     gap: 4px;
   }
 
-  .sx-stat:nth-last-child(-n + 2) {
+  /* Scoped to that grid, and only ever meant for it: four counts across and
+     the two fee values on a row of their own. Unscoped it also caught the four
+     figures below, which are a different set in a different container, and gave
+     the last two of them a full width each. */
+  .sx-stats .sx-stat:nth-last-child(-n + 2) {
     grid-column: span 2;
+  }
+
+  /* The four block figures, two by two.
+     Their desktop layout is a flex-wrap on a twenty-six pixel gutter, which is
+     right for bare text and wrong from the moment the boxes above arrive at
+     this width: three fit across and the fourth drops to a row of its own. A
+     grid on the same two-pixel gutter as the stats above puts them even, and
+     the pairing falls out of the order they are already in, the two account
+     counts and then the two rates. */
+  .sx-keep {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px;
   }
 
   .sx-legend {

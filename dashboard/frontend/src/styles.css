@@ -1719,6 +1719,57 @@ body {
   fill: color-mix(in srgb, var(--warn) 9%, transparent);
 }
 
+/* How the XDP transmit path is configured, where there is one. One line high
+   and `flex: none`: the rows above share out the card's surplus height between
+   them, and this must not take a share of it, being a fixed statement rather
+   than a line that grows more readable with room.
+
+   Two columns rather than the three the rows use, and the label sized to its
+   own words rather than to their 140px track. Aligned to the rows above, the
+   card's model got a 272px column that a real one needs 321px for, and in a
+   narrow grid column the fixed label took half the width and left sixty pixels
+   for the text. The tidier grid cost the line the only part of it an operator
+   could not have guessed. Nothing here lines up with the rows, so nothing is
+   gained by pretending it does. */
+.net-xdp {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 18px;
+  padding: 9px 0 2px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.net-xdp-label {
+  grid-column: 1;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.net-xdp-detail {
+  grid-column: 2;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The one word on this line an operator turned a flag on to get, so the one
+   word set in the body colour. Untoned on purpose: zero-copy is not better than
+   copy in any sense this card can judge, only what was asked for, and the bind
+   fails outright rather than falling back, so there is no silent failure here
+   for an amber to warn about. */
+.net-xdp-mode {
+  color: var(--text);
+}
+
+
 /* ---- produced blocks ---- */
 
 /* Scrolls with the page rather than inside a window of its own. On the overview

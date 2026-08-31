@@ -1,6 +1,6 @@
 import { decimal } from "../format";
 import { direction, NETWORK_WINDOW_SECONDS, sharedPeak, unitFor, type Direction } from "../network";
-import type { NetworkSample } from "../types";
+import type { NetworkSample, XdpConfig } from "../types";
 import { RENDER_LAG_MS, useNow, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, chartY, Explain } from "./primitives";
@@ -31,6 +31,10 @@ export function NetworkCard() {
     "summary",
     "network",
   );
+  // Null where the validator was given no XDP config, since the point behind
+  // this is only submitted where it was. Absence is the answer rather than
+  // something to work out.
+  const xdp = store.get<XdpConfig | null>("summary", "xdp");
   // Drawn a sample behind live, so the newest point sits past the right edge
   // and the line is continuous across it rather than ending in a notch.
   const edge = useNow() - RENDER_LAG_MS;
@@ -77,7 +81,90 @@ export function NetworkCard() {
         peak={peak}
         explain={scope}
       />
+      {xdp && <Xdp xdp={xdp} />}
     </Card>
+  );
+}
+
+/**
+ * Anything the validator could actually name about the card, in the order it is
+ * worth reading.
+ *
+ * Both of these come back as "unknown" where the lookup failed: the driver from
+ * a device that would not answer, the model from a host with no PCI database to
+ * resolve the id against. Left out rather than printed, because "unknown" in a
+ * line naming hardware reads as a fault in the hardware rather than in the
+ * lookup, and the tooltip still says what was and was not read.
+ */
+export function xdpDetail(xdp: XdpConfig): string[] {
+  return [xdp.driver, xdp.model].filter((part) => named(part));
+}
+
+/** Whether the validator resolved this, rather than saying it could not. */
+function named(part: string): boolean {
+  return part !== "" && part !== "unknown";
+}
+
+/**
+ * The whole tooltip: a sentence saying what the line is, then the two things
+ * the line itself has no room for.
+ *
+ * The line names the mode, the driver and the model. The vendor and the kernel
+ * are the rest of what was reported, and either can be missing on a host that
+ * could not look it up, so this says whichever it has and stops at the sentence
+ * where it has neither.
+ *
+ * The kernel is checked by prefix rather than for an exact "unknown", because a
+ * failed `uname` is reported as "unknown" followed by the error it got, and
+ * printed after the word kernel that reads as a version number.
+ *
+ * The sentence is built here rather than in the component so that the casing is
+ * covered by the same tests as the content. With no vendor to lead it, the
+ * kernel starts the second sentence and has to be capitalised to do so.
+ */
+export function xdpTooltip(xdp: XdpConfig): string {
+  const sentence = "How this validator's XDP transmit path is set up.";
+  const parts = [];
+  if (named(xdp.vendor)) parts.push(xdp.vendor);
+  if (xdp.kernel_version !== "" && !xdp.kernel_version.startsWith("unknown")) {
+    parts.push(`kernel ${xdp.kernel_version}`);
+  }
+  if (parts.length === 0) return sentence;
+  const aside = parts.join(", ");
+  return `${sentence} ${aside.charAt(0).toUpperCase()}${aside.slice(1)}.`;
+}
+
+/**
+ * How the transmit path is set up, where it is set up at all.
+ *
+ * One line, no figures, and nothing on it moves. It belongs on this card
+ * because it is about the interface the card is already measuring, and it
+ * belongs at the foot because it is the answer to a question asked once when
+ * the flags went on rather than something to watch.
+ *
+ * Untoned throughout. Copy is the slower path, but the card cannot know whether
+ * that was the intent or an omission, and an amber row would be calling a
+ * working configuration a fault. The mode is the only word set in the body
+ * colour, because it is the one thing an operator turned a flag on to get.
+ */
+function Xdp({ xdp }: { xdp: XdpConfig }) {
+  const detail = xdpDetail(xdp);
+
+  return (
+    <div className="net-xdp">
+      {/* A sentence and the two figures the line cannot fit. What the tooltip
+          used to carry beyond that was background about zero-copy and the
+          socket bind that an operator running these flags knows already. */}
+      <span className="net-xdp-label">
+        <Explain text={xdpTooltip(xdp)}>XDP transmit</Explain>
+      </span>
+      <span className="net-xdp-detail">
+        <span className="net-xdp-mode">{xdp.zero_copy ? "zero-copy" : "copy"}</span>
+        {detail.map((part) => (
+          <span key={part}> · {part}</span>
+        ))}
+      </span>
+    </div>
   );
 }
 

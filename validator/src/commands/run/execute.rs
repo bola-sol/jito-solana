@@ -7,6 +7,7 @@ use {
         ledger_lockfile, lock_ledger,
         shred_receiver_addresses::parse_shred_receiver_addresses,
     },
+    agave_dashboard::{DashboardConfig, DashboardService, StartupProgress, StartupProgressFn},
     agave_snapshots::{
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
         paths::BANK_SNAPSHOTS_DIR,
@@ -530,6 +531,27 @@ pub fn execute(
     } else {
         bind_addresses.active()
     };
+
+    // The dashboard is unauthenticated and exposes validator internals, so it
+    // stays on loopback unless the operator names an address explicitly.
+    let dashboard_config = value_t!(matches, "dashboard_port", u16).ok().map(|port| {
+        let bind_address = matches
+            .value_of("dashboard_bind_address")
+            .map(|address| {
+                solana_net_utils::parse_host(address).expect("invalid dashboard_bind_address")
+            })
+            .unwrap_or_else(|| solana_net_utils::parse_host("127.0.0.1").unwrap());
+        let mut config = DashboardConfig {
+            listen_addr: SocketAddr::new(bind_address, port),
+            ..DashboardConfig::default()
+        };
+        // Added to the loopback defaults rather than replacing them, so a
+        // proxied dashboard stays reachable on the box it runs on.
+        config
+            .allowed_hosts
+            .extend(values_t!(matches, "dashboard_allowed_host", String).unwrap_or_default());
+        config
+    });
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
@@ -1096,6 +1118,24 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
+    // Started before the bootstrap below, which is where the RPC search and the
+    // snapshot download happen. Those run long before a `Validator` exists, so
+    // starting the dashboard any later leaves the port refusing connections
+    // through the slowest part of a cold start. The collector attaches inside
+    // `Validator::new_with_exit`, once there is state to read.
+    let dashboard_service = match dashboard_config {
+        None => None,
+        Some(dashboard_config) => {
+            let listen_addr = dashboard_config.listen_addr;
+            let progress = startup_progress_fn(start_progress.clone());
+            Some(
+                DashboardService::start(dashboard_config, progress, exit.clone()).map_err(
+                    |err| format!("failed to start the dashboard on {listen_addr}: {err}"),
+                )?,
+            )
+        }
+    };
+
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1205,6 +1245,7 @@ pub fn execute(
         admin_service_post_init,
         xdp_transmit_setup,
         exit,
+        dashboard_service,
     )
     .map_err(|err| format!("{err:?}"))?;
 
@@ -1217,6 +1258,67 @@ pub fn execute(
     info!("Validator exiting...");
 
     Ok(())
+}
+
+/// Adapts the validator's startup phase to the shape the dashboard publishes.
+///
+/// This lives here rather than in `solana-core` so that the dashboard's types
+/// stay out of that crate's public API. It is only needed by the binary that
+/// owns `start_progress` in the first place.
+fn startup_progress_fn(progress: Arc<RwLock<ValidatorStartProgress>>) -> StartupProgressFn {
+    Arc::new(move || {
+        // Read once: two reads could straddle a phase change and report a
+        // phase that disagrees with its own `running` flag.
+        let current = *progress.read().unwrap();
+        let (phase, detail, replay_slots, stake_percent) = match current {
+            ValidatorStartProgress::Initializing => ("initializing", None, None, None),
+            ValidatorStartProgress::SearchingForRpcService => {
+                ("searching_for_rpc_service", None, None, None)
+            }
+            ValidatorStartProgress::DownloadingSnapshot { slot, rpc_addr } => (
+                "downloading_snapshot",
+                Some(format!("slot {slot} from {rpc_addr}")),
+                None,
+                None,
+            ),
+            ValidatorStartProgress::CleaningBlockStore => ("cleaning_blockstore", None, None, None),
+            ValidatorStartProgress::CleaningAccounts => ("cleaning_accounts", None, None, None),
+            ValidatorStartProgress::LoadingLedger => ("loading_ledger", None, None, None),
+            ValidatorStartProgress::ProcessingLedger { slot, max_slot } => (
+                "processing_ledger",
+                Some(format!("slot {slot} of {max_slot}")),
+                Some((slot, max_slot)),
+                None,
+            ),
+            ValidatorStartProgress::StartingServices => ("starting_services", None, None, None),
+            ValidatorStartProgress::Halted => ("halted", None, None, None),
+            ValidatorStartProgress::WaitingForSupermajority {
+                slot,
+                gossip_stake_percent,
+            } => (
+                "waiting_for_supermajority",
+                // The share is sent as a figure below rather than written into
+                // this line, so the panel can draw it as well as say it.
+                Some(format!("slot {slot}")),
+                None,
+                Some(gossip_stake_percent as f64 / 100.0),
+            ),
+            ValidatorStartProgress::Running => ("running", None, None, None),
+        };
+        StartupProgress {
+            phase: phase.to_string(),
+            detail,
+            running: matches!(current, ValidatorStartProgress::Running),
+            // Derived by the dashboard, which tracks where replay began.
+            fraction: None,
+            replay_slots,
+            stake_percent,
+            // Both filled in by the dashboard, which watches the phase change.
+            // Nothing here knows when the validator entered the phase it is in.
+            phase_elapsed_nanos: 0,
+            phases_taken: Vec::new(),
+        }
+    })
 }
 
 // This function is duplicated in ledger-tool/src/main.rs...

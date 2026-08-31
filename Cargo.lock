@@ -134,6 +134,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-dashboard"
+version = "4.2.2"
+dependencies = [
+ "agave-dashboard",
+ "bincode",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "soketto",
+ "solana-account 4.3.1",
+ "solana-accounts-db",
+ "solana-clock",
+ "solana-cluster-type",
+ "solana-config-interface",
+ "solana-gossip",
+ "solana-keypair",
+ "solana-leader-schedule",
+ "solana-ledger",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-program-runtime",
+ "solana-pubkey 4.2.0",
+ "solana-runtime",
+ "solana-sdk-ids",
+ "solana-signer",
+ "solana-version",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
+]
+
+[[package]]
 name = "agave-feature-set"
 version = "4.2.2"
 dependencies = [
@@ -382,6 +416,7 @@ name = "agave-validator"
 version = "4.2.2"
 dependencies = [
  "agave-cpu-utils",
+ "agave-dashboard",
  "agave-feature-set",
  "agave-logger",
  "agave-snapshots",
@@ -8288,6 +8323,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
  "agave-bls-sigverify",
+ "agave-dashboard",
  "agave-feature-set",
  "agave-fs",
  "agave-logger",

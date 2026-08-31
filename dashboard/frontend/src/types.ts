@@ -624,6 +624,33 @@ export interface IngestSummary {
   paths: IngestPath[];
 }
 
+/**
+ * How the XDP transmit path is set up, on a validator running one.
+ *
+ * Absent entirely otherwise: the validator only reports this where it was given
+ * a config. Describes the path under turbine, repair and gossip alike despite
+ * the flags being named for retransmit, and says nothing about receiving.
+ *
+ * A configuration rather than a measurement. It answers whether the flags took
+ * and on what card, not whether the path is fast. Nothing the validator reports
+ * answers that.
+ */
+export interface XdpConfig {
+  /**
+   * Whether the socket bound with zero-copy rather than copy.
+   *
+   * True is trustworthy: the flag goes straight to the bind, which fails
+   * outright on a driver that cannot do it rather than falling back, so a
+   * validator that is running and reporting this really has it.
+   */
+  zero_copy: boolean;
+  driver: string;
+  /** Both of these read "unknown" where the PCI database could not be read. */
+  vendor: string;
+  model: string;
+  kernel_version: string;
+}
+
 export interface StartupProgress {
   phase: string;
   detail: string | null;

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { xdpDetail, xdpTooltip } from "./components/NetworkCard";
 import { direction, NETWORK_WINDOW_SECONDS, sharedPeak, unitFor } from "./network";
+import type { XdpConfig } from "./types";
 
 const KB = 1024;
 const MB = 1024 * 1024;
@@ -87,5 +89,77 @@ describe("unitFor", () => {
 describe("the window", () => {
   it("matches the transactions chart, so both read on one timebase", () => {
     expect(NETWORK_WINDOW_SECONDS).toBe(60);
+  });
+});
+
+describe("the XDP line", () => {
+  const config = (over: Partial<XdpConfig> = {}): XdpConfig => ({
+    zero_copy: true,
+    driver: "ice",
+    vendor: "Intel Corporation",
+    model: "Ethernet Controller E810-C for QSFP",
+    kernel_version: "6.8.0-45-generic",
+    ...over,
+  });
+
+  it("names the driver and the card, in that order", () => {
+    expect(xdpDetail(config())).toEqual(["ice", "Ethernet Controller E810-C for QSFP"]);
+  });
+
+  it("leaves out what the validator could not look up", () => {
+    // Both come back as the literal string "unknown" where the device would
+    // not answer or the host has no PCI database. Printed, it reads as a fault
+    // in the card rather than in the lookup.
+    expect(xdpDetail(config({ model: "unknown" }))).toEqual(["ice"]);
+    expect(xdpDetail(config({ driver: "unknown", model: "unknown" }))).toEqual([]);
+  });
+
+  it("leaves out what was never sent at all", () => {
+    expect(xdpDetail(config({ driver: "", model: "" }))).toEqual([]);
+  });
+
+  it("keeps a card whose name merely contains the word", () => {
+    // Only an exact "unknown" is the failure marker. A real model name is not
+    // dropped for containing it.
+    expect(xdpDetail(config({ model: "Unknown Devices Inc 40G" }))).toContain(
+      "Unknown Devices Inc 40G",
+    );
+  });
+});
+
+describe("the XDP tooltip", () => {
+  const SAID = "How this validator's XDP transmit path is set up.";
+  const config = (over: Partial<XdpConfig> = {}): XdpConfig => ({
+    zero_copy: true,
+    driver: "ice",
+    vendor: "Intel Corporation",
+    model: "Ethernet Controller E810-C for QSFP",
+    kernel_version: "6.8.0-45-generic",
+    ...over,
+  });
+
+  it("adds the two things the line has no room for", () => {
+    expect(xdpTooltip(config())).toBe(`${SAID} Intel Corporation, kernel 6.8.0-45-generic.`);
+  });
+
+  it("capitalises the kernel where there is no vendor to lead", () => {
+    // Otherwise a lowercase word opens the second sentence and reads as a typo.
+    expect(xdpTooltip(config({ vendor: "unknown" }))).toBe(`${SAID} Kernel 6.8.0-45-generic.`);
+  });
+
+  it("keeps the vendor where the kernel is missing", () => {
+    expect(xdpTooltip(config({ kernel_version: "" }))).toBe(`${SAID} Intel Corporation.`);
+  });
+
+  it("stops at the sentence where it has neither", () => {
+    expect(xdpTooltip(config({ vendor: "unknown", kernel_version: "" }))).toBe(SAID);
+  });
+
+  it("drops a kernel that is a failed uname rather than a version", () => {
+    // uname failing is reported as "unknown" followed by the error it got, and
+    // printed after the word kernel that reads as a version number.
+    expect(xdpTooltip(config({ kernel_version: "unknown: os error 2" }))).toBe(
+      `${SAID} Intel Corporation.`,
+    );
   });
 });

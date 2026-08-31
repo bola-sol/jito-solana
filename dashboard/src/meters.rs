@@ -20,7 +20,7 @@ use {
         metrics_tap::{
             AccountsTotals, BundleTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals,
             QuicLevels, QuicTotals, ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost,
-            SlotWaterfall, TapCounters, VerifyTotals, WindowedCounters,
+            SlotWaterfall, TapCounters, VerifyTotals, WindowedCounters, XdpConfig,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -848,6 +848,9 @@ pub struct Meters {
     quic_forwards_window: VecDeque<QuicTotals>,
     quic_vote_window: VecDeque<QuicTotals>,
     quic_paths: Debounced<Option<QuicPaths>>,
+    /// How the XDP transmit path is configured, or nothing where the
+    /// validator is not running one.
+    xdp: Debounced<Option<XdpConfig>>,
     /// Where the chain had got to in its epoch, as of the last tick that could
     /// take bank forks.
     ///
@@ -914,6 +917,7 @@ impl Meters {
             quic_forwards_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_vote_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_paths: Debounced::default(),
+            xdp: Debounced::default(),
             epoch_now: None,
             leader_totals: LeaderTotals::default(),
             epoch_span: Debounced::default(),
@@ -944,9 +948,31 @@ impl Meters {
         }
 
         self.collect_network();
+        self.collect_xdp();
         self.collect_host();
         self.collect_ingest_paths();
         self.collect_from_metrics();
+    }
+
+    /// Publishes how the XDP transmit path is set up, where there is one.
+    ///
+    /// Its own pass rather than a few lines inside `collect_network`, which
+    /// gives up early on a host whose interface counters cannot be read. The
+    /// two have nothing to do with each other: one is `/proc/net/dev` and the
+    /// other is a point the validator submits, and a host that has lost the
+    /// first has not lost the second.
+    ///
+    /// Sent every tick and debounced, so the wire carries it once. The tap
+    /// latches the config and it cannot change while the process runs, so after
+    /// the first report every tick offers the same value and none of them is
+    /// published.
+    fn collect_xdp(&mut self) {
+        self.xdp.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "xdp",
+            self.metrics_tap.xdp(),
+        );
     }
 
     /// Publishes how often an account replay needed was already in memory.
@@ -1812,7 +1838,9 @@ fn push_history<T: Serialize>(history: &mut Vec<T>, sample: T, publisher: &Publi
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::fixture::fixture, std::thread::sleep};
+    use {
+        super::*, crate::fixture::fixture, solana_metrics::datapoint::DataPoint, std::thread::sleep,
+    };
 
     /// A tap reading carrying only the scheduler, which is the stage most of
     /// these tests are about. The other three ride in the same struct and are
@@ -2311,6 +2339,42 @@ mod tests {
         assert_eq!(position.slot, 64);
         assert_eq!(position.epoch, bank.epoch_schedule().get_epoch(64));
         assert!(position.start_slot <= 64);
+    }
+
+    #[test]
+    fn test_no_xdp_is_published_where_the_validator_reported_none() {
+        // The key is sent as null so the panel can tell a validator that
+        // reported no config apart from one whose config has not arrived yet.
+        let harness = fixture();
+        let mut meters = harness.meters();
+        meters.collect_xdp();
+
+        let published = harness.published_key("summary", "xdp").unwrap();
+        assert!(published.contains(r#""value":null"#), "{published}");
+    }
+
+    #[test]
+    fn test_a_reported_xdp_config_reaches_the_wire_whole() {
+        // Tags and fields alike, which is what makes this point different from
+        // every other one the tap reads.
+        let harness = fixture();
+        let mut meters = harness.meters();
+        let mut point = DataPoint::new("xdp-network-config");
+        point.add_tag("driver", "ice");
+        point.add_tag("zero_copy", "true");
+        point.add_field_str("model", "Ethernet Controller E810-C for QSFP");
+        meters.metrics_tap.observe_point(&point);
+        meters.collect_xdp();
+
+        let published = harness.published_key("summary", "xdp").unwrap();
+        assert!(published.contains(r#""zero_copy":true"#), "{published}");
+        assert!(published.contains(r#""driver":"ice""#), "{published}");
+        // Unwrapped on the way through: the point stores a string field with
+        // the line protocol's quotes still round it.
+        assert!(
+            published.contains(r#""model":"Ethernet Controller E810-C for QSFP""#),
+            "{published}"
+        );
     }
 
     #[test]

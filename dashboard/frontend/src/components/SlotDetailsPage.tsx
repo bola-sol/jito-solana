@@ -4,10 +4,10 @@ import { recurrence } from "../cost";
 import { blockAverages } from "../produced";
 import type { ProducedBlock, SlotCost, SlotWaterfall } from "../types";
 import { useStore } from "../useStore";
-import { waterfallRows } from "../waterfall";
+import { capacity, schedulerView, shareOfGroup, type Capacity, type SchedulerView } from "../slotDetail";
+import type { WaterfallRow } from "../waterfall";
 import { Copyable } from "./Copyable";
-import { Explain, Meter } from "./primitives";
-import { WaterfallRows } from "./WaterfallRows";
+import { Explain } from "./primitives";
 
 /**
  * Every block this validator produced, and what went into each one.
@@ -125,6 +125,16 @@ function AveragesRow({ blocks }: { blocks: ProducedBlock[] }) {
   );
 }
 
+/**
+ * One produced block: the row that names it, and what it held once opened.
+ *
+ * The body is led by the block's compute rather than by the scheduler. What an
+ * operator wants from a block they produced is how full it was and what filled
+ * it; the scheduler's two dozen counters are nought on a healthy slot, and as a
+ * flat list they were most of the height of the page saying nothing happened.
+ * They are all still here, one line summarising them and the detail a click
+ * away.
+ */
 function BlockRow({
   block,
   waterfall,
@@ -175,24 +185,10 @@ function BlockRow({
 
       {open && (
         <div className="produced-detail">
-          <Meter fraction={filled} />
-          <div className="produced-grid">
-            <Figure label="Compute units" value={count(block.block_cost)} />
-            <Figure label="Of limit" value={count(block.block_cost_limit)} />
-            <Figure label="Non-vote" value={count(block.non_vote_transactions)} />
-            <Figure
-              label="Votes"
-              value={count(Math.max(0, block.transactions - block.non_vote_transactions))}
-            />
-            <Figure label="Failed" value={count(block.failed_transactions)} />
-            <Figure label="Entries" value={count(block.entries)} />
-            {/* Base is the remainder: the bank reports the two together and the
-                priority half separately, never the base fee on its own. */}
-            <Figure label="Base fees" value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`} />
-            <Figure label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
-          </div>
-          {waterfall && <SlotWaterfallDetail waterfall={waterfall} />}
-          {cost && <BlockCostDetail block={block} cost={cost} costs={costs} />}
+          <BlockCompute block={block} cost={cost} />
+          {cost && <BlockAccount block={block} cost={cost} costs={costs} />}
+          {waterfall && <BlockScheduler waterfall={waterfall} />}
+          {cost && <BlockFigures cost={cost} />}
 
           {/* The block's identity, together: which slot, when, and its hash.
               The slot stays in the row above as well, since that is the only
@@ -215,56 +211,109 @@ function BlockRow({
   );
 }
 
-/**
- * What the scheduler did with the transactions it was offered for this slot.
- *
- * The same rows as the live waterfall on the front page, over one slot rather
- * than a rolling window — the scheduler counts each led slot separately and
- * says which slot each set belongs to, so this is that slot's own account
- * rather than a share of a longer period that happens to contain it.
- *
- * Only ever drawn under a block this validator produced, which is the only
- * place the figures exist: the counters are tagged with the bank being
- * produced, and there is no bank unless we are producing it.
- *
- * Named for whichever scheduler built the block. A stock validator has one and
- * the name never changes; a jito validator hands the slot to BAM whenever BAM
- * is connected, and which of the two built a given block is not otherwise
- * visible anywhere on the page.
- */
-function SlotWaterfallDetail({ waterfall }: { waterfall: SlotWaterfall }) {
-  const bam = waterfall.source === "bam";
+/** A label over a figure, which is most of what this body is made of. */
+function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
-    <div className="produced-waterfall">
-      <div className="produced-waterfall-head">
-        <Explain text="Every transaction the banking stage was handed during this slot, and what became of it. The indented rows are the ones that got no further, and why. Received is exactly buffered plus those first reasons; the later stages do not add up the same way, because the queue holds transactions across slots and some of what was scheduled here arrived before this slot began.">
-          <span className="produced-waterfall-title">Scheduler</span>
-        </Explain>
-        {bam && (
-          <Explain text="BAM built this block. It is sent atomic transaction batches rather than packets off the wire, so the figures below start from what parsed out of those batches.">
-            <span className="produced-waterfall-source">BAM</span>
-          </Explain>
-        )}
-      </div>
-      <WaterfallRows rows={waterfallRows(waterfall)} />
+    <div className="sx-stat">
+      <span className="sx-eyebrow">{label}</span>
+      <span className={`sx-stat-value${warn ? " tone-warn" : ""}`}>{value}</span>
     </div>
   );
 }
 
 /**
- * What limited this block, if anything did.
+ * What the block cost, and what the rest of the limit did.
  *
- * A block can be half empty and still unable to take another transaction: every
- * account has its own compute ceiling within a block, and one busy account
- * reaches it long before the block limit is anywhere near. That is the
- * difference between a validator short of work and one throttled by a single
- * account, and nothing else on this page distinguishes them.
- *
- * The block's own total is deliberately not repeated here. The row above the
- * fold already carries compute units against the block limit, which is where
- * someone glancing at a list of blocks will read it.
+ * The headline figure of the whole body. A produced block is worth reading for
+ * how much of its allowance it used, and the number that answers that was
+ * previously one of eight equal figures in a grid.
  */
-function BlockCostDetail({
+function BlockCompute({ block, cost }: { block: ProducedBlock; cost: SlotCost | undefined }) {
+  const cap = capacity(block, cost);
+  const votes = Math.max(0, block.transactions - block.non_vote_transactions);
+  const unused = Math.max(0, block.block_cost_limit - block.block_cost);
+
+  return (
+    <div className="sx-lead">
+      <div className="sx-head">
+        <div className="sx-cu">
+          <div className="sx-eyebrow">
+            <Explain text="What this block's transactions cost to execute, against the ceiling consensus puts on a block. A block well under its limit was not necessarily short of work: every account has its own ceiling too, far below this one, so a single busy account can stop a half-empty block taking anything more that touches it.">
+              Compute units used
+            </Explain>
+          </div>
+          <div className="sx-cu-value">{count(block.block_cost)}</div>
+          <div className="sx-cu-of">
+            of {count(block.block_cost_limit)} limit · {count(unused)} unused
+          </div>
+        </div>
+        <div className="sx-stats">
+          <Stat label="Non-vote" value={count(block.non_vote_transactions)} />
+          <Stat label="Votes" value={count(votes)} />
+          {/* Toned only when it happened. A failed transaction is still in the
+              block and still paid its fee, so this is worth noticing and is not
+              in itself a fault. */}
+          <Stat
+            label="Failed"
+            value={count(block.failed_transactions)}
+            warn={block.failed_transactions > 0}
+          />
+          <Stat label="Entries" value={count(block.entries)} />
+          {/* Base is the remainder: the bank reports the two together and the
+              priority half separately, never the base fee on its own. */}
+          <Stat label="Base fees" value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`} />
+          <Stat label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
+        </div>
+      </div>
+      {cap && <CapacityBar cap={cap} />}
+    </div>
+  );
+}
+
+/**
+ * The limit, cut into what one account took, what everything else took, and
+ * what went unused.
+ *
+ * Three shares of the limit rather than of the block, which is the only reading
+ * under which the unused part belongs on the same bar. It does mean the
+ * costliest account's segment is smaller than its share of the block, by
+ * however empty the block was — the figures beside the account below give both.
+ */
+function CapacityBar({ cap }: { cap: Capacity }) {
+  return (
+    <div className="sx-cap">
+      <div className="sx-cap-bar" aria-hidden="true">
+        <i className="sx-seg is-top" style={{ width: `${cap.top * 100}%` }} />
+        <i className="sx-seg is-rest" style={{ width: `${cap.rest * 100}%` }} />
+        <i className="sx-seg is-free" />
+      </div>
+      <div className="sx-legend">
+        <span className="sx-key">
+          <i className="sx-sw is-top" aria-hidden="true" />
+          costliest account {percent(cap.top, 1)}
+        </span>
+        <span className="sx-key">
+          <i className="sx-sw is-rest" aria-hidden="true" />
+          everything else {percent(cap.rest, 1)}
+        </span>
+        <span className="sx-key">
+          <i className="sx-sw is-free" aria-hidden="true" />
+          unused {percent(cap.free, 1)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The account that took the most of the block.
+ *
+ * One account, because one is what the collector reports. Its two percentages
+ * are deliberately both shown and are not the same measurement: the share of
+ * its own per-account ceiling is what says whether it was throttled, and the
+ * share of the block is what says whether it crowded anything else out.
+ */
+function BlockAccount({
   block,
   cost,
   costs,
@@ -274,39 +323,40 @@ function BlockCostDetail({
   costs: SlotCost[];
 }) {
   const ofLimit =
-    block.account_cost_limit > 0 ? cost.costliest_cost / block.account_cost_limit : 0;
-  const ofBlock = cost.block_cost > 0 ? cost.costliest_cost / cost.block_cost : 0;
+    block.account_cost_limit > 0 ? cost.costliest_cost / block.account_cost_limit : null;
+  const ofBlock = cost.block_cost > 0 ? cost.costliest_cost / cost.block_cost : null;
   const seen = recurrence(costs, cost.costliest_account);
 
   return (
-    <div className="produced-waterfall">
-      <div className="produced-waterfall-head">
-        <Explain text="What the cost tracker made of this block. Every account has its own compute ceiling within a block, well below the block's own, so one busy account can stop a half-empty block taking any more transactions that touch it.">
-          <span className="produced-waterfall-title">Block cost</span>
+    <div className="sx-acct">
+      <div className="sx-eyebrow">
+        <Explain text="The account this block charged the most compute to. Every account has its own ceiling within a block, well below the block's own, so this is the figure that says whether one account was what stopped the block taking more.">
+          Costliest account
         </Explain>
       </div>
-
-      <div className="cost-hot">
-        <div className="cost-hot-who">
-          <div className="cost-hot-label">Costliest account</div>
-          <Copyable text={cost.costliest_account} className="cost-hot-key" />
-        </div>
-        <div className="cost-hot-value">{units(cost.costliest_cost)} CU</div>
-        <div className="cost-meter">
-          <span className="cost-track" aria-hidden="true">
-            <span className="cost-fill" style={{ width: `${Math.min(100, ofLimit * 100)}%` }} />
-          </span>
-          <span className="cost-of">
-            {percent(ofLimit, 0)} of the {units(block.account_cost_limit)} account limit ·{" "}
-            {percent(ofBlock, 0)} of this block
-          </span>
-        </div>
+      <div className="sx-acct-row">
+        <Copyable text={cost.costliest_account} className="sx-acct-key" />
+        {/* Against the account's own ceiling, not the block's. That is the one
+            this account could actually have hit. */}
+        <span className="sx-acct-track" aria-hidden="true">
+          <span
+            className="sx-acct-fill"
+            style={{ width: `${Math.min(100, (ofLimit ?? 0) * 100)}%` }}
+          />
+        </span>
+        <span className="sx-acct-cu">{units(cost.costliest_cost)} CU</span>
+        <span className="sx-acct-of">
+          {/* The account ceiling moves with feature activation, so it is taken
+              from the bank rather than held here. Absent on a block captured
+              before it was read, and the clause goes with it. */}
+          {ofLimit === null ? "" : `${percent(ofLimit, 0)} of account limit · `}
+          {ofBlock === null ? "—" : `${percent(ofBlock, 0)} of block`}
+        </span>
       </div>
-
       {/* Only when it has topped more than this one block. On its own it says
           nothing: something has to be the largest. */}
       {seen && seen.blocks > 1 && (
-        <div className="cost-again">
+        <div className="sx-acct-note">
           Costliest in{" "}
           <b>
             {seen.blocks} of the last {seen.of} blocks
@@ -319,22 +369,191 @@ function BlockCostDetail({
           />
         </div>
       )}
+    </div>
+  );
+}
 
-      <div className="produced-figures">
-        <Figure label="Accounts written" value={count(cost.accounts)} />
-        <Figure label="Contended" value={count(cost.contended)} />
-        <Figure label="New account data" value={bytes(cost.new_account_data)} />
-        <Figure label="In flight" value={count(cost.in_flight)} />
+/**
+ * What the scheduler did with this slot, in one line and a drawer.
+ *
+ * The line is the four points every transaction passes through and one figure
+ * for everything lost between them. That is the whole of it on a healthy slot,
+ * which is nearly all of them. The drawer holds the counters themselves,
+ * grouped by the stage that dropped them, and is worth opening only when the
+ * line says something was lost.
+ *
+ * Named for whichever scheduler built the block. A stock validator has one and
+ * the name never changes; a jito validator hands the slot to BAM whenever BAM
+ * is connected, and which of the two built a given block is not otherwise
+ * visible anywhere on the page.
+ */
+function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
+  const view = schedulerView(waterfall);
+  const [breakdown, setBreakdown] = useState(false);
+  const bam = waterfall.source === "bam";
+  const held = view.groups.find((group) => group.key === "schedule")?.total ?? 0;
+  const dropped = view.lost - held;
+
+  return (
+    <div className="sx-sched">
+      <div className="sx-strip">
+        <span className="sx-strip-label">
+          <Explain text="Every transaction the banking stage was handed during this slot, and what became of it. The counters behind the breakdown say what got no further and why. Received is exactly buffered plus the intake reasons; the later stages do not add up the same way, because the queue holds transactions across slots and some of what was scheduled here arrived before this slot began.">
+            Scheduler
+          </Explain>
+          {bam && (
+            <>
+              {" · "}
+              <Explain text="BAM built this block. It is sent atomic transaction batches rather than packets off the wire, so the first figure below is counted in batches and the three after it in transactions.">
+                BAM
+              </Explain>
+            </>
+          )}
+        </span>
+        <div className="sx-chain">
+          {view.chain.map((link, index) => (
+            <span className="sx-link" key={link.key}>
+              {index > 0 && <span className="sx-arrow">→</span>}
+              <span className="sx-link-pair">
+                <span>{link.label}</span>
+                <span>{count(link.count)}</span>
+                {link.key === "finished" && view.completion !== null && (
+                  <span className={`sx-pct${view.completion < 0.9 ? " tone-warn" : ""}`}>
+                    {percent(view.completion, 1)}
+                  </span>
+                )}
+              </span>
+            </span>
+          ))}
+        </div>
+        <span className="sx-strip-right">
+          <span className={view.lost > 0 ? "tone-warn" : ""}>
+            {count(dropped)} dropped / {count(held)} held back
+          </span>
+          <button
+            type="button"
+            className="sx-more"
+            aria-expanded={breakdown}
+            onClick={() => setBreakdown((was) => !was)}
+          >
+            breakdown{breakdown ? " ▾" : ""}
+          </button>
+        </span>
+      </div>
+      {breakdown && <Breakdown view={view} />}
+    </div>
+  );
+}
+
+/** The counters themselves, grouped by the stage that dropped them. */
+function Breakdown({ view }: { view: SchedulerView }) {
+  return (
+    <div className="sx-drawer">
+      <div className="sx-verdict">
+        <i className={`sx-dot ${view.lost > 0 ? "is-lossy" : "is-clean"}`} aria-hidden="true" />
+        {view.worst === null ? (
+          <span className="sx-verdict-text">
+            Nothing was lost in this slot. All {count(view.counters)} counters at nought.
+          </span>
+        ) : (
+          <span className="sx-verdict-text">
+            {count(view.lost)} transactions lost.{" "}
+            <span className="sx-verdict-dim">
+              Worst counter: {view.worst.label} ({count(view.worst.count)}),{" "}
+              {percent(view.worst.count / view.lost, 0)} of the total.
+            </span>
+          </span>
+        )}
+        <span className="sx-verdict-aside">
+          {count(view.nonZero)} of {count(view.counters)} counters non-zero
+        </span>
+      </div>
+      <div className="sx-groups">
+        {view.groups.map((group) => (
+          <div className="sx-group" key={group.key}>
+            <div className="sx-group-head">
+              <span className="sx-group-name">{group.title}</span>
+              <span className={`sx-group-total${group.total > 0 ? " tone-warn" : ""}`}>
+                {count(group.total)}
+              </span>
+            </div>
+            <div className="sx-rows">
+              {group.rows.map((row, index) => (
+                <CounterRow
+                  key={row.key}
+                  row={row}
+                  share={shareOfGroup(group, row)}
+                  rank={index}
+                  /* Where the quiet ones begin, so the rule between the two
+                     halves is drawn once and only when both halves exist. */
+                  first={index === group.hits && group.hits > 0}
+                />
+              ))}
+            </div>
+            {/* Counted in batches, so it is set below the group rather than in
+                it: it is neither part of that total nor a share of it. */}
+            {group.aside.map((row) => (
+              <div className="sx-aside" key={row.key}>
+                <Explain text={row.explain}>
+                  {row.label} · {count(row.count)}
+                </Explain>
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function Figure({ label, value }: { label: string; value: string }) {
+/**
+ * One counter.
+ *
+ * A counter above nought gets a bar of its share of its group; one at nought
+ * gets a line and no bar. A bar of zero length beside every quiet counter was
+ * the largest part of what made the old list unreadable, and it said nothing a
+ * nought in the column did not already say.
+ */
+function CounterRow({
+  row,
+  share,
+  rank,
+  first,
+}: {
+  row: WaterfallRow;
+  share: number;
+  rank: number;
+  first: boolean;
+}) {
+  const quiet = row.count === 0;
   return (
-    <div className="produced-figure">
-      <div className="produced-figure-label">{label}</div>
-      <div className="produced-figure-value">{value}</div>
+    <div className={`sx-counter${quiet ? " is-quiet" : ""}${first ? " is-first-quiet" : ""}`}>
+      <span className="sx-counter-line">
+        <Explain text={row.explain} className="sx-counter-label">
+          {row.label}
+        </Explain>
+        <span className="sx-counter-count">{count(row.count)}</span>
+      </span>
+      {!quiet && (
+        <span className="sx-counter-track" aria-hidden="true">
+          <span
+            className={`sx-counter-fill is-${Math.min(rank + 1, 3)}`}
+            style={{ width: `${share * 100}%` }}
+          />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** What the cost tracker saw of the block beyond its costliest account. */
+function BlockFigures({ cost }: { cost: SlotCost }) {
+  return (
+    <div className="sx-keep">
+      <Stat label="Accounts written" value={count(cost.accounts)} />
+      <Stat label="Contended" value={count(cost.contended)} />
+      <Stat label="New account data" value={bytes(cost.new_account_data)} />
+      <Stat label="In flight" value={count(cost.in_flight)} />
     </div>
   );
 }

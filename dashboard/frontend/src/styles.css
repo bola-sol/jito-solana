@@ -1769,7 +1769,6 @@ body {
   color: var(--text);
 }
 
-
 /* ---- produced blocks ---- */
 
 /* Scrolls with the page rather than inside a window of its own. On the overview
@@ -1883,23 +1882,6 @@ body {
   flex-direction: column;
   gap: 10px;
   padding: 10px 6px 12px;
-}
-
-.produced-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 10px 14px;
-}
-
-.produced-figure-label {
-  color: var(--text-faint);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.produced-figure-value {
-  font-size: 13px;
 }
 
 .produced-foot {
@@ -2247,8 +2229,7 @@ body {
   min-width: 0;
 }
 
-.path-loss-label .explain-trigger,
-.waterfall-label .explain-trigger {
+.path-loss-label .explain-trigger {
   display: block;
   max-width: 100%;
   overflow: hidden;
@@ -2360,111 +2341,6 @@ body {
   display: flex;
   flex-direction: column;
   padding-bottom: 4px;
-}
-
-.waterfall {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.waterfall-row {
-  display: grid;
-  /* The bar takes the free space, not the label. The bar is the thing the card
-     exists to draw, and giving the label the `1fr` left it five hundred pixels
-     wide with a fifty-pixel bar beside it. The label is capped instead and
-     ellipsises; the bar keeps a floor so it never collapses to a stray dot in a
-     narrow column. */
-  grid-template-columns: minmax(0, 16em) 5em minmax(40px, 1fr) 3.4em;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
-}
-
-/* Truncated on the trigger rather than here, for the reason given at
-   `.path-loss-label`: this element is the bubble's containing block and
-   clipping it hides every explanation on the row. */
-.waterfall-label {
-  min-width: 0;
-}
-
-/* Stages carry the eye down the card; the reasons under them are subordinate
-   and indented to say so. */
-.waterfall-row.is-stage .waterfall-label {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.waterfall-row.is-loss .waterfall-label,
-.waterfall-row.is-count .waterfall-label,
-.waterfall-row.is-note .waterfall-label {
-  padding-left: 12px;
-  color: var(--text-dim);
-}
-
-.waterfall-row.is-stage {
-  margin-top: 5px;
-}
-
-.waterfall-count {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.waterfall-row.is-loss .waterfall-count,
-.waterfall-row.is-count .waterfall-count,
-.waterfall-row.is-note .waterfall-count {
-  color: var(--text-dim);
-}
-
-.waterfall-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--panel-raised);
-  overflow: hidden;
-}
-
-/* No track either, on a row with nothing to draw in one. An empty track beside
-   a figure of forty reads as a bar that failed to render; blank space reads as
-   a row that has no bar, which is the truth. The cell stays so the tracks above
-   and below it keep one baseline. */
-.waterfall-row.is-count .waterfall-bar {
-  background: none;
-}
-
-.waterfall-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-
-/* Losses and pressure are drawn in the same weight as the stages rather than in
-   a warning colour. Most of what lands in the largest of them is a validator
-   forwarding transactions it was never meant to execute, and colouring that as
-   a fault would make the ordinary state of a healthy node look alarming. */
-.waterfall-row.is-loss .waterfall-fill,
-.waterfall-row.is-note .waterfall-fill {
-  background: var(--text-faint);
-}
-
-.waterfall-share {
-  text-align: right;
-  font-size: 9.5px;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Each section restarts its bars at full against a total of its own, so it
-   needs a rule and a name above it. Without them the card reads as one cascade
-   that keeps climbing back to a hundred percent. */
-.produced-waterfall {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  margin-top: 2px;
-  border-top: 1px solid var(--border);
 }
 
 /* ---- replay ---- */
@@ -2628,85 +2504,548 @@ body {
 
 /* ---- what a block cost ---- */
 
-/* Lifted onto the raised panel because it is the one figure here that is a
-   diagnosis rather than a reading. */
-.cost-hot {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 14px;
-  align-items: baseline;
-  padding: 9px 11px;
-  margin: 2px 0 4px;
-  border-radius: 6px;
-  background: var(--panel-raised);
+/* The expanded body of a slot row. Led by the block's compute, because that is
+   what an operator opens a produced block to read; the scheduler's two dozen
+   counters are nought on a healthy slot and sit behind a control.
+
+   Every label here is the dashboard's own 10px uppercase at 0.04em rather than
+   a scale of its own, so these sections read as part of the same instrument as
+   every card. */
+
+.sx-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.cost-hot-who {
-  min-width: 0;
+.sx-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  flex-wrap: wrap;
 }
 
-.cost-hot-label {
+.sx-eyebrow {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
 }
 
-.cost-hot-key {
+.sx-cu-value {
   font-family: ui-monospace, monospace;
-  font-size: 12px;
-  color: var(--text);
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  margin-top: 5px;
 }
 
-.cost-hot-value {
+.sx-cu-of {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  margin-top: 5px;
+}
+
+.sx-stats {
+  display: flex;
+  gap: 26px;
+  padding-bottom: 3px;
+  flex-wrap: wrap;
+}
+
+.sx-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sx-stat-value {
+  font-family: ui-monospace, monospace;
   font-size: 16px;
-  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The limit, cut three ways. Shares of the limit rather than of the block,
+   which is the only reading under which unused headroom belongs on the same
+   bar as the used part. */
+.sx-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sx-cap-bar {
+  height: 22px;
+  display: flex;
+  background: var(--panel-raised);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sx-seg.is-top {
+  background: var(--accent);
+}
+
+/* A hairline of the panel behind, so two adjacent segments do not read as one
+   when the first is a sliver. */
+.sx-seg.is-rest {
+  background: var(--path-4);
+  border-left: 1px solid var(--panel);
+}
+
+.sx-seg.is-free {
+  flex: 1;
+  background: var(--panel-raised);
+}
+
+.sx-legend {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sx-key {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sx-sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  flex: none;
+}
+
+.sx-sw.is-top {
+  background: var(--accent);
+}
+
+.sx-sw.is-rest {
+  background: var(--path-4);
+}
+
+/* Outlined rather than filled: it is the absence of use, and a solid swatch of
+   the track colour reads as another quantity. */
+.sx-sw.is-free {
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+}
+
+.sx-acct {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.sx-acct-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(60px, 1fr) auto auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.sx-acct-key {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.sx-acct-track {
+  height: 9px;
+  background: var(--panel-raised);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sx-acct-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.sx-acct-cu {
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 600;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.cost-meter {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(40px, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  margin-top: 2px;
-}
-
-/* Against the panel rather than the raised panel, since the track sits on the
-   raised one and would otherwise vanish into it. */
-.cost-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--panel);
-  overflow: hidden;
-}
-
-.cost-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-
-.cost-of {
+.sx-acct-of,
+.sx-acct-note {
+  font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
 
-.cost-again {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin: 0 0 8px 2px;
+.sx-acct-of {
+  text-align: right;
+  white-space: nowrap;
 }
 
-.cost-again b {
-  color: var(--text);
+.sx-acct-note b {
+  color: var(--text-dim);
   font-weight: 500;
+}
+
+/* The scheduler, shrunk to one line. */
+.sx-sched {
+  display: flex;
+  flex-direction: column;
+}
+
+.sx-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.sx-strip-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.sx-chain {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sx-link,
+.sx-link-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.sx-link-pair span:first-child {
+  color: var(--text-faint);
+}
+
+.sx-arrow {
+  color: var(--border);
+  padding: 0 11px 0 4px;
+}
+
+.sx-pct {
+  color: var(--path-2);
+}
+
+.sx-strip-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Solid rather than dotted: dotted is this dashboard's mark for an explanation,
+   and this opens a panel. */
+.sx-more {
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.sx-more:hover {
+  color: var(--text);
+}
+
+.sx-more:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sx-drawer {
+  margin-top: 12px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sx-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sx-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.sx-dot.is-clean {
+  background: var(--good);
+}
+
+.sx-dot.is-lossy {
+  background: var(--warn);
+}
+
+.sx-verdict-text {
+  font-size: 13px;
+}
+
+.sx-verdict-dim {
+  color: var(--text-dim);
+}
+
+.sx-verdict-aside {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sx-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sx-group {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.sx-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 7px;
+}
+
+.sx-group-name {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.sx-group-total {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sx-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sx-counter-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Truncated on the trigger rather than on the wrapper, which is the bubble's
+   containing block: clipping that hides the explanation entirely. */
+.sx-counter-label .explain-trigger {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sx-counter.is-quiet .sx-counter-line {
+  color: var(--text-faint);
+}
+
+/* One rule between what fired and what did not, drawn on the first quiet row
+   rather than as a separate element, so it appears only when both halves are
+   there. */
+.sx-counter.is-first-quiet {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 3px;
+}
+
+.sx-counter-track {
+  display: block;
+  height: 4px;
+  margin-top: 4px;
+  background: var(--panel);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* The same slate ramp the TPU path card uses for its losses, and for the same
+   reason: these are parts of one quantity, not three severities. Amber is kept
+   for the group totals, where it says something went wrong at that stage. */
+.sx-counter-fill {
+  display: block;
+  height: 100%;
+}
+
+.sx-counter-fill.is-1 {
+  background: var(--path-2);
+}
+
+.sx-counter-fill.is-2 {
+  background: var(--path-4);
+}
+
+.sx-counter-fill.is-3 {
+  background: var(--path-6);
+}
+
+/* Counted in batches where the rows above are transactions, so it is set below
+   the group rather than in it. */
+.sx-aside {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.sx-keep {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+@media (max-width: 700px) {
+  .sx-cu-value {
+    font-size: 26px;
+  }
+
+  .sx-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  /* The four counts are short enough to share a row; the fee values are not,
+     so those take half the width on a row of their own. Each keeps its own
+     label: a slash between two unrelated counts reads as a ratio. */
+  .sx-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  /* Padding kept narrow on purpose. At 360px, which some phones still are, a
+     quarter of the row is 54px of content at 11px of padding and the longest
+     label wants 53 of them. Eight leaves the label somewhere to go rather than
+     wrapping the moment a device is a hair narrower than the one it was
+     measured on. */
+  .sx-stat {
+    background: var(--panel-raised);
+    padding: 9px 8px;
+    gap: 4px;
+  }
+
+  .sx-stat:nth-last-child(-n + 2) {
+    grid-column: span 2;
+  }
+
+  .sx-legend {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .sx-acct-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .sx-acct-key {
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.4;
+  }
+
+  .sx-acct-track {
+    display: none;
+  }
+
+  .sx-acct-cu,
+  .sx-acct-of {
+    text-align: left;
+  }
+
+  /* The arrows go with the row: stacked, they would point at the label below
+     rather than along the chain. */
+  .sx-chain {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+    width: 100%;
+  }
+
+  .sx-link-pair {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .sx-arrow {
+    display: none;
+  }
+
+  .sx-strip-right {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .sx-groups {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .sx-verdict-aside {
+    margin-left: 0;
+  }
 }
 
 /* Inline with the sentence around it, so it reads as part of the text rather
@@ -2721,55 +3060,13 @@ body {
   color: var(--text);
 }
 
-/* The account key is the widest thing in the box and the first to run out of
-   room, so it loses the fixed columns before anything else does. */
-@media (max-width: 560px) {
-  .cost-of {
-    white-space: normal;
-  }
-}
-
-.produced-waterfall-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.produced-waterfall-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-}
-
-/* Named only when something other than the validator's own scheduler built the
-   block, so it carries the accent rather than the faint grey of the heading it
-   sits beside: it is the exception, and it changes what the rows below mean. */
-.produced-waterfall-source {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-}
-
 @media (max-width: 700px) {
-  /* The bar is down to its forty-pixel floor by here and conveys nothing at
-     that size, while five of the labels have started to ellipsise. Drop it and
-     give the room to the words, which is the half that still reads. */
-  .waterfall-row {
-    grid-template-columns: minmax(0, 1fr) 5em 3.4em;
-  }
-
   .path-legend {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .path-headline {
     gap: 18px;
-  }
-
-  .waterfall-bar {
-    display: none;
   }
 }
 

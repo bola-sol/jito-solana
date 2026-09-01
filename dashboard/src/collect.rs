@@ -1069,17 +1069,7 @@ impl Collector {
         self.publisher.retain_only(
             TOPIC_SLOT,
             "overview",
-            &self.slots.recent(SLOT_OVERVIEW_LEN),
-        );
-        // Our own slots from before that window, as their own message. Two
-        // messages because one carrying both would pass the frame ceiling in
-        // the worst case; see `SlotRing::own_before_window`. The key matters:
-        // the retained map is a `BTreeMap`, so "overview" is sent before "own"
-        // and the client can clear on the first and merge on the second.
-        self.publisher.retain_only(
-            TOPIC_SLOT,
-            "own",
-            &self.slots.own_before_window(SLOT_OVERVIEW_LEN),
+            &self.slots.overview(SLOT_OVERVIEW_LEN),
         );
     }
 

@@ -204,7 +204,7 @@ export function SlotStrip() {
           <SlotBar
             key={entry.slot}
             entry={entry}
-            leader={store.leaderOf(entry.slot)}
+            leader={store.leaderOf(entry.slot, entry.mine)}
             active={entry.slot === cursor}
             nominalMs={nominalMs}
             onPoint={setCursor}
@@ -224,7 +224,10 @@ export function SlotStrip() {
           Ours
         </Explain>
         {pinned !== null && (
-          <SlotDetail entry={active} leader={store.leaderOf(active?.slot ?? 0)} />
+          <SlotDetail
+            entry={active}
+            leader={store.leaderOf(active?.slot ?? 0, active?.mine ?? false)}
+          />
         )}
       </div>
     </section>

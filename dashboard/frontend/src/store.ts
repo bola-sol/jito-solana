@@ -8,7 +8,15 @@
  */
 
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
-import type { EpochInfo, Envelope, NetworkSample, Peer, SlotEntry, TpsSample } from "./types";
+import type {
+  Displays,
+  EpochInfo,
+  Envelope,
+  NetworkSample,
+  Peer,
+  SlotEntry,
+  TpsSample,
+} from "./types";
 
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
 const MAX_SLOTS = 512;
@@ -67,6 +75,36 @@ export class Store {
    * changes, which is the only way an answer here can change.
    */
   private leaderCache = new Map<number, LeaderRef>();
+  /** Us, rebuilt only when one of the three values it is made of changes. */
+  private ours: LeaderRef = NO_LEADER;
+  private oursFrom = "";
+  /**
+   * Names and icons for the whole cluster, once something has asked for them.
+   *
+   * The peer table only reaches the leaders of the window a client holds, so a
+   * turn from further back has a key and nothing else until this arrives.
+   * Empty until `loadDisplays` is called, which the schedule page does the
+   * first time somebody searches.
+   */
+  private displays = new Map<string, { name: string | null; icon: string | null }>();
+  /**
+   * Epochs other than the current one, once something has asked for them.
+   *
+   * The current epoch arrives on its own message; this holds the ones reached
+   * by reading back through the history, which crosses a boundary whenever the
+   * tip is within a hundred thousand slots of one. `null` for an epoch the
+   * validator no longer has a schedule for, remembered so it is asked once.
+   */
+  private epochs = new Map<number, EpochInfo | null>();
+  /**
+   * Bumped whenever a leader could newly resolve: an epoch's arrays arriving,
+   * the names arriving, the epoch turning.
+   *
+   * Read by anything memoising over resolved leaders. The store is one object
+   * for the life of the page, so a memo keyed on it alone never re-runs, and
+   * the turns built before this moved would keep their bare keys.
+   */
+  private leaderRevision = 0;
 
   private listeners = new Set<() => void>();
   private frame: number | null = null;
@@ -169,16 +207,109 @@ export class Store {
    * have, resolves to a key with no name or to nothing at all, and the callers
    * fall back in that order.
    */
-  leaderOf(slot: number): LeaderRef {
+  getLeaderRevision = (): number => this.leaderRevision;
+
+  /**
+   * Fetches an epoch's schedule, once.
+   *
+   * Only the current one is published, it being half a megabyte and wanted by
+   * the pages that read back far enough to leave it. Asked for rather than sent
+   * for the same reason the names are.
+   */
+  async loadEpoch(epoch: number): Promise<void> {
+    if (this.epochs.has(epoch)) return;
+    const record = await this.request<EpochInfo | null>("epoch", "query", { epoch });
+    // Held even when nothing came back, so an epoch the validator has no
+    // schedule for is asked about once rather than on every search.
+    this.epochs.set(epoch, record ?? null);
+    if (record) this.leadersChanged();
+  }
+
+  /** Every answer already given was given without whatever just arrived. */
+  private leadersChanged(): void {
+    this.leaderRevision += 1;
+    this.leaderCache.clear();
+    this.touch();
+  }
+
+  leaderOf(slot: number, mine: boolean): LeaderRef {
+    // Ours takes no lookup, and must not depend on one. Both sources have a
+    // reach, and our own slots are kept well past both: five hundred of them is
+    // about eleven hours, which is far outside the peer table's window and
+    // crosses an epoch boundary often enough that the turn array cannot answer
+    // for them either. The validator tells us who we are directly.
+    if (mine) return this.ourLeader();
+
     const cached = this.leaderCache.get(slot);
     if (cached) return cached;
 
-    const key = leaderAt(this.values.get("epoch.new") as EpochInfo | undefined, slot);
-    const peer = key === null ? undefined : this.peersByIdentity().get(key);
+    const key = this.leaderAtAny(slot);
+    // The peer table first, being the fresher of the two: it is rebuilt every
+    // few seconds where the display table is fetched once. Both hold the same
+    // answer for a leader they both know.
+    const shown = key === null ? undefined : (this.peersByIdentity().get(key) ?? this.displays.get(key));
     const leader: LeaderRef =
-      key === null ? NO_LEADER : { key, name: peer?.name ?? null, icon: peer?.icon ?? null };
+      key === null ? NO_LEADER : { key, name: shown?.name ?? null, icon: shown?.icon ?? null };
     this.leaderCache.set(slot, leader);
     return leader;
+  }
+
+  /**
+   * Who leads a slot, from whichever epoch's arrays cover it.
+   *
+   * The published one first, being the one nearly every slot on the page falls
+   * in. The fetched ones are only consulted for a slot outside it, which is a
+   * page that has read back past a boundary.
+   */
+  private leaderAtAny(slot: number): string | null {
+    const here = leaderAt(this.values.get("epoch.new") as EpochInfo | undefined, slot);
+    if (here !== null) return here;
+    for (const past of this.epochs.values()) {
+      if (past === null) continue;
+      const there = leaderAt(past, slot);
+      if (there !== null) return there;
+    }
+    return null;
+  }
+
+  /**
+   * Fetches the cluster's names and icons, once.
+   *
+   * Called when something needs a name for a leader the peer table does not
+   * reach, which in practice means a search that has gone into history. Later
+   * calls are free: the table does not change often enough to be worth asking
+   * twice in a session, and a stale name is a great deal better than none.
+   */
+  async loadDisplays(): Promise<void> {
+    if (this.displays.size > 0) return;
+    const table = await this.request<Displays>("summary", "displays", {});
+    const next = new Map<string, { name: string | null; icon: string | null }>();
+    table.keys.forEach((key, index) => {
+      next.set(key, { name: table.names[index] ?? null, icon: table.icons[index] ?? null });
+    });
+    this.displays = next;
+    this.leadersChanged();
+  }
+
+  /**
+   * This validator, from what it publishes about itself.
+   *
+   * The same three values the header is drawn from, so a turn of ours is
+   * labelled exactly as the header labels us rather than by a second route that
+   * can disagree with it.
+   */
+  private ourLeader(): LeaderRef {
+    const key = (this.values.get("summary.identity_key") as string | undefined) ?? null;
+    const name = (this.values.get("summary.identity_name") as string | undefined) ?? null;
+    const icon = (this.values.get("summary.identity_icon") as string | undefined) ?? null;
+    // Rebuilt on change rather than per call: the rows that draw a leader are
+    // memoised on their props, and a fresh object each render would defeat it.
+    const stamp = `${key} ${name} ${icon}`;
+    if (this.oursFrom !== stamp) {
+      this.oursFrom = stamp;
+      this.ours = { key, name, icon };
+    }
+    return this.ours;
   }
 
   /**
@@ -265,7 +396,7 @@ export class Store {
       this.values.set(`${topic}.${key}`, value);
       // The two things a resolved leader is made of. Either changing makes
       // every answer already given potentially wrong.
-      if (topic === "epoch" || topic === "peers") this.leaderCache.clear();
+      if (topic === "epoch" || topic === "peers") this.leadersChanged();
     }
 
     this.touch();

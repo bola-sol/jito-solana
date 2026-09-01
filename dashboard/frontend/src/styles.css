@@ -3776,6 +3776,21 @@ body {
 /* The way further back than the live window reaches. A control rather than a
    scroll trigger: the list is not virtualised, so what is fetched is what gets
    rendered, and the reader asking is what decides how much is worth the DOM. */
+/* Where the list stops, and why. Set as prose rather than as a disabled
+   control: there is nothing to press, and a greyed-out button invites trying.
+   It is the same place the button was, so the foot of the list always says
+   what happens next. */
+.schedule-capped {
+  align-self: center;
+  max-width: 46ch;
+  margin: 4px 0 var(--gap);
+  padding: 0 14px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
 .schedule-older {
   align-self: center;
   margin: 4px 0 var(--gap);

@@ -77,7 +77,7 @@ export interface Turn {
  */
 export function turnsOf(
   held: SlotEntry[],
-  leaderOf: (slot: number) => LeaderRef,
+  leaderOf: (slot: number, mine: boolean) => LeaderRef,
 ): Turn[] {
   const byTurn = new Map<number, SlotEntry[]>();
   for (const entry of held) {
@@ -91,8 +91,11 @@ export function turnsOf(
     .sort(([a], [b]) => b - a)
     .map(([turn, entries]) => {
       // Asked once for the turn rather than once per slot: all four share a
-      // leader by definition, which is what a turn is.
-      const leader = leaderOf(turn * SLOTS_PER_TURN);
+      // leader by definition, which is what a turn is. Whether it was ours is
+      // carried by the slots themselves, and is what lets a turn of ours be
+      // named when neither the turn array nor the peer table reaches it.
+      const mine = entries.some((entry) => entry.mine);
+      const leader = leaderOf(turn * SLOTS_PER_TURN, mine);
       const first = Math.min(...entries.map((entry) => entry.slot));
       const slots: TurnSlot[] = [];
       for (let slot = turn * SLOTS_PER_TURN + SLOTS_PER_TURN - 1; slot >= first; slot--) {
@@ -102,7 +105,7 @@ export function turnsOf(
         leader: leader.key,
         leader_icon: leader.icon,
         leader_name: leader.name,
-        mine: entries.some((entry) => entry.mine),
+        mine,
         slots,
       };
     });

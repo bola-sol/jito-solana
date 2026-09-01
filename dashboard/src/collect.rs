@@ -334,6 +334,13 @@ pub struct Collector {
     /// here on every slot change and read there on demand, so a read lock is
     /// held for the length of one range and a write for the length of one row.
     history: Arc<RwLock<SlotHistory>>,
+    /// This epoch and the one before it, for the page to ask about.
+    ///
+    /// Shared with the server, which answers a query out of it. Only the
+    /// current one is published; the previous is kept because a client reading
+    /// back through the packed history crosses into it a quarter of the time
+    /// and cannot name a leader there without it.
+    epochs: Arc<RwLock<Vec<EpochInfo>>>,
     /// The epoch, and whether its schedule was known, the last time the epoch
     /// message was built.
     ///
@@ -396,6 +403,7 @@ impl Collector {
         publisher: Arc<Publisher>,
         info_cache: Arc<RwLock<ValidatorInfoCache>>,
         history: Arc<RwLock<SlotHistory>>,
+        epochs: Arc<RwLock<Vec<EpochInfo>>>,
         startup_progress: StartupProgressFn,
     ) -> Self {
         let now = Instant::now();
@@ -412,6 +420,7 @@ impl Collector {
             first_observed_slot: None,
             produced: ProducedRing::new(PRODUCED_BLOCKS),
             history,
+            epochs,
             skip_leader_slots: Vec::new(),
             epoch_published: None,
             skip_epoch: None,
@@ -1234,22 +1243,39 @@ impl Collector {
                 Err(_) => (0, 0),
             };
 
-            self.debounces.epoch.publish(
-                &self.publisher,
-                TOPIC_EPOCH,
-                "new",
-                EpochInfo {
-                    epoch,
-                    start_slot,
-                    end_slot,
-                    slots_in_epoch,
-                    my_leader_slots,
-                    leaders,
-                    turns,
-                    block_cost_limit,
-                    account_cost_limit,
-                },
-            );
+            let current = EpochInfo {
+                epoch,
+                start_slot,
+                end_slot,
+                slots_in_epoch,
+                my_leader_slots,
+                leaders,
+                turns,
+                block_cost_limit,
+                account_cost_limit,
+            };
+
+            // The epoch before this one, built alongside and kept rather than
+            // sent. A client reading back through the packed history crosses
+            // into it whenever the tip is within a hundred thousand slots of
+            // this epoch's start, which is about a quarter of every epoch, and
+            // without its arrays every slot on the far side of the boundary has
+            // no leader the page can name. It is half a megabyte, so it is
+            // asked for by the pages that reach that far rather than sent to
+            // every client that connects.
+            let previous = epoch
+                .checked_sub(1)
+                .map(|before| self.epoch_record(bank, before));
+
+            let mut archive = self.epochs.write().unwrap();
+            archive.clear();
+            archive.extend(previous.into_iter().flatten());
+            archive.push(current.clone());
+            drop(archive);
+
+            self.debounces
+                .epoch
+                .publish(&self.publisher, TOPIC_EPOCH, "new", current);
             self.epoch_published = Some((epoch, known));
         }
 
@@ -1352,6 +1378,40 @@ impl Collector {
     ///
     /// The bank is only read for its epoch schedule, which comes from genesis
     /// and so is the same on any bank.
+    /// Everything the page needs to name the leaders of an epoch that is not
+    /// the current one.
+    ///
+    /// `my_leader_slots` is left empty. It feeds the countdown and the leader
+    /// list for the epoch being led now, neither of which asks about a past
+    /// one, and filling it would be twenty kilobytes of slot numbers nothing
+    /// reads. `None` where the schedule for that epoch is no longer cached,
+    /// which for a validator that started inside this epoch is every time.
+    fn epoch_record(&self, bank: &Bank, epoch: Epoch) -> Option<EpochInfo> {
+        let schedule = bank.epoch_schedule();
+        let start_slot = schedule.get_first_slot_in_epoch(epoch);
+        let slots_in_epoch = schedule.get_slots_in_epoch(epoch);
+        let (leaders, turns) = self.epoch_turns(epoch, slots_in_epoch);
+        if turns.is_empty() {
+            return None;
+        }
+
+        let (block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
+            Ok(tracker) => (tracker.get_block_limit(), tracker.get_account_limit()),
+            Err(_) => (0, 0),
+        };
+        Some(EpochInfo {
+            epoch,
+            start_slot,
+            end_slot: start_slot.saturating_add(slots_in_epoch.saturating_sub(1)),
+            slots_in_epoch,
+            my_leader_slots: Vec::new(),
+            leaders,
+            turns,
+            block_cost_limit,
+            account_cost_limit,
+        })
+    }
+
     /// The epoch's leader schedule, as a table of leaders and one index per
     /// turn.
     ///
@@ -2165,6 +2225,42 @@ mod tests {
 
         let (_, turns) = collector.epoch_turns(epoch, slots_in_epoch.saturating_add(4));
         assert!(turns.is_empty());
+    }
+
+    #[test]
+    fn test_the_epoch_before_this_one_is_kept_rather_than_sent() {
+        // Half a megabyte of arrays, wanted only by a page that has read back
+        // past a boundary, which is why it is held for asking rather than put
+        // in front of every client that connects.
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+
+        let held = harness.epochs.read().unwrap();
+        let bank = harness.working_bank();
+        let epoch = bank.epoch_schedule().get_epoch(bank.slot());
+        assert!(
+            held.iter().any(|record| record.epoch == epoch),
+            "the current epoch is always among them"
+        );
+        // The previous one only where its schedule is still cached, which for a
+        // fixture starting at slot nought it is not. Absent, not wrong.
+        assert!(held.iter().all(|record| record.epoch <= epoch));
+    }
+
+    #[test]
+    fn test_a_kept_past_epoch_carries_no_leader_slots_of_ours() {
+        // They feed the countdown and the list for the epoch being led now.
+        // Twenty kilobytes of slot numbers nothing asks a past epoch for.
+        let harness = fixture();
+        let collector = harness.collector();
+        let bank = harness.working_bank();
+        let epoch = bank.epoch_schedule().get_epoch(bank.slot());
+
+        if let Some(record) = collector.epoch_record(&bank, epoch) {
+            assert!(record.my_leader_slots.is_empty());
+            assert!(!record.turns.is_empty(), "and it is otherwise whole");
+        }
     }
 
     #[test]

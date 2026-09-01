@@ -68,6 +68,24 @@ describe("turnsOf", () => {
     expect(turn.leader_name).toBe("Bob Co");
   });
 
+  it("tells the resolver whether the turn was ours", () => {
+    // The resolver answers ours from what the validator says about itself,
+    // which is the only route that reaches a turn older than the peer table or
+    // outside the epoch the page holds arrays for. Dropping this argument is
+    // what left our own turns showing a bare key on the schedule page while the
+    // sidebar had them right.
+    const asked: Array<[number, boolean]> = [];
+    const resolve = (slot: number, mine: boolean) => {
+      asked.push([slot, mine]);
+      return { key: "us", name: "Lantern", icon: null };
+    };
+    turnsOf([{ ...held(100), mine: true }, held(200)], resolve);
+    expect(asked).toEqual([
+      [200, false],
+      [100, true],
+    ]);
+  });
+
   it("names nobody for a turn whose epoch the page has no schedule for", () => {
     // Deep history can reach past the epoch whose arrays the page holds. Better
     // an unknown leader than a confident wrong one.

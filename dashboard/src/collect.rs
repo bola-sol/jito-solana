@@ -350,18 +350,28 @@ pub struct Collector {
     /// every poll it would be two hundred kilobytes of arrays assembled five
     /// times a second for `Debounced` to find unchanged and throw away.
     ///
-    /// The second half of the pair is what lets a schedule that arrives late
+    /// The last part of the key is what lets a schedule that arrives late
     /// still be published. Until it is derived the arrays are empty, and on
     /// the epoch alone the next tick would match and never try again.
-    epoch_published: Option<(Epoch, bool)>,
+    ///
+    /// The identity is part of it because `my_leader_slots` is read for whoever
+    /// this validator is at the time. An operator who boots on a dummy identity
+    /// and swaps to the staked one afterwards would otherwise be left with the
+    /// dummy's answer, which is no leader slots at all, latched until the epoch
+    /// turned. The countdown beside it went on working throughout, because that
+    /// is recomputed every tick, which is what made the pair of them read as a
+    /// validator with slots coming up and none this epoch.
+    epoch_published: Option<(Epoch, Pubkey, bool)>,
     /// This validator's leader slots for the epoch the *root* is in, kept so
     /// the skip rate can walk them as the root passes each one.
     ///
-    /// Rebuilt only when the root crosses an epoch boundary, which is what ties
-    /// it to `skip_next_index`: the two must describe the same epoch, or the
-    /// index points into the wrong schedule.
+    /// Rebuilt when the root crosses an epoch boundary, which is what ties it
+    /// to `skip_next_index`: the two must describe the same epoch, or the index
+    /// points into the wrong schedule. Rebuilt on an identity change too, for
+    /// the reason given on `epoch_published`: these are one validator's slots,
+    /// and after a swap they are somebody else's.
     skip_leader_slots: Vec<Slot>,
-    skip_epoch: Option<Epoch>,
+    skip_epoch: Option<(Epoch, Pubkey)>,
     skip_next_index: usize,
     skip_produced: usize,
     skip_elapsed: usize,
@@ -1291,8 +1301,10 @@ impl Collector {
         // the two together would send the whole schedule out once a second.
 
         // Built when the epoch turns, not at every poll. See `epoch_published`
-        // for why, and for why the schedule being known is half of the key.
-        if self.epoch_published != Some((epoch, true)) {
+        // for why, and for why the schedule and the identity are part of the
+        // key rather than the epoch alone.
+        let me = self.ctx.identity();
+        if self.epoch_published != Some((epoch, me, true)) {
             // An unknown schedule is published as no leader slots. The panel
             // counts them, and a count is better absent-as-zero than withheld.
             let my_leader_slots = self.leader_slots_in_epoch(bank, epoch).unwrap_or_default();
@@ -1340,7 +1352,7 @@ impl Collector {
             self.debounces
                 .epoch
                 .publish(&self.publisher, TOPIC_EPOCH, "new", current);
-            self.epoch_published = Some((epoch, known));
+            self.epoch_published = Some((epoch, me, known));
         }
 
         self.collect_epoch_countdown(bank, epoch, start_slot, end_slot);
@@ -1706,7 +1718,11 @@ impl Collector {
         // minute after a rollover during which the root is still finishing the
         // old epoch, and the schedule has to match the slots being counted.
         let epoch = root_bank.epoch();
-        if self.skip_epoch != Some(epoch) {
+        // Keyed on the identity as well, so a validator that boots on a dummy
+        // one and swaps afterwards counts its real slots rather than staying on
+        // the empty list the dummy had.
+        let me = self.ctx.identity();
+        if self.skip_epoch != Some((epoch, me)) {
             // The epoch is latched only once its schedule is in hand. Taking an
             // unknown schedule as an empty one would record a permanent zero:
             // the list is built once per epoch, so there would be no second
@@ -1714,7 +1730,7 @@ impl Collector {
             let Some(leader_slots) = self.leader_slots_in_epoch(root_bank, epoch) else {
                 return;
             };
-            self.skip_epoch = Some(epoch);
+            self.skip_epoch = Some((epoch, me));
             self.skip_leader_slots = leader_slots;
             self.skip_next_index = 0;
             self.skip_produced = 0;
@@ -2097,6 +2113,7 @@ mod tests {
     use {
         super::*,
         crate::fixture::{Fixture, fixture},
+        solana_keypair::Keypair,
     };
 
     /// The arrival window as the collector holds it.
@@ -2342,6 +2359,69 @@ mod tests {
         harness.advance_to(8);
         collector.tick();
         assert_eq!(collector.epoch_published, first);
+    }
+
+    #[test]
+    fn test_a_swapped_identity_rebuilds_the_epoch_rather_than_keeping_the_old_answer() {
+        // An operator who boots on a dummy identity and swaps to the staked one
+        // afterwards had the dummy's leader slots, which is none at all,
+        // latched for the rest of the epoch. The countdown beside it went on
+        // working, because that is recomputed every tick, so the panel read as
+        // a validator with a turn minutes away and no slots this epoch.
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+        let first = collector.epoch_published;
+        assert!(first.is_some());
+
+        harness
+            .ctx
+            .cluster_info
+            .set_keypair(Arc::new(Keypair::new()));
+        harness.advance_to(8);
+        collector.tick();
+
+        assert_ne!(
+            collector.epoch_published, first,
+            "the epoch must be rebuilt for whoever this validator is now"
+        );
+    }
+
+    #[test]
+    fn test_the_skip_rate_starts_again_for_a_swapped_identity() {
+        // Same latch, same reason. The slot list it walks belongs to one
+        // validator, and after a swap it belongs to somebody else.
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+
+        // Called directly: the skip rate rides the slow tier, which only runs
+        // while somebody is watching, and this is about the latch rather than
+        // about the tiering.
+        let stranger = Pubkey::new_unique();
+        collector.skip_epoch = Some((0, stranger));
+        collector.skip_next_index = 99;
+        collector.collect_skip_rate(&harness.working_bank());
+
+        assert_ne!(
+            collector.skip_epoch,
+            Some((0, stranger)),
+            "the latch must not still belong to the identity that has gone"
+        );
+        // Not nought: the reset is followed straight away by the walk, which
+        // steps over every leader slot the root has already passed. Compared
+        // against a collector meeting this epoch for the first time, which is
+        // what a restarted walk should agree with, rather than against a
+        // constant that would depend on how many slots the fixture leads.
+        let restarted = {
+            let mut control = harness.collector();
+            control.collect_skip_rate(&harness.working_bank());
+            control.skip_next_index
+        };
+        assert_eq!(
+            collector.skip_next_index, restarted,
+            "the walk restarts rather than carrying an index into another schedule"
+        );
     }
 
     // ---- what this build is ---------------------------------------------

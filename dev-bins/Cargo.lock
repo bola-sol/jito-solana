@@ -128,6 +128,7 @@ dependencies = [
  "solana-cluster-type",
  "solana-config-interface",
  "solana-gossip",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-metrics",
  "solana-program-runtime",

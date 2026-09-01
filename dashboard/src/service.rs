@@ -23,8 +23,10 @@ use {
         proto::Publisher,
         server,
         startup::StartupPublisher,
+        tips::TipMeter,
         validator_info::ValidatorInfoCache,
     },
+    solana_pubkey::Pubkey,
     std::{
         io,
         sync::{
@@ -77,6 +79,11 @@ pub struct DashboardService {
     /// Counters lifted from the measurements the validator submits about
     /// itself, watched from `start` so the boot sequence is counted too.
     metrics_tap: Arc<MetricsTap>,
+    /// The jito tip settings, retained from `start` for the same reason as
+    /// `startup_progress`: they arrive with the configuration and are not
+    /// wanted until the collector exists at `attach`.
+    tip_payment_program_id: Option<Pubkey>,
+    commission_bps: Option<u16>,
     /// The packed slot history, shared between the collector that fills it and
     /// the server that answers range queries out of it.
     ///
@@ -187,6 +194,8 @@ impl DashboardService {
             publisher,
             startup_progress,
             metrics_tap,
+            tip_payment_program_id: config.tip_payment_program_id,
+            commission_bps: config.commission_bps,
             history,
             info_cache,
             epochs,
@@ -261,6 +270,10 @@ impl DashboardService {
             let history = self.history.clone();
             let epochs = self.epochs.clone();
             let startup_progress = self.startup_progress.clone();
+            // Derived once here rather than per tick. Absent on a validator
+            // with no tip payment program, and then no tips are read at all.
+            let tips = self.tip_payment_program_id.as_ref().map(TipMeter::new);
+            let commission_bps = self.commission_bps;
             thread::Builder::new()
                 .name("solDashColl".to_string())
                 .spawn(move || {
@@ -271,6 +284,8 @@ impl DashboardService {
                         history,
                         epochs,
                         startup_progress,
+                        tips,
+                        commission_bps,
                     );
                     collector.publish_static();
                     while !exit.load(Ordering::Relaxed) && !validator_exit.load(Ordering::Relaxed) {

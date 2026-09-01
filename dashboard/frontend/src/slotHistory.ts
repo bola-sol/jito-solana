@@ -8,10 +8,12 @@
  * downstream has to know where a turn came from.
  *
  * What comes back is a reconstruction, not the original. The packed row carries
- * the six figures a schedule row shows and no others, so the fields outside
- * that read as nought here: failed transactions, entries and priority fees are
- * absent rather than zero, and anything drawing them from these entries would
- * be drawing a number that was never measured.
+ * the figures a schedule row shows and no others, so the fields outside that
+ * read as nought here: failed transactions and entries are absent rather than
+ * zero, and anything drawing them from these entries would be drawing a number
+ * that was never measured. Priority fees used to be among them and are now
+ * carried, because the schedule page draws the two kinds of fee apart and a
+ * split that vanished as a reader scrolled back would be worse than none.
  */
 
 import { leaderAt } from "./schedule";
@@ -21,13 +23,21 @@ import type { EpochInfo, SlotEntry, SlotLevel } from "./types";
 export const HAS_BLOCK = 1;
 /** Set where the slot's first shred was timed. */
 export const HAS_CLOCK = 1 << 1;
+/**
+ * Set where the slot's tips were measured.
+ *
+ * Nought is a real reading here: it says the searchers passed that leader by,
+ * which is worth drawing. A slot with the bit clear was never measured, and
+ * draws nothing at all.
+ */
+export const HAS_TIPS = 1 << 2;
 
 /**
  * One slot as the validator sends it: positional, not an object.
  *
- * Order: level, flags, votes, non-votes, compute, fees, time. It is pinned by a
- * test here and by another on the validator, because two positional formats
- * only agree by being changed together.
+ * Order: level, flags, votes, non-votes, compute, fees, priority fees, tips,
+ * time. It is pinned by a test here and by another on the validator, because
+ * two positional formats only agree by being changed together.
  */
 export type WireRow = [
   level: number,
@@ -36,6 +46,8 @@ export type WireRow = [
   nonVotes: number,
   compute: number,
   fees: number,
+  priorityFees: number,
+  tips: number,
   timeMillis: number,
 ];
 
@@ -80,7 +92,8 @@ export function entriesOf(
   range.rows.forEach((row, index) => {
     if (row === null) return;
     const slot = range.first_slot + index;
-    const [level, flags, votes, nonVotes, compute, fees, timeMillis] = row;
+    const [level, flags, votes, nonVotes, compute, fees, priorityFees, tips, timeMillis] =
+      row;
     // Only to decide whether the slot was ours. Who the leader is, and what
     // they are called, the page resolves for itself through `store.leaderOf`,
     // the same way it does for a live slot.
@@ -105,7 +118,8 @@ export function entriesOf(
               block_cost_limit: epoch?.block_cost_limit ?? 0,
               account_cost_limit: epoch?.account_cost_limit ?? 0,
               total_fees: fees,
-              priority_fees: 0,
+              priority_fees: priorityFees,
+              tips: (flags & HAS_TIPS) === 0 ? null : tips,
             },
       duration_nanos:
         timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,

@@ -92,6 +92,17 @@ pub struct BlockDetail {
     /// the base fee alone would double-count the priority half.
     pub total_fees: u64,
     pub priority_fees: u64,
+    /// Lamports paid into the jito tip accounts during this slot.
+    ///
+    /// The measured figure, before jito's cut and before anybody's commission.
+    /// What a turn paid is a fact about the slot; what it earned a validator is
+    /// worked out where it is drawn, and only for the validator that is us.
+    ///
+    /// `None` where no tip program is configured, or where the bank's parent
+    /// had been pruned and there was nothing to difference against. Absent and
+    /// nought are different readings: a turn that genuinely took no tips is
+    /// worth seeing.
+    pub tips: Option<u64>,
 }
 
 impl SlotEntry {
@@ -338,6 +349,7 @@ mod tests {
                         account_cost_limit: u64::MAX,
                         total_fees: u64::MAX,
                         priority_fees: u64::MAX,
+                        tips: Some(u64::MAX),
                     }),
                     duration_nanos: Some(u64::MAX),
                 })

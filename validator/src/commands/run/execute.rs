@@ -560,6 +560,13 @@ pub fn execute(
             .unwrap_or_else(|| solana_net_utils::parse_host("127.0.0.1").unwrap());
         let mut config = DashboardConfig {
             listen_addr: SocketAddr::new(bind_address, port),
+            // Read from the flags directly rather than from the tip manager's
+            // config, which substitutes freshly generated keys when voting is
+            // disabled. Tip accounts derived from a placeholder would read
+            // nothing for the life of the process and the page would show a
+            // column of noughts; absent here draws no column at all.
+            tip_payment_program_id: pubkey_of(matches, "tip_payment_program_pubkey"),
+            commission_bps: value_t!(matches, "commission_bps", u16).ok(),
             ..DashboardConfig::default()
         };
         // Added to the loopback defaults rather than replacing them, so a

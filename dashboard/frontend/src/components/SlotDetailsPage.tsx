@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { blockStamp, blockTime, bytes, count, percent, sol, units } from "../format";
 import { recurrence } from "../cost";
 import { blockAverages } from "../produced";
-import type { ProducedBlock, SlotCost, SlotWaterfall } from "../types";
+import { jitoShare, ourShare } from "../tips";
+import type { ProducedBlock, SlotCost, SlotWaterfall, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { capacity, schedulerView, shareOfGroup, type Capacity, type SchedulerView } from "../slotDetail";
 import type { WaterfallRow } from "../waterfall";
@@ -27,6 +28,9 @@ export function SlotDetailsPage() {
   const blocks = store.get<ProducedBlock[]>("summary", "produced_blocks");
   const waterfalls = store.get<SlotWaterfall[]>("summary", "slot_waterfalls");
   const costs = store.get<SlotCost[]>("summary", "slot_costs");
+  // Absent on a validator with no tip payment program, and then no tip figure
+  // is drawn at all.
+  const rates = store.get<TipRates>("summary", "tip_rates");
   const [open, setOpen] = useState<number | null>(null);
 
   // Joined by slot rather than nested on the block, because the two are built
@@ -65,6 +69,7 @@ export function SlotDetailsPage() {
             waterfall={bySlot.get(block.slot)}
             cost={costBySlot.get(block.slot)}
             costs={costs ?? []}
+            rates={rates}
             open={open === block.slot}
             onToggle={() => setOpen(open === block.slot ? null : block.slot)}
           />
@@ -140,6 +145,7 @@ function BlockRow({
   waterfall,
   cost,
   costs,
+  rates,
   open,
   onToggle,
 }: {
@@ -148,6 +154,8 @@ function BlockRow({
   cost: SlotCost | undefined;
   /** Every produced block's cost, for reading this one against the rest. */
   costs: SlotCost[];
+  /** Absent where no tip program is configured, and then no tip figure shows. */
+  rates: TipRates | undefined;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -185,7 +193,7 @@ function BlockRow({
 
       {open && (
         <div className="produced-detail">
-          <BlockCompute block={block} cost={cost} />
+          <BlockCompute block={block} cost={cost} rates={rates} />
           {cost && <BlockAccount block={block} cost={cost} costs={costs} />}
           {waterfall && <BlockScheduler waterfall={waterfall} />}
           {cost && <BlockFigures cost={cost} />}
@@ -212,9 +220,20 @@ function BlockRow({
 }
 
 /** A label over a figure, which is most of what this body is made of. */
-function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+function Stat({
+  label,
+  value,
+  warn,
+  title,
+}: {
+  label: string;
+  value: string;
+  warn?: boolean;
+  /** Hover text, where the figure is derived and the derivation is worth a look. */
+  title?: string;
+}) {
   return (
-    <div className="sx-stat">
+    <div className="sx-stat" title={title}>
       <span className="sx-eyebrow">{label}</span>
       <span className={`sx-stat-value${warn ? " tone-warn" : ""}`}>{value}</span>
     </div>
@@ -228,7 +247,15 @@ function Stat({ label, value, warn }: { label: string; value: string; warn?: boo
  * how much of its allowance it used, and the number that answers that was
  * previously one of eight equal figures in a grid.
  */
-function BlockCompute({ block, cost }: { block: ProducedBlock; cost: SlotCost | undefined }) {
+function BlockCompute({
+  block,
+  cost,
+  rates,
+}: {
+  block: ProducedBlock;
+  cost: SlotCost | undefined;
+  rates: TipRates | undefined;
+}) {
   const cap = capacity(block, cost);
   const votes = Math.max(0, block.transactions - block.non_vote_transactions);
   const unused = Math.max(0, block.block_cost_limit - block.block_cost);
@@ -263,6 +290,19 @@ function BlockCompute({ block, cost }: { block: ProducedBlock; cost: SlotCost | 
               priority half separately, never the base fee on its own. */}
           <Stat label="Base fees" value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`} />
           <Stat label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
+          {/* Ours, which is the question an operator is asking of their own
+              block. The wider figure it came from is on the hover rather than
+              in a column of its own: it is the same number twice, and only one
+              of them answers anything here. Drawn only where the tips were
+              measured, so a turn the searchers passed by reads nought and a
+              turn never measured is absent. */}
+          {rates && block.tips != null && (
+            <Stat
+              label="Our tips"
+              value={`${sol(ourShare(block.tips, rates) ?? 0, 6)} SOL`}
+              title={`${sol(jitoShare(block.tips, rates), 6)} SOL reached the distribution account, of ${sol(block.tips, 6)} paid. Derived from the configured rates, not measured.`}
+            />
+          )}
         </div>
       </div>
       {cap && <CapacityBar cap={cap} />}

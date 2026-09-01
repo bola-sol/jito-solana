@@ -21,6 +21,7 @@ use {
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
+        tips::{TipMeter, TipRates},
         validator_info::{self, ValidatorInfoCache},
     },
     serde::Serialize,
@@ -395,6 +396,16 @@ pub struct Collector {
     /// Viewers attached as of the last tick, kept only so that pausing and
     /// resuming are logged once rather than on every tick.
     subscribers: usize,
+
+    /// Reads what each slot paid in jito tips. `None` where no tip payment
+    /// program is configured, which is every plain agave validator.
+    tips: Option<TipMeter>,
+    /// Our own commission on tips, sent to the page so it can work out what our
+    /// blocks earned. Never applied to another validator's turn.
+    commission_bps: Option<u16>,
+    /// The meter's last reported residual, so a change is logged once rather
+    /// than every slow tick.
+    tips_residual: Option<u64>,
 }
 
 impl Collector {
@@ -405,6 +416,8 @@ impl Collector {
         history: Arc<RwLock<SlotHistory>>,
         epochs: Arc<RwLock<Vec<EpochInfo>>>,
         startup_progress: StartupProgressFn,
+        tips: Option<TipMeter>,
+        commission_bps: Option<u16>,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -441,6 +454,9 @@ impl Collector {
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             subscribers: 0,
+            tips,
+            commission_bps,
+            tips_residual: None,
         }
     }
 
@@ -465,6 +481,26 @@ impl Collector {
         );
         self.publisher
             .publish(TOPIC_SUMMARY, "cluster", &self.ctx.cluster_name());
+        // The rates the page derives its two tip figures with. Sent rather than
+        // applied here so the stored figure stays the measured one: a rate
+        // corrected later then repairs the whole history rather than only what
+        // arrives after it. Absent where no tip program is configured, which is
+        // how the page knows to draw no column at all.
+        if let Some(meter) = &self.tips {
+            log::info!(
+                "dashboard: reading jito tips from {} accounts, {:?}",
+                meter.accounts().len(),
+                meter.accounts()
+            );
+            self.publisher.publish(
+                TOPIC_SUMMARY,
+                "tip_rates",
+                &TipRates {
+                    jito_cut_bps: crate::tips::JITO_CUT_BPS,
+                    commission_bps: self.commission_bps,
+                },
+            );
+        }
         // Fixed once the node has joined, and the first thing to check when a
         // validator will not gossip.
         self.publisher.publish(
@@ -486,7 +522,7 @@ impl Collector {
         // holds to advance, so a reader that takes it three times a tick is
         // three chances to be in the way rather than one. Nothing is computed
         // under it: the guard lives only long enough to clone the handles out.
-        let (root_bank, working_bank, highest_slot, frozen) = {
+        let (root_bank, working_bank, highest_slot, mut frozen) = {
             let bank_forks = self.ctx.bank_forks.read().unwrap();
             (
                 bank_forks.root_bank(),
@@ -495,6 +531,10 @@ impl Collector {
                 bank_forks.frozen_banks().collect::<Vec<_>>(),
             )
         };
+        // Slot order, for the tip meter alone. Every other reading below is a
+        // difference against a bank's own parent and would be right in any
+        // order; the meter's sweep check is a running total and would not.
+        frozen.sort_by_key(|(slot, _)| *slot);
         // The highest slot this validator has replayed, as opposed to the
         // highest it holds a bank for.
         let completed = frozen
@@ -550,6 +590,27 @@ impl Collector {
             // slots already sent and the ones about to be.
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead);
+            self.report_tip_residual();
+        }
+    }
+
+    /// Logs what the last sweep says the tip readings missed, once per change.
+    ///
+    /// The only check this measurement gets. A figure near nought says the
+    /// turn's readings were complete; a large one says they were not, and is
+    /// worth a look before the numbers on the page are believed. Logged rather
+    /// than published: it is a statement about our arithmetic, not about the
+    /// cluster, and nothing on the page can honestly show it.
+    fn report_tip_residual(&mut self) {
+        let residual = self.tips.as_ref().and_then(TipMeter::residual);
+        if residual == self.tips_residual {
+            return;
+        }
+        self.tips_residual = residual;
+        if let Some(lamports) = residual {
+            log::info!(
+                "dashboard: {lamports} lamports of tips were paid before the receiver changed and are counted against no turn"
+            );
         }
     }
 
@@ -954,7 +1015,8 @@ impl Collector {
             // `None` and leaves the figure alone: by the time a bank is rooted
             // it was frozen many ticks earlier and already carries a correct
             // count.
-            let counts = bank.parent().map(|parent| {
+            let parent = bank.parent();
+            let counts = parent.as_ref().map(|parent| {
                 (
                     bank.transaction_count()
                         .saturating_sub(parent.transaction_count()),
@@ -971,9 +1033,20 @@ impl Collector {
                 .slots
                 .get(slot)
                 .is_none_or(|entry| entry.block.is_none());
+            // Once per slot, at a bank's first sighting, and only where there
+            // is a parent to difference against. A pruned parent leaves the
+            // figure unknown rather than nought.
+            let tips = if fresh {
+                parent
+                    .as_ref()
+                    .zip(self.tips.as_mut())
+                    .map(|(parent, meter)| meter.measure(bank, parent))
+            } else {
+                None
+            };
             let detail = counts
                 .filter(|_| fresh)
-                .map(|(total, non_vote)| block_detail(bank, total, non_vote));
+                .map(|(total, non_vote)| block_detail(bank, total, non_vote, tips));
 
             // Our own blocks carry a blockhash and a start time on top of that,
             // which the block panel shows and nothing else needs.
@@ -1047,6 +1120,7 @@ impl Collector {
             account_cost_limit: detail.account_cost_limit,
             total_fees: detail.total_fees,
             priority_fees: detail.priority_fees,
+            tips: detail.tips,
         }
     }
 
@@ -1918,7 +1992,7 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
 /// the caller. Everything taken here is the bank's own: the error and entry
 /// counters are reset for each bank rather than inherited from the parent, so
 /// differencing them would subtract the wrong thing.
-fn block_detail(bank: &Bank, transactions: u64, non_vote: u64) -> BlockDetail {
+fn block_detail(bank: &Bank, transactions: u64, non_vote: u64, tips: Option<u64>) -> BlockDetail {
     // Poisoned only if a replay thread panicked while holding it, in which case
     // the validator has more pressing problems than a missing bar.
     let (block_cost, block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
@@ -1941,6 +2015,7 @@ fn block_detail(bank: &Bank, transactions: u64, non_vote: u64) -> BlockDetail {
         account_cost_limit,
         total_fees: fees.total_transaction_fee(),
         priority_fees: fees.total_priority_fee(),
+        tips,
     }
 }
 

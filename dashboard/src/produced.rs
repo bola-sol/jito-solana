@@ -55,6 +55,9 @@ pub struct ProducedBlock {
     /// the base fee alone would double-count the priority half.
     pub total_fees: u64,
     pub priority_fees: u64,
+    /// Lamports paid into the jito tip accounts during this slot, as measured.
+    /// The page works our commission out from it; see [`crate::tips`].
+    pub tips: Option<u64>,
 }
 
 /// The most recent produced blocks, oldest first.
@@ -122,6 +125,7 @@ mod tests {
             account_cost_limit: 0,
             total_fees: 0,
             priority_fees: 0,
+            tips: None,
         }
     }
 

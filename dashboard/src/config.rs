@@ -3,7 +3,10 @@
 //! sizes in `server`. Only these two reach a command-line flag, so only these
 //! two travel as configuration.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use {
+    solana_pubkey::Pubkey,
+    std::net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardConfig {
@@ -21,6 +24,19 @@ pub struct DashboardConfig {
     /// the dashboard through a reverse proxy must add the public one, because
     /// the proxy forwards the name the visitor typed.
     pub allowed_hosts: Vec<String>,
+    /// The jito tip payment program, where this validator runs one.
+    ///
+    /// The eight tip accounts are derived from it rather than written down,
+    /// because the id differs between clusters. `None` on a validator with no
+    /// tip programs at all, which is every plain agave one, and then no tips
+    /// are read and no column is drawn.
+    pub tip_payment_program_id: Option<Pubkey>,
+    /// This validator's commission on tips, in basis points.
+    ///
+    /// Used for one figure on one page: what our own blocks earned us. Never
+    /// applied to another validator's turn, whose commission is not ours to
+    /// know.
+    pub commission_bps: Option<u16>,
 }
 
 impl Default for DashboardConfig {
@@ -31,6 +47,8 @@ impl Default for DashboardConfig {
             // take a deliberate act.
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 10999),
             allowed_hosts: vec!["localhost".to_string()],
+            tip_payment_program_id: None,
+            commission_bps: None,
         }
     }
 }

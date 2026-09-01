@@ -25,7 +25,10 @@ pub const PACKED_SLOTS: usize = 100_000;
 
 /// One slot, packed to the columns a schedule row draws.
 ///
-/// Thirty-two bytes, and forty in the ring with the slot it belongs to. The
+/// Forty-eight bytes, and fifty-six in the ring with the slot it belongs to.
+/// It was thirty-two until tips and priority fees arrived together; the two of
+/// them cost sixteen because alignment leaves no room to be clever, and the
+/// hundred thousand rows cost 1.6 MB more for it. The
 /// leader is not among them: it comes from the epoch's turn array, where it is
 /// stored once per leader rather than once per slot.
 ///
@@ -49,7 +52,30 @@ pub struct PackedSlot {
     /// times the current block limit; a cluster that raises the limit past four
     /// billion gets a clamped figure rather than a wrapped one.
     pub compute: u32,
+    /// Base and priority fees together, in lamports.
+    ///
+    /// Kept alongside the priority half rather than as base alone, because the
+    /// bank reports the total and the split is the subtraction. A reader
+    /// wanting base does `fees - priority_fees`.
     pub fees: u64,
+    /// The priority half of `fees`.
+    ///
+    /// The packed row dropped this until the schedule page started drawing the
+    /// two apart. Without it the split appeared in the live window and vanished
+    /// as a reader scrolled back into the history, which is worse than not
+    /// splitting at all.
+    pub priority_fees: u64,
+    /// Lamports paid into the jito tip accounts during this slot.
+    ///
+    /// The measured figure. Both figures drawn from it, what reached a
+    /// distribution account and what it earned us, are worked out where they
+    /// are drawn: they are this times rates held in configuration, and storing
+    /// a derived number would freeze a rate into a hundred thousand rows that a
+    /// correction could no longer reach.
+    ///
+    /// Nought unless `HAS_TIPS` is set, which is the usual guard: a turn that
+    /// took no tips and a turn never measured are different readings.
+    pub tips: u64,
     /// Wall clock of the slot's first shred, in milliseconds.
     ///
     /// Absolute rather than an offset from the window. An offset would be four
@@ -64,19 +90,22 @@ pub struct PackedSlot {
 /// Most slots one range may carry.
 ///
 /// The reply shares the frame ceiling with everything else the server sends,
-/// and a row is about forty-four bytes of JSON, so the ceiling alone would
-/// allow some twenty-three thousand. This is well inside that and still fifty
-/// times a screenful, which is the figure that matters: the page asks for what
-/// it is about to draw, not for everything it might one day scroll to.
+/// and a row is about sixty-five bytes of JSON once the two lamport figures are
+/// on it, so a full span is around half the ceiling. That makes this much the
+/// largest thing the server sends, and the next field to be added here wants
+/// the arithmetic done again first. If it ever comes out uncomfortable the fix
+/// is a smaller span rather than a narrower row, since this figure is ours: it
+/// is already fifty times a screenful, and the page asks for what it is about
+/// to draw rather than for everything it might one day scroll to.
 pub const MAX_RANGE_SLOTS: usize = 8192;
 
 /// One slot as it goes on the wire.
 ///
 /// Positional rather than an object because the field names would outweigh the
 /// figures several times over across a span of these. Order: level, flags,
-/// votes, non-votes, compute, fees, time. The frontend mirrors it, so the two
-/// only agree by being changed together.
-pub type WireRow = (u8, u8, u32, u32, u32, u64, u64);
+/// votes, non-votes, compute, fees, priority fees, tips, time. The frontend
+/// mirrors it, so the two only agree by being changed together.
+pub type WireRow = (u8, u8, u32, u32, u32, u64, u64, u64, u64);
 
 /// A span of the history, as it goes on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -98,6 +127,10 @@ pub struct SlotRange {
 pub const HAS_BLOCK: u8 = 1;
 /// Set where the slot's first shred was timed.
 pub const HAS_CLOCK: u8 = 1 << 1;
+/// Set where the slot's tips were measured, as against a slot whose tips are
+/// simply unknown. Nought is a real reading: it says the searchers passed that
+/// leader by, which is worth seeing.
+pub const HAS_TIPS: u8 = 1 << 2;
 
 /// A fixed-size history of packed slots, indexed by the slot itself.
 ///
@@ -146,6 +179,8 @@ impl SlotHistory {
                         row.non_votes,
                         row.compute,
                         row.fees,
+                        row.priority_fees,
+                        row.tips,
                         row.time_millis,
                     )
                 })
@@ -176,6 +211,11 @@ impl SlotHistory {
             row.non_votes = clamp(block.non_vote_transactions);
             row.compute = clamp(block.block_cost);
             row.fees = block.total_fees;
+            row.priority_fees = block.priority_fees;
+            if let Some(tips) = block.tips {
+                row.flags |= HAS_TIPS;
+                row.tips = tips;
+            }
         }
     }
 
@@ -244,6 +284,7 @@ mod tests {
                 account_cost_limit: 12_000_000,
                 total_fees: 104_600_000,
                 priority_fees: 0,
+                tips: None,
             }),
             ..entry(slot)
         }
@@ -358,7 +399,7 @@ mod tests {
         history.record(&with_block(10, 9_500, 8_752));
         history.record_time(10, 1_756_000_000_123);
 
-        let (level, flags, votes, non_votes, compute, fees, time) =
+        let (level, flags, votes, non_votes, compute, fees, priority, tips, time) =
             history.range(10, 1).rows[0].expect("recorded");
         assert_eq!(level, SlotLevel::Rooted as u8);
         assert_eq!(flags, HAS_BLOCK | HAS_CLOCK);
@@ -366,7 +407,54 @@ mod tests {
         assert_eq!(non_votes, 8_752);
         assert_eq!(compute, 41_827_311);
         assert_eq!(fees, 104_600_000);
+        assert_eq!(priority, 0);
+        // Unmeasured, so the flag is clear and the column reads nothing. The
+        // fixture leaves tips out precisely so this stays the default case.
+        assert_eq!(tips, 0);
+        assert_eq!(flags & HAS_TIPS, 0);
         assert_eq!(time, 1_756_000_000_123);
+    }
+
+    #[test]
+    fn test_tips_of_nought_are_not_tips_that_were_never_read() {
+        // The whole reason for a third flag bit. A turn the searchers passed by
+        // is worth seeing; a turn measured on a bank whose parent had gone is
+        // not the same thing and must not draw the same.
+        let mut history = SlotHistory::new(64);
+
+        let mut measured = with_block(20, 100, 10);
+        if let Some(block) = measured.block.as_mut() {
+            block.tips = Some(0);
+        }
+        history.record(&measured);
+        history.record(&with_block(21, 100, 10));
+
+        let read = history.get(20).expect("recorded");
+        assert_eq!(read.flags & HAS_TIPS, HAS_TIPS);
+        assert_eq!(read.tips, 0);
+
+        let unread = history.get(21).expect("recorded");
+        assert_eq!(unread.flags & HAS_TIPS, 0);
+        assert_eq!(unread.tips, 0);
+    }
+
+    #[test]
+    fn test_the_two_kinds_of_fee_are_kept_apart() {
+        // The packed row carried only the total until the schedule page started
+        // drawing them separately. Base is the subtraction, so the pair has to
+        // survive the trip or the split appears live and vanishes in history.
+        let mut history = SlotHistory::new(64);
+        let mut block = with_block(30, 100, 10);
+        if let Some(detail) = block.block.as_mut() {
+            detail.total_fees = 104_600_000;
+            detail.priority_fees = 99_000_000;
+        }
+        history.record(&block);
+
+        let read = history.get(30).expect("recorded");
+        assert_eq!(read.fees, 104_600_000);
+        assert_eq!(read.priority_fees, 99_000_000);
+        assert_eq!(read.fees.saturating_sub(read.priority_fees), 5_600_000);
     }
 
     #[test]

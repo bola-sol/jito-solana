@@ -323,46 +323,19 @@ describe("slots", () => {
     await expect(store.request("slot", "range", {})).rejects.toThrow("not connected");
   });
 
-  it("keeps the own-slot snapshot that arrives after the overview", () => {
-    // The connect snapshot is two messages. The first clears and fills the
-    // recent window; the second carries our own leader slots from before it
-    // and must merge into what the first left, not replace it.
-    const store = new Store();
-    store.apply(envelope("slot", "overview", [slot(900), slot(901), slot(902)]));
-    store.apply(
-      envelope("slot", "own", [
-        { ...slot(10), mine: true },
-        { ...slot(11), mine: true },
-      ]),
-    );
-
-    const held = store.getSlots().map((entry) => entry.slot);
-    expect(held).toEqual([10, 11, 900, 901, 902]);
-  });
-
-  it("clears the own slots of a previous connection when the overview arrives", () => {
-    // A reconnect resends both. The overview clearing first is what stops a
-    // stale own slot outliving the connection that delivered it.
-    const store = new Store();
-    store.apply(envelope("slot", "own", [{ ...slot(10), mine: true }]));
-    store.apply(envelope("slot", "overview", [slot(900)]));
-
-    expect(store.getSlots().map((entry) => entry.slot)).toEqual([900]);
-  });
-
   it("bounds how many of our own slots it keeps", () => {
     const store = new Store();
-    for (let number = 1; number <= 600; number += 1) {
+    for (let number = 1; number <= 200; number += 1) {
       store.apply(envelope("slot", "update", { ...slot(number), mine: true }));
     }
-    for (let number = 601; number <= 1400; number += 1) {
+    for (let number = 201; number <= 1000; number += 1) {
       store.apply(envelope("slot", "update", slot(number)));
     }
     const ours = store.getSlots().filter((entry) => entry.mine);
-    expect(ours).toHaveLength(500);
-    // The newest five hundred of ours, not the first five hundred we ever saw.
-    expect(ours[ours.length - 1].slot).toBe(600);
-    expect(ours[0].slot).toBe(101);
+    expect(ours).toHaveLength(64);
+    // The newest sixty-four of ours, not the first sixty-four we ever saw.
+    expect(ours[ours.length - 1].slot).toBe(200);
+    expect(ours[0].slot).toBe(137);
   });
 
   it("does not let retained slots displace the recent window", () => {

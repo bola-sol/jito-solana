@@ -89,7 +89,11 @@ export function SchedulePage() {
   // it arrives a search still matches on key and on slot number, which is what
   // most searches are; a name search before it lands finds the leaders of the
   // live window and no more.
-  const searching = query.trim().length > 0;
+  // Filtering to ours counts as searching. Only sixty-four of our own slots are
+  // pushed, enough for the sidebar's rail and a few hours here; the rest are in
+  // the packed history like everybody else's, so asking for ours means reading
+  // back through it.
+  const searching = query.trim().length > 0 || oursOnly;
 
   // Everything the validator still holds, fetched once, the first time somebody
   // searches. Kept apart from the list's own slots on purpose: `turnsOf` over a

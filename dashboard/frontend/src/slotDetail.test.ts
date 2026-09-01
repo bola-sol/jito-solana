@@ -18,6 +18,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     account_cost_limit: 35_000_000,
     total_fees: 20_060,
     priority_fees: 12_480,
+    tips: null,
     ...over,
   };
 }

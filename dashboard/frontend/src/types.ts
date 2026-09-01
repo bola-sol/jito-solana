@@ -157,6 +157,18 @@ export interface UpcomingSlot {
   mine: boolean;
 }
 
+/**
+ * The rates the page needs to turn a measured tip figure into the two it draws.
+ *
+ * Absent on a validator with no tip payment program, and then no tip column is
+ * drawn at all. `commission_bps` is absent where the flag was not set, which
+ * leaves the page able to say what a turn paid and not what it earned.
+ */
+export interface TipRates {
+  jito_cut_bps: number;
+  commission_bps: number | null;
+}
+
 /** What one block contained, as the collector read it off the frozen bank. */
 export interface BlockDetail {
   transactions: number;
@@ -169,6 +181,18 @@ export interface BlockDetail {
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
+  /**
+   * Lamports paid into the jito tip accounts during this slot, as measured.
+   *
+   * The measurement, not anyone's income. What reached a distribution account
+   * and what it earned us are worked out from it in `tips.ts`, using rates the
+   * validator sends, so that a corrected rate corrects the whole history.
+   *
+   * `null` where no tip program is configured, or where the slot's bank had no
+   * parent to difference against. Distinct from nought, which says the
+   * searchers passed that leader by.
+   */
+  tips: number | null;
 }
 
 export interface Tps {
@@ -283,6 +307,18 @@ export interface ProducedBlock {
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
+  /**
+   * Lamports paid into the jito tip accounts during this slot, as measured.
+   *
+   * The measurement, not anyone's income. What reached a distribution account
+   * and what it earned us are worked out from it in `tips.ts`, using rates the
+   * validator sends, so that a corrected rate corrects the whole history.
+   *
+   * `null` where no tip program is configured, or where the slot's bank had no
+   * parent to difference against. Distinct from nought, which says the
+   * searchers passed that leader by.
+   */
+  tips: number | null;
 }
 
 /**

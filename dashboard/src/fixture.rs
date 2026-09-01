@@ -154,6 +154,11 @@ impl Fixture {
             self.history.clone(),
             self.epochs.clone(),
             running(),
+            // No tip program in the fixture: a bank built here holds no tip
+            // accounts, so a meter over it would read nought for every slot and
+            // say nothing the tests in `tips` do not already say.
+            None,
+            None,
         )
     }
 

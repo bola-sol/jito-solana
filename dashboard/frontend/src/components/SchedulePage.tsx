@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { count, percent, shortKey, sol, solCompact } from "../format";
 import { matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
-import type { EpochInfo, Peer, SlotEntry, StakeSummary } from "../types";
+import { jitoShare } from "../tips";
+import type { EpochInfo, Peer, SlotEntry, StakeSummary, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
@@ -75,6 +76,9 @@ export function SchedulePage() {
   const peers = store.get<Peer[]>("peers", "all");
   const epoch = store.get<EpochInfo>("epoch", "new");
   const identity = store.get<string>("summary", "identity_key");
+  // Absent on a validator with no tip payment program, and then the tips column
+  // shows nothing for anybody rather than a column of noughts.
+  const rates = store.get<TipRates>("summary", "tip_rates");
   const live = store.getSlots();
 
   // Spans fetched from the validator's packed history, oldest first, below
@@ -273,6 +277,7 @@ export function SchedulePage() {
             turn={turn}
             peer={turn.leader ? byIdentity.get(turn.leader) : undefined}
             totalStake={stake?.total_stake}
+            rates={rates}
           />
         ))}
         {deepLoading && (
@@ -319,10 +324,12 @@ const TurnCard = memo(
     turn,
     peer,
     totalStake,
+    rates,
   }: {
     turn: Turn;
     peer: Peer | undefined;
     totalStake: number | undefined;
+    rates: TipRates | undefined;
   }) {
     return (
       <div className="schedule-group">
@@ -332,12 +339,16 @@ const TurnCard = memo(
             <span className="schedule-slot">Slot</span>
             <span>Votes</span>
             <span>Non-votes</span>
-            <span>Fees</span>
+            <span>Base</span>
+            <span>Priority</span>
+            <span title="Reaching the distribution account, after jito's cut. Derived, not measured.">
+              Tips
+            </span>
             <span>Duration</span>
             <span>Compute</span>
           </div>
           {turn.slots.map((slot) => (
-            <SlotRow key={slot.slot} slot={slot} />
+            <SlotRow key={slot.slot} slot={slot} rates={rates} />
           ))}
         </div>
       </div>
@@ -346,6 +357,7 @@ const TurnCard = memo(
   (before, after) =>
     before.peer === after.peer &&
     before.totalStake === after.totalStake &&
+    before.rates === after.rates &&
     before.turn.slots.length === after.turn.slots.length &&
     before.turn.slots.every((slot, index) => slot.entry === after.turn.slots[index]?.entry),
 );
@@ -395,7 +407,7 @@ function TurnLeader({
 }
 
 /** One slot, empty until it has been produced. */
-function SlotRow({ slot }: { slot: TurnSlot }) {
+function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined }) {
   const entry = slot.entry;
   const block = entry?.block ?? null;
   // Votes are what is left of the block once the rest is taken out. Clamped
@@ -414,7 +426,14 @@ function SlotRow({ slot }: { slot: TurnSlot }) {
       </span>
       <span>{votes === null ? "—" : count(votes)}</span>
       <span>{block ? count(block.non_vote_transactions) : "—"}</span>
-      <span>{block ? sol(block.total_fees, 4) : "—"}</span>
+      <span>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
+      <span>{block ? sol(block.priority_fees, 4) : "—"}</span>
+      <span>
+        {/* Absent where the tip program is not configured or the slot was never
+            measured. Nought is a real reading and draws as nought: it says the
+            searchers passed that leader by. */}
+        {rates && block?.tips != null ? sol(jitoShare(block.tips, rates), 4) : "—"}
+      </span>
       <span>
         {entry?.duration_nanos == null ? "—" : `${Math.round(entry.duration_nanos / 1e6)} ms`}
       </span>

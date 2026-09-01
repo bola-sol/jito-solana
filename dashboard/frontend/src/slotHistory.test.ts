@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { leaderAt } from "./schedule";
-import { entriesOf, HAS_BLOCK, HAS_CLOCK, type SlotRange, type WireRow } from "./slotHistory";
+import {
+  entriesOf,
+  HAS_BLOCK,
+  HAS_CLOCK,
+  HAS_TIPS,
+  type SlotRange,
+  type WireRow,
+} from "./slotHistory";
 import type { EpochInfo } from "./types";
 
 const ALICE = "A1ice1111111111111111111111111111111111111";
@@ -23,7 +30,17 @@ function epochOf(over: Partial<EpochInfo> = {}): EpochInfo {
 }
 
 function row(over: Partial<Record<number, number>> = {}): WireRow {
-  const base: WireRow = [3, HAS_BLOCK | HAS_CLOCK, 66, 8_752, 11_877_602, 44_100_000, 1_000_000];
+  const base: WireRow = [
+    3,
+    HAS_BLOCK | HAS_CLOCK | HAS_TIPS,
+    66,
+    8_752,
+    11_877_602,
+    44_100_000,
+    12_480,
+    7_400_000,
+    1_000_000,
+  ];
   return base.map((value, index) => over[index] ?? value) as WireRow;
 }
 
@@ -63,6 +80,32 @@ describe("entriesOf", () => {
     expect(entry.block?.transactions).toBe(66 + 8_752);
     expect(entry.block?.block_cost).toBe(11_877_602);
     expect(entry.block?.total_fees).toBe(44_100_000);
+    expect(entry.block?.priority_fees).toBe(12_480);
+    expect(entry.block?.tips).toBe(7_400_000);
+  });
+
+  it("keeps a tip figure that was never measured apart from one that was nought", () => {
+    // The reason for the third flag bit. A turn the searchers passed by is
+    // worth drawing; a turn measured on a bank with no parent is not the same
+    // thing and must not draw as nought.
+    const measured = entriesOf(range([row({ 7: 0 })]), epochOf(), undefined);
+    expect(measured[0].block?.tips).toBe(0);
+
+    const unmeasured = entriesOf(
+      range([row({ 1: HAS_BLOCK | HAS_CLOCK, 7: 7_400_000 })]),
+      epochOf(),
+      undefined,
+    );
+    expect(unmeasured[0].block?.tips).toBeNull();
+  });
+
+  it("carries the two kinds of fee apart, so the split survives the trip back", () => {
+    // Base is the subtraction. The row carried only the total until the
+    // schedule page started drawing them separately, and the split appeared
+    // live and vanished in history.
+    const [entry] = entriesOf(range([row()]), epochOf(), undefined);
+    const base = (entry.block?.total_fees ?? 0) - (entry.block?.priority_fees ?? 0);
+    expect(base).toBe(44_087_520);
   });
 
   it("takes the cost limits from the epoch rather than from the row", () => {
@@ -75,7 +118,7 @@ describe("entriesOf", () => {
   it("works the duration out as the gap to the last slot that had a clock", () => {
     // Not carried, because it is a subtraction of two things that are.
     const entries = entriesOf(
-      range([row({ 6: 1_000_000 }), row({ 6: 1_000_400 })]),
+      range([row({ 8: 1_000_000 }), row({ 8: 1_000_400 })]),
       epochOf(),
       undefined,
     );
@@ -87,7 +130,7 @@ describe("entriesOf", () => {
     // A skipped slot shows as one long interval rather than as none, which is
     // what the validator's own walk does with it.
     const entries = entriesOf(
-      range([row({ 6: 1_000_000 }), null, row({ 6: 1_000_800 })]),
+      range([row({ 8: 1_000_000 }), null, row({ 8: 1_000_800 })]),
       epochOf(),
       undefined,
     );

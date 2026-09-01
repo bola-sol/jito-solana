@@ -12,7 +12,7 @@
 
 use {
     crate::{
-        collect::Collector,
+        collect::{Collector, EpochInfo},
         context::{DashboardContext, StartupProgress, StartupProgressFn},
         history::{PACKED_SLOTS, SlotHistory},
         meters::Meters,
@@ -69,6 +69,8 @@ pub struct Fixture {
     /// The packed history the collector fills, exposed so a test can read back
     /// what a tick recorded without going through the server.
     pub history: Arc<RwLock<SlotHistory>>,
+    /// This epoch and the one before it, as the collector leaves them.
+    pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
     /// The cluster's tip as the context's closure will report it. Shared with
     /// that closure so a test can move the cluster on without rebuilding the
     /// fixture.
@@ -150,6 +152,7 @@ impl Fixture {
             self.publisher.clone(),
             Arc::new(RwLock::new(ValidatorInfoCache::default())),
             self.history.clone(),
+            self.epochs.clone(),
             running(),
         )
     }
@@ -263,6 +266,7 @@ pub fn fixture() -> Fixture {
         identity,
         vote_account,
         history: Arc::new(RwLock::new(SlotHistory::new(PACKED_SLOTS))),
+        epochs: Arc::new(RwLock::new(Vec::new())),
         _ledger: ledger,
     }
 }

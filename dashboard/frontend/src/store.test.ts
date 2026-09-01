@@ -99,6 +99,183 @@ describe("slots", () => {
     expect(ours.map((entry) => entry.slot)).toEqual([1, 2, 3, 4]);
   });
 
+  it("names a leader in an epoch the page was never sent, once it is fetched", async () => {
+    // Reading back through the history leaves the published epoch whenever the
+    // tip is within its depth of a boundary, about a quarter of the time. Every
+    // slot on the far side had no leader at all until this.
+    const store = new Store();
+    const sent: string[] = [];
+    store.setSender((frame) => sent.push(frame));
+    store.setConnection("open");
+    store.apply(
+      envelope("epoch", "new", {
+        epoch: 2,
+        start_slot: 200,
+        end_slot: 299,
+        slots_in_epoch: 100,
+        my_leader_slots: [],
+        leaders: ["NOW"],
+        turns: Array.from({ length: 25 }, () => 0),
+        block_cost_limit: 0,
+        account_cost_limit: 0,
+      }),
+    );
+    expect(store.leaderOf(104, false).key).toBeNull();
+    const before = store.getLeaderRevision();
+
+    const loading = store.loadEpoch(1);
+    const id = (JSON.parse(sent[0]) as { id: number }).id;
+    store.apply({
+      topic: "epoch",
+      key: "query",
+      id,
+      value: {
+        epoch: 1,
+        start_slot: 100,
+        end_slot: 199,
+        slots_in_epoch: 100,
+        my_leader_slots: [],
+        leaders: ["BEFORE"],
+        turns: Array.from({ length: 25 }, () => 0),
+        block_cost_limit: 0,
+        account_cost_limit: 0,
+      },
+    });
+    await loading;
+
+    expect(store.leaderOf(104, false).key).toBe("BEFORE");
+    // The current epoch still answers for its own slots, and first.
+    expect(store.leaderOf(204, false).key).toBe("NOW");
+    expect(store.getLeaderRevision()).toBeGreaterThan(before);
+  });
+
+  it("asks about an epoch it has no schedule for only once", async () => {
+    // A validator that has not been up long has nothing for it, and every
+    // search would otherwise ask again.
+    const store = new Store();
+    const sent: string[] = [];
+    store.setSender((frame) => sent.push(frame));
+    store.setConnection("open");
+
+    const loading = store.loadEpoch(1);
+    const id = (JSON.parse(sent[0]) as { id: number }).id;
+    store.apply({ topic: "epoch", key: "query", id, value: null });
+    await loading;
+
+    await store.loadEpoch(1);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("names a leader the peer table does not reach, once the table is fetched", async () => {
+    // The peer table covers the leaders of the held window. A turn from further
+    // back had a key and nothing else, which is what made a search by name find
+    // only the last few minutes of a history eleven hours deep.
+    const store = new Store();
+    const sent: string[] = [];
+    store.setSender((frame) => sent.push(frame));
+    store.setConnection("open");
+    store.apply(
+      envelope("epoch", "new", {
+        epoch: 1,
+        start_slot: 100,
+        end_slot: 115,
+        slots_in_epoch: 16,
+        my_leader_slots: [],
+        leaders: ["FARAWAY"],
+        turns: [0, 0, 0, 0],
+        block_cost_limit: 0,
+        account_cost_limit: 0,
+      }),
+    );
+    expect(store.leaderOf(104, false)).toEqual({ key: "FARAWAY", name: null, icon: null });
+
+    const loading = store.loadDisplays();
+    const id = (JSON.parse(sent[0]) as { id: number }).id;
+    store.apply({
+      topic: "summary",
+      key: "displays",
+      id,
+      value: { keys: ["FARAWAY"], names: ["Far Away Co"], icons: [null] },
+    });
+    await loading;
+
+    expect(store.leaderOf(104, false)).toEqual({
+      key: "FARAWAY",
+      name: "Far Away Co",
+      icon: null,
+    });
+  });
+
+  it("asks for the display table once and no more", async () => {
+    const store = new Store();
+    const sent: string[] = [];
+    store.setSender((frame) => sent.push(frame));
+    store.setConnection("open");
+
+    const loading = store.loadDisplays();
+    const id = (JSON.parse(sent[0]) as { id: number }).id;
+    store.apply({
+      topic: "summary",
+      key: "displays",
+      id,
+      value: { keys: ["A"], names: ["Alpha"], icons: [null] },
+    });
+    await loading;
+
+    await store.loadDisplays();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("names a slot of ours from what the validator says about itself", () => {
+    // Not from the turn array or the peer table. Both have a reach and our own
+    // slots are kept past both: five hundred of them is about eleven hours,
+    // outside the peer table's window and often across an epoch boundary, which
+    // is where the turn array stops. Live, that showed our own turns as a bare
+    // key, or as unknown once the boundary was behind them.
+    const store = new Store();
+    store.apply(envelope("summary", "identity_key", "OURKEY"));
+    store.apply(envelope("summary", "identity_name", "Lantern"));
+    store.apply(envelope("summary", "identity_icon", "https://l/i.png"));
+
+    const ours = store.leaderOf(443_227_896, true);
+    expect(ours).toEqual({ key: "OURKEY", name: "Lantern", icon: "https://l/i.png" });
+  });
+
+  it("gives the same object back for ours until one of its parts changes", () => {
+    // The rows that draw a leader are memoised on their props, so a fresh
+    // object every render would rebuild the whole list on each meter sample.
+    const store = new Store();
+    store.apply(envelope("summary", "identity_key", "OURKEY"));
+    const first = store.leaderOf(1, true);
+    expect(store.leaderOf(2, true)).toBe(first);
+
+    store.apply(envelope("summary", "identity_name", "Lantern"));
+    expect(store.leaderOf(1, true)).not.toBe(first);
+    expect(store.leaderOf(1, true).name).toBe("Lantern");
+  });
+
+  it("still looks a slot that is not ours up the long way", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "identity_key", "OURKEY"));
+    store.apply(
+      envelope("epoch", "new", {
+        epoch: 1,
+        start_slot: 100,
+        end_slot: 115,
+        slots_in_epoch: 16,
+        my_leader_slots: [],
+        leaders: ["THEIRKEY"],
+        turns: [0, 0, 0, 0],
+        block_cost_limit: 0,
+        account_cost_limit: 0,
+      }),
+    );
+    expect(store.leaderOf(104, false).key).toBe("THEIRKEY");
+    // And a slot outside the epoch the page holds still names nobody, which is
+    // the honest answer rather than a confident wrong one.
+    expect(store.leaderOf(99, false).key).toBeNull();
+  });
+
   it("answers a request with the reply carrying its id", async () => {
     const store = new Store();
     const sent: string[] = [];

@@ -20,7 +20,7 @@
 //! written in that slot, which costs almost nothing.
 
 use {
-    serde::Deserialize,
+    serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_accounts_db::accounts_index::IndexKey,
     solana_config_interface::state::{ConfigKeys, get_config_data},
@@ -50,6 +50,15 @@ pub struct ValidatorInfo {
     pub icon_url: Option<String>,
 }
 
+/// What every validator that published anything calls itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Displays {
+    /// Base58 identities. `names[i]` and `icons[i]` belong to `keys[i]`.
+    pub keys: Vec<String>,
+    pub names: Vec<Option<String>>,
+    pub icons: Vec<Option<String>>,
+}
+
 #[derive(Debug, Default)]
 pub struct ValidatorInfoCache {
     by_identity: HashMap<Pubkey, ValidatorInfo>,
@@ -58,6 +67,31 @@ pub struct ValidatorInfoCache {
 impl ValidatorInfoCache {
     pub fn get(&self, identity: &Pubkey) -> Option<&ValidatorInfo> {
         self.by_identity.get(identity)
+    }
+
+    /// Everything the cache holds, as three arrays sharing an index.
+    ///
+    /// Arrays rather than a map because the wire is JSON: an object would carry
+    /// the words name and icon once per validator, which across a cluster is
+    /// more bytes than the values themselves.
+    ///
+    /// Names and icons come from here rather than from the epoch message
+    /// because they change on their own schedule, not the epoch's, and because
+    /// most of a cluster publishes neither: a validator with nothing to say
+    /// costs two nulls here and would cost a place in every array there.
+    pub fn displays(&self) -> Displays {
+        let mut keys = Vec::with_capacity(self.by_identity.len());
+        let mut names = Vec::with_capacity(self.by_identity.len());
+        let mut icons = Vec::with_capacity(self.by_identity.len());
+        for (identity, info) in &self.by_identity {
+            if info.name.is_none() && info.icon_url.is_none() {
+                continue;
+            }
+            keys.push(identity.to_string());
+            names.push(info.name.clone());
+            icons.push(info.icon_url.clone());
+        }
+        Displays { keys, names, icons }
     }
 
     pub fn len(&self) -> usize {

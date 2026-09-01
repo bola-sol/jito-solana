@@ -118,6 +118,20 @@ export interface ProgramCache {
  * Published only for the leaders on screen, so a leader may be missing from
  * this table briefly after a reconnection, before the next slow tick.
  */
+/**
+ * What every validator that published anything calls itself.
+ *
+ * Asked for rather than pushed: it is a hundred and fifty kilobytes on a
+ * cluster this size and most of a session never needs it. Three arrays sharing
+ * an index, because an object would carry the words name and icon once per
+ * validator.
+ */
+export interface Displays {
+  keys: string[];
+  names: (string | null)[];
+  icons: (string | null)[];
+}
+
 export interface Peer {
   identity: string;
   version: string | null;

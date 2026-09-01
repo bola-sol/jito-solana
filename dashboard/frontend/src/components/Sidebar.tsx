@@ -79,7 +79,11 @@ export function Sidebar({
             </div>
           )}
           {slots.map((entry) => (
-            <SidebarRow key={entry.slot} entry={entry} leader={store.leaderOf(entry.slot)} />
+            <SidebarRow
+              key={entry.slot}
+              entry={entry}
+              leader={store.leaderOf(entry.slot, entry.mine)}
+            />
           ))}
         </div>
       )}

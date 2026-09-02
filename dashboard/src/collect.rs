@@ -303,8 +303,11 @@ pub struct Collector {
     /// Whether replay was seen trailing the tip before the marker was set, which
     /// decides whether there is anything to discard.
     replayed_behind: bool,
-    /// Whether replay has drawn level with the cluster's tip since startup, so
-    /// the moment is stamped once.
+    /// Whether a tip ahead of replay has been seen since startup, and whether
+    /// replay has since drawn level with it. The blockstore keeps optimistic slots
+    /// from before a restart, so the first tip read is stale and below the
+    /// snapshot; level with that is not caught up.
+    trailed_cluster: bool,
     caught_cluster: bool,
     /// The epoch end being counted down to, held so the readout does not chase its
     /// own estimate. See [`EPOCH_END_DRIFT_DIVISOR`].
@@ -369,6 +372,7 @@ impl Collector {
             slot_time_window: VecDeque::new(),
             caught_up_at: None,
             replayed_behind: false,
+            trailed_cluster: false,
             caught_cluster: false,
             epoch_end: None,
             last_vote_advance: now,
@@ -1413,19 +1417,21 @@ impl Collector {
 
     // ---- health, skip rate ----------------------------------------------
 
-    /// Stamps, once, the moment replay draws level with the cluster: caught up
-    /// as an operator means it, the behind-cluster distance reaching nought. On
-    /// the fast path rather than with the health figures, which only run while
-    /// someone is watching and would stamp it late or not at all.
+    /// Stamps, once, the moment replay draws level with a cluster tip it was
+    /// seen trailing: caught up as an operator means it. On the fast path, since
+    /// the health figures only run while someone is watching.
     fn mark_caught_cluster(&mut self) {
         if self.caught_cluster {
             return;
         }
-        let level = self
-            .ctx
-            .cluster_tip()
-            .is_some_and(|tip| tip <= self.last_completed_slot);
-        if !level {
+        let Some(tip) = self.ctx.cluster_tip() else {
+            return;
+        };
+        if tip > self.last_completed_slot {
+            self.trailed_cluster = true;
+            return;
+        }
+        if !self.trailed_cluster {
             return;
         }
         self.caught_cluster = true;
@@ -2655,15 +2661,31 @@ mod tests {
     }
 
     #[test]
-    fn test_catching_up_is_stamped_when_the_cluster_distance_reaches_nought() {
-        // Not when replay reaches what this node holds, which right after a boot
-        // is a few slots ahead while the cluster is thousands: that stamped eight
-        // seconds against a catch-up that took minutes. The tip is the highest
-        // optimistic slot seen, so it is set once, low, after a tick with none.
+    fn test_a_stale_tip_below_the_snapshot_does_not_count_as_caught_up() {
+        // The blockstore keeps optimistic slots from before a restart, so the
+        // first tip read is below what replay started from. That stamped catch-up
+        // at nought seconds on a node still twenty-five slots behind.
         let harness = fixture();
         harness.advance_to(64);
         let mut collector = harness.collector();
 
+        harness.set_cluster_tip(1);
+        collector.tick();
+        assert!(
+            harness
+                .published_key("summary", "caught_up_time_nanos")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_catching_up_is_stamped_once_a_tip_seen_ahead_is_reached() {
+        let harness = fixture();
+        harness.advance_to(64);
+        let mut collector = harness.collector();
+
+        // Behind: a tip ahead of replay is seen, and nothing is stamped.
+        harness.set_cluster_tip(100);
         collector.tick();
         assert!(
             harness
@@ -2671,7 +2693,8 @@ mod tests {
                 .is_none()
         );
 
-        harness.set_cluster_tip(1);
+        // Level with it.
+        harness.advance_to(101);
         collector.tick();
         assert!(
             harness

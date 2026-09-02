@@ -17,6 +17,7 @@ function slot(number: number, level: SlotEntry["level"] = "completed"): SlotEntr
     level,
     block: null,
     duration_nanos: null,
+    time_millis: null,
     mine: false,
   };
 }

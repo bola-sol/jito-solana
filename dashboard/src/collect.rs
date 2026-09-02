@@ -303,6 +303,9 @@ pub struct Collector {
     /// Whether replay was seen trailing the tip before the marker was set, which
     /// decides whether there is anything to discard.
     replayed_behind: bool,
+    /// Whether replay has drawn level with the cluster's tip since startup, so
+    /// the moment is stamped once.
+    caught_cluster: bool,
     /// The epoch end being counted down to, held so the readout does not chase its
     /// own estimate. See [`EPOCH_END_DRIFT_DIVISOR`].
     epoch_end: Option<(Epoch, SystemTime)>,
@@ -366,6 +369,7 @@ impl Collector {
             slot_time_window: VecDeque::new(),
             caught_up_at: None,
             replayed_behind: false,
+            caught_cluster: false,
             epoch_end: None,
             last_vote_advance: now,
             // Nothing is known until the first bank is read, and claiming to be
@@ -449,6 +453,7 @@ impl Collector {
             .unwrap_or_default();
 
         self.collect_slot_positions(&root_bank, highest_slot, completed);
+        self.mark_caught_cluster();
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank, &frozen);
         // From the working bank: the root trails the tip by the thirty-two slots it
@@ -652,13 +657,6 @@ impl Collector {
 
         let from = completed.saturating_add(CAUGHT_UP_MARGIN_SLOTS);
         self.caught_up_at = Some(from);
-        // Wall clock rather than an offset: the collector is built after boot,
-        // so the page takes the offset from the uptime it already has.
-        self.publisher.publish(
-            TOPIC_SUMMARY,
-            "caught_up_time_nanos",
-            &system_time_nanos(SystemTime::now()),
-        );
         if self.replayed_behind {
             // Everything held was measured while trailing the tip, so it goes and the
             // readout is blank until the window refills. A validator that started level
@@ -1414,6 +1412,31 @@ impl Collector {
     }
 
     // ---- health, skip rate ----------------------------------------------
+
+    /// Stamps, once, the moment replay draws level with the cluster: caught up
+    /// as an operator means it, the behind-cluster distance reaching nought. On
+    /// the fast path rather than with the health figures, which only run while
+    /// someone is watching and would stamp it late or not at all.
+    fn mark_caught_cluster(&mut self) {
+        if self.caught_cluster {
+            return;
+        }
+        let level = self
+            .ctx
+            .cluster_tip()
+            .is_some_and(|tip| tip <= self.last_completed_slot);
+        if !level {
+            return;
+        }
+        self.caught_cluster = true;
+        // Wall clock rather than an offset, since the collector is built after
+        // boot and the page has the uptime to take it from.
+        self.publisher.publish(
+            TOPIC_SUMMARY,
+            "caught_up_time_nanos",
+            &system_time_nanos(SystemTime::now()),
+        );
+    }
 
     fn collect_health(&mut self) {
         let health = health_of(
@@ -2632,18 +2655,24 @@ mod tests {
     }
 
     #[test]
-    fn test_catching_up_is_stamped_for_the_page() {
+    fn test_catching_up_is_stamped_when_the_cluster_distance_reaches_nought() {
+        // Not when replay reaches what this node holds, which right after a boot
+        // is a few slots ahead while the cluster is thousands: that stamped eight
+        // seconds against a catch-up that took minutes. The tip is the highest
+        // optimistic slot seen, so it is set once, low, after a tick with none.
         let harness = fixture();
+        harness.advance_to(64);
         let mut collector = harness.collector();
-        let count = CAUGHT_UP_MIN_SAMPLES as u64;
-        collector.slot_time_window = steady_window((300_000_000 - (count - 1), 1_000), count, 400);
+
+        collector.tick();
         assert!(
             harness
                 .published_key("summary", "caught_up_time_nanos")
                 .is_none()
         );
 
-        collector.mark_caught_up(300_000_000, 300_000_000);
+        harness.set_cluster_tip(1);
+        collector.tick();
         assert!(
             harness
                 .published_key("summary", "caught_up_time_nanos")

@@ -61,6 +61,9 @@ pub struct DashboardService {
     /// Counters lifted from the measurements the validator submits about
     /// itself, watched from `start` so the boot sequence is counted too.
     metrics_tap: Arc<MetricsTap>,
+    /// Times the boot phases from `start` and is handed to the collector at
+    /// `attach`, so the record survives the handover.
+    startup: Arc<std::sync::Mutex<StartupPublisher>>,
     /// The jito tip settings, retained from `start` until the collector exists.
     tip_payment_program_id: Option<Pubkey>,
     commission_bps: Option<u16>,
@@ -108,6 +111,7 @@ impl DashboardService {
         // boundary.
         let epochs: Arc<RwLock<Vec<EpochInfo>>> = Arc::new(RwLock::new(Vec::new()));
         let attached = Arc::new(AtomicBool::new(false));
+        let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
 
         let runtime = Builder::new_multi_thread()
             .worker_threads(RUNTIME_THREADS)
@@ -146,13 +150,13 @@ impl DashboardService {
             let exit = exit.clone();
             let attached = attached.clone();
             let startup_progress = startup_progress.clone();
+            let startup = startup.clone();
             thread::Builder::new()
                 .name("solDashBoot".to_string())
                 .spawn(move || {
-                    let mut startup = StartupPublisher::default();
                     while !attached.load(Ordering::Relaxed) && !exit.load(Ordering::Relaxed) {
                         let progress = *startup_progress.read().unwrap();
-                        startup.publish(&publisher, progress);
+                        startup.lock().unwrap().publish(&publisher, progress);
                         thread::sleep(BOOT_POLL);
                     }
                 })?
@@ -165,6 +169,7 @@ impl DashboardService {
             startup_progress,
             started,
             metrics_tap,
+            startup,
             tip_payment_program_id: config.tip_payment_program_id,
             commission_bps: config.commission_bps,
             history,
@@ -230,6 +235,7 @@ impl DashboardService {
             let history = self.history.clone();
             let epochs = self.epochs.clone();
             let startup_progress = self.startup_progress.clone();
+            let startup = self.startup.clone();
             // Derived once here rather than per tick. Absent on a validator
             // with no tip payment program, and then no tips are read at all.
             let tips = self.tip_payment_program_id.as_ref().map(TipMeter::new);
@@ -244,6 +250,7 @@ impl DashboardService {
                         history,
                         epochs,
                         startup_progress,
+                        startup,
                         tips,
                         commission_bps,
                     );

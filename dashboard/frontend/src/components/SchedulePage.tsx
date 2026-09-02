@@ -392,9 +392,10 @@ function TurnLeader({
           className="schedule-leader-key"
         />
       )}
-      {began !== null && <span className="schedule-leader-when">{blockStamp(began)}</span>}
-      {/* Always drawn, empty or not. The peer table arrives on the slow tier
-          and a turn that grew a line when it did would be measured twice. */}
+      {/* Both always drawn, empty or not: the stamp lands once the first slot
+          is timed and the peer table on the slow tier, and a turn that grew a
+          line when either did would be measured twice. */}
+      <span className="schedule-leader-when">{began === null ? "" : blockStamp(began)}</span>
       <div className="schedule-leader-meta">
         {peer?.version && <span className="schedule-version">{peer.version}</span>}
         {peer && peer.stake > 0 && (

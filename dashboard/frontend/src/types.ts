@@ -23,6 +23,8 @@ export interface SlotEntry {
   /** What replay found in the block. Null for a slot with no block. */
   block: BlockDetail | null;
   duration_nanos: number | null;
+  /** When the slot's first shred arrived, in milliseconds. Null for a slot never timed. */
+  time_millis: number | null;
 }
 
 /**

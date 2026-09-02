@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { count, percent, shortKey, sol, solCompact } from "../format";
+import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
 import { matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
 import { jitoShare } from "../tips";
@@ -375,6 +375,8 @@ function TurnLeader({
   // Missing rather than zero when the table has not caught up with a leader
   // that has only just come into view.
   const share = peer && totalStake ? peer.stake / totalStake : null;
+  // Slots are newest first, so the turn's own first slot is the last one.
+  const began = turn.slots[turn.slots.length - 1]?.entry?.time_millis ?? null;
 
   return (
     <div className="schedule-leader">
@@ -390,6 +392,7 @@ function TurnLeader({
           className="schedule-leader-key"
         />
       )}
+      {began !== null && <span className="schedule-leader-when">{blockStamp(began)}</span>}
       {/* Always drawn, empty or not. The peer table arrives on the slow tier
           and a turn that grew a line when it did would be measured twice. */}
       <div className="schedule-leader-meta">

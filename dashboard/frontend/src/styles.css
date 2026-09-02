@@ -2985,11 +2985,10 @@ body {
     gap: 4px;
   }
 
-  /* Scoped to that grid, and only ever meant for it: four counts across and
-     the two fee values on a row of their own. Unscoped it also caught the four
-     figures below, which are a different set in a different container, and gave
-     the last two of them a full width each. */
-  .sx-stats .sx-stat:nth-last-child(-n + 2) {
+  /* A fee value is 106px at this size and a third of the row is 103, so the
+     fees take half each: base and priority side by side, tips beneath. By class
+     rather than position, since tips is only there on a jito validator. */
+  .sx-stats .sx-fee {
     grid-column: span 2;
   }
 
@@ -3881,6 +3880,12 @@ body {
 .schedule-leader-key {
   font-size: 11px;
   color: var(--text-faint);
+}
+
+.schedule-leader-when {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .schedule-mine {

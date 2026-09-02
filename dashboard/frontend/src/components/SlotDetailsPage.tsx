@@ -225,15 +225,17 @@ function Stat({
   value,
   warn,
   title,
+  className,
 }: {
   label: string;
   value: string;
   warn?: boolean;
   /** Hover text, where the figure is derived and the derivation is worth a look. */
   title?: string;
+  className?: string;
 }) {
   return (
-    <div className="sx-stat" title={title}>
+    <div className={`sx-stat${className ? ` ${className}` : ""}`} title={title}>
       <span className="sx-eyebrow">{label}</span>
       <span className={`sx-stat-value${warn ? " tone-warn" : ""}`}>{value}</span>
     </div>
@@ -288,8 +290,12 @@ function BlockCompute({
           <Stat label="Entries" value={count(block.entries)} />
           {/* Base is the remainder: the bank reports the two together and the
               priority half separately, never the base fee on its own. */}
-          <Stat label="Base fees" value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`} />
-          <Stat label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} />
+          <Stat
+            label="Base fees"
+            value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`}
+            className="sx-fee"
+          />
+          <Stat label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} className="sx-fee" />
           {/* Ours, which is the question an operator is asking of their own
               block. The wider figure it came from is on the hover rather than
               in a column of its own: it is the same number twice, and only one
@@ -299,6 +305,7 @@ function BlockCompute({
           {rates && block.tips != null && (
             <Stat
               label="Our tips"
+              className="sx-fee"
               value={`${sol(ourShare(block.tips, rates) ?? 0, 6)} SOL`}
               title={`${sol(jitoShare(block.tips, rates), 6)} SOL reached the distribution account, of ${sol(block.tips, 6)} paid. Derived from the configured rates, not measured.`}
             />

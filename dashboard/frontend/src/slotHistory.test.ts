@@ -124,6 +124,9 @@ describe("entriesOf", () => {
     );
     expect(entries[0].duration_nanos).toBeNull();
     expect(entries[1].duration_nanos).toBe(400_000_000);
+    // The clock itself travels too, for stamping a turn.
+    expect(entries[0].time_millis).toBe(1_000_000);
+    expect(entries[1].time_millis).toBe(1_000_400);
   });
 
   it("carries the gap across a slot it has no row for", () => {

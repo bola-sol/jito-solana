@@ -40,6 +40,9 @@ pub struct SlotEntry {
     /// Outside [`BlockDetail`] because it is measured from shred arrival and exists
     /// for slots with no block.
     pub duration_nanos: Option<u64>,
+    /// When the slot's first shred arrived, in milliseconds. Stamps a turn on the
+    /// schedule page; the packed history keeps the same figure for older slots.
+    pub time_millis: Option<u64>,
 }
 
 /// What one block contained, read off its bank as it froze. Every field is per
@@ -82,6 +85,7 @@ impl SlotEntry {
             mine: false,
             block: None,
             duration_nanos: None,
+            time_millis: None,
         }
     }
 }
@@ -267,6 +271,7 @@ mod tests {
                     slot: 428_804_675 + index,
                     level: SlotLevel::OptimisticallyConfirmed,
                     mine: true,
+                    time_millis: Some(u64::MAX),
                     block: Some(BlockDetail {
                         transactions: u64::MAX,
                         non_vote_transactions: u64::MAX,

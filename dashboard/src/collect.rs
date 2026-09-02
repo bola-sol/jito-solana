@@ -600,15 +600,17 @@ impl Collector {
                 continue;
             };
 
-            if let Some((previous_slot, previous_arrival)) = self.last_shred_time
-                && slot > previous_slot
-            {
-                let elapsed = arrived.saturating_sub(previous_arrival);
-                if let Some(entry) = self.slots.update(slot, |entry| {
+            let elapsed = self
+                .last_shred_time
+                .filter(|(previous_slot, _)| slot > *previous_slot)
+                .map(|(_, previous_arrival)| arrived.saturating_sub(previous_arrival));
+            if let Some(entry) = self.slots.update(slot, |entry| {
+                entry.time_millis = Some(arrived);
+                if let Some(elapsed) = elapsed {
                     entry.duration_nanos = Some(elapsed.saturating_mul(1_000_000));
-                }) {
-                    changed.push(entry);
                 }
+            }) {
+                changed.push(entry);
             }
 
             // The slot's own wall clock, kept by the packed history; the entries above

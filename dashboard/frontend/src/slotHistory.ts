@@ -123,6 +123,7 @@ export function entriesOf(
             },
       duration_nanos:
         timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,
+      time_millis: timed ? timeMillis : null,
     });
 
     if (timed) previousTime = timeMillis;

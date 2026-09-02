@@ -192,6 +192,7 @@ mod tests {
             mine: false,
             block: None,
             duration_nanos: None,
+            time_millis: None,
         }
     }
 

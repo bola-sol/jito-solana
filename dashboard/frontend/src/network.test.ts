@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { xdpDetail, xdpTooltip } from "./components/NetworkCard";
-import { direction, NETWORK_WINDOW_SECONDS, sharedPeak, unitFor } from "./network";
+import { direction, egressShares, NETWORK_WINDOW_SECONDS, sharedPeak, unitFor } from "./network";
 import type { XdpConfig } from "./types";
 
 const KB = 1024;
@@ -161,5 +161,33 @@ describe("the XDP tooltip", () => {
     expect(xdpTooltip(config({ kernel_version: "unknown: os error 2" }))).toBe(
       `${SAID} Intel Corporation.`,
     );
+  });
+});
+
+describe("egressShares", () => {
+  it("names what the senders measured and leaves the rest as a remainder", () => {
+    const shares = egressShares(57_000_000, {
+      gossip_per_second: 4_000_000,
+      repair_per_second: 240_000,
+    });
+    expect(shares.gossip).toBe(4_000_000);
+    expect(shares.repair).toBe(240_000);
+    expect(shares.measured).toBe(4_240_000);
+    expect(shares.remainder).toBe(52_760_000);
+  });
+
+  it("treats a sender that has not reported as nought rather than unknown", () => {
+    const shares = egressShares(1_000, { gossip_per_second: null, repair_per_second: 300 });
+    expect(shares.gossip).toBe(0);
+    expect(shares.measured).toBe(300);
+    expect(shares.remainder).toBe(700);
+  });
+
+  it("never draws a negative remainder", () => {
+    // The senders report over their own windows and the interface over the
+    // last second, so briefly the parts can exceed the whole.
+    const shares = egressShares(100, { gossip_per_second: 90, repair_per_second: 30 });
+    expect(shares.remainder).toBe(0);
+    expect(shares.measured).toBe(120);
   });
 });

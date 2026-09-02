@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { buildLabel, duration, percent, sol, solCompact } from "../format";
+import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
 import { useNarrow } from "../narrow";
-import type { StakeSummary } from "../types";
+import { bootTimes, type BootTimes } from "../startup";
+import type { StakeSummary, StartupProgress } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
@@ -31,6 +32,12 @@ export function Header() {
   const identityBalance = store.get<number>("summary", "identity_balance");
   const voteBalance = store.get<number>("summary", "vote_balance");
   const uptimeNanos = store.get<number>("summary", "uptime_nanos");
+  const boot = bootTimes(
+    store.get<StartupProgress>("summary", "startup_progress"),
+    uptimeNanos,
+    store.get<number>("summary", "server_time_nanos"),
+    store.get<number>("summary", "caught_up_time_nanos"),
+  );
   const cluster = store.get<string>("summary", "cluster");
   const version = store.get<string>("summary", "version");
   const client = store.get<string>("summary", "client");
@@ -78,6 +85,7 @@ export function Header() {
           identity={identity}
           voteKey={voteKey}
           figures={figures}
+          boot={boot}
         />
       </header>
     );
@@ -127,7 +135,7 @@ export function Header() {
         <HeaderStat label="Commission" value={figures.commission} />
         <HeaderStat label="Identity Balance" value={figures.identityBalance} />
         <HeaderStat label="Vote Balance" value={figures.voteBalance} />
-        <HeaderStat label="Uptime" value={figures.uptime} />
+        <HeaderStat label="Uptime" value={figures.uptime} detail={boot && <Boot boot={boot} />} />
       </div>
 
       <Connection state={connection} showLabel />
@@ -151,6 +159,7 @@ function Identity({
   identity,
   voteKey,
   figures,
+  boot,
 }: {
   name: string;
   icon: string | null;
@@ -158,6 +167,7 @@ function Identity({
   identity: string | undefined;
   voteKey: string | undefined;
   figures: Record<string, string>;
+  boot: BootTimes | null;
 }) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
@@ -213,7 +223,7 @@ function Identity({
             <PanelRow label="Commission" value={figures.commission} />
             <PanelRow label="Identity balance" value={figures.identityBalance} />
             <PanelRow label="Vote balance" value={figures.voteBalance} />
-            <PanelRow label="Uptime" value={figures.uptime} />
+            <PanelRow label="Uptime" value={figures.uptime} detail={boot && <Boot boot={boot} />} />
             <PanelRow label="Shred version" value={figures.shred} />
           </dl>
         </div>
@@ -222,11 +232,62 @@ function Identity({
   );
 }
 
-function PanelRow({ label, value }: { label: string; value: string }) {
+function PanelRow({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: ReactNode;
+}) {
   return (
     <>
       <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dd>
+        {detail ? (
+          <Explain interactive className="header-stat-detail" text={detail}>
+            {value}
+          </Explain>
+        ) : (
+          value
+        )}
+      </dd>
+    </>
+  );
+}
+
+/** When the validator started, what the boot took, and how long it trailed the tip. */
+function Boot({ boot }: { boot: BootTimes }) {
+  return (
+    <>
+      <span className="boot-row">
+        <b>Started</b>
+        <span>{blockStamp(boot.startedMillis)}</span>
+      </span>
+      <span className="boot-rule" />
+      <span className="boot-row">
+        <b>Startup</b>
+        <span>{duration(boot.startupMillis)}</span>
+      </span>
+      {boot.phases.map((phase) => (
+        <span key={phase.label} className="boot-row boot-sub">
+          <span>{phase.label}</span>
+          <span>{duration(phase.millis)}</span>
+        </span>
+      ))}
+      {boot.catchUpMillis !== null && (
+        <>
+          <span className="boot-rule" />
+          <span className="boot-row">
+            <b>Caught up</b>
+            <span>{duration(boot.catchUpMillis)} after running</span>
+          </span>
+          <span className="boot-note">
+            Counted from when the cluster clock settled, a few seconds after the tip was reached.
+          </span>
+        </>
+      )}
     </>
   );
 }

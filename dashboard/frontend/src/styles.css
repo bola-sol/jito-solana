@@ -413,6 +413,37 @@ body {
   font-weight: 400;
 }
 
+.boot-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.boot-row b {
+  font-weight: 500;
+}
+
+.boot-row > span:last-child {
+  font-family: ui-monospace, monospace;
+}
+
+.boot-sub {
+  padding-left: 12px;
+  color: var(--text-faint);
+}
+
+.boot-rule {
+  border-top: 1px solid var(--border);
+  margin: 2px 0;
+}
+
+.boot-note {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
 .connection {
   display: flex;
   align-items: center;
@@ -1717,6 +1748,102 @@ body {
 
 .net-fill.is-egress {
   fill: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+
+/* The egress split, on the rows' own three columns so the bar sits under the
+   line it divides. The unattributed segment is hatched rather than filled:
+   it is not a measurement, and a solid third colour would say it was. */
+.net-split {
+  display: grid;
+  grid-template-columns: minmax(140px, auto) minmax(120px, 1fr) minmax(92px, auto);
+  align-items: start;
+  gap: 4px 18px;
+  padding: 0 0 10px;
+  flex: none;
+}
+
+.net-split-label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-top: 1px;
+}
+
+.net-split-body {
+  min-width: 0;
+}
+
+.net-split-bar {
+  display: flex;
+  height: 8px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.net-split-bar i {
+  display: block;
+  height: 100%;
+}
+
+.net-split-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.net-split-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.net-split-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.net-split .is-gossip {
+  background: var(--warn);
+}
+
+.net-split .is-repair {
+  background: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+
+.net-split .is-unattributed {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--panel-raised) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.net-split-legend .is-unattributed {
+  border: 1px solid var(--border);
+}
+
+.net-split-meta {
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-split-meta b {
+  display: block;
+  font-weight: 500;
+  color: var(--text-dim);
 }
 
 /* How the XDP transmit path is configured, where there is one. One line high

@@ -1,6 +1,13 @@
 import { decimal } from "../format";
-import { direction, NETWORK_WINDOW_SECONDS, sharedPeak, unitFor, type Direction } from "../network";
-import type { NetworkSample, XdpConfig } from "../types";
+import {
+  direction,
+  egressShares,
+  NETWORK_WINDOW_SECONDS,
+  sharedPeak,
+  unitFor,
+  type Direction,
+} from "../network";
+import type { EgressSplit, NetworkSample, XdpConfig } from "../types";
 import { RENDER_LAG_MS, useNow, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, chartY, Explain } from "./primitives";
@@ -35,6 +42,9 @@ export function NetworkCard() {
   // this is only submitted where it was. Absence is the answer rather than
   // something to work out.
   const xdp = store.get<XdpConfig | null>("summary", "xdp");
+  // Absent until a sender has reported, and never on a validator whose log
+  // level keeps it from submitting points at all.
+  const split = store.get<EgressSplit>("summary", "network_egress");
   // Drawn a sample behind live, so the newest point sits past the right edge
   // and the line is continuous across it rather than ending in a notch.
   const edge = useNow() - RENDER_LAG_MS;
@@ -45,6 +55,12 @@ export function NetworkCard() {
   const received = visible.map((sample) => sample.received_per_second);
   const sent = visible.map((sample) => sample.sent_per_second);
   const peak = sharedPeak(received, sent);
+  const egress = direction(sent) ?? {
+    current: rates.sent_per_second,
+    average: rates.sent_per_second,
+    delta: 0,
+    trend: "flat" as const,
+  };
 
   const scope =
     "Every non-loopback interface on this host, not the validator's own traffic: " +
@@ -73,7 +89,7 @@ export function NetworkCard() {
       <Row
         label="Egress"
         kind="egress"
-        read={direction(sent) ?? { current: rates.sent_per_second, average: rates.sent_per_second, delta: 0, trend: "flat" }}
+        read={egress}
         samples={visible}
         value={(sample) => sample.sent_per_second}
         edge={edge}
@@ -81,6 +97,7 @@ export function NetworkCard() {
         peak={peak}
         explain={scope}
       />
+      {split && <Split total={egress.current} split={split} />}
       {xdp && <Xdp xdp={xdp} />}
     </Card>
   );
@@ -163,6 +180,52 @@ function Xdp({ xdp }: { xdp: XdpConfig }) {
         {detail.map((part) => (
           <span key={part}> · {part}</span>
         ))}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * How much of egress two senders account for, drawn to the width of the line
+ * above it. The rest is hatched and named as unattributed rather than left to
+ * read as a third measurement: it is the shred path over XDP, which counts no
+ * bytes.
+ */
+function Split({ total, split }: { total: number; split: EgressSplit }) {
+  const shares = egressShares(total, split);
+  const whole = Math.max(total, shares.measured, 1);
+  const { unit, divisor } = unitFor(total);
+  const show = (value: number) => decimal(value / divisor, 2);
+  const width = (value: number) => `${((100 * value) / whole).toFixed(2)}%`;
+
+  return (
+    <div className="net-split">
+      <span className="net-split-label">
+        <Explain text="What the gossip and repair senders report putting on the wire, over the window each reports. The remainder is everything else the interface sent, mostly shreds over XDP, which reports no bytes.">
+          of which
+        </Explain>
+      </span>
+      <span className="net-split-body">
+        <span className="net-split-bar" aria-hidden="true">
+          <i className="is-gossip" style={{ width: width(shares.gossip) }} />
+          <i className="is-repair" style={{ width: width(shares.repair) }} />
+          <i className="is-unattributed" style={{ width: width(shares.remainder) }} />
+        </span>
+        <span className="net-split-legend">
+          <span>
+            <i className="is-gossip" />gossip {show(shares.gossip)}
+          </span>
+          <span>
+            <i className="is-repair" />repair {show(shares.repair)}
+          </span>
+          <span>
+            <i className="is-unattributed" />unattributed {show(shares.remainder)}
+          </span>
+        </span>
+      </span>
+      <span className="net-split-meta">
+        <b>measured</b>
+        {show(shares.measured)} {unit}/s
       </span>
     </div>
   );

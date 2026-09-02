@@ -1,13 +1,8 @@
-//! Embeds the built frontend into the binary.
-//!
-//! Turning the dashboard on should take one flag and no extra services, so the
-//! SPA has to travel inside `agave-validator`. `frontend/dist` is checked in,
-//! which lets a plain `cargo build` work without a Node toolchain. After
-//! changing the UI, run `npm run build` in `dashboard/frontend` to regenerate
+//! Embeds the built frontend into the binary. `frontend/dist` is checked in
+//! so a plain `cargo build` needs no Node toolchain; after changing the UI,
+//! run `npm run build` in `dashboard/frontend`. When `dist` is missing the
+//! build still succeeds and the server serves a page saying how to produce
 //! it.
-//!
-//! When `frontend/dist` is missing the build still succeeds, and the server
-//! serves a page explaining how to produce it.
 
 use std::{env, fs, path::Path};
 

@@ -1,29 +1,18 @@
-//! Detail for the blocks this validator produced.
-//!
-//! Captured while the block's bank is still in bank forks. The cost tracker and
-//! the collected fees live on the bank and go with it when it is dropped after
-//! rooting, so anything read from them has to be taken at the moment the slot
-//! freezes or not at all.
-//!
-//! Only this validator's own leader slots are kept, which on a small validator
-//! is about four slots in every eight hundred.
+//! Detail for the blocks this validator produced, captured while the block's
+//! bank is still in bank forks: the cost tracker and collected fees go with
+//! the bank when it is dropped after rooting.
 
 use {serde::Serialize, solana_clock::Slot};
 
-/// What one produced block looked like.
-///
-/// Some of the bank's counters accumulate along the fork and some are reset for
-/// each bank. Which is which is not guessable from the names, so it is recorded
-/// here per field rather than left to the reader: `transactions` and
-/// `non_vote_transactions` are differences against the parent, the rest are the
-/// bank's own.
+/// What one produced block looked like. `transactions` and
+/// `non_vote_transactions` are differences against the parent; the rest are
+/// the bank's own.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProducedBlock {
     pub slot: Slot,
-    /// When the blockstore recorded the first shred of this slot, in
-    /// milliseconds. For a block this validator produced that is its own
-    /// first shred, so it is when the block started rather than when anything
-    /// observed it. `None` for a slot the blockstore holds no timing for.
+    /// When the blockstore recorded the first shred of this slot, in milliseconds,
+    /// which for our own block is when it started. `None` where the blockstore
+    /// holds no timing.
     pub slot_time_millis: Option<u64>,
     pub blockhash: String,
     /// Time from the previous slot, when the blockstore recorded one.
@@ -47,12 +36,8 @@ pub struct ProducedBlock {
     /// what the costliest account is read against.
     pub account_cost_limit: u64,
 
-    /// Fees this block collected, in lamports. Held per bank rather than
-    /// accumulated along the fork, so neither is differenced.
-    ///
-    /// `total_fees` is base and priority together: the bank's
-    /// `total_transaction_fee` adds the two despite its name, so taking it as
-    /// the base fee alone would double-count the priority half.
+    /// Fees this block collected, in lamports, base and priority together: the
+    /// bank's `total_transaction_fee` adds the two despite its name.
     pub total_fees: u64,
     pub priority_fees: u64,
     /// Lamports paid into the jito tip accounts during this slot, as measured.
@@ -83,15 +68,10 @@ impl ProducedRing {
         &self.blocks
     }
 
-    /// Records a block, keeping the newest `capacity` of them.
-    ///
-    /// Returns false for a slot already held. A bank stays frozen in bank forks
-    /// for many ticks before it is rooted, so the collector sees each of these
-    /// repeatedly and only the first sighting carries the block's own figures.
-    ///
-    /// Sorted on insert rather than assumed ordered: bank forks is walked as a
-    /// map, so two blocks frozen between one tick and the next can arrive in
-    /// either order.
+    /// Records a block, keeping the newest `capacity`. Returns false for a slot
+    /// already held, since a bank stays frozen for many ticks and only the first
+    /// sighting has the block's figures. Sorted on insert because bank forks is
+    /// walked as a map.
     pub fn insert(&mut self, block: ProducedBlock) -> bool {
         if self.contains(block.slot) {
             return false;

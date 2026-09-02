@@ -1,16 +1,10 @@
-//! Host load, memory, filesystem capacity and disk saturation.
-//!
-//! Read straight from `/proc` and `statvfs` rather than through the metrics
-//! tap, for the same reason the network counters are: nothing here depends on
-//! what the validator chooses to emit or on the log level it emits at, so the
-//! panel keeps working on a node configured quieter than the default.
-//!
-//! Three different questions live in here and must not be run together. How
-//! full a filesystem is says whether the validator will run out of room. How
-//! hard a device is worked says whether it will run out of throughput. They
-//! come from different sources, are measured in different units, and a machine
-//! can be in trouble on either one while the other reads perfectly healthy.
+//! Host load, memory, filesystem capacity and disk saturation, read from
+//! `/proc` and `statvfs` rather than the metrics tap, so the panel works on a
+//! node logging below the default. Capacity and saturation are kept apart: a
+//! machine can be in trouble on one while the other reads healthy.
 
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
 use std::{
     collections::BTreeMap,
     ffi::CString,
@@ -18,13 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(target_os = "linux")]
-use std::os::unix::ffi::OsStrExt;
-
-/// Bytes in a disk sector, as `/proc/diskstats` counts them.
-///
-/// Always 512 whatever the device's own sector size is: the kernel reports
-/// these in traditional sectors rather than in the hardware's units.
+/// Bytes in a disk sector as `/proc/diskstats` counts them: always 512,
+/// whatever the device's own sector size.
 const SECTOR_BYTES: u64 = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,9 +34,8 @@ pub struct Memory {
     pub available: u64,
     /// Page cache and buffers, the part of "used" the kernel will give back.
     pub reclaimable: u64,
-    /// Untouched memory. Needed as well as `available`, because the two answer
-    /// different questions: what is spoken for is `total - free - reclaimable`,
-    /// and `available` is larger than `free` by most of the page cache.
+    /// Untouched memory. What is spoken for is `total - free - reclaimable`;
+    /// `available` is larger than `free` by most of the page cache.
     pub free: u64,
     pub swap_total: u64,
     pub swap_free: u64,
@@ -62,18 +50,14 @@ pub struct DiskCounters {
     pub writes: u64,
     pub write_sectors: u64,
     pub write_ms: u64,
-    /// Milliseconds the device had at least one request in flight. This is what
-    /// `iostat` turns into `%util`, and it is a duty cycle rather than a level:
-    /// a device can sit at its ceiling here with the filesystem nearly empty.
+    /// Milliseconds the device had at least one request in flight, which is what
+    /// `iostat` turns into `%util`. A duty cycle, not a level.
     pub busy_ms: u64,
 }
 
 impl DiskCounters {
-    /// This sample less the one before it, or `None` if a counter went
-    /// backwards.
-    ///
-    /// Counters reset when a device is removed and re-added, and an unsigned
-    /// wrap would otherwise read as an enormous burst of work.
+    /// This sample less the one before, or `None` if a counter went backwards, as
+    /// it does when a device is re-added.
     pub fn since(&self, previous: &Self) -> Option<Self> {
         Some(Self {
             reads: self.reads.checked_sub(previous.reads)?,
@@ -98,10 +82,8 @@ impl DiskCounters {
         self.reads.saturating_add(self.writes)
     }
 
-    /// Mean milliseconds a request spent queued and serviced.
-    ///
-    /// `None` where the device did nothing in the interval, because no request
-    /// waited and a nought would read as an idle device being fast.
+    /// Mean milliseconds a request spent queued and serviced. `None` where the
+    /// device did nothing, since nought would read as fast.
     pub fn wait_ms(&self) -> Option<f64> {
         let operations = self.operations();
         if operations == 0 {
@@ -111,10 +93,8 @@ impl DiskCounters {
         Some(waited as f64 / operations as f64)
     }
 
-    /// Share of the interval the device had work in flight, in `[0, 1]`.
-    ///
-    /// Clamped because `busy_ms` is accumulated by the kernel on its own clock
-    /// and can exceed a wall-clock interval by a millisecond or two.
+    /// Share of the interval the device had work in flight, clamped because the
+    /// kernel accumulates `busy_ms` on its own clock.
     pub fn busy(&self, interval_ms: f64) -> Option<f64> {
         if interval_ms <= 0.0 {
             return None;
@@ -192,12 +172,8 @@ pub fn filesystem(_path: &Path) -> io::Result<Filesystem> {
     ))
 }
 
-/// Which filesystem `path` is on, as an opaque identity for grouping.
-///
-/// Two paths on the same filesystem must be reported once rather than twice,
-/// and comparing the strings will not do it: a validator given four accounts
-/// directories under one mount would otherwise show one filesystem four times,
-/// each claiming the whole of its free space.
+/// Which filesystem `path` is on, for grouping: four accounts directories
+/// under one mount are one filesystem, not four.
 #[cfg(target_os = "linux")]
 pub fn filesystem_id(path: &Path) -> io::Result<u64> {
     use std::os::linux::fs::MetadataExt;
@@ -212,17 +188,9 @@ pub fn filesystem_id(_path: &Path) -> io::Result<u64> {
     ))
 }
 
-/// The block device behind `path`, named as `/proc/diskstats` names it.
-///
-/// Resolved through `/sys/dev/block`, and folded up to the parent disk when the
-/// path sits on a partition: `nvme0n1p1` keeps its own counters, but what an
-/// operator wants to know is whether `nvme0n1` is saturated, and every
-/// partition on it competes for the same queue.
-///
-/// `None` rather than an error where there is no block device at all, which is
-/// the case for a validator keeping accounts on tmpfs. That is a filesystem
-/// with no device to be worked hard, so it belongs in the capacity rows and
-/// nowhere else.
+/// The block device behind `path`, named as `/proc/diskstats` names it, folded
+/// up to the parent disk for a partition since every partition competes for
+/// the same queue. `None` where there is no block device at all, as on tmpfs.
 #[cfg(target_os = "linux")]
 pub fn device_for(path: &Path) -> io::Result<Option<String>> {
     use std::os::linux::fs::MetadataExt;
@@ -328,12 +296,9 @@ fn parse_memory(contents: &str) -> Option<Memory> {
     seen_total.then_some(memory)
 }
 
-/// `259 0 nvme0n1 12345 0 987654 3210 ...`
-///
-/// Fields after the name are the ones the kernel has reported since 2.6: reads,
-/// reads merged, sectors read, milliseconds reading, then the same four for
-/// writes, then requests in flight, then milliseconds spent doing any I/O.
-/// Later kernels append discard and flush counters, which are ignored.
+/// `259 0 nvme0n1 12345 0 987654 3210 ...`: reads, reads merged, sectors read,
+/// milliseconds reading, the same four for writes, requests in flight, then
+/// milliseconds doing any I/O. Later discard and flush counters are ignored.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_diskstats(contents: &str) -> BTreeMap<String, DiskCounters> {
     let mut disks = BTreeMap::new();
@@ -374,7 +339,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_the_three_averages_and_the_thread_counts() {
+    fn test_reads_the_three_averages_and_the_thread_counts() {
         let load = parse_load("12.40 11.80 10.90 14/1847 3320145\n").unwrap();
         assert_eq!(load.one, 12.40);
         assert_eq!(load.five, 11.80);
@@ -384,14 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn survives_a_loadavg_without_the_thread_pair() {
+    fn test_survives_a_loadavg_without_the_thread_pair() {
         let load = parse_load("0.10 0.20 0.30").unwrap();
         assert_eq!(load.running, 0);
         assert_eq!(load.threads, 0);
     }
 
     #[test]
-    fn refuses_a_loadavg_it_cannot_read() {
+    fn test_refuses_a_loadavg_it_cannot_read() {
         assert!(parse_load("").is_none());
         assert!(parse_load("not a number 1 2").is_none());
     }
@@ -408,7 +373,7 @@ SwapFree:         8388608 kB
 ";
 
     #[test]
-    fn reads_memory_in_bytes_and_adds_the_reclaimable_parts() {
+    fn test_reads_memory_in_bytes_and_adds_the_reclaimable_parts() {
         let memory = parse_memory(MEMINFO).unwrap();
         assert_eq!(memory.total, 402_653_184 * 1024);
         assert_eq!(memory.available, 92_274_688 * 1024);
@@ -419,7 +384,7 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn does_not_mistake_swap_cached_for_the_page_cache() {
+    fn test_does_not_mistake_swap_cached_for_the_page_cache() {
         // `SwapCached` sits directly under `Cached` and is a different figure.
         // A prefix match here would add it to the reclaimable total.
         let memory =
@@ -429,13 +394,13 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn reports_no_swap_where_none_is_configured() {
+    fn test_reports_no_swap_where_none_is_configured() {
         let memory = parse_memory("MemTotal: 1024 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n").unwrap();
         assert_eq!(memory.swap_total, 0);
     }
 
     #[test]
-    fn refuses_meminfo_without_a_total() {
+    fn test_refuses_meminfo_without_a_total() {
         assert!(parse_memory("MemFree: 100 kB\n").is_none());
     }
 
@@ -447,7 +412,7 @@ SwapFree:         8388608 kB
 ";
 
     #[test]
-    fn reads_the_counters_a_device_line_carries() {
+    fn test_reads_the_counters_a_device_line_carries() {
         let disks = parse_diskstats(DISKSTATS);
         let disk = disks.get("nvme0n1").unwrap();
         assert_eq!(disk.reads, 1000);
@@ -460,7 +425,7 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn keeps_partitions_separate_here_and_folds_them_later() {
+    fn test_keeps_partitions_separate_here_and_folds_them_later() {
         // Both are read; `device_for` is what decides a path on `nvme0n1p1` is
         // reported against `nvme0n1`.
         let disks = parse_diskstats(DISKSTATS);
@@ -469,12 +434,12 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn skips_a_line_too_short_to_carry_the_busy_figure() {
+    fn test_skips_a_line_too_short_to_carry_the_busy_figure() {
         assert!(!parse_diskstats(DISKSTATS).contains_key("loop0"));
     }
 
     #[test]
-    fn turns_sectors_into_bytes_at_five_hundred_and_twelve() {
+    fn test_turns_sectors_into_bytes_at_five_hundred_and_twelve() {
         let disk = DiskCounters {
             read_sectors: 2,
             write_sectors: 4,
@@ -485,7 +450,7 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn subtracts_the_previous_sample() {
+    fn test_subtracts_the_previous_sample() {
         let previous = DiskCounters {
             reads: 10,
             busy_ms: 100,
@@ -502,7 +467,7 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn discards_a_sample_where_a_counter_went_backwards() {
+    fn test_discards_a_sample_where_a_counter_went_backwards() {
         // A device removed and re-added restarts at nought, and an unsigned
         // wrap would read as an enormous burst of work.
         let previous = DiskCounters {
@@ -517,7 +482,7 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn works_out_the_mean_wait_across_reads_and_writes() {
+    fn test_works_out_the_mean_wait_across_reads_and_writes() {
         let delta = DiskCounters {
             reads: 30,
             writes: 70,
@@ -529,13 +494,13 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn has_no_wait_to_report_where_the_device_did_nothing() {
+    fn test_has_no_wait_to_report_where_the_device_did_nothing() {
         // Nought here would read as an idle device being infinitely fast.
         assert_eq!(DiskCounters::default().wait_ms(), None);
     }
 
     #[test]
-    fn reads_busy_as_a_share_of_the_interval() {
+    fn test_reads_busy_as_a_share_of_the_interval() {
         let delta = DiskCounters {
             busy_ms: 340,
             ..DiskCounters::default()
@@ -544,7 +509,7 @@ SwapFree:         8388608 kB
     }
 
     #[test]
-    fn clamps_busy_where_the_kernel_clock_runs_past_the_interval() {
+    fn test_clamps_busy_where_the_kernel_clock_runs_past_the_interval() {
         let delta = DiskCounters {
             busy_ms: 1004,
             ..DiskCounters::default()

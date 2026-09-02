@@ -13,7 +13,6 @@ use {
         convert::Into,
         env,
         fmt::Write,
-        panic::AssertUnwindSafe,
         sync::{Arc, Barrier, Mutex, Once, RwLock},
         thread,
         time::{Duration, Instant, UNIX_EPOCH},
@@ -418,34 +417,12 @@ pub type DataPointObserver = Box<dyn Fn(&DataPoint) + Send + Sync>;
 
 static OBSERVER: std::sync::OnceLock<DataPointObserver> = std::sync::OnceLock::new();
 
-/// Watches the points this process submits, whatever the metrics configuration.
+/// Installs a hook that sees every point submitted, whether or not a metrics
+/// host is configured. Returns false if one is already installed.
 ///
-/// Much of what a validator measures about itself â€” the packet counts through
-/// each stage, the accounts cache hit rate, what repair asked for â€” is held in
-/// counters that are private to the module that keeps them and are swapped to
-/// zero as they are reported. Reading them at the source therefore means both
-/// reaching into another crate and racing the reporter for values only one
-/// reader can have. Watching what is reported costs neither: the numbers are
-/// already leaving, and taking a copy on the way past changes nothing about who
-/// gets them.
-///
-/// Works with no metrics host configured. Points are submitted regardless of
-/// configuration and it is the InfluxDB writer that discards them, so a
-/// validator reporting to nowhere still measures itself.
-///
-/// The observer runs on the thread that submitted the point, which is a
-/// validator thread doing something else, so it must be cheap and must not
-/// block. Copying what it wants into a bounded channel is the intended shape.
-///
-/// A panic in it is caught. Where a `MetricsWriter` runs on the agent's own
-/// thread and can bring down no more than metrics reporting, this runs on a
-/// thread that was doing something the validator needs, and an observer is by
-/// definition code that was not there before. Losing the observer is the worst
-/// it can cost.
-///
-/// Returns false if an observer is already installed; there is one process and
-/// one observer, and the first wins rather than being replaced out from under
-/// whatever set it.
+/// The observer runs on the submitting thread, which is a validator thread, so
+/// it must be cheap, must not block, and must not panic: the validator's panic
+/// hook exits the process before anything could catch it.
 pub fn set_datapoint_observer(observer: DataPointObserver) -> bool {
     OBSERVER.set(observer).is_ok()
 }
@@ -453,16 +430,8 @@ pub fn set_datapoint_observer(observer: DataPointObserver) -> bool {
 /// Submits a new point from any thread.  Note that points are internally queued
 /// and transmitted periodically in batches.
 pub fn submit(point: DataPoint, level: log::Level) {
-    // A relaxed load against an unset cell when nothing is watching, which is
-    // every validator that has not asked to.
     if let Some(observe) = OBSERVER.get() {
-        // Caught rather than allowed to unwind: this is a validator thread that
-        // was submitting a measurement, not running the observer's errand.
-        // `AssertUnwindSafe` because the point is only lent out, and whatever
-        // the observer holds is the observer's to keep consistent.
-        if std::panic::catch_unwind(AssertUnwindSafe(|| observe(&point))).is_err() {
-            warn!("metrics observer panicked; the point was still submitted");
-        }
+        observe(&point);
     }
     let agent = get_singleton_agent();
     agent.submit(point, level);
@@ -621,6 +590,28 @@ pub mod test_mocks {
 #[cfg(test)]
 mod test {
     use {super::*, test_mocks::MockMetricsWriter};
+
+    #[test]
+    fn test_datapoint_observer() {
+        // One test, because the cell is process-wide and set once.
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        assert!(set_datapoint_observer(Box::new(move |point| {
+            // Other tests in this binary submit points too; record only ours.
+            if let Some(name) = point.name.strip_prefix("observer_test_") {
+                recorder.lock().unwrap().push(name);
+            }
+        })));
+
+        submit(
+            DataPoint::new("observer_test_watched").to_owned(),
+            log::Level::Info,
+        );
+        assert_eq!(seen.lock().unwrap().as_slice(), ["watched"]);
+
+        // The first observer keeps the cell.
+        assert!(!set_datapoint_observer(Box::new(|_| {})));
+    }
 
     #[test]
     fn test_submit() {

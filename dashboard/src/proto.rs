@@ -1,20 +1,10 @@
 //! Wire protocol for the dashboard websocket.
 //!
-//! Every message is a JSON envelope carrying a `topic`, a `key` within that
-//! topic, and a `value`:
-//!
-//! ```json
-//! { "topic": "summary", "key": "cluster", "value": "testnet" }
-//! ```
-//!
-//! Messages fall into two classes. Retained messages carry validator state that
-//! changes over time. The newest value for each `(topic, key)` is kept, so a
-//! client that connects late is brought up to date immediately. Ephemeral
-//! messages describe an event at a point in time, such as a slot changing
-//! status, and only reach the clients connected when they happen.
-//!
-//! A client can also issue a query by sending an envelope with an `id`. The
-//! response goes back to that `id` alone and is never broadcast.
+//! Every message is a JSON envelope with a `topic`, a `key` within it, and a
+//! `value`. Retained messages carry state; the newest value per `(topic, key)`
+//! is kept so a client connecting late is caught up in one shot. Ephemeral
+//! messages describe an event and reach only the clients connected at the
+//! time. A request carries an `id`, and its reply goes to that `id` alone.
 
 use {
     serde::{Deserialize, Serialize},
@@ -25,29 +15,17 @@ use {
     tokio::sync::broadcast,
 };
 
-/// Ceiling on a single websocket message, applied in both directions.
-///
-/// soketto takes one limit per connection, so this bounds what a client may
-/// send as much as what the server does — and the client's frame is buffered
-/// whole before any smaller limit can be applied to it. Sixty-four clients at
-/// the previous 32MB was two gigabytes of caller-controlled buffering.
-///
-/// The largest message the server sends is the 512-slot overview. Its entries
-/// carry a base58 identity and, at worst, a name and icon URL bounded together
-/// by the 642-byte validator-info account, which puts the message near 430KB.
-/// A megabyte leaves headroom without leaving room to abuse.
+/// Ceiling on a single websocket message, both directions: soketto takes one
+/// limit per connection, and a client's frame is buffered whole before any
+/// smaller limit applies. The largest server message is the 512-slot overview
+/// at under half a megabyte.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
 
-/// Messages buffered per client before it counts as too slow and gets
-/// disconnected. The server drops laggards rather than slowing itself down for
-/// them.
+/// Messages buffered per client before it counts as too slow and is dropped.
 const BROADCAST_CAPACITY: usize = 8192;
 
-/// The topics a client can receive.
-///
-/// Here rather than beside whichever collector happens to publish them: they
-/// are part of the wire format, three modules send on `summary` alone, and one
-/// of them had grown its own copy of the string.
+/// The topics a client can receive. Here because they are part of the wire
+/// format.
 pub const TOPIC_SUMMARY: &str = "summary";
 pub const TOPIC_EPOCH: &str = "epoch";
 pub const TOPIC_SLOT: &str = "slot";
@@ -70,11 +48,8 @@ pub struct Request {
     pub key: String,
     #[serde(default)]
     pub id: Option<u64>,
-    /// Whatever the request carries, left unparsed here.
-    ///
-    /// A `Value` rather than a typed field per request: the envelope is shared
-    /// by every request there is, and each one knows the shape of its own
-    /// parameters. Absent where a request needs none.
+    /// Whatever the request carries, left unparsed: each request knows the shape
+    /// of its own parameters.
     #[serde(default)]
     pub params: serde_json::Value,
 }
@@ -94,9 +69,8 @@ pub fn encode_with_id<T: Serialize>(topic: &str, key: &str, id: Option<u64>, val
         id,
         value,
     };
-    // The only way this fails is a `Serialize` impl that itself errors, which
-    // none of ours do. Falling back to a null value keeps a bug in one topic
-    // from taking down the whole dashboard.
+    // The only failure is a `Serialize` impl that errors. Falling back to null
+    // keeps a bug in one topic from taking the feed down.
     match serde_json::to_string(&envelope) {
         Ok(json) => Arc::from(json.as_str()),
         Err(err) => {
@@ -144,10 +118,8 @@ impl Publisher {
         let _ = self.sender.send(encode(topic, key, value));
     }
 
-    /// Update what a future connection will receive without sending anything to
-    /// current ones. This is for bulk snapshots such as the full peer list and
-    /// the slot overview. Their incremental changes go out separately, so
-    /// resending the whole thing would be wasted bandwidth.
+    /// Updates what a future connection receives without sending anything now,
+    /// for bulk snapshots whose incremental changes go out separately.
     pub fn retain_only<T: Serialize>(&self, topic: &'static str, key: &str, value: &T) {
         let message = encode(topic, key, value);
         self.retained
@@ -165,19 +137,14 @@ impl Publisher {
         self.sender.subscribe()
     }
 
-    /// Websocket clients currently attached.
-    ///
-    /// Each connection holds one receiver for its lifetime, so this is the
-    /// number of people looking. Collection that only exists to be looked at
-    /// can be skipped when it is zero.
+    /// Websocket clients currently attached, so collection that only exists to be
+    /// looked at can be skipped when nobody is.
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
     }
 }
 
-/// Tracks the last published value of a key so collectors can publish only on
-/// change. Most of the dashboard's data is sampled on a timer but changes far
-/// less often than it is sampled.
+/// The last published value of a key, so collectors publish only on change.
 pub struct Debounced<T> {
     last: Option<T>,
 }
@@ -221,9 +188,7 @@ mod tests {
 
     #[test]
     fn test_a_payload_that_cannot_encode_does_not_take_the_feed_down() {
-        // The fallback exists so that one broken topic costs that topic and
-        // nothing else. Without it the encode would have to panic or the
-        // publisher would have to return an error to every caller.
+        // One broken topic costs that topic and nothing else.
         let message = encode("summary", "broken", &Unserializable);
         assert_eq!(
             &*message,

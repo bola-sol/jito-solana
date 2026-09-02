@@ -100,6 +100,25 @@ const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
  * average of 1.02 MB/s would print beside a current reading of 980 KB/s as
  * "980" and "avg 1.02", and the second looks like the smaller number.
  */
+/** Egress cut into what is measured and what is not, none of it below nought. */
+export interface EgressShares {
+  gossip: number;
+  repair: number;
+  /** What no sender accounts for, mostly shreds over XDP. */
+  remainder: number;
+  measured: number;
+}
+
+export function egressShares(
+  total: number,
+  split: { gossip_per_second: number | null; repair_per_second: number | null },
+): EgressShares {
+  const gossip = Math.max(0, split.gossip_per_second ?? 0);
+  const repair = Math.max(0, split.repair_per_second ?? 0);
+  const measured = gossip + repair;
+  return { gossip, repair, measured, remainder: Math.max(0, total - measured) };
+}
+
 export function unitFor(value: number): { unit: string; divisor: number } {
   let divisor = 1;
   let index = 0;

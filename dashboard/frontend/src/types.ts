@@ -267,6 +267,16 @@ export interface NetworkSample extends Network {
   timestamp_nanos: number;
 }
 
+/**
+ * The share of egress two senders account for, in bytes per second. Null until
+ * a sender has reported. Turbine goes out over XDP and reports no bytes, so
+ * the rest of egress cannot be named.
+ */
+export interface EgressSplit {
+  gossip_per_second: number | null;
+  repair_per_second: number | null;
+}
+
 export interface IngestPath {
   name: string;
   port: number;

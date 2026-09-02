@@ -655,6 +655,7 @@ pub struct Meters {
     host: HostMeter,
     sockets: SocketMeter,
     shreds: ShredMeter,
+    egress: EgressMeter,
     accounts: AccountsMeter,
     program_cache: ProgramCacheMeter,
     tpu: TpuMeter,
@@ -680,6 +681,7 @@ impl Meters {
             host: HostMeter::default(),
             sockets: SocketMeter::new(),
             shreds: ShredMeter::new(),
+            egress: EgressMeter::default(),
             accounts: AccountsMeter::new(),
             program_cache: ProgramCacheMeter::new(),
             tpu: TpuMeter::new(),
@@ -752,6 +754,7 @@ impl Meters {
             return;
         };
         self.shreds.tick(&previous, &current, &self.publisher);
+        self.egress.tick(&previous, &current, &self.publisher);
         self.collect_waterfall(&previous, &current);
         self.program_cache
             .tick(&previous, &current, &self.publisher);
@@ -1204,6 +1207,56 @@ fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
 }
 
 /// How much of what arrived had to be asked for.
+/// What the two UDP senders that count their bytes are putting out, in bytes
+/// per second. `None` until a sender has reported once since startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+struct EgressSplit {
+    gossip_per_second: Option<u64>,
+    repair_per_second: Option<u64>,
+}
+
+/// The gossip and repair share of egress, from the senders' own reports. Each
+/// point carries the window it covers, so a rate is bytes over that window and
+/// holds its last value between points rather than dropping to nought.
+#[derive(Default)]
+struct EgressMeter {
+    split: EgressSplit,
+    published: Debounced<EgressSplit>,
+}
+
+impl EgressMeter {
+    fn tick(&mut self, previous: &TapCounters, current: &TapCounters, publisher: &Publisher) {
+        let rate = |bytes: u64, millis: u64, was: Option<u64>| {
+            (millis > 0)
+                .then(|| bytes.saturating_mul(1000).checked_div(millis))
+                .flatten()
+                .or(was)
+        };
+        self.split = EgressSplit {
+            gossip_per_second: rate(
+                current
+                    .gossip_sent_bytes
+                    .saturating_sub(previous.gossip_sent_bytes),
+                current
+                    .gossip_sent_millis
+                    .saturating_sub(previous.gossip_sent_millis),
+                self.split.gossip_per_second,
+            ),
+            repair_per_second: rate(
+                current
+                    .repair_sent_bytes
+                    .saturating_sub(previous.repair_sent_bytes),
+                current
+                    .repair_sent_millis
+                    .saturating_sub(previous.repair_sent_millis),
+                self.split.repair_per_second,
+            ),
+        };
+        self.published
+            .publish(publisher, TOPIC_SUMMARY, "network_egress", self.split);
+    }
+}
+
 struct ShredMeter {
     /// `(turbine, repair)` shreds per sample.
     window: VecDeque<(u64, u64)>,

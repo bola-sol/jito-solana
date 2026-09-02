@@ -650,6 +650,13 @@ impl Collector {
 
         let from = completed.saturating_add(CAUGHT_UP_MARGIN_SLOTS);
         self.caught_up_at = Some(from);
+        // Wall clock rather than an offset: the collector is built after boot,
+        // so the page takes the offset from the uptime it already has.
+        self.publisher.publish(
+            TOPIC_SUMMARY,
+            "caught_up_time_nanos",
+            &system_time_nanos(SystemTime::now()),
+        );
         if self.replayed_behind {
             // Everything held was measured while trailing the tip, so it goes and the
             // readout is blank until the window refills. A validator that started level
@@ -2582,6 +2589,26 @@ mod tests {
             collector.slot_time_window.len(),
             CAUGHT_UP_MIN_SAMPLES,
             "nothing was measured while behind, so nothing is thrown away"
+        );
+    }
+
+    #[test]
+    fn test_catching_up_is_stamped_for_the_page() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let count = CAUGHT_UP_MIN_SAMPLES as u64;
+        collector.slot_time_window = steady_window((300_000_000 - (count - 1), 1_000), count, 400);
+        assert!(
+            harness
+                .published_key("summary", "caught_up_time_nanos")
+                .is_none()
+        );
+
+        collector.mark_caught_up(300_000_000, 300_000_000);
+        assert!(
+            harness
+                .published_key("summary", "caught_up_time_nanos")
+                .is_some()
         );
     }
 

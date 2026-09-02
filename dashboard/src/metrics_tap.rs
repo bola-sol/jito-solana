@@ -35,6 +35,14 @@ const SHREDS_REPAIR: &str = "shred_fetch_repair_receiver";
 /// forwards speak QUIC, whose counters are transactions rather than datagrams,
 /// and serve repair's receiver is never reported.
 const GOSSIP_RECEIVER: &str = "gossip_receiver";
+
+/// The two UDP senders that report what they sent, under the name each was
+/// given. Turbine goes out over XDP and reports shred counts only, so egress
+/// can be split this far and no further.
+const GOSSIP_SENDER: &str = "Gossip";
+const REPAIR_SENDER: &str = "Repair";
+const SENT_BYTES: &str = "streamer-send-bytes_total";
+const SENT_MILLIS: &str = "streamer-send-sample_duration_ms";
 const TPU_VOTE_RECEIVER: &str = "tpu_vote_receiver";
 
 /// Packets seen, which for the shred receivers is shreds.
@@ -313,6 +321,14 @@ pub struct MetricsTap {
     /// `/proc/net/udp` will not give for its drop counts.
     pub packets_gossip: AtomicU64,
     pub packets_tpu_vote: AtomicU64,
+
+    /// Bytes each named sender put on the wire, with the milliseconds each
+    /// sample covered, so a rate is bytes over the window reported rather than
+    /// over the interval the points happened to arrive at.
+    pub gossip_sent_bytes: AtomicU64,
+    pub gossip_sent_millis: AtomicU64,
+    pub repair_sent_bytes: AtomicU64,
+    pub repair_sent_millis: AtomicU64,
 
     /// What the accounts database read, wrote, and is holding.
     pub accounts: AccountsCounters,
@@ -696,6 +712,10 @@ pub struct TapCounters {
     pub shreds_repair: u64,
     pub packets_gossip: u64,
     pub packets_tpu_vote: u64,
+    pub gossip_sent_bytes: u64,
+    pub gossip_sent_millis: u64,
+    pub repair_sent_bytes: u64,
+    pub repair_sent_millis: u64,
     pub scheduler: SchedulerTotals,
     pub accounts: AccountsTotals,
     /// Levels, read as they stand rather than differenced.
@@ -765,6 +785,12 @@ impl MetricsTap {
             SHREDS_REPAIR => self.add_packets(&self.shreds_repair, point),
             GOSSIP_RECEIVER => self.add_packets(&self.packets_gossip, point),
             TPU_VOTE_RECEIVER => self.add_packets(&self.packets_tpu_vote, point),
+            GOSSIP_SENDER => {
+                self.add_sent(&self.gossip_sent_bytes, &self.gossip_sent_millis, point)
+            }
+            REPAIR_SENDER => {
+                self.add_sent(&self.repair_sent_bytes, &self.repair_sent_millis, point)
+            }
             SCHEDULER_COUNTS => {
                 self.scheduler_is_bam.store(
                     scheduler_source(point) == SchedulerSource::Bam,
@@ -795,6 +821,16 @@ impl MetricsTap {
             if *name == PACKETS_COUNT {
                 add_field(counter, value);
                 return;
+            }
+        }
+    }
+
+    fn add_sent(&self, bytes: &AtomicU64, millis: &AtomicU64, point: &DataPoint) {
+        for (name, value) in &point.fields {
+            match *name {
+                SENT_BYTES => add_field(bytes, value),
+                SENT_MILLIS => add_field(millis, value),
+                _ => (),
             }
         }
     }
@@ -1052,6 +1088,10 @@ impl MetricsTap {
             shreds_repair: self.shreds_repair.load(Ordering::Relaxed),
             packets_gossip: self.packets_gossip.load(Ordering::Relaxed),
             packets_tpu_vote: self.packets_tpu_vote.load(Ordering::Relaxed),
+            gossip_sent_bytes: self.gossip_sent_bytes.load(Ordering::Relaxed),
+            gossip_sent_millis: self.gossip_sent_millis.load(Ordering::Relaxed),
+            repair_sent_bytes: self.repair_sent_bytes.load(Ordering::Relaxed),
+            repair_sent_millis: self.repair_sent_millis.load(Ordering::Relaxed),
             scheduler: self.scheduler.totals(),
             accounts: self.accounts.totals(),
             accounts_storage_bytes: self.accounts.storage_bytes.load(Ordering::Relaxed),
@@ -1695,6 +1735,30 @@ mod tests {
         assert_eq!(counters.shreds_turbine, 900);
         assert_eq!(counters.packets_gossip, 42);
         assert_eq!(counters.packets_tpu_vote, 70);
+    }
+
+    #[test]
+    fn test_each_named_sender_keeps_its_bytes_and_its_window_apart() {
+        // Gossip reports every five seconds or so and repair every ten, so the
+        // window has to travel with the bytes or a rate would be off by the
+        // ratio of the two.
+        let tap = MetricsTap::default();
+        fn sent<'a>(bytes: &'a str, millis: &'a str) -> [(&'static str, &'a str); 3] {
+            [
+                (SENT_BYTES, bytes),
+                (SENT_MILLIS, millis),
+                ("streamer-send-host_count", "1000i"),
+            ]
+        }
+        tap.observe(&named(GOSSIP_SENDER, &sent("22786715i", "5503i")));
+        tap.observe(&named(REPAIR_SENDER, &sent("2138992i", "10004i")));
+        tap.observe(&named(GOSSIP_SENDER, &sent("21012098i", "5383i")));
+
+        let counters = tap.counters();
+        assert_eq!(counters.gossip_sent_bytes, 43_798_813);
+        assert_eq!(counters.gossip_sent_millis, 10_886);
+        assert_eq!(counters.repair_sent_bytes, 2_138_992);
+        assert_eq!(counters.repair_sent_millis, 10_004);
     }
 
     /// The waterfall point as the scheduler sends it, one field per counter.

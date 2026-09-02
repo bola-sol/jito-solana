@@ -1,23 +1,11 @@
-//! Validator display names, read from on-chain `ValidatorInfo` config accounts.
+//! Validator display names, read from on-chain `ValidatorInfo` config
+//! accounts.
 //!
-//! These are the names the dashboard shows instead of raw pubkeys. They live in
-//! accounts owned by the config program, keyed by the validator's identity.
-//!
-//! Their addresses are not derived from the identity they describe. The tool
-//! that publishes one generates a fresh keypair for it, so there is no address
-//! to compute from a validator's pubkey and the only way to find these accounts
-//! is to search by owner.
-//!
-//! That search is only affordable against the secondary index, which has to be
-//! turned on with `--account-index program-id`. Without it the same call reads
-//! every account on the validator off disk to check one field, which on a
-//! mainnet node is hundreds of gigabytes and does not finish in any useful
-//! time. So the index is checked first and the search is skipped when it is
-//! absent, leaving the dashboard to show pubkeys.
-//!
-//! Whatever the search finds is a starting point, not the whole story. The
-//! cache is kept current afterwards from the per-slot list of config accounts
-//! written in that slot, which costs almost nothing.
+//! The account addresses are not derived from the identity, so the only way to
+//! find them is to search by owner, which is only affordable against the
+//! secondary index (`--account-index program-id`). Without it the search is
+//! skipped and the dashboard shows pubkeys. The cache is kept current
+//! afterwards from each slot's own writes, which costs almost nothing.
 
 use {
     serde::{Deserialize, Serialize},
@@ -37,12 +25,8 @@ const VALIDATOR_INFO_PROGRAM: Pubkey =
 /// config accounts without deserializing them.
 const MAX_VALIDATOR_INFO_LEN: usize = 576 + 1 + (32 + 1) * 2;
 
-/// The two fields the dashboard renders.
-///
-/// A validator info account also carries a website, a free-text description and
-/// a keybase username. Serde ignores what it is not asked for, and caching
-/// those for every validator on the cluster would hold hundreds of bytes each
-/// for text nothing displays.
+/// The two fields the dashboard renders. The account also carries a website,
+/// description and keybase name, which nothing displays.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct ValidatorInfo {
     pub name: Option<String>,
@@ -69,16 +53,10 @@ impl ValidatorInfoCache {
         self.by_identity.get(identity)
     }
 
-    /// Everything the cache holds, as three arrays sharing an index.
-    ///
-    /// Arrays rather than a map because the wire is JSON: an object would carry
-    /// the words name and icon once per validator, which across a cluster is
-    /// more bytes than the values themselves.
-    ///
-    /// Names and icons come from here rather than from the epoch message
-    /// because they change on their own schedule, not the epoch's, and because
-    /// most of a cluster publishes neither: a validator with nothing to say
-    /// costs two nulls here and would cost a place in every array there.
+    /// Everything the cache holds, as three arrays sharing an index, since an
+    /// object would carry the words name and icon once per validator. Separate
+    /// from the epoch message because names change on their own schedule and most
+    /// validators publish neither.
     pub fn displays(&self) -> Displays {
         let mut keys = Vec::with_capacity(self.by_identity.len());
         let mut names = Vec::with_capacity(self.by_identity.len());
@@ -121,14 +99,9 @@ impl ValidatorInfoCache {
     }
 }
 
-/// Validator info written in `bank`'s own slot.
-///
-/// The path that works on every validator, indexed or not: it reads one slot's
-/// write set rather than searching for accounts by owner. Like `scan_all` it
-/// returns rather than merges, so
-/// that a caller sweeping several banks can take the cache lock once, at the
-/// end, and only if anything turned up — config accounts are written perhaps
-/// once a day across the whole cluster, so almost every sweep finds nothing.
+/// Validator info written in `bank`'s own slot, which works on every
+/// validator, indexed or not. Returns rather than merges so a caller sweeping
+/// several banks takes the cache lock once, and only if anything turned up.
 pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     bank.get_program_accounts_modified_since_parent(&solana_sdk_ids::config::id())
         .into_iter()
@@ -136,19 +109,14 @@ pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
         .collect()
 }
 
-/// Walks every config account and returns the validator info it finds.
-///
-/// This is a full accounts-database scan and takes minutes on a real cluster.
-/// It must run on a background thread, and no lock may be held across it, or
-/// anything else wanting that lock stalls for the duration.
+/// Walks every config account and returns the validator info it finds. Minutes
+/// on a real cluster: run on a background thread with no lock held across it.
 pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     let config_id = solana_sdk_ids::config::id();
 
-    // Refused rather than attempted when the config program is excluded from
-    // the index. The indexed call quietly falls back to reading every account
-    // on the validator when it cannot use the index, and that is the one thing
-    // this must never do: it takes hours on a mainnet node, holds back storage
-    // cleaning for the whole of it, and cannot be interrupted once started.
+    // Refused when the config program is excluded from the index, because the
+    // indexed call falls back to reading every account on the validator, which
+    // takes hours and cannot be interrupted.
     if !bank.account_indexes_include_key(&config_id) {
         log::info!(
             "dashboard: the config program is excluded from the account index, so validator              names are unavailable and the dashboard will show pubkeys"
@@ -168,11 +136,8 @@ pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
         }
     };
 
-    // An empty result on a live cluster means the index is not switched on. The
-    // lookup asks the secondary index which accounts the config program owns,
-    // and an index that was never built answers none of them rather than
-    // failing. There are thousands of these accounts on any real cluster, so
-    // nothing found is a configuration answer, not a measurement.
+    // An empty result on a live cluster means the index is not switched on: an
+    // index never built answers none rather than failing.
     if accounts.is_empty() {
         log::info!(
             "dashboard: found no validator info accounts. Start the validator with              --account-index program-id --account-index-include-key {config_id} to show              validator names instead of pubkeys"
@@ -185,9 +150,8 @@ pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
         .collect()
 }
 
-/// Extracts the validator identity and its advertised info from a config
-/// account's raw data. Returns `None` for config accounts that are not
-/// validator info, or that are malformed.
+/// The identity and its advertised info from a config account's raw data, or
+/// `None` for other config accounts and malformed data.
 fn parse(data: &[u8]) -> Option<(Pubkey, ValidatorInfo)> {
     if data.len() > MAX_VALIDATOR_INFO_LEN {
         return None;
@@ -256,9 +220,8 @@ mod tests {
 
     #[test]
     fn test_the_slot_sweep_ignores_slots_that_wrote_nothing() {
-        // Which is almost every slot: config accounts are written perhaps once
-        // a day across the whole cluster. A sweep that returned the same
-        // entries every tick would take the cache lock for nothing.
+        // Almost every slot: config accounts are written perhaps once a day across
+        // the cluster.
         let harness = fixture();
         harness.advance_with(
             1,
@@ -277,10 +240,9 @@ mod tests {
 
     #[test]
     fn test_the_full_scan_finds_info_from_an_earlier_slot() {
-        // The one-shot startup read, which is what populates the cache at all:
-        // the slot sweep only ever sees writes that happen while it is running.
-        // The fixture's bank carries the config program in its account index,
-        // without which this read is skipped and finds nothing by design.
+        // The one-shot startup read that populates the cache. The fixture's bank
+        // carries the config program in its index, without which this finds nothing
+        // by design.
         let harness = fixture();
         let identity = Pubkey::new_unique();
         harness.advance_with(
@@ -333,9 +295,8 @@ mod tests {
 
     #[test]
     fn test_fields_the_dashboard_does_not_render_are_ignored() {
-        // The account carries more than this struct asks for. An unknown field
-        // must be skipped rather than failing the whole parse, or a validator
-        // publishing a website would lose its name too.
+        // An unknown field must be skipped, or a validator publishing a website would
+        // lose its name too.
         let identity = Pubkey::new_unique();
         let data = encode(
             vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],

@@ -1,26 +1,13 @@
-//! Counters lifted from the measurements the validator submits about itself.
+//! Counters lifted from the metrics points the validator submits about itself.
 //!
-//! Some of what an operator most wants to see is held in counters that are
-//! private to the module keeping them and swapped to zero as they are reported.
-//! Reading them where they live would mean both reaching into another crate and
-//! racing the reporter for values only one reader can have. They are already
-//! leaving the process as metrics points, so this takes a copy on the way past.
+//! The counters behind most panels are private to the module keeping them and
+//! reset as they are reported, so this watches the points on their way out
+//! instead. The observer runs on the submitting thread: a name comparison, and
+//! for the few points wanted a scan of fields into atomics. Only the per-slot
+//! points take a lock, and those arrive once per leader slot.
 //!
-//! The observer runs on whichever validator thread submitted the point, so what
-//! happens here is a string comparison against a handful of names and, for the
-//! few that match, a scan of their fields into atomics. A point this module does
-//! not want costs one comparison, and nothing on that path allocates or locks.
-//!
-//! One point is the exception. The scheduler's per-slot counts are kept in a
-//! queue behind a lock rather than summed into atomics, because they are not
-//! summed at all — each belongs to one leader slot and is shown against it. That
-//! point arrives four times in every eight hundred slots on a small validator,
-//! where the rest of this reads several hundred a second.
-//!
-//! Totals only ever climb. The points themselves carry deltas — each one is what
-//! happened since the last was sent — so accumulating them gives a figure that
-//! can be differenced between readings, which is what every other rate on the
-//! dashboard is built from.
+//! The points carry deltas, so accumulating them gives totals that only climb
+//! and can be differenced between readings like every other rate here.
 
 use {
     serde::Serialize,
@@ -39,166 +26,77 @@ use {
 /// by the accounts database with the counters reset as it reads them.
 const ACCOUNTS_DB_TIMINGS: &str = "accounts_db_store_timings";
 
-/// The two shred receivers, one per socket. Turbine delivers to the first; the
-/// second carries only what this validator had to ask another node for, which
-/// is what the repair socket is.
+/// The two shred receivers, one per socket: turbine, and repair for what this
+/// validator had to ask another node for.
 const SHREDS_TURBINE: &str = "shred_fetch_receiver";
 const SHREDS_REPAIR: &str = "shred_fetch_repair_receiver";
 
-/// The receivers on the other two UDP ports the socket panel lists.
-///
-/// There is no third. The TPU and TPU forwards ports speak QUIC, where the
-/// in-process counters count transactions pulled out of streams rather than
-/// datagrams off the wire, and a share worked out from those against a datagram
-/// drop count would be a ratio between two different things. The serve repair
-/// port does keep a receiver of this kind, but nothing ever reports it: the
-/// stats are built, counted into on every packet, and dropped when the service
-/// ends. Reaching them would take a change to `core`, which this does not make.
+/// The receivers on the other two UDP ports the socket panel lists. TPU and TPU
+/// forwards speak QUIC, whose counters are transactions rather than datagrams,
+/// and serve repair's receiver is never reported.
 const GOSSIP_RECEIVER: &str = "gossip_receiver";
 const TPU_VOTE_RECEIVER: &str = "tpu_vote_receiver";
 
 /// Packets seen, which for the shred receivers is shreds.
 const PACKETS_COUNT: &str = "packets_count";
 
-/// The banking stage scheduler's own account of what it did with everything
-/// handed to it, reported once a second with its counters reset as it reports.
-///
-/// This is the whole of the transaction waterfall. The scheduler already counts
-/// every transaction that reached it and, for the ones that got no further, the
-/// reason — twenty-one figures that between them say where the traffic went.
-///
-/// Reported only when there is something to report, so an idle validator sends
-/// nothing at all rather than a second of zeroes. That is the difference
-/// between a scheduler doing nothing and one not being watched, and the panel
-/// keeps it: no traffic in the window publishes nothing.
-///
-/// Worth knowing that this one point does not go through `datapoint_info!`. It
-/// calls `solana_metrics::submit` itself, so unlike everything else read here
-/// it is not behind the info-logging check and arrives whatever the operator
-/// has set their log level to.
+/// The scheduler's account of everything handed to it, reported once a second
+/// with its counters reset as it reports. Submitted only when there is something
+/// to report, and through `solana_metrics::submit` directly, so it arrives at
+/// any log level.
 const SCHEDULER_COUNTS: &str = "banking_stage_scheduler_counts";
-/// Why a worker's transaction never reached the block. Reported by the same
-/// worker, on the same tick and under the same `id`, as the counts point above,
-/// so the two are read into one set of counters and windowed together.
+/// Why a worker's transaction never reached the block. Same worker, tick and
+/// `id` as the counts point, so the two are read into one set of counters.
 const WORKER_ERROR_METRICS: &str = "banking_stage_worker_error_metrics";
 
-/// Where the accounts database served reads from, and what it wrote.
-///
-/// Three points rather than one, because the accounts database reports what it
-/// is doing in three places: what it loaded and from where, how big its storage
-/// files are, and what it flushed to them.
+/// Where the accounts database served reads from and what it wrote, across the
+/// three points it reports on.
 const ACCOUNTS_LOADS: &str = "accounts_db_load_accounts";
 const ACCOUNTS_STORES: &str = "accounts_db-stores";
 const ACCOUNTS_FLUSH: &str = "accounts_db-flush_accounts_cache";
 
-/// The program cache's own account of itself, reported once per bank with its
-/// counters reset as it reports — so each point is one slot's work.
-///
-/// Read from here rather than off the cache object the bank holds, which is
-/// where this used to come from. Two reasons, and the second is the better one:
-/// reaching the cache needs an accessor that upstream keeps behind
-/// `dev-context-only-utils`, and polling a counter that resets every four
-/// hundred milliseconds on a one-second tick reads part of one slot and misses
-/// the rest. The point is emitted at every reset, so nothing is missed.
+/// The program cache's counters, reported once per bank and reset as they are,
+/// so each point is one slot's work. The cache object itself is behind
+/// `dev-context-only-utils`, and polling it would miss most of each slot.
 const PROGRAM_CACHE: &str = "loaded-programs-cache-stats";
 
-/// The QUIC listeners, one point per port under its own name.
-///
-/// All three are read. Only the TPU one feeds verification and the scheduler,
-/// but the connection and stream figures are worth having for each: a port
-/// being hammered is worth seeing whether or not anything downstream of it
-/// cares, and forwards and vote are where an operator would never otherwise
-/// look.
+/// The QUIC listeners, one point per port. Only the TPU port feeds the stages
+/// below, but the connection and stream figures are worth having for all three.
 const QUIC_TPU: &str = "quic_streamer_tpu";
 const QUIC_TPU_FORWARDS: &str = "quic_streamer_tpu_forwards";
 const QUIC_TPU_VOTE: &str = "quic_streamer_tpu_vote";
 
-/// Signature verification and deduplication for everything that is not a vote.
-///
-/// `tpu-vote-verifier` is the same point for votes and is deliberately left
-/// alone: votes take a different path out of here and never reach the scheduler
-/// below, so adding them would inflate the top of the card against a bottom
-/// that could never account for them.
+/// Signature verification for everything that is not a vote. `tpu-vote-verifier`
+/// is left alone: votes never reach the scheduler below.
 const TPU_VERIFIER: &str = "tpu-verifier";
 
-/// The bundle stage's own loop, on builds that have one.
-///
-/// Bundles reach a jito validator over gRPC from the block engine and go into
-/// their own stage, so they touch none of the QUIC ports above and none of the
-/// signature verification beside them. Two figures are read: how many bundles
-/// arrived and how many transactions rode in them. Counted where they arrive
-/// rather than where they execute, which is why the panel says "arrived".
-///
-/// The transactions themselves are already inside `WORKER_COUNTS`. The bundle
-/// stage runs its own pool of consume workers reporting under that same name,
-/// so what this adds is not another total but a note on the composition of one
-/// the card already draws. It is deliberately not a stage of its own.
-///
-/// Silent on a build with no bundle stage, and on one whose bundle stage has
-/// nothing to do: the reporter checks that it has data before submitting, so an
-/// idle stage sends no point rather than a point of noughts. Absent for that
-/// reason too on a validator running BAM, which supersedes this path.
+/// The bundle stage's loop, on builds that have one. Bundles arrive over gRPC
+/// and skip the QUIC ports and sigverify, so this annotates the executed stage
+/// rather than adding one. Silent where there is no bundle stage, where it is
+/// idle, and under BAM, which supersedes it.
 const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 
-/// The worker threads, which is where a scheduled transaction is executed.
-///
-/// One point per worker, all under this name and distinguished by an `id` tag.
-/// Nothing here reads the tag: accumulating every one of them into the same
-/// counters is what gives the figure for the stage as a whole.
-///
-/// Submitted at trace level, where everything else this reads is info. That
-/// costs nothing, because the level is only consulted by the agent that writes
-/// points onward — [`solana_metrics::submit`] calls the observer before it, so
-/// a point nobody would ever collect still arrives here.
+/// The worker threads, one point each under an `id` tag that is not read:
+/// summing them gives the stage's total. Submitted at trace level, which does
+/// not matter here because the observer runs before the level is consulted.
 const WORKER_COUNTS: &str = "banking_stage_worker_counts";
 
-/// The same twenty-one counters again, covering one leader slot rather than one
-/// second, and carrying the slot they belong to as a field.
-///
-/// Submitted only while this validator is producing: the slot on it comes from
-/// `decision.bank()`, which is `Some` for `Consume` and nothing else. So this
-/// point exists for exactly the slots this node led and for no others, which is
-/// what makes the produced block panel its home — on the schedule page, where
-/// all but a handful of the turns belong to other validators, there would be
-/// nothing to show against them.
+/// The same counters again per leader slot, with the slot as a field. Submitted
+/// only while this validator is producing, so it exists for exactly the slots
+/// this node led.
 const SCHEDULER_SLOT_COUNTS: &str = "banking_stage_scheduler_slot_counts";
 
-/// How the XDP transmit path is set up, on a validator running one.
-///
-/// The only point here that describes a configuration rather than counting
-/// something, and the only one read for its tags as much as its fields. It is
-/// submitted on an interval by the system monitor, and only where the validator
-/// was given an XDP config at all, so its absence is what says XDP is off. That
-/// is the whole reason it is worth reading: the flags behind it are
-/// experimental and opt-in, and nothing else the validator reports says whether
-/// they took.
-///
-/// Despite the flag names it is not only about retransmit. One transmitter is
-/// built and handed to turbine, repair and gossip alike, so this describes the
-/// path under all three. Nothing here is about receiving.
+/// How the XDP transmit path is set up, on a validator running one. Submitted
+/// on an interval only where an XDP config was given, so its absence is what
+/// says XDP is off. One transmitter serves turbine, repair and gossip alike.
 const XDP_NETWORK_CONFIG: &str = "xdp-network-config";
 
-/// Every slot's replay, timed.
-///
-/// Reported once per slot replayed — every slot, not only the ones this node
-/// led — so unlike the scheduler's per-slot point this arrives continuously.
-/// It is the only place the time replay spends keeping up with the cluster is
-/// measured, and the whole of it is agave's own: no other client has this
-/// pipeline to instrument.
-///
-/// Behind the info-log gate, unlike the scheduler points, because it is sent
-/// with `datapoint_info!` rather than through `solana_metrics::submit`. The
-/// default filter is `solana=info`, so it arrives unless a validator has been
-/// configured to say less than the default.
+/// Every slot's replay, timed. Sent with `datapoint_info!`, so it arrives
+/// unless the validator logs below `solana=info`.
 const REPLAY_SLOT_STATS: &str = "replay-slot-stats";
 
-/// What the cost tracker made of a block: its total, and the account that took
-/// the largest share of it.
-///
-/// Reported for every slot, ours and everyone else's, and tagged with which it
-/// was. Only the blocks this validator produced are kept: the point of the
-/// panel is what limited a block we built, and a block someone else built is
-/// not ours to do anything about.
+/// What the cost tracker made of a block. Reported for every slot and tagged
+/// with whether it was ours; only ours are kept.
 const COST_TRACKER: &str = "cost_tracker_stats";
 
 /// The tag saying whether the reporting node produced the block.
@@ -207,41 +105,23 @@ const IS_LEADER: &str = "is_leader";
 /// The field naming the slot a point covers.
 const SLOT: &str = "slot";
 
-/// Replayed slots kept, from which the panel's means and peaks are taken.
-///
-/// About a minute and a half of a healthy cluster. Long enough that the means
-/// settle — a twenty-slot sample of the program cache missed its true mean by a
-/// third, because compilation arrives in bursts — and short enough to still be
-/// describing now.
+/// Replayed slots kept, about a minute and a half. Shorter samples missed the
+/// program cache's mean by a third, because compilation arrives in bursts.
 const REPLAY_SLOTS: usize = 256;
 
-/// Leader slots kept, for both the per-slot waterfalls and the per-slot costs.
-///
-/// Matched to the produced block panel's own retention, so every block it can
-/// show has its waterfall and its cost breakdown for as long as it is shown. A
-/// block whose detail page had lost half its sections would look like a slot
-/// that had gone wrong rather than one that had simply aged.
+/// Leader slots kept, matched to the produced block panel's retention so every
+/// block it shows still has its waterfall and costs.
 const SLOT_WATERFALLS: usize = 500;
 
-/// The tag naming which scheduler reported a point.
-///
-/// Absent on a stock validator, which runs one scheduler and has nothing to
-/// distinguish. jito runs a second controller beside it for BAM and tags both,
-/// which is the only reason this is read.
+/// The tag naming which scheduler reported a point. Absent on a stock
+/// validator; jito tags both of its schedulers.
 const SCHEDULER_ID: &str = "id";
 
 /// The id the validator's own scheduler reports under.
 const OWN_SCHEDULER_ID: &str = "0";
 
-/// What the accounts database read, wrote, and is holding.
-///
-/// The read side is a rate of accounts rather than of bytes. Agave counts what
-/// it loaded in accounts and what it flushed in both, and there is no byte
-/// counter anywhere on the load path to build a read throughput from.
-///
-/// Deliberately not `/proc/self/io`, which would give real bytes for both and
-/// attribute the blockstore's writes to the accounts database while it was at
-/// it. Process-wide disk figures are worth having; they are not this card.
+/// What the accounts database read, wrote, and is holding. Reads are counted in
+/// accounts rather than bytes, because nothing on the load path counts bytes.
 #[derive(Debug, Default)]
 pub struct AccountsCounters {
     /// Accounts served from each of the three places a read can be answered
@@ -254,9 +134,8 @@ pub struct AccountsCounters {
     pub stored_accounts: AtomicU64,
     pub stored_bytes: AtomicU64,
 
-    /// Levels rather than counts: how much storage exists and how much of it is
-    /// still live. The difference between them is the fragmentation that shrink
-    /// exists to reclaim.
+    /// Levels, not counts: storage that exists and storage still live. The
+    /// difference is what shrink reclaims.
     pub storage_bytes: AtomicU64,
     pub storage_alive_bytes: AtomicU64,
     pub storage_count: AtomicU64,
@@ -293,31 +172,18 @@ pub struct ProgramCacheCounters {
     /// Keys left holding no versions at all once pruning had finished.
     pub empty_entries: AtomicU64,
 
-    /// Entries loaded when an eviction last ran.
-    ///
-    /// A level rather than a count, so it is stored rather than added to — and
-    /// an awkward one, because it is only written when an eviction happens and
-    /// is reset with everything else at each bank. It reads nought on any slot
-    /// that evicted nothing, which is most of them. The panel takes the highest
-    /// reading across its window rather than the latest for that reason: what
-    /// is worth knowing is how full the cache got, not whether it happened to
-    /// evict in the last second.
+    /// Entries loaded when an eviction last ran. A level, written only when an
+    /// eviction happens and reset with each bank, so the panel takes the peak across
+    /// its window rather than the latest reading.
     pub water_level: AtomicU64,
 }
 
 /// One QUIC port: who was let in, what they sent, and what got through.
 ///
-/// Three kinds of figure arrive on this point and they cannot be treated alike.
-/// Most fields are reported with `swap(0)`, so each point carries one interval's
-/// work and they are accumulated here. `total_incoming_connection_attempts` is
-/// reported with `load` instead, so it arrives already cumulative and is stored
-/// rather than added — differenced later like the rest, since both end up as
-/// totals that only climb. The last two are levels and are neither added nor
-/// differenced.
-///
-/// That inconsistency is upstream's and is easy to miss: accumulating the
-/// cumulative one would square it within a minute, and it is the denominator
-/// the whole first section is drawn against.
+/// Most fields are reported with `swap(0)` and accumulate here.
+/// `total_incoming_connection_attempts` is reported with `load`, already
+/// cumulative, and is stored instead; the last two are levels. Accumulating the
+/// cumulative one would square it within a minute.
 #[derive(Debug, Default)]
 pub struct QuicCounters {
     /// Connections offered, cumulative on the wire. The denominator for
@@ -333,20 +199,11 @@ pub struct QuicCounters {
     pub handshake_timeout: AtomicU64,
     /// Reached the handshake and failed it.
     pub handshake_error: AtomicU64,
-    /// Completed the handshake and cleared the rate limiters a second time.
-    ///
-    /// Neither a loss nor an outcome: the one checkpoint the listener reports
-    /// between the offer and the connection table. It is here because two
-    /// separate branches drop a connection without counting it anywhere, one
-    /// either side of the handshake, and without this figure the two are a
-    /// single gap that cannot be told apart. See `QuicTotals`.
+    /// Completed the handshake. The one checkpoint between the offer and the
+    /// connection table; see `QuicTotals` for why it matters.
     pub handshook: AtomicU64,
-    /// Handshook and then refused a place in the connection table.
-    ///
-    /// Four counters for one event, and they overlap: the unstaked path runs
-    /// through the same insert that raises `add_failed`, so one refusal there
-    /// raises two of these. They are never added together — see `refusedTable`
-    /// in `tpuPath.ts` for what is done with them instead.
+    /// Handshook and then refused a place in the table. Four overlapping counters
+    /// for one event, never summed; see `refusedTable` in `tpuPath.ts`.
     pub add_failed: AtomicU64,
     /// Refused by the stake-weighted listener with the staked table full.
     pub add_failed_staked: AtomicU64,
@@ -397,9 +254,8 @@ pub struct VerifyCounters {
     pub below_floor: AtomicU64,
     /// Passed verification.
     pub verified: AtomicU64,
-    /// Batches — not transactions — dropped because the queue onward to the
-    /// scheduler was full. Kept apart from everything else here for that
-    /// reason: it cannot be added to or subtracted from a count of packets.
+    /// Batches, not transactions, dropped because the queue to the scheduler was
+    /// full. Kept apart because it cannot be added to a packet count.
     pub evicted_batches: AtomicU64,
 }
 
@@ -421,11 +277,9 @@ pub struct ExecutedCounters {
     /// block having failed, which still costs their fee.
     pub succeeded: AtomicU64,
 
-    // Why a transaction the worker took up never reached the block, from the
-    // error point. Only the reasons that end a transaction are read: the ones
-    // that hand it back — `account_in_use` and the four cost-limit errors — are
-    // already drawn as retries, and `instruction_error` is a transaction that
-    // did reach the block having failed, which is drawn as that.
+    // Why a transaction the worker took up never reached the block. Only the
+    // terminal reasons: retries are drawn as retries, and `instruction_error`
+    // reached the block.
     pub too_many_locks: AtomicU64,
     pub account_missing: AtomicU64,
     pub fee_payer_broke: AtomicU64,
@@ -449,26 +303,14 @@ pub struct MetricsTap {
     /// falls.
     pub accounts_cache_evicts: AtomicU64,
 
-    /// Shreds that arrived on their own, and shreds this validator had to ask
-    /// for. A node the cluster is not reaching gets the second where it should
-    /// have had the first.
-    ///
-    /// The first doubles as the turbine port's received count. That is the same
-    /// figure read for a second purpose rather than a second reading of it:
-    /// everything arriving on the TVU port is a shred, so what that receiver
-    /// counted is what the port delivered.
+    /// Shreds that arrived on their own, and shreds this validator had to ask for.
+    /// The first is also the turbine port's received count: everything on the TVU
+    /// port is a shred.
     pub shreds_turbine: AtomicU64,
     pub shreds_repair: AtomicU64,
 
-    /// Packets delivered on the gossip and TPU vote ports.
-    ///
-    /// Wanted for the denominator the kernel will not give. `/proc/net/udp`
-    /// counts the datagrams a socket discarded but not the ones it handed over,
-    /// so a drop count on its own cannot be turned into a share of the traffic —
-    /// and a number of drops that cannot be judged against anything is the
-    /// weakest thing the socket panel shows. These are the other half of that
-    /// sum, and they count datagrams too, one per packet, which is what makes
-    /// them addable to a drop count in the first place.
+    /// Packets delivered on the gossip and TPU vote ports, which is the denominator
+    /// `/proc/net/udp` will not give for its drop counts.
     pub packets_gossip: AtomicU64,
     pub packets_tpu_vote: AtomicU64,
 
@@ -478,18 +320,10 @@ pub struct MetricsTap {
     /// How the program cache is faring.
     pub program_cache: ProgramCacheCounters,
 
-    /// The three stages either side of the scheduler, which together with it
-    /// make the whole path a transaction takes through this validator.
-    ///
-    /// Four separate sets rather than one, and the panel draws them as four
-    /// sections rather than one flow, because they do not reconcile: each is
-    /// instrumented on its own terms, reports on its own cadence, and counts a
-    /// population the next one does not quite receive. Summed into a single
-    /// chain they would look authoritative and be quietly wrong.
+    /// The stages either side of the scheduler. Kept as separate sets and drawn as
+    /// separate sections, because they do not reconcile into one flow.
     pub quic: QuicCounters,
-    /// The other two QUIC ports. Neither feeds verification or the scheduler,
-    /// so neither joins the chain above; both are read for the same connection
-    /// and stream figures the TPU port keeps.
+    /// The other two QUIC ports, read for the same connection and stream figures.
     pub quic_forwards: QuicCounters,
     pub quic_vote: QuicCounters,
     pub verify: VerifyCounters,
@@ -499,66 +333,35 @@ pub struct MetricsTap {
     /// Where the transactions handed to the banking stage ended up.
     pub scheduler: SchedulerCounters,
 
-    /// The same, per leader slot, for the slots this validator produced.
-    ///
-    /// The one thing here behind a lock rather than an atomic. It is taken once
-    /// per slot this node leads — four times in every eight hundred slots on a
-    /// small validator, against the several hundred points a second the rest of
-    /// this reads without locking anything — and held only long enough to push
-    /// a struct of counts or to copy the queue out.
+    /// The same per leader slot. The one thing here behind a lock, taken once per
+    /// slot this node leads.
     slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
 
-    /// Which scheduler sent the interval counts above, from the same tag the
-    /// per-slot points carry.
-    ///
-    /// Only one scheduler reports the interval point — a build running two
-    /// gates that report on whichever of them is enabled — so unlike the
-    /// per-slot points there is nothing here to choose between. What there is
-    /// to say is which one it was, because it decides what `received` counts.
+    /// Which scheduler sent the interval counts, from the same tag the per-slot
+    /// points carry. It decides what `received` counts.
     scheduler_is_bam: AtomicBool,
 
-    /// What each block this validator produced cost, newest last.
-    ///
-    /// Bounded to the same depth as the waterfalls, so every block the panel
-    /// can show still has its costs for as long as it is shown.
+    /// What each block this validator produced cost, newest last. Bounded like the
+    /// waterfalls.
     slot_costs: Mutex<VecDeque<SlotCost>>,
 
-    /// The last few hundred replayed slots, timed.
-    ///
-    /// Kept as arrivals rather than accumulated, for the same reason as the
-    /// waterfalls above: each point already describes one slot and nothing
-    /// else. Held as a queue rather than as running totals because the panel
-    /// wants the worst slot as well as the ordinary one, and a maximum cannot
-    /// be recovered by differencing two totals.
+    /// The last few hundred replayed slots, kept as arrivals rather than totals
+    /// because the panel wants the worst slot as well as the mean.
     replay_slots: Mutex<VecDeque<ReplaySlotTimes>>,
 
-    /// How the XDP transmit path is configured, or nothing on a validator not
-    /// running one.
-    ///
-    /// Latched rather than windowed. It describes how the process was started
-    /// and cannot change while it runs, so the first report stands for the life
-    /// of the validator and later ones only overwrite it with the same thing.
-    /// Never cleared: a config that stopped being reported has not been turned
-    /// off, it has stopped being reported, and those want telling apart.
+    /// How the XDP transmit path is configured. Latched: it cannot change while the
+    /// process runs, and a config that stops being reported has not been turned
+    /// off.
     xdp: Mutex<Option<XdpConfig>>,
 }
 
-/// How the XDP transmit path is configured.
-///
-/// Strings as the validator resolved them, not as the flags were written. The
-/// driver comes from the device, and the vendor and model from the PCI database
-/// where it could be read and as raw PCI ids where it could not, so either may
-/// arrive as "unknown" on a host missing the database. Passed through as sent
-/// rather than tidied here: a guess at what "unknown" ought to say would be a
-/// guess printed as fact.
+/// How the XDP transmit path is configured, as the validator resolved it.
+/// Vendor and model may arrive as "unknown" on a host without the PCI
+/// database, and are passed through as sent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct XdpConfig {
-    /// Whether the socket bound with `XDP_ZEROCOPY` rather than `XDP_COPY`.
-    ///
-    /// Trustworthy in a way most reported settings are not. The flag is passed
-    /// straight to `bind`, which fails outright on a driver that cannot do it
-    /// rather than falling back, so a validator that is running and reporting
-    /// this true really is in zero-copy.
+    /// Whether the socket bound with `XDP_ZEROCOPY`. The flag is passed straight to
+    /// `bind`, which fails rather than falling back, so true means zero-copy.
     pub zero_copy: bool,
     pub driver: String,
     pub vendor: String,
@@ -575,20 +378,15 @@ pub struct SlotWaterfall {
     pub counts: SchedulerTotals,
 }
 
-/// What one block cost, and which account took the most of it.
-///
-/// The per-account ceiling this is read against is not in the point. It is a
-/// consensus limit that moves with feature activation, so the panel takes it
-/// from the bank rather than holding a number here that would quietly go stale.
+/// What one block cost, and which account took the most of it. The per-account
+/// ceiling is a consensus limit read from the bank rather than held here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SlotCost {
     pub slot: Slot,
     /// The account that consumed the most compute in this block.
     pub costliest_account: String,
     pub costliest_cost: u64,
-    /// The block's total, as the cost tracker counted it. Kept so the costliest
-    /// account can be read as a share of its own block as well as of the
-    /// per-account limit.
+    /// The block's total, so the costliest account can be read as a share of it.
     pub block_cost: u64,
     pub accounts: u64,
     /// Accounts more than one transaction wanted to write. The cost tracker's
@@ -598,21 +396,14 @@ pub struct SlotCost {
     pub in_flight: u64,
 }
 
-/// One replayed slot's timings, in microseconds.
+/// One replayed slot's timings, in microseconds, of three kinds:
 ///
-/// Three different kinds of measurement, which is why the panel keeps them in
-/// three sections rather than one column:
-///
-/// - `fetch`, `confirming` and `completing` are single spans on replay's own
-///   thread, measured one after another. They are disjoint, they add up, and
-///   they are the figure to compare against the slot time.
-/// - `poh_verify`, `tx_verify` and `dispatch` are sums of asynchronous job
-///   durations. The jobs overlap each other and each is parallel inside, so
-///   these routinely exceed the window they happened in and are worth only
-///   relative to one another.
-/// - everything from `execute` down is thread time accumulated across the
-///   worker threads, summed by the scheduler and handed back. Those partition
-///   cleanly, and their total is the CPU one slot costs.
+/// - `fetch`, `confirming` and `completing` are disjoint spans on replay's own
+///   thread and add up to a real duration;
+/// - `poh_verify`, `tx_verify` and `dispatch` are sums of overlapping
+///   asynchronous jobs, worth only relative to one another;
+/// - everything from `execute` down is thread time across the workers, which
+///   partitions cleanly into the CPU one slot costs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReplaySlotTimes {
     // Replay's own thread, sequential.
@@ -642,13 +433,8 @@ pub struct ReplaySlotTimes {
 }
 
 impl ReplaySlotTimes {
-    /// What replay's own thread spent on this slot.
-    ///
-    /// The three are disjoint spans measured in sequence, so this sum is a real
-    /// duration, and it is the one to hold against the slot time. Wall clock
-    /// from first sight of the slot is deliberately not used: replay works
-    /// several slots at once and does much else between visits, so the gap
-    /// between the two is not attributable to anything in particular.
+    /// What replay's own thread spent on this slot: three disjoint spans, so a
+    /// real duration to hold against the slot time.
     pub fn serial(&self) -> u64 {
         self.fetch
             .saturating_add(self.confirming)
@@ -675,17 +461,12 @@ pub enum SchedulerSource {
     #[default]
     Scheduler,
     /// A second scheduler running beside it, which on jito is BAM. It receives
-    /// batches from the marketplace rather than packets off the wire and builds
-    /// the block itself whenever it is connected.
+    /// batches rather than packets.
     Bam,
 }
 
-/// Reads the tag, treating an untagged point as the validator's own.
-///
-/// Every agave point is untagged, so this is the answer there. A tagged point
-/// naming anything other than the built-in id is a second scheduler, and BAM is
-/// the only one that exists; a third would be labelled as BAM until this learns
-/// its name, which is wrong in the label but not in which report is kept.
+/// Reads the tag, treating an untagged point as the validator's own. Any other
+/// id is taken as BAM, the only second scheduler that exists.
 fn scheduler_source(point: &DataPoint) -> SchedulerSource {
     match point.tags.iter().find(|(name, _)| *name == SCHEDULER_ID) {
         None => SchedulerSource::Scheduler,
@@ -695,47 +476,26 @@ fn scheduler_source(point: &DataPoint) -> SchedulerSource {
 }
 
 /// Whether a newly arrived report describes more of a slot's work than the one
-/// already held for it.
-///
-/// `scheduled` decides it. Exactly one scheduler is enabled at a time, so on
-/// any slot only one of them placed work with a worker, and that is the one
-/// whose report describes the block. `finished` and then `buffered` break the
-/// tie on a slot where nothing was scheduled at all, so an empty leader slot
-/// still keeps whichever report saw the most.
-///
-/// `received` is deliberately not consulted. It is the one figure the two count
-/// in different units — BAM counts the atomic batches it was sent, the built-in
-/// scheduler counts packets — so comparing them would decide the winner by
-/// batch size.
+/// held. `scheduled` decides it, since only the enabled scheduler placed work;
+/// `finished` and `buffered` break ties on an empty slot. `received` is not
+/// consulted because the two schedulers count it in different units.
 fn describes_more_work(new: &SchedulerTotals, held: &SchedulerTotals) -> bool {
     (new.scheduled, new.finished, new.buffered) > (held.scheduled, held.finished, held.buffered)
 }
 
-/// The banking stage scheduler's counters, in the order a transaction meets
-/// them.
-///
-/// Three stages with losses between them. Everything sigverify passes on is
-/// `received`; what survives the checks at the door is `buffered`; what the
-/// scheduler then hands a worker is `scheduled`; what comes back done is
-/// `finished`. The rest of these are the reasons the count falls between one
-/// stage and the next.
-///
-/// The first stretch is an identity, and one the validator's own tests assert:
-/// received equals buffered plus every drop from `not_held` down to
-/// `nonce_conflict`, plus `check_queue_full`. The later stretches are not, and
-/// cannot be — the container holds a standing population, so a transaction
-/// buffered in one second is scheduled in another, and over any window the
-/// three stages are three different populations that merely resemble each
-/// other. Reading it as a strict funnel would be wrong.
+/// The scheduler's counters, in the order a transaction meets them: received,
+/// buffered, scheduled, finished, with the reasons the count falls between
+/// each. The first stretch is an identity the validator's own tests assert; the
+/// later ones are not, since the container holds a standing population across
+/// seconds.
 #[derive(Debug, Default)]
 pub struct SchedulerCounters {
     /// Everything sigverify handed the scheduler.
     pub received: AtomicU64,
 
     // Lost at the door, before ever being buffered.
-    /// Not held, because the validator was forwarding rather than buffering.
-    /// The ordinary state of a validator that is not near its leader slot, and
-    /// on most nodes most of the time this is nearly all of the traffic.
+    // Not held because the validator was forwarding rather than buffering, which
+    // on most nodes most of the time is nearly all the traffic.
     pub not_held: AtomicU64,
     /// The queue feeding the checks was full.
     pub check_queue_full: AtomicU64,
@@ -771,9 +531,8 @@ pub struct SchedulerCounters {
 
     /// Handed to a worker.
     pub scheduled: AtomicU64,
-    /// Held back this pass because it wanted accounts already being written,
-    /// or because every worker was busy. Not losses — pressure. These say the
-    /// scheduler had work it could not place.
+    /// Held back this pass for account conflicts or busy workers. Pressure, not
+    /// losses.
     pub blocked_conflicts: AtomicU64,
     pub blocked_threads: AtomicU64,
 
@@ -782,13 +541,8 @@ pub struct SchedulerCounters {
     pub retried: AtomicU64,
 }
 
-/// A snapshot of [`SchedulerCounters`], for differencing between readings.
-///
-/// Sent to the browser as it stands, once a window of these has been summed.
-/// Deliberately not copied into a separate wire type on the way: the field
-/// names here are already the panel's own vocabulary rather than the
-/// scheduler's, and twenty-one lines of assigning one to the other would be
-/// twenty-one chances to cross a pair over silently.
+/// A snapshot of [`SchedulerCounters`], sent to the browser as it stands: the
+/// field names are already the panel's vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct AccountsTotals {
     pub loaded_from_write_cache: u64,
@@ -815,23 +569,15 @@ pub struct ProgramCacheTotals {
 
 /// One window of a QUIC port's counters.
 ///
-/// These do not partition the offer, and cannot be made to. The listener drops
-/// a connection without counting it anywhere in two places: an `accept()` that
-/// returns an error before the handshake, and a QoS that declines a connection
-/// by returning nothing after it. Both are silent upstream — no counter, only a
-/// debug log — so no amount of reading fields here recovers them.
-///
-/// What `handshook` buys is telling the two apart. The rate limiters are
-/// charged either side of the handshake and share one counter each, so their
-/// split is unknowable, but that split cancels in the total:
+/// These do not partition the offer. The listener drops a connection without
+/// counting it in two places, either side of the handshake, and `handshook` is
+/// what tells the two silences apart:
 ///
 /// ```text
 /// before = offered - (shed_all + shed_address + refused_full
 ///                     + handshake_timeout + handshake_error + handshook)
 /// after  = handshook - (refused a table place + admitted)
 /// ```
-///
-/// Each of those is exact, and each maps to exactly one of the two silences.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicTotals {
     pub offered: u64,
@@ -859,31 +605,22 @@ pub struct QuicTotals {
     pub disconnected: u64,
 }
 
-/// How one QUIC port stands at this instant, rather than what it did.
-///
-/// Apart from the counters because a window of levels is meaningless: summed
-/// they give a number twelve times too large, and differenced they give the
-/// change rather than the reading.
+/// How one QUIC port stands at this instant. Levels, kept apart from the
+/// counters because a window of them can be neither summed nor differenced.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicLevels {
     pub open: u64,
     pub active_streams: u64,
 }
 
-/// Bundles the block engine sent, and the transactions inside them.
-///
-/// Two counters where the point carries eighteen. The rest describe a funnel
-/// this dashboard does not draw — six reasons a bundle was dropped, the buffer
-/// it waits in, the bundles that made it through — and reading them would put
-/// fields in this struct that nothing renders, which reads as measured and is
-/// not. If a bundle section is ever built they are there to be picked up.
+/// Bundles the block engine sent, and the transactions inside them. The point's
+/// other sixteen fields describe a funnel nothing here draws.
 #[derive(Debug, Default)]
 pub struct BundleCounters {
     /// Bundles handed to the stage over the interval.
     pub received: AtomicU64,
-    /// Transactions carried in them, which is the figure worth having: it is in
-    /// the same unit as the section this annotates, even though it is measured
-    /// at a different point in their journey.
+    /// Transactions carried in them, in the same unit as the section this
+    /// annotates.
     pub packets: AtomicU64,
 }
 
@@ -985,12 +722,8 @@ pub struct TapCounters {
 }
 
 impl MetricsTap {
-    /// Starts watching, if nothing else already is.
-    ///
-    /// There is one observer for the process and the first to ask keeps it, so
-    /// a second dashboard in the same binary — which does not happen, but the
-    /// interface allows it — gets a tap that stays at zero rather than one that
-    /// quietly steals the first's.
+    /// Starts watching, if nothing else already is. The first observer keeps the
+    /// process's one slot; a second gets a tap that stays at zero.
     pub fn install() -> Arc<Self> {
         let tap = Arc::new(Self::default());
         let observer = tap.clone();
@@ -1002,22 +735,16 @@ impl MetricsTap {
         tap
     }
 
-    /// Feeds one point in, for tests in the other modules of this crate.
-    ///
-    /// Compiled only into the test build. `observe` itself stays private: in a
-    /// running validator the only thing that may call it is the closure
-    /// `install` hands to the metrics writer, and widening it so a test in
-    /// another module can reach it would make that no longer true.
+    /// Feeds one point in, for tests in other modules. `observe` itself stays
+    /// private.
     #[cfg(test)]
     pub(crate) fn observe_point(&self, point: &DataPoint) {
         self.observe(point);
     }
 
-    /// Adds what one point carries, if it is one of the few worth reading.
-    ///
-    /// A point this module does not want leaves after the match below, which is
-    /// a comparison against fourteen names. Everything the validator measures about
-    /// itself arrives here, so that is the cost paid on every one of them.
+    /// Adds what one point carries, if it is one of the few wanted. Every point the
+    /// validator submits passes through here, so an unwanted one costs the match
+    /// and nothing else.
     fn observe(&self, point: &DataPoint) {
         match point.name {
             ACCOUNTS_DB_TIMINGS => {
@@ -1072,16 +799,9 @@ impl MetricsTap {
         }
     }
 
-    /// Records one leader slot's waterfall.
-    ///
-    /// These counts are already one slot's own — the scheduler resets them as
-    /// it reports, and reports when the slot it is producing changes — so
-    /// unlike everything else here they are kept as they arrive rather than
-    /// accumulated and differenced later.
-    ///
-    /// A point without a readable slot is dropped. It has nowhere to be shown:
-    /// the panel joins these to blocks by slot number, and a waterfall that
-    /// cannot say which slot it describes belongs to none of them.
+    /// Records one leader slot's waterfall. These counts are already one slot's
+    /// own, so they are kept as they arrive. A point without a readable slot has
+    /// nowhere to be shown and is dropped.
     fn remember_slot(&self, point: &DataPoint) {
         let Some(slot) = point
             .fields
@@ -1105,18 +825,10 @@ impl MetricsTap {
             // losing a panel is not worth taking the validator down over.
             return;
         };
-        // One row per slot, keeping whichever report describes the block.
-        //
-        // A build running two schedulers reports this point twice for every
-        // leader slot, once from each, and only the one that was enabled did
-        // any of the work; the other's report is nearly empty. Replacing
-        // unconditionally let whichever thread happened to report last decide,
-        // which emptied the panel on roughly half of all slots. Summing them
-        // would be worse still: it would add two populations counted in
-        // different units.
-        //
-        // Appending is not an option either. It would leave two rows for one
-        // slot and push a real one off the end of the queue.
+        // One row per slot, keeping whichever report describes the block. A build
+        // running two schedulers reports every leader slot twice, and only the enabled
+        // one did the work; keeping the last to arrive emptied the panel on half of
+        // all slots.
         if let Some(held) = slots.iter_mut().find(|held| held.slot == slot) {
             if describes_more_work(&waterfall.counts, &held.counts) {
                 *held = waterfall;
@@ -1129,27 +841,9 @@ impl MetricsTap {
         }
     }
 
-    /// Records one replayed slot's timings.
-    ///
-    /// Every field is read by name against what the validator sends. Two are
-    /// easy to get wrong from the outside and are worth stating: the confirm
-    /// and dispatch spans are reported as `confirmation_without_replay_us` and
-    /// `task_submission_us` rather than `confirmation_time_us` and
-    /// `replay_time`, because the unified scheduler is the only block
-    /// verification method this tree has and those are the names it reports
-    /// under; and `update_transaction_statuses` carries no `_us` suffix where
-    /// every figure around it does.
-    /// Latches how the XDP transmit path is set up.
-    ///
-    /// Read from the tags as much as the fields, which no other point here
-    /// needs: `driver` and `zero_copy` are tags, and the three that name the
-    /// kernel and the card are fields. The two are stored differently — a tag
-    /// keeps the value it was given and a string field arrives wrapped in
-    /// quotes — so they cannot be read the same way.
-    ///
-    /// An unparseable `zero_copy` is taken as false rather than dropping the
-    /// report. Everything else on the point is still worth having, and false is
-    /// the reading that claims least.
+    /// Latches how the XDP transmit path is set up. Read from tags as well as
+    /// fields: `driver` and `zero_copy` are tags, the rest fields. An unparseable
+    /// `zero_copy` is taken as false rather than dropping the report.
     fn remember_xdp(&self, point: &DataPoint) {
         let tag = |wanted: &str| {
             point
@@ -1179,6 +873,9 @@ impl MetricsTap {
         }
     }
 
+    /// Records one replayed slot's timings. The confirm and dispatch spans arrive
+    /// as `confirmation_without_replay_us` and `task_submission_us`, the unified
+    /// scheduler's names, and `update_transaction_statuses` has no `_us` suffix.
     fn remember_replay(&self, point: &DataPoint) {
         let mut slot = ReplaySlotTimes::default();
         let mut seen = false;
@@ -1205,11 +902,8 @@ impl MetricsTap {
                 "program_cache_us" => &mut slot.program_cache,
                 "total_transactions" => &mut slot.transactions,
 
-                // The cost of compiling a program that was not in the cache,
-                // which is nearly the whole of what the cache costs when it
-                // misses. Summed rather than kept apart: an operator reading
-                // this wants what a miss cost, not which third of the compiler
-                // it went to.
+                // Compiling a program that was not in the cache, summed: what a miss cost,
+                // not which third of the compiler it went to.
                 "execute_details_create_executor_load_elf_us"
                 | "execute_details_create_executor_verify_code_us"
                 | "execute_details_create_executor_jit_compile_us" => &mut slot.compiling,
@@ -1220,10 +914,7 @@ impl MetricsTap {
                     &mut slot.checking
                 }
 
-                // Bookkeeping around execution. Small on any validator, and
-                // smaller still on one with transaction history switched off,
-                // where the two collectors and the status writer have almost
-                // nothing to do.
+                // Bookkeeping around execution, small on any validator.
                 "collect_balances_us"
                 | "collect_logs_us"
                 | "update_stakes_cache_us"
@@ -1236,9 +927,8 @@ impl MetricsTap {
             seen = true;
         }
 
-        // A point that named nothing this reads is not a slot that took no
-        // time, it is a point this does not understand. Keeping it would drag
-        // every mean towards nought and say the node had got faster.
+        // A point naming nothing this reads is not a slot that took no time. Keeping
+        // it would drag every mean towards nought.
         if !seen {
             return;
         }
@@ -1252,11 +942,8 @@ impl MetricsTap {
         }
     }
 
-    /// Records what one of this validator's own blocks cost.
-    ///
-    /// Points for other validators' blocks are dropped on the `is_leader` tag.
-    /// They arrive for every slot the node replays, which is all of them, and
-    /// none of them describe a block this operator can do anything about.
+    /// Records what one of this validator's own blocks cost. Other validators'
+    /// blocks are dropped on the `is_leader` tag.
     fn remember_cost(&self, point: &DataPoint) {
         let is_leader = point
             .tags
@@ -1304,9 +991,8 @@ impl MetricsTap {
         let Ok(mut costs) = self.slot_costs.lock() else {
             return;
         };
-        // Replaced rather than appended if the slot is already held. The
-        // tracker reports a slot once, but a repeat would otherwise leave two
-        // rows for one block and push a real one off the end.
+        // Replaced rather than appended if the slot is already held, so a repeat
+        // cannot push a real row off the end.
         if let Some(held) = costs.iter_mut().find(|held| held.slot == slot_number) {
             *held = cost;
             return;
@@ -1389,11 +1075,8 @@ impl MetricsTap {
 }
 
 impl AccountsCounters {
-    /// Adds one of the three accounts points.
-    ///
-    /// Matched on field name across all three rather than one method each: the
-    /// names do not collide, and a single mapping is one place to look for
-    /// where a figure on the card comes from.
+    /// Adds one of the three accounts points, matched on field name across all
+    /// three since the names do not collide.
     fn add_point(&self, point: &DataPoint) {
         for (name, value) in &point.fields {
             // Levels first. These say how things stand rather than what has
@@ -1415,13 +1098,8 @@ impl AccountsCounters {
                 "num_loaded_from_write_cache" => &self.loaded_from_write_cache,
                 "num_loaded_from_read_cache" => &self.loaded_from_read_cache,
                 "num_loaded_from_index_storage" => &self.loaded_from_storage,
-                // Two spellings each, because this point renamed its fields
-                // between validator versions: what 4.3 calls stored, 4.2 calls
-                // flushed. Both are matched so this file is the same on either
-                // branch, and the name that does not exist simply never
-                // arrives. Only the flush point is read for these, so the
-                // identically named field on the shrink stats is not picked up
-                // by accident.
+                // Two spellings each: 4.3 calls stored what 4.2 called flushed, and this file
+                // is carried across both branches.
                 "num_accounts_stored" | "num_accounts_flushed" => &self.stored_accounts,
                 "account_bytes_stored" | "account_bytes_flushed" => &self.stored_bytes,
                 _ => continue,
@@ -1497,10 +1175,8 @@ impl QuicCounters {
                 set_field(&self.offered, value);
                 continue;
             }
-            // Levels, and the only two read here. `peak_open_staked_connections`
-            // looks like a third but is a peak reset to the current reading as
-            // it is reported, which is neither a level nor a count and would
-            // need a third treatment to mean anything over a window.
+            // Levels, and the only two read here. `peak_open_staked_connections` is a
+            // peak reset as it is reported, which is neither a level nor a count.
             if *name == "open_connections" {
                 set_field(&self.open, value);
                 continue;
@@ -1520,10 +1196,8 @@ impl QuicCounters {
                 "connection_add_failed_staked_node" => &self.add_failed_staked,
                 "connection_add_failed_unstaked_node" => &self.add_failed_unstaked,
                 "connection_add_failed_banned" => &self.add_failed_banned,
-                // `connection_add_failed_on_pruning` is deliberately absent. It
-                // is raised two lines from `..._staked_node` on the same
-                // refusal and means the same thing, so reading it would be
-                // reading one event twice.
+                // `connection_add_failed_on_pruning` is raised on the same refusal as
+                // `..._staked_node` and would count one event twice.
                 "connection_added_from_staked_peer" => &self.admitted_staked,
                 "connection_added_from_unstaked_peer" => &self.admitted_unstaked,
                 "new_streams" => &self.streams,
@@ -1532,10 +1206,8 @@ impl QuicCounters {
                 "stream_read_timeouts" => &self.read_timeouts,
                 "stream_read_errors" => &self.read_errors,
                 "invalid_stream_size" => &self.invalid_size,
-                // Named for the counter, not for the field it is reported
-                // under: the struct calls this `total_packets_sent_to_consumer`
-                // and the point calls it this. Matching the struct's name reads
-                // nought for ever and takes the whole section with it.
+                // Named for the point's field, not the struct's
+                // `total_packets_sent_to_consumer`.
                 "packets_sent_to_consumer" => &self.handed_on,
                 "bytes_sent_to_consumer" => &self.bytes_handed_on,
                 "total_handle_chunk_to_packet_send_full_err" => &self.queue_full,
@@ -1590,11 +1262,8 @@ impl BundleCounters {
             let counter = match *name {
                 "num_bundles_received" => &self.received,
                 "num_packets_received" => &self.packets,
-                // The drop reasons, the buffer levels and the timings. Every
-                // one of these is reset by the reporter after it submits, like
-                // the two above, so any of them could be added here as it
-                // stands — except the two `current_buffered_*`, which are
-                // levels and would need storing rather than adding.
+                // The drop reasons, buffer levels and timings. All reset by the reporter, so
+                // any could be added here except the `current_buffered_*` levels.
                 _ => continue,
             };
             add_field(counter, value);
@@ -1659,11 +1328,8 @@ impl ExecutedCounters {
                 "max_loaded_accounts_data_size_exceeded" => &self.account_data_too_large,
                 "invalid_program_for_execution" => &self.program_not_executable,
                 "program_execution_temporarily_restricted" => &self.program_restricted,
-                // `max_queue_len` is a gauge and `num_messages_processed`
-                // counts batches rather than transactions. `total` sums every
-                // error including the ones drawn elsewhere, so it is no use as
-                // a figure of its own. The rest of the error point is reasons
-                // rare enough to be left to the row that gathers them.
+                // `max_queue_len` is a gauge, `num_messages_processed` counts batches, and
+                // `total` sums errors drawn elsewhere.
                 _ => continue,
             };
             add_field(counter, value);
@@ -1694,14 +1360,8 @@ impl ExecutedCounters {
 }
 
 impl SchedulerCounters {
-    /// Adds the counts one scheduler point carries.
-    ///
-    /// Both of the scheduler's points — the one covering an interval and the
-    /// one covering a single leader slot — carry the same twenty-one fields
-    /// under the same names, so the mapping between the scheduler's vocabulary
-    /// and the panel's lives here once. Two copies of it would be two places
-    /// for a pair to be crossed over, and a crossed pair is invisible: the
-    /// numbers would still add up, against the wrong labels.
+    /// Adds the counts one scheduler point carries. Both scheduler points carry the
+    /// same fields under the same names, so the mapping lives here once.
     fn add_point(&self, point: &DataPoint) {
         for (name, value) in &point.fields {
             let counter = match *name {
@@ -1726,9 +1386,7 @@ impl SchedulerCounters {
                 "num_unschedulable_threads" => &self.blocked_threads,
                 "num_finished" => &self.finished,
                 "num_retryable" => &self.retried,
-                // `min_priority` and `max_priority` are gauges rather than
-                // counts, and `slot` names the point rather than measuring
-                // anything. None of the three belongs in a total.
+                // `min_priority` and `max_priority` are gauges and `slot` names the point.
                 _ => continue,
             };
             add_field(counter, value);
@@ -1765,9 +1423,7 @@ impl SchedulerCounters {
 }
 
 /// Counters that only ever climb, so a window of them is a difference summed.
-///
-/// A trait rather than four sets of inherent methods so the windowing itself
-/// can be written once, in the collector, instead of once per stage.
+/// A trait so the windowing is written once, in the meters.
 pub trait WindowedCounters: Copy + Default {
     /// This reading less the one before it, which is one interval's work.
     fn since(&self, previous: &Self) -> Self;
@@ -1775,20 +1431,13 @@ pub trait WindowedCounters: Copy + Default {
     fn plus(&self, other: &Self) -> Self;
 }
 
-/// Differencing and summing for a set of counters that only ever climb.
-///
-/// Written once rather than once per stage. Every one of these types needs the
-/// same two operations across every one of its fields, and a field left out of
-/// either is silently wrong in the worst way available: it reads as nought for
-/// ever rather than failing, so the row it feeds looks measured and says
-/// nothing. Listing the fields once removes the chance.
+/// Differencing and summing over every field, listed once: a field left out of
+/// either would read nought for ever without failing.
 macro_rules! counter_arithmetic {
     ($totals:ident { $($field:ident),* $(,)? }) => {
         impl WindowedCounters for $totals {
-            /// Saturating throughout. The totals only climb, so a lower reading
-            /// than the last means the tap was installed mid-flight or a counter
-            /// was reset under it, and nought is the right answer to that rather
-            /// than a number near `u64::MAX`.
+            /// Saturating: a lower reading than the last means the tap was installed
+            /// mid-flight or a counter was reset, and nought is the right answer to that.
             fn since(&self, previous: &Self) -> Self {
                 Self {
                     $($field: self.$field.saturating_sub(previous.$field),)*
@@ -1913,11 +1562,7 @@ fn add_field(counter: &AtomicU64, value: &str) {
     }
 }
 
-/// Replaces a gauge with the reading a point carries.
-///
-/// Stored rather than added, which is the whole difference between the two
-/// kinds of figure here: a counter says how much happened since the last point
-/// and only means anything summed, a gauge says how things stand and only means
+/// Replaces a gauge with the reading a point carries. A gauge only means
 /// anything as the latest value.
 fn set_field(gauge: &AtomicU64, value: &str) {
     if let Some(latest) = field_u64(value) {
@@ -1925,22 +1570,14 @@ fn set_field(gauge: &AtomicU64, value: &str) {
     }
 }
 
-/// Reads a field value that was written as an integer.
-///
-/// Values arrive formatted for the line protocol the metrics writer speaks
-/// rather than as numbers: an integer field carries a trailing `i`, which is
-/// InfluxDB's way of saying it is not a float. A value without one is a float,
-/// a boolean or a quoted string, and none of those are counters.
+/// Reads a field written as an integer, which the line protocol marks with a
+/// trailing `i`. Anything without one is not a counter.
 fn field_u64(value: &str) -> Option<u64> {
     value.strip_suffix('i')?.parse().ok()
 }
 
-/// A string field as it was written, without the wrapper the point put round it.
-///
-/// `add_field_str` stores a string already quoted for the line protocol and with
-/// any quote inside it escaped, so what arrives here is the encoding rather than
-/// the value. One pair of quotes is taken off rather than every leading and
-/// trailing one, so a value that really did start with a quote keeps it.
+/// A string field without the line-protocol quotes `add_field_str` put round
+/// it. One pair is taken off, so a value that started with a quote keeps it.
 fn field_str(value: &str) -> String {
     let inner = value
         .strip_prefix('"')
@@ -2010,11 +1647,8 @@ mod tests {
                 accounts_cache_hits: 15,
                 accounts_cache_misses: 3,
                 accounts_cache_evicts: 1,
-                // Every other counter left at nought, which is half of what
-                // this test is for: a point from one source must not move
-                // another source's figures. Defaulted rather than written out,
-                // because the comparison is against the whole struct either way
-                // and a hand-written list of them only has to be maintained.
+                // Every other counter stays at nought: a point from one source must not move
+                // another's figures.
                 ..TapCounters::default()
             }
         );
@@ -2049,9 +1683,8 @@ mod tests {
 
     #[test]
     fn test_each_socket_receiver_counts_into_its_own_port() {
-        // The socket panel's denominator. Four receivers report packets under
-        // the same field name, and a row's share of traffic lost is only right
-        // if each one lands against the port it was read from.
+        // Each receiver's packets must land against the port it was read from, or a
+        // row's share of traffic lost is wrong.
         let tap = MetricsTap::default();
         tap.observe(&named(SHREDS_TURBINE, &[("packets_count", "900i")]));
         tap.observe(&named(GOSSIP_RECEIVER, &[("packets_count", "40i")]));
@@ -2071,10 +1704,8 @@ mod tests {
 
     #[test]
     fn test_the_waterfall_counters_land_where_they_belong() {
-        // Twenty-one fields under names that do not resemble the ones the panel
-        // uses, several of which differ from each other only in their tail. A
-        // pair transposed here would put the fee payer failures under "too old"
-        // and nothing downstream could tell.
+        // Several of these names differ only in their tail; a transposed pair would
+        // put the wrong reason under a label.
         let tap = MetricsTap::default();
         tap.observe(&scheduler(&[
             ("num_received", "1000i"),
@@ -2126,11 +1757,8 @@ mod tests {
 
     #[test]
     fn test_the_receive_stretch_of_that_point_balances() {
-        // The identity the validator's own tests assert, restated against the
-        // names this module gives them: everything received either got in or
-        // has a reason it did not. Checking it here is what makes the panel's
-        // first section a genuine account rather than a list that happens to
-        // sit under a heading.
+        // The identity the validator's own tests assert: everything received either
+        // got in or has a reason it did not.
         let counters = MetricsTap::default();
         counters.observe(&scheduler(&[
             ("num_received", "1000i"),
@@ -2168,10 +1796,8 @@ mod tests {
 
     #[test]
     fn test_a_window_of_readings_differences_and_sums() {
-        // How the panel is built: totals that only climb, differenced against
-        // the last reading to give one interval's work, then added across the
-        // window. Both halves saturate, so a counter that went backwards under
-        // the tap reads as no work rather than as eighteen quintillion.
+        // Differenced against the last reading, then summed across the window,
+        // saturating at both steps.
         let first = SchedulerTotals {
             received: 100,
             buffered: 10,
@@ -2192,13 +1818,8 @@ mod tests {
         assert_eq!(first.since(&second).received, 0);
     }
 
-    /// The per-slot point: the same counters, plus the slot they belong to.
-    ///
-    /// The slot carries the same trailing `i` as every other integer field,
-    /// because `add_field_i64` is what puts it there. Formatted here rather
-    /// than written out by each caller: a fixture that left the suffix off
-    /// would be describing a point the validator never sends, and the tap
-    /// would rightly drop it.
+    /// The per-slot point. The slot carries the trailing `i` that `add_field_i64`
+    /// writes, formatted here so a fixture cannot leave it off.
     fn slot_point(slot: u64, fields: &[(&'static str, &str)]) -> DataPoint {
         let slot = format!("{slot}i");
         let mut all = vec![("slot", slot.as_str())];
@@ -2249,9 +1870,8 @@ mod tests {
 
     #[test]
     fn test_other_validators_blocks_are_dropped() {
-        // This point arrives for every slot the node replays, which is all of
-        // them. Only the blocks we built are ours to do anything about, and
-        // keeping the rest would push them off the end of the queue.
+        // This point arrives for every slot replayed; only the blocks we built are
+        // kept.
         let tap = MetricsTap::default();
         tap.observe(&cost_point(
             false,
@@ -2270,9 +1890,7 @@ mod tests {
 
     #[test]
     fn test_the_leader_tag_is_read_as_a_tag_not_a_field() {
-        // `is_leader` is added with `=>` rather than as a value, so it lands in
-        // the point's tags. Looking for it among the fields would drop every
-        // block this validator produced.
+        // `is_leader` is a tag, not a field.
         let tap = MetricsTap::default();
         let mut point = named(COST_TRACKER, &[("bank_slot", "441034909i")]);
         point.fields.push((IS_LEADER, "true".to_string()));
@@ -2283,9 +1901,8 @@ mod tests {
         );
     }
 
-    /// One replay point as the validator sends it, abridged to the fields the
-    /// tap reads. The names are taken from a real mainnet line rather than from
-    /// the source, which is what makes them worth pinning.
+    /// One replay point, abridged to the fields the tap reads. Names taken from a
+    /// real mainnet line.
     fn replay_point(fields: &[(&'static str, &str)]) -> DataPoint {
         named(REPLAY_SLOT_STATS, fields)
     }
@@ -2319,10 +1936,8 @@ mod tests {
 
     #[test]
     fn test_the_names_the_unified_scheduler_reports_under() {
-        // The only block verification method this tree has, so these are the
-        // only spellings that ever arrive. A tap matching `confirmation_time_us`
-        // and `replay_time` would read nought for ever, and the panel would say
-        // replay had taken no time at all.
+        // The only spellings the unified scheduler sends; the older names would read
+        // nought for ever.
         let tap = MetricsTap::default();
         tap.observe(&replay_point(&[
             ("confirmation_time_us", "17288i"),
@@ -2380,10 +1995,8 @@ mod tests {
 
     #[test]
     fn test_a_leader_slot_is_kept_whole_rather_than_accumulated() {
-        // These are already one slot's own counts — the scheduler resets them
-        // as it reports — so they are held as they arrived. Adding them to the
-        // running totals the way every other point here is handled would give
-        // each led slot's work twice.
+        // Already one slot's own counts, so held as they arrived rather than added to
+        // the running totals.
         let tap = MetricsTap::default();
         tap.observe(&slot_point(
             430_789_128,
@@ -2405,11 +2018,8 @@ mod tests {
 
     #[test]
     fn test_the_slot_is_read_by_the_same_rule_as_every_other_integer() {
-        // Strict, and worth pinning because it is easy to get wrong from the
-        // outside: `add_field_i64` writes "430789128i", not "430789128". If
-        // upstream ever writes the slot another way this test fails, which is
-        // better than the panel quietly emptying — the counters would still be
-        // read, they would just have no slot to be shown against.
+        // `add_field_i64` writes "430789128i", not "430789128". A change upstream
+        // fails here rather than quietly emptying the panel.
         let tap = MetricsTap::default();
         let mut bare = DataPoint::new(SCHEDULER_SLOT_COUNTS);
         bare.fields.push(("slot", "430789128".to_string()));
@@ -2446,11 +2056,8 @@ mod tests {
 
     #[test]
     fn test_an_idle_scheduler_does_not_empty_a_slot_it_did_not_build() {
-        // The bug this exists to stop. A build running two schedulers reports
-        // this point twice for every leader slot, once from each, and only the
-        // one that was enabled did any of the work. Keeping whichever arrived
-        // last is a race between two threads, and it emptied the panel on about
-        // half of all slots.
+        // Two schedulers report every leader slot, and only the enabled one did the
+        // work. Keeping the last to arrive emptied the panel on half of all slots.
         for order in [["10000", "0"], ["0", "10000"]] {
             let tap = MetricsTap::default();
             for id in order {
@@ -2478,9 +2085,7 @@ mod tests {
 
     #[test]
     fn test_the_interval_counts_say_which_scheduler_sent_them() {
-        // Only one scheduler reports this point, so there is nothing to choose
-        // between — but which one it was decides whether `received` is packets
-        // or batches, and the live card cannot draw itself without knowing.
+        // Which scheduler reported decides whether `received` is packets or batches.
         let tap = MetricsTap::default();
         assert_eq!(
             tap.scheduler_source(),
@@ -2506,9 +2111,8 @@ mod tests {
 
     #[test]
     fn test_the_scheduler_that_built_the_slot_is_named() {
-        // Which one built the block is worth reading on its own, and the panel
-        // needs it: the two count what arrived in different units, so the rows
-        // cannot be drawn against the same total.
+        // The two count arrivals in different units, so the panel needs to know which
+        // built the block.
         let tap = MetricsTap::default();
         tap.observe(&tagged_slot_point("0", 1, &[("num_scheduled", "5i")]));
         tap.observe(&tagged_slot_point("10000", 2, &[("num_scheduled", "5i")]));
@@ -2529,9 +2133,7 @@ mod tests {
 
     #[test]
     fn test_an_empty_leader_slot_keeps_the_report_that_saw_the_most() {
-        // Nothing was scheduled by either, so the tie falls to what was
-        // buffered. Without it the row would be decided by arrival order again,
-        // on exactly the slots that have least to show.
+        // Nothing scheduled by either, so the tie falls to what was buffered.
         let tap = MetricsTap::default();
         tap.observe(&tagged_slot_point("10000", 100, &[("num_received", "2i")]));
         tap.observe(&tagged_slot_point("0", 100, &[("num_buffered", "31i")]));
@@ -2544,9 +2146,7 @@ mod tests {
 
     #[test]
     fn test_only_the_newest_leader_slots_are_kept() {
-        // Matched to what the produced block panel retains, so every block it
-        // can show still has its waterfall, and nothing is held for a block
-        // that has already scrolled out of reach.
+        // Matched to what the produced block panel retains.
         let tap = MetricsTap::default();
         for slot in 0..u64::try_from(SLOT_WATERFALLS).unwrap().saturating_add(10) {
             tap.observe(&slot_point(slot, &[("num_received", "1i")]));
@@ -2559,9 +2159,8 @@ mod tests {
 
     #[test]
     fn test_the_flush_point_is_read_under_either_spelling() {
-        // The field was renamed between validator versions and this crate is
-        // carried across both, so a single spelling would leave the whole
-        // written-to-storage section reading nought on one of them.
+        // The field was renamed between validator versions and this crate is carried
+        // across both.
         for (accounts, bytes) in [
             ("num_accounts_stored", "account_bytes_stored"),
             ("num_accounts_flushed", "account_bytes_flushed"),
@@ -2606,10 +2205,8 @@ mod tests {
 
     #[test]
     fn test_the_quic_fields_are_the_ones_the_point_carries() {
-        // Several of these are named after the counter behind them and several
-        // are not, which is not guessable and was wrong once. A field name
-        // taken from the struct rather than from the wire matches nothing,
-        // reads nought for ever, and takes its whole section down with it.
+        // Several of these are named after the counter behind them and several are
+        // not. A name from the struct rather than the wire reads nought for ever.
         let tap = MetricsTap::default();
         tap.observe(&named(QUIC_TPU, QUIC_POINT));
 
@@ -2640,30 +2237,17 @@ mod tests {
 
     #[test]
     fn test_the_shed_connections_account_for_the_offer() {
-        // The listener sheds in order and moves on after each, so every attempt
-        // is shed at one of the gates, fails the handshake, or is admitted.
-        // That is what lets the section be drawn against its own total rather
-        // than against a sum of its rows, and it is why this one is closer to a
-        // partition than any other section on the dashboard.
-        //
-        // Closer, not equal. A connection can be shed by the rate limiter a
-        // second time after the handshake, which counts against a gate it has
-        // already passed, and an `accept()` that fails outright is counted
-        // nowhere. So the rows can run slightly over the offer or slightly
-        // under it, and the panel has to tolerate both. This pins the
-        // arithmetic on a clean sample; the tolerance is tested in the browser.
-        //
-        // The sample is clean in a way a real port is not: it is built so that
-        // nothing falls into either uncounted branch, which is what lets the
-        // gates add up to the offer at all. `handshook` is what measures the
-        // two branches when they are not empty.
+        // The listener sheds in order, so every attempt is shed at one gate, fails the
+        // handshake, or is admitted, and the section is drawn against its own total.
+        // Not quite a partition: a second rate-limit after the handshake and a failed
+        // `accept()` are counted nowhere. This sample is built so neither happens;
+        // `handshook` measures them when they do.
         let tap = MetricsTap::default();
         tap.observe(&named(QUIC_TPU, QUIC_POINT));
 
         let quic = tap.counters().quic;
-        // Saturating rather than bare addition: the workspace denies
-        // `arithmetic_side_effects`, and unlike the sums of literals elsewhere
-        // in these tests these are runtime values the lint cannot prove safe.
+        // Saturating: the workspace denies `arithmetic_side_effects` and these are
+        // runtime values.
         let accounted = [
             quic.shed_all,
             quic.shed_address,
@@ -2681,10 +2265,8 @@ mod tests {
 
     #[test]
     fn test_the_handshake_checkpoint_is_read() {
-        // The one figure that tells the two uncounted branches apart, and the
-        // clean sample is built so both come out at nought: everything that
-        // cleared the gates handshook, and everything that handshook was
-        // either refused a table place or admitted.
+        // The one figure that tells the two uncounted branches apart, both nought in
+        // this clean sample.
         let tap = MetricsTap::default();
         tap.observe(&named(QUIC_TPU, QUIC_POINT));
 
@@ -2702,11 +2284,8 @@ mod tests {
 
     #[test]
     fn test_the_refusal_counters_are_kept_apart_rather_than_summed() {
-        // Four names for one refusal, and they overlap: the unstaked path runs
-        // through the same insert that raises `connection_add_failed`, so a
-        // single refusal there raises two of them. The tap reads them apart and
-        // leaves the reconciling to the panel, which takes the larger reading
-        // rather than the sum.
+        // Four overlapping names for one refusal. The tap reads them apart; the panel
+        // takes the larger rather than the sum.
         let tap = MetricsTap::default();
         tap.observe(&named(
             QUIC_TPU,
@@ -2728,9 +2307,7 @@ mod tests {
     #[test]
     fn test_the_pruning_alias_is_left_out_of_the_refusals() {
         // `connection_add_failed_on_pruning` is raised on the same refusal as
-        // `..._staked_node`, two lines apart in the listener, and means the
-        // same thing. It is exactly the field someone extends this match with
-        // later by reading the point rather than the listener.
+        // `..._staked_node` and means the same thing.
         let tap = MetricsTap::default();
         tap.observe(&named(
             QUIC_TPU,
@@ -2749,11 +2326,8 @@ mod tests {
 
     #[test]
     fn test_the_cumulative_offer_is_stored_rather_than_added() {
-        // Every counter on this point is reported with `swap`, so each point
-        // carries one interval and they accumulate. The offer is reported with
-        // `load` and arrives already cumulative. Added like its neighbours it
-        // would square inside a minute, and it is the denominator the whole
-        // section is drawn against.
+        // Every counter here is reported with `swap` except the offer, which arrives
+        // cumulative. Added like its neighbours it would square inside a minute.
         let tap = MetricsTap::default();
         tap.observe(&named(
             QUIC_TPU,
@@ -2794,9 +2368,8 @@ mod tests {
 
     #[test]
     fn test_each_quic_port_counts_into_its_own_set() {
-        // Three listeners reporting the same field names under three point
-        // names. Summed together the panel would say one port was doing what
-        // all three were, and the busiest of them would hide the other two.
+        // Three listeners report the same field names under three point names;
+        // summed, the busiest would hide the other two.
         let tap = MetricsTap::default();
         tap.observe(&named(QUIC_TPU, &[("new_streams", "900i")]));
         tap.observe(&named(QUIC_TPU_FORWARDS, &[("new_streams", "40i")]));
@@ -2810,9 +2383,8 @@ mod tests {
 
     #[test]
     fn test_the_accounts_points_add_into_one_set_of_figures() {
-        // Three points from three parts of the accounts database, matched on
-        // field name in one place. Loads come from one, the flush figures from
-        // another, and the storage levels from a third.
+        // Three points from three parts of the accounts database, matched on field
+        // name in one place.
         let tap = MetricsTap::default();
         tap.observe(&named(
             ACCOUNTS_LOADS,
@@ -2847,9 +2419,8 @@ mod tests {
 
     #[test]
     fn test_the_storage_levels_are_replaced_rather_than_summed() {
-        // How much storage exists, not how much appeared since the last point.
-        // Summed, a validator holding a steady hundred gigabytes would report
-        // tens of terabytes within a minute.
+        // A level, not a count: summed, a steady hundred gigabytes would read as
+        // terabytes within a minute.
         let tap = MetricsTap::default();
         tap.observe(&named(ACCOUNTS_STORES, &[("total_bytes", "100i")]));
         tap.observe(&named(ACCOUNTS_STORES, &[("total_bytes", "104i")]));
@@ -2858,10 +2429,8 @@ mod tests {
 
     #[test]
     fn test_a_level_is_replaced_rather_than_accumulated() {
-        // `water_level` says where the cache stood, not what happened since the
-        // last point. Added up the way every counter beside it is, a cache that
-        // held four hundred entries all minute would report having held tens of
-        // thousands.
+        // `water_level` is where the cache stood, not what happened since the last
+        // point.
         let tap = MetricsTap::default();
         tap.observe(&named(PROGRAM_CACHE, &[("water_level", "400i")]));
         tap.observe(&named(PROGRAM_CACHE, &[("water_level", "412i")]));
@@ -2870,9 +2439,7 @@ mod tests {
 
     #[test]
     fn test_the_cache_counter_named_differently_from_its_field_still_lands() {
-        // The point calls it `replace_entry` where the counter behind it is
-        // `replacements`. A mapping taken from the struct rather than from the
-        // wire would silently read nought for ever.
+        // The point calls it `replace_entry` where the counter is `replacements`.
         let tap = MetricsTap::default();
         tap.observe(&named(
             PROGRAM_CACHE,
@@ -2888,10 +2455,8 @@ mod tests {
     #[test]
     fn test_the_verify_stage_accounts_for_every_packet_it_was_given() {
         // There is no counter for a failed signature. It is what is left once
-        // the duplicates, the underpaying and the verified are taken off, and
-        // that subtraction is only exact because sigverify discards at one step
-        // and returns — a packet is deduplicated, or dropped below the floor,
-        // or verified, or bad, and never two of them.
+        // duplicates, underpaying and verified are taken off, which is exact because
+        // sigverify discards at one step.
         let tap = MetricsTap::default();
         tap.observe(&named(
             TPU_VERIFIER,
@@ -2915,10 +2480,8 @@ mod tests {
 
     #[test]
     fn test_every_worker_adds_into_the_same_execution_totals() {
-        // One point per worker thread, told apart only by a tag nothing here
-        // reads. Summing them is what gives the figure for the stage, so a tap
-        // that kept them apart or took the last would report one worker's share
-        // of the work as all of it.
+        // One point per worker, told apart by a tag nothing reads. Summing them gives
+        // the stage's figure.
         let tap = MetricsTap::default();
         for _ in 0..4 {
             tap.observe(&named(
@@ -2939,11 +2502,8 @@ mod tests {
 
     #[test]
     fn test_the_reasons_a_worker_dropped_a_transaction_join_its_counts() {
-        // Two points, reported by the same worker on the same tick under the
-        // same id: one says what became of the work, the other says why. Read
-        // into one set of counters because the panel draws them as one stage —
-        // and because the reasons only mean anything against the outcomes they
-        // are the difference between.
+        // Two points from the same worker on the same tick: what became of the work
+        // and why. Read into one set of counters.
         let tap = MetricsTap::default();
         tap.observe(&named(
             WORKER_COUNTS,
@@ -2986,9 +2546,8 @@ mod tests {
 
     #[test]
     fn test_the_vote_verifier_is_not_counted_with_the_rest() {
-        // Votes leave sigverify by a different door and never reach the
-        // scheduler, so counting them at the top would inflate a total the
-        // stages below could never account for.
+        // Votes never reach the scheduler, so counting them at the top would inflate a
+        // total the stages below cannot account for.
         let tap = MetricsTap::default();
         tap.observe(&named("tpu-vote-verifier", &[("total_packets", "5000i")]));
         assert_eq!(tap.counters().verify.received, 0);
@@ -2996,9 +2555,7 @@ mod tests {
 
     #[test]
     fn test_the_priority_gauges_are_left_out_of_the_waterfall() {
-        // They ride the same point and are the only two fields on it that are
-        // not counts. Summing a window of "the highest fee in the queue right
-        // now" would produce a number with no meaning at all.
+        // The only two fields on the point that are not counts.
         let tap = MetricsTap::default();
         tap.observe(&scheduler(&[
             ("min_priority", "5i"),
@@ -3024,9 +2581,8 @@ mod tests {
         assert_eq!(tap.counters().shreds_turbine, 900);
     }
 
-    /// An XDP config point built through the same calls the validator's macro
-    /// makes, so the encodings under test are the real ones rather than a guess
-    /// at what they look like.
+    /// An XDP point built through the same calls the validator's macro makes, so
+    /// the encodings are the real ones.
     fn xdp_point(
         zero_copy: bool,
         driver: &str,
@@ -3045,10 +2601,8 @@ mod tests {
 
     #[test]
     fn test_the_xdp_config_is_read_from_the_tags_and_the_fields_alike() {
-        // The only point here that needs both. A tag keeps the value it was
-        // given; a string field arrives wrapped in quotes for the line
-        // protocol, and reading it without unwrapping would put those quotes on
-        // the card.
+        // A tag keeps its value; a string field arrives wrapped in quotes for the line
+        // protocol.
         let tap = MetricsTap::default();
         tap.observe(&xdp_point(
             true,
@@ -3068,9 +2622,8 @@ mod tests {
 
     #[test]
     fn test_there_is_no_xdp_config_where_none_was_ever_reported() {
-        // The point is only submitted where the validator was given an XDP
-        // config, so its absence is the answer rather than something to work
-        // out.
+        // The point is only submitted where an XDP config was given, so its absence
+        // is the answer.
         let tap = MetricsTap::default();
         tap.observe(&named(SHREDS_TURBINE, &[("packets_count", "1i")]));
         assert!(tap.xdp().is_none());
@@ -3096,10 +2649,8 @@ mod tests {
 
     #[test]
     fn test_the_latest_xdp_report_stands() {
-        // It is submitted on an interval and cannot change while the process
-        // runs, so this is only ever the same reading again. Overwriting rather
-        // than keeping the first means a config read late, once the PCI
-        // database was available, is not held out by one read early.
+        // Submitted on an interval and unchanging, so overwriting means a config read
+        // late, once the PCI database was available, wins over an early read.
         let tap = MetricsTap::default();
         tap.observe(&xdp_point(false, "ice", "unknown", "unknown", "6.8.0"));
         tap.observe(&xdp_point(

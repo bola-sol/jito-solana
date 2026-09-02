@@ -7,7 +7,7 @@ use {
         ledger_lockfile, lock_ledger,
         shred_receiver_addresses::parse_shred_receiver_addresses,
     },
-    agave_dashboard::{DashboardConfig, DashboardService, StartupProgress, StartupProgressFn},
+    agave_dashboard::{DashboardConfig, DashboardContext, DashboardService},
     agave_snapshots::{
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
         paths::BANK_SNAPSHOTS_DIR,
@@ -558,17 +558,13 @@ pub fn execute(
                 solana_net_utils::parse_host(address).expect("invalid dashboard_bind_address")
             })
             .unwrap_or_else(|| solana_net_utils::parse_host("127.0.0.1").unwrap());
-        let mut config = DashboardConfig {
-            listen_addr: SocketAddr::new(bind_address, port),
-            // Read from the flags directly rather than from the tip manager's
-            // config, which substitutes freshly generated keys when voting is
-            // disabled. Tip accounts derived from a placeholder would read
-            // nothing for the life of the process and the page would show a
-            // column of noughts; absent here draws no column at all.
-            tip_payment_program_id: pubkey_of(matches, "tip_payment_program_pubkey"),
-            commission_bps: value_t!(matches, "commission_bps", u16).ok(),
-            ..DashboardConfig::default()
-        };
+        let mut config = DashboardConfig::new(SocketAddr::new(bind_address, port));
+        // Read from the flags directly rather than from the tip manager's
+        // config, which substitutes freshly generated keys when voting is
+        // disabled. Tip accounts derived from a placeholder would read nothing
+        // for the life of the process; absent here draws no column at all.
+        config.tip_payment_program_id = pubkey_of(matches, "tip_payment_program_pubkey");
+        config.commission_bps = value_t!(matches, "commission_bps", u16).ok();
         // Added to the loopback defaults rather than replacing them, so a
         // proxied dashboard stays reachable on the box it runs on.
         config
@@ -1150,19 +1146,17 @@ pub fn execute(
     );
 
     // Started before the bootstrap below, which is where the RPC search and the
-    // snapshot download happen. Those run long before a `Validator` exists, so
-    // starting the dashboard any later leaves the port refusing connections
-    // through the slowest part of a cold start. The collector attaches inside
-    // `Validator::new_with_exit`, once there is state to read.
-    let dashboard_service = match dashboard_config {
+    // snapshot download happen, so the page is up through the slowest part of
+    // a cold start. The collector attaches once the validator exists.
+    let mut dashboard_service = match dashboard_config {
         None => None,
         Some(dashboard_config) => {
             let listen_addr = dashboard_config.listen_addr;
-            let progress = startup_progress_fn(start_progress.clone());
             Some(
-                DashboardService::start(dashboard_config, progress, exit.clone()).map_err(
-                    |err| format!("failed to start the dashboard on {listen_addr}: {err}"),
-                )?,
+                DashboardService::start(dashboard_config, start_progress.clone(), exit.clone())
+                    .map_err(|err| {
+                        format!("failed to start the dashboard on {listen_addr}: {err}")
+                    })?,
             )
         }
     };
@@ -1275,9 +1269,23 @@ pub fn execute(
         admin_service_post_init,
         xdp_transmit_setup,
         exit,
-        dashboard_service,
     )
     .map_err(|err| format!("{err:?}"))?;
+
+    if let Some(dashboard_service) = &mut dashboard_service {
+        dashboard_service
+            .attach(DashboardContext {
+                cluster_info: validator.cluster_info.clone(),
+                bank_forks: validator.bank_forks.clone(),
+                block_commitment_cache: validator.block_commitment_cache.clone(),
+                blockstore: validator.blockstore.clone(),
+                leader_schedule_cache: validator.leader_schedule_cache.clone(),
+                vote_account,
+                highest_finalized: validator.highest_finalized.clone(),
+                account_paths: validator_config.account_paths.clone(),
+            })
+            .map_err(|err| format!("failed to start the dashboard collector: {err}"))?;
+    }
 
     if let Some(filename) = init_complete_file {
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
@@ -1285,70 +1293,12 @@ pub fn execute(
     info!("Validator initialized");
     validator.listen_for_signals()?;
     validator.close();
+    if let Some(dashboard_service) = dashboard_service {
+        dashboard_service.join().expect("dashboard_service");
+    }
     info!("Validator exiting...");
 
     Ok(())
-}
-
-/// Adapts the validator's startup phase to the shape the dashboard publishes.
-///
-/// This lives here rather than in `solana-core` so that the dashboard's types
-/// stay out of that crate's public API. It is only needed by the binary that
-/// owns `start_progress` in the first place.
-fn startup_progress_fn(progress: Arc<RwLock<ValidatorStartProgress>>) -> StartupProgressFn {
-    Arc::new(move || {
-        // Read once: two reads could straddle a phase change and report a
-        // phase that disagrees with its own `running` flag.
-        let current = *progress.read().unwrap();
-        let (phase, detail, replay_slots, stake_percent) = match current {
-            ValidatorStartProgress::Initializing => ("initializing", None, None, None),
-            ValidatorStartProgress::SearchingForRpcService => {
-                ("searching_for_rpc_service", None, None, None)
-            }
-            ValidatorStartProgress::DownloadingSnapshot { slot, rpc_addr } => (
-                "downloading_snapshot",
-                Some(format!("slot {slot} from {rpc_addr}")),
-                None,
-                None,
-            ),
-            ValidatorStartProgress::CleaningBlockStore => ("cleaning_blockstore", None, None, None),
-            ValidatorStartProgress::CleaningAccounts => ("cleaning_accounts", None, None, None),
-            ValidatorStartProgress::LoadingLedger => ("loading_ledger", None, None, None),
-            ValidatorStartProgress::ProcessingLedger { slot, max_slot } => (
-                "processing_ledger",
-                Some(format!("slot {slot} of {max_slot}")),
-                Some((slot, max_slot)),
-                None,
-            ),
-            ValidatorStartProgress::StartingServices => ("starting_services", None, None, None),
-            ValidatorStartProgress::Halted => ("halted", None, None, None),
-            ValidatorStartProgress::WaitingForSupermajority {
-                slot,
-                gossip_stake_percent,
-            } => (
-                "waiting_for_supermajority",
-                // The share is sent as a figure below rather than written into
-                // this line, so the panel can draw it as well as say it.
-                Some(format!("slot {slot}")),
-                None,
-                Some(gossip_stake_percent as f64 / 100.0),
-            ),
-            ValidatorStartProgress::Running => ("running", None, None, None),
-        };
-        StartupProgress {
-            phase: phase.to_string(),
-            detail,
-            running: matches!(current, ValidatorStartProgress::Running),
-            // Derived by the dashboard, which tracks where replay began.
-            fraction: None,
-            replay_slots,
-            stake_percent,
-            // Both filled in by the dashboard, which watches the phase change.
-            // Nothing here knows when the validator entered the phase it is in.
-            phase_elapsed_nanos: 0,
-            phases_taken: Vec::new(),
-        }
-    })
 }
 
 // This function is duplicated in ledger-tool/src/main.rs...

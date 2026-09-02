@@ -37,7 +37,6 @@ use {
         // tip_manager::TipManagerConfig,
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
-    agave_dashboard::{DashboardContext, DashboardService},
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
@@ -145,6 +144,7 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_utils,
         transaction_execution::TransactionStatusSender,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -173,7 +173,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant, SystemTime},
+        time::{Duration, Instant},
     },
     strum::VariantNames,
     strum_macros::{Display, EnumCount, EnumIter, EnumString, IntoStaticStr},
@@ -723,7 +723,6 @@ pub struct Validator {
     #[cfg_attr(not(unix), allow(dead_code))]
     log_config: Option<ValidatorLogConfig>,
     json_rpc_service: Option<JsonRpcService>,
-    dashboard_service: Option<DashboardService>,
     pubsub_service: Option<PubSubService>,
     rpc_completed_slots_service: Option<JoinHandle<()>>,
     optimistically_confirmed_bank_tracker: Option<OptimisticallyConfirmedBankTracker>,
@@ -751,6 +750,9 @@ pub struct Validator {
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub blockstore: Arc<Blockstore>,
+    pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    pub leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     geyser_plugin_service: Option<GeyserPluginService>,
     /// Held for the lifetime of the validator so the dispatch thread keeps
     /// running. `None` when no loaded plugin opted into contact info
@@ -798,7 +800,6 @@ impl Validator {
             admin_rpc_service_post_init,
             xdp_transmit_setup,
             exit,
-            None,
         )
     }
 
@@ -818,10 +819,6 @@ impl Validator {
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
         xdp_transmit_setup: Option<XdpTransmitSetup>,
         exit: Arc<AtomicBool>,
-        // Started by the caller before this point, so that the phases which run
-        // ahead of a validator existing are still reported. `None` disables the
-        // dashboard entirely.
-        mut dashboard_service: Option<DashboardService>,
     ) -> Result<Self> {
         if config.enable_scheduler_bindings && config.bam_url.load().is_some() {
             return Err(anyhow!("BAM conflicts with external scheduler bindings"));
@@ -1257,11 +1254,6 @@ impl Validator {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         // Updated by Votor and shared with RPC health and block creation.
         let highest_finalized = Arc::new(RwLock::new(None));
-        // The dashboard reads it as well, to say how far replay trails the
-        // cluster. Cloned here rather than where it is used, because the handle
-        // itself is moved into the TPU below and the dashboard is assembled
-        // after that.
-        let dashboard_highest_finalized = highest_finalized.clone();
 
         let max_slots = Arc::new(MaxSlots::default());
 
@@ -1795,7 +1787,7 @@ impl Validator {
                 votor_server_sockets: node.sockets.votor_server,
                 votor_client_socket: node.sockets.quic_votor_client,
                 votor_peer_overrides: config.votor_peer_overrides.clone(),
-                highest_finalized,
+                highest_finalized: highest_finalized.clone(),
             },
             reward_aggregates_sender,
             shredstream_receiver_address.clone(),
@@ -1947,58 +1939,6 @@ impl Validator {
             )
         });
 
-        // Attached last, so the collector reads a validator that is fully
-        // assembled. It only ever reads, and holds no handle the validator
-        // needs back.
-        if let Some(dashboard_service) = &mut dashboard_service {
-            let context = DashboardContext {
-                cluster_info: cluster_info.clone(),
-                bank_forks: bank_forks.clone(),
-                block_commitment_cache: block_commitment_cache.clone(),
-                blockstore: blockstore.clone(),
-                leader_schedule_cache: leader_schedule_cache.clone(),
-                vote_account: *vote_account,
-                cluster_type: genesis_config.cluster_type,
-                // `start_time` is an `Instant`; the dashboard reports an
-                // absolute uptime, so translate it to wall-clock.
-                start_time: SystemTime::now() - start_time.elapsed(),
-                // The same rule the RPC health check uses, and deliberately
-                // the same rather than a second opinion. Both sources are the
-                // cluster's own work rather than this node's, so they keep
-                // moving while replay is catching up, which is what makes
-                // either an honest yardstick for how far behind it has fallen.
-                //
-                // Which one applies turns on the migration. Votor writes the
-                // certificate and only once Alpenglow consensus is live, so
-                // before that it is empty and the blockstore's optimistic
-                // slots, recorded from votes seen in gossip, are what the
-                // cluster has confirmed.
-                cluster_tip: {
-                    let migration_status = migration_status.clone();
-                    let blockstore = blockstore.clone();
-                    Arc::new(move || {
-                        if migration_status.is_alpenglow_enabled() {
-                            let cert = dashboard_highest_finalized.read().ok()?;
-                            cert.as_ref().map(|cert| cert.block().slot)
-                        } else {
-                            blockstore
-                                .get_latest_optimistic_slots(1)
-                                .ok()?
-                                .pop()
-                                .map(|(slot, _, _)| slot)
-                        }
-                    })
-                },
-                // Where the accounts database writes, for the host panel's
-                // capacity and device rows. The ledger path is not passed: the
-                // blockstore already carries it.
-                account_paths: config.account_paths.clone(),
-            };
-            dashboard_service
-                .attach(context, exit.clone())
-                .map_err(|err| anyhow!("Failed to start the dashboard collector: {err}"))?;
-        }
-
         Ok(Self {
             log_config: config.log_config.clone(),
             exit,
@@ -2006,7 +1946,6 @@ impl Validator {
             gossip_service,
             serve_repair_service,
             json_rpc_service,
-            dashboard_service,
             pubsub_service,
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
@@ -2028,6 +1967,9 @@ impl Validator {
             cluster_info,
             bank_forks,
             blockstore,
+            block_commitment_cache,
+            leader_schedule_cache,
+            highest_finalized,
             geyser_plugin_service,
             _contact_info_notifier: contact_info_notifier,
             blockstore_metric_report_service,
@@ -2135,10 +2077,6 @@ impl Validator {
 
         if let Some(json_rpc_service) = self.json_rpc_service {
             json_rpc_service.join().expect("rpc_service");
-        }
-
-        if let Some(dashboard_service) = self.dashboard_service {
-            dashboard_service.join().expect("dashboard_service");
         }
 
         if let Some(pubsub_service) = self.pubsub_service {

@@ -1,25 +1,15 @@
 //! Per-socket UDP receive counters, read from `/proc/net/udp`.
 //!
-//! These say something the validator's own counters cannot. `StreamerReceiveStats`
-//! counts packets that were already delivered into userspace, so a packet the
-//! kernel discarded because the receive buffer was full is invisible to it — and
-//! that is the common way a validator loses shreds. `sk_drops` counts exactly
-//! those.
-//!
-//! The two are complementary rather than rival readings, and the panel adds
-//! them: what a socket delivered plus what it discarded is everything that
-//! arrived at it, which is the only denominator a drop count can be judged
-//! against. [`crate::metrics_tap`] supplies the delivered half, for the ports
-//! that have a receiver reporting one.
-//!
-//! It also reaches the QUIC paths. QUIC runs over UDP, so the TPU sockets appear
-//! here with drop counters of their own, where the in-process figures count
-//! transactions pulled out of streams and so cannot be added to a datagram
-//! count.
+//! `sk_drops` counts packets the kernel discarded because the receive buffer
+//! was full, which the validator's own counters never see and which is the
+//! common way shreds go missing. Delivered plus discarded is everything that
+//! arrived at a socket, the only denominator a drop count can be judged
+//! against; [`crate::metrics_tap`] supplies the delivered half. QUIC runs over
+//! UDP, so the TPU sockets appear here too.
 //!
 //! Counters are cumulative per socket and keyed here by port. Attribution to a
-//! service is the caller's job, and it is a heuristic: this file describes every
-//! UDP socket in the network namespace, not just the validator's.
+//! service is the caller's job: this file describes every UDP socket in the
+//! namespace.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -27,40 +17,25 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Kernel receive counters for every socket bound to one port.
-///
-/// Summed across sockets rather than reported one by one: turbine binds several
-/// to a single port with `SO_REUSEPORT`, and a multi-homed validator binds one
-/// per address, so a port routinely has many rows and only their total means
-/// anything.
+/// Kernel receive counters for every socket bound to one port, summed: turbine
+/// binds several with `SO_REUSEPORT`, and only the total means anything.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PortCounters {
     /// Datagrams discarded since the sockets were opened, overwhelmingly
     /// because the receive buffer was full when one arrived.
     pub drops: u64,
-    /// Bytes sitting unread right now. A gauge rather than a counter, and the
-    /// leading indicator: a queue that stays deep is a reader falling behind,
-    /// which is the state that precedes dropping.
+    /// Bytes sitting unread. A gauge, and the leading indicator: a queue that
+    /// stays deep is a reader falling behind.
     pub queued: u64,
 }
 
 pub type PortMap = HashMap<u16, PortCounters>;
 
-/// A cumulative per-port counter over a trailing window.
-///
-/// Built for drops, where the running total cannot answer the question the
-/// panel is opened to ask, which is whether packets are being lost *now*. A
-/// validator that dropped a quarter of a million while gossip pulled its first
-/// view of the cluster, and none in the hour since, reads identically to one
-/// still dropping them. This lets that burst age out.
-///
-/// Also holds the packets each port delivered, which are counted by the
-/// validator rather than by the kernel and reach the caller from somewhere
-/// else entirely. Same shape, and driven from the same tick with the same set
-/// of ports, so that the two windows cover the same span by construction: the
-/// share of a port's traffic that was lost is one divided by the sum of both,
-/// and two windows that had drifted a sample apart would make that share
-/// quietly wrong in a way nothing on the page could show.
+/// A cumulative per-port counter over a trailing window, so a startup burst
+/// ages out and the panel answers whether packets are being lost now. Also
+/// holds what each port delivered, driven from the same tick with the same
+/// ports so the two windows cover the same span, which the share lost divides
+/// them by.
 #[derive(Debug)]
 pub struct PortWindow {
     span: Duration,
@@ -76,13 +51,9 @@ impl PortWindow {
         }
     }
 
-    /// Records a tick and forgets what has fallen out of the window.
-    ///
-    /// The oldest sample kept is the newest one that is still at least a span
-    /// old, so the window covers slightly more than the span rather than less.
-    /// Discarding it as soon as it aged out would measure from the sample after
-    /// it and under-report by a tick — and under-reporting drops is the one
-    /// direction this must not err in.
+    /// Records a tick and forgets what has fallen out. The oldest sample kept is
+    /// the newest still at least a span old, so the window covers slightly more
+    /// than the span rather than under-reporting by a tick.
     pub fn push(&mut self, now: Instant, totals: HashMap<u16, u64>) {
         self.samples.push_back((now, totals));
         while let Some((next, _)) = self.samples.get(1) {
@@ -93,10 +64,7 @@ impl PortWindow {
         }
     }
 
-    /// Time the window actually covers, which is short until it has filled.
-    ///
-    /// Reported so the panel can name the span it is showing instead of
-    /// claiming a full minute it has not yet watched.
+    /// Time the window actually covers, short until it has filled.
     pub fn covers(&self, now: Instant) -> Duration {
         self.samples
             .front()
@@ -104,11 +72,8 @@ impl PortWindow {
             .unwrap_or_default()
     }
 
-    /// How far `port`'s counter has climbed since the start of the window.
-    ///
-    /// Zero for a port with no reading yet at the window's start, which needs a
-    /// port to have appeared part-way through — the caller writes every port it
-    /// reports on every tick, so that means a socket bound after startup.
+    /// How far `port`'s counter has climbed since the start of the window. Zero
+    /// for a socket bound after the window started.
     pub fn since(&self, port: u16, current: u64) -> u64 {
         self.samples
             .front()
@@ -120,10 +85,8 @@ impl PortWindow {
     }
 }
 
-/// Reads both address families and merges them by port.
-///
-/// `/proc/net/udp6` is absent on a kernel built without IPv6, and a validator
-/// bound only to v4 is entirely ordinary, so either file alone is enough.
+/// Reads both address families and merges them by port. `/proc/net/udp6` is
+/// absent on a kernel without IPv6, so either file alone is enough.
 #[cfg(target_os = "linux")]
 pub fn read() -> io::Result<PortMap> {
     let mut ports = PortMap::new();
@@ -156,22 +119,16 @@ pub fn read() -> io::Result<PortMap> {
 }
 
 /// Accumulates one `/proc/net/udp`-format table into `ports`, returning the
-/// number of rows understood.
-///
-/// Both tables share a layout, of which three columns are wanted:
+/// rows understood. Both families share the layout; only the address width
+/// differs, and only the port after the colon is wanted:
 ///
 /// ```text
 ///  sl  local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode ref pointer drops
 /// 308: 00000000:14E9 00000000:0000 07 00000000:00000000 00:00000000 00000000   0        0 22359 2 0000000000000000 0
 /// ```
 ///
-/// Only the address width differs between v4 and v6, and since just the port is
-/// wanted — the hex after the colon, big-endian in both — one parser covers each
-/// file.
-///
-/// `drops` is read by index rather than as the last field. It has been the
-/// thirteenth column since it was appended in 2.6.27, and a kernel that grows a
-/// fourteenth should be ignored rather than have that column reported as drops.
+/// `drops` is read as the thirteenth column rather than the last, so a kernel
+/// that appends a column is ignored rather than misread.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
     let mut rows: usize = 0;
@@ -214,13 +171,9 @@ fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
 mod tests {
     use super::*;
 
-    /// Two sockets on port 8001 (0x1F41) as `SO_REUSEPORT` gives, and one on
-    /// 8899 (0x22C3).
-    ///
-    /// Left unformatted because it is a verbatim transcript of the kernel's
-    /// output, and the column positions are the thing under test. Wrapping the
-    /// rows preserves their value but hides the alignment that makes a
-    /// mis-indexed column obvious on sight.
+    /// Two sockets on port 8001 (0x1F41) as `SO_REUSEPORT` gives, and one on 8899
+    /// (0x22C3). Left unformatted: a verbatim transcript, and the column positions
+    /// are what is under test.
     #[rustfmt::skip]
     const V4: &str = "\
    sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops
@@ -332,9 +285,8 @@ mod tests {
 
     #[test]
     fn test_port_with_no_baseline_in_the_window_reports_no_drops() {
-        // Rather than the whole cumulative total, which would show a socket
-        // bound part-way through the window as having dropped everything it
-        // has ever dropped inside it.
+        // Rather than the cumulative total, which would show a socket bound
+        // mid-window as having dropped everything it ever dropped.
         let base = Instant::now();
         let mut window = PortWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 0));
@@ -351,9 +303,8 @@ mod tests {
 
     #[test]
     fn test_row_missing_its_trailing_columns_is_skipped() {
-        // Truncated after `inode`, as a kernel predating the drops column would
-        // print it. Reading the last field instead of the thirteenth would take
-        // the inode here and report it as millions of drops.
+        // Truncated after `inode`, as a kernel predating the drops column prints it.
+        // Reading the last field would report the inode as drops.
         let text = "  308: 00000000:1F41 00000000:0000 07 00000000:00000100 00:00000000 00000000 \
                     0 0 22359\n";
         assert_eq!(parse(text).len(), 0);

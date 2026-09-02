@@ -1,110 +1,56 @@
 //! A flat history of what each recent slot contained.
 //!
-//! The slot ring in [`crate::slots`] holds whole [`SlotEntry`] records, which
-//! is the right shape for the few hundred slots a client is sent and the wrong
-//! one for a hundred thousand: measured at about two hundred and seventy bytes
-//! apiece in a map, most of it the leader's key, name and icon repeated for
-//! every slot of a turn.
-//!
-//! This holds the same span in a flat array of fixed-size rows, carrying only
-//! the columns the schedule page draws. Nothing reads it yet. It exists so that
-//! the depth is being retained before the query that serves it is built, since
-//! a history only starts being useful once it has had time to fill.
+//! The slot ring in [`crate::slots`] holds whole [`SlotEntry`] records, the
+//! right shape for the few hundred slots a client is sent and the wrong one
+//! for a hundred thousand. This holds the same span as fixed-size rows carrying
+//! only the columns the schedule page draws.
 
 use {crate::slots::SlotEntry, serde::Serialize, solana_clock::Slot};
 
-/// Slots kept in the packed history.
-///
-/// A hundred thousand of them, about eleven hours at four hundred milliseconds
-/// a slot, for under four megabytes. The same span as whole slot entries would
-/// be some twenty-seven, and no client could be sent that in any case.
-///
-/// Allocated by the service rather than by the collector, because the server
-/// answers range queries out of it and starts before the collector exists.
+/// Slots kept in the packed history: a hundred thousand, about eleven hours,
+/// for under four megabytes. Allocated by the service because the server
+/// answers range queries out of it before the collector exists.
 pub const PACKED_SLOTS: usize = 100_000;
 
-/// One slot, packed to the columns a schedule row draws.
-///
-/// Forty-eight bytes, and fifty-six in the ring with the slot it belongs to.
-/// It was thirty-two until tips and priority fees arrived together; the two of
-/// them cost sixteen because alignment leaves no room to be clever, and the
-/// hundred thousand rows cost 1.6 MB more for it. The
-/// leader is not among them: it comes from the epoch's turn array, where it is
-/// stored once per leader rather than once per slot.
-///
-/// Duration is not among them either, and is not missing. It is the gap to the
-/// previous slot that has a clock, so a reader holding a span of these works it
-/// out the same way the collector does, and storing it would be storing a
-/// subtraction.
+/// One slot, packed to the columns a schedule row draws: forty-eight bytes.
+/// The leader is not among them, it comes from the epoch's turn array; nor is
+/// the duration, which is the gap to the previous slot with a clock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PackedSlot {
     /// [`crate::slots::SlotLevel`] as its discriminant.
     pub level: u8,
-    /// Bit 0: a block was recorded. Bit 1: the slot's clock is known.
-    ///
-    /// Both are needed because nought is a real reading for every count here.
-    /// A block that landed empty and a slot whose block was never seen are
-    /// different things, and neither is a slot that was skipped.
+    /// Bit 0: a block was recorded. Bit 1: the slot's clock is known. Both needed
+    /// because nought is a real reading for every count here.
     pub flags: u8,
     pub votes: u32,
     pub non_votes: u32,
-    /// Compute units the block used. Saturating into `u32`, which is seventy
-    /// times the current block limit; a cluster that raises the limit past four
-    /// billion gets a clamped figure rather than a wrapped one.
+    /// Compute units the block used, saturating into `u32`, seventy times the
+    /// current block limit.
     pub compute: u32,
-    /// Base and priority fees together, in lamports.
-    ///
-    /// Kept alongside the priority half rather than as base alone, because the
-    /// bank reports the total and the split is the subtraction. A reader
-    /// wanting base does `fees - priority_fees`.
+    /// Base and priority fees together, in lamports; base is `fees -
+    /// priority_fees`.
     pub fees: u64,
-    /// The priority half of `fees`.
-    ///
-    /// The packed row dropped this until the schedule page started drawing the
-    /// two apart. Without it the split appeared in the live window and vanished
-    /// as a reader scrolled back into the history, which is worse than not
-    /// splitting at all.
+    /// The priority half of `fees`, so the split survives into history.
     pub priority_fees: u64,
-    /// Lamports paid into the jito tip accounts during this slot.
-    ///
-    /// The measured figure. Both figures drawn from it, what reached a
-    /// distribution account and what it earned us, are worked out where they
-    /// are drawn: they are this times rates held in configuration, and storing
-    /// a derived number would freeze a rate into a hundred thousand rows that a
-    /// correction could no longer reach.
-    ///
-    /// Nought unless `HAS_TIPS` is set, which is the usual guard: a turn that
-    /// took no tips and a turn never measured are different readings.
+    /// Lamports paid into the jito tip accounts during this slot, as measured.
+    /// What reached a distribution account and what it earned us are worked out
+    /// where drawn, from rates a correction can still reach. Nought unless
+    /// `HAS_TIPS` is set.
     pub tips: u64,
-    /// Wall clock of the slot's first shred, in milliseconds.
-    ///
-    /// Absolute rather than an offset from the window. An offset would be four
-    /// bytes instead of eight and would pack the row to thirty-two with its
-    /// slot, but it would also have to be rebased every time the window moved,
-    /// and a validator up for more than forty-nine days would overflow it. The
-    /// span a reader is sent can still carry offsets: rebasing is a subtraction
-    /// at the point of sending, where the range is known.
+    /// Wall clock of the slot's first shred, in milliseconds. Absolute rather than
+    /// an offset from the window, which would have to be rebased as the window
+    /// moved.
     pub time_millis: u64,
 }
 
-/// Most slots one range may carry.
-///
-/// The reply shares the frame ceiling with everything else the server sends,
-/// and a row is about sixty-five bytes of JSON once the two lamport figures are
-/// on it, so a full span is around half the ceiling. That makes this much the
-/// largest thing the server sends, and the next field to be added here wants
-/// the arithmetic done again first. If it ever comes out uncomfortable the fix
-/// is a smaller span rather than a narrower row, since this figure is ours: it
-/// is already fifty times a screenful, and the page asks for what it is about
-/// to draw rather than for everything it might one day scroll to.
+/// Most slots one range may carry. A row is about sixty-five bytes of JSON, so
+/// a full span is around half the frame ceiling, and the next field added here
+/// wants that arithmetic done again. Fifty times a screenful already.
 pub const MAX_RANGE_SLOTS: usize = 8192;
 
-/// One slot as it goes on the wire.
-///
-/// Positional rather than an object because the field names would outweigh the
-/// figures several times over across a span of these. Order: level, flags,
-/// votes, non-votes, compute, fees, priority fees, tips, time. The frontend
-/// mirrors it, so the two only agree by being changed together.
+/// One slot as it goes on the wire. Positional because field names would
+/// outweigh the figures. Order: level, flags, votes, non-votes, compute, fees,
+/// priority fees, tips, time. The frontend mirrors it.
 pub type WireRow = (u8, u8, u32, u32, u32, u64, u64, u64, u64);
 
 /// A span of the history, as it goes on the wire.
@@ -113,12 +59,8 @@ pub struct SlotRange {
     /// The slot `rows[0]` describes. Every row after it is one slot on, so the
     /// slot numbers themselves are never sent.
     pub first_slot: Slot,
-    /// One entry per slot, `null` for a slot the history does not hold.
-    ///
-    /// Null covers three cases the reader cannot tell apart and does not need
-    /// to: a slot older than the history reaches, one newer than anything
-    /// recorded, and one that was never seen. All three are drawn the same way,
-    /// as a row with no figures.
+    /// One entry per slot, `null` for a slot the history does not hold, whether
+    /// too old, too new, or never seen.
     pub rows: Vec<Option<WireRow>>,
 }
 
@@ -127,20 +69,13 @@ pub struct SlotRange {
 pub const HAS_BLOCK: u8 = 1;
 /// Set where the slot's first shred was timed.
 pub const HAS_CLOCK: u8 = 1 << 1;
-/// Set where the slot's tips were measured, as against a slot whose tips are
-/// simply unknown. Nought is a real reading: it says the searchers passed that
-/// leader by, which is worth seeing.
+/// Set where the slot's tips were measured. Nought is a real reading: the
+/// searchers passed that leader by.
 pub const HAS_TIPS: u8 = 1 << 2;
 
-/// A fixed-size history of packed slots, indexed by the slot itself.
-///
-/// Direct-mapped: the row for a slot is always at `slot % capacity`, so writing
-/// and reading are both a single index with no map to walk or rebalance. The
-/// slot is stored beside its row rather than implied by the position, which
-/// costs eight bytes and removes the one bug this shape invites. Without it a
-/// row from a full lap ago is indistinguishable from a current one, and the
-/// alternative, clearing rows as the window advances, is a second thing that
-/// has to be right for the first to be trusted.
+/// A fixed-size history of packed slots, direct-mapped at `slot % capacity`.
+/// The slot is stored beside its row so a row from a lap ago cannot answer for
+/// a current one.
 pub struct SlotHistory {
     rows: Vec<(Slot, PackedSlot)>,
 }
@@ -161,12 +96,8 @@ impl SlotHistory {
         (*held == slot && slot != 0).then_some(row)
     }
 
-    /// A span of slots, oldest first, for sending to a client.
-    ///
-    /// `count` is clamped rather than refused. A caller asking for more than
-    /// the ceiling gets what fits, and knows it did because the rows it is
-    /// given are positional and it can count them; refusing would make a client
-    /// that guessed slightly wrong get nothing at all.
+    /// A span of slots, oldest first. `count` is clamped rather than refused; the
+    /// rows are positional, so the caller can see how many it got.
     pub fn range(&self, first_slot: Slot, count: usize) -> SlotRange {
         let count = count.min(MAX_RANGE_SLOTS);
         let rows = (0..count as u64)
@@ -189,20 +120,15 @@ impl SlotHistory {
         SlotRange { first_slot, rows }
     }
 
-    /// What one slot contained, from the entry the collector already keeps.
-    ///
-    /// Called on every change to an entry rather than once when it settles: a
-    /// slot's level climbs through several values and its block arrives on
-    /// freeze, and there is no single moment at which it is finished.
+    /// What one slot contained. Called on every change to an entry, since there is
+    /// no single moment at which one is finished.
     pub fn record(&mut self, entry: &SlotEntry) {
         let row = self.row(entry.slot);
         row.level = entry.level as u8;
         if let Some(block) = &entry.block {
             row.flags |= HAS_BLOCK;
-            // Votes are what is left of the block once the rest is taken out,
-            // the same reading the schedule page makes. Saturating because the
-            // two counters are differenced independently and a bank whose
-            // parent has gone reports neither.
+            // Votes are what is left of the block once the rest is taken out. Saturating
+            // because a bank whose parent has gone reports neither counter.
             row.votes = clamp(
                 block
                     .transactions
@@ -227,9 +153,8 @@ impl SlotHistory {
         row.time_millis = millis;
     }
 
-    /// The row for `slot`, cleared first if the one in that position belongs to
-    /// an older slot. Both writers reach a row through here, so neither can
-    /// leave the other's fields behind from a previous lap.
+    /// The row for `slot`, cleared first if it belongs to an older slot. Both
+    /// writers come through here.
     fn row(&mut self, slot: Slot) -> &mut PackedSlot {
         let index = self.index(slot);
         let held = &mut self.rows[index];
@@ -239,18 +164,16 @@ impl SlotHistory {
         &mut held.1
     }
 
-    /// `slot % capacity`, without a bare remainder: the workspace denies
-    /// `arithmetic_side_effects`, and the capacity being non-zero is a property
-    /// of the constructor rather than of the type.
+    /// `slot % capacity` without a bare remainder: the workspace denies
+    /// `arithmetic_side_effects`.
     fn index(&self, slot: Slot) -> usize {
         let capacity = self.rows.len() as u64;
         usize::try_from(slot.checked_rem(capacity).unwrap_or(0)).unwrap_or(0)
     }
 }
 
-/// Into `u32`, clamped rather than wrapped. Every counter this is used on is
-/// far inside the range today, and a clamp reads as "at least this much" where
-/// a wrap reads as a small number.
+/// Into `u32`, clamped: "at least this much" reads better than a wrapped small
+/// number.
 fn clamp(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
@@ -327,9 +250,7 @@ mod tests {
 
     #[test]
     fn test_a_slot_a_lap_ago_is_not_mistaken_for_this_one() {
-        // The bug this shape invites. Both slots land in the same row, and
-        // without the slot stored beside it the older one would answer for the
-        // newer with a whole lap of stale figures.
+        // The bug this shape invites: two slots in the same row.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 5_000, 4_000));
         history.record(&with_block(74, 9, 4));
@@ -355,9 +276,8 @@ mod tests {
 
     #[test]
     fn test_a_range_is_positional_and_holds_a_gap_open() {
-        // The slot numbers are never sent, so a slot the history has not got
-        // has to take up its place in the list rather than be left out. Dropped
-        // instead, every row after it would describe the wrong slot.
+        // The slot numbers are never sent, so a missing slot takes its place in the
+        // list.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 10, 4));
         history.record(&with_block(12, 20, 9));
@@ -372,9 +292,7 @@ mod tests {
 
     #[test]
     fn test_a_range_past_the_ceiling_is_clamped_rather_than_refused() {
-        // A client that guesses slightly wrong gets what fits. Refusing would
-        // give it nothing at all, and it can see how much it got: the rows are
-        // positional and it can count them.
+        // A client that guesses slightly wrong gets what fits.
         let history = SlotHistory::new(64);
         let range = history.range(10, MAX_RANGE_SLOTS.saturating_add(1_000));
         assert_eq!(range.rows.len(), MAX_RANGE_SLOTS);
@@ -392,9 +310,7 @@ mod tests {
 
     #[test]
     fn test_a_range_carries_the_columns_in_the_order_the_frontend_reads_them() {
-        // The one place the wire order is pinned. It is positional, so the two
-        // sides only agree by being changed together, and a silent reordering
-        // would put fees in the compute column.
+        // The one place the wire order is pinned.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 9_500, 8_752));
         history.record_time(10, 1_756_000_000_123);
@@ -417,9 +333,8 @@ mod tests {
 
     #[test]
     fn test_tips_of_nought_are_not_tips_that_were_never_read() {
-        // The whole reason for a third flag bit. A turn the searchers passed by
-        // is worth seeing; a turn measured on a bank whose parent had gone is
-        // not the same thing and must not draw the same.
+        // The reason for a third flag bit: a turn the searchers passed by and a turn
+        // never measured must not draw the same.
         let mut history = SlotHistory::new(64);
 
         let mut measured = with_block(20, 100, 10);
@@ -440,9 +355,7 @@ mod tests {
 
     #[test]
     fn test_the_two_kinds_of_fee_are_kept_apart() {
-        // The packed row carried only the total until the schedule page started
-        // drawing them separately. Base is the subtraction, so the pair has to
-        // survive the trip or the split appears live and vanishes in history.
+        // Base is the subtraction, so the pair has to survive the trip.
         let mut history = SlotHistory::new(64);
         let mut block = with_block(30, 100, 10);
         if let Some(detail) = block.block.as_mut() {

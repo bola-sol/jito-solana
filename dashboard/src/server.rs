@@ -1,10 +1,6 @@
-//! One port serving two things: the embedded single-page app over HTTP, and
-//! the state feed over a websocket at `/websocket`.
-//!
-//! Both share a listener so that turning the dashboard on stays a single flag.
-//! Routing works by peeking at the request head. Peeking leaves the bytes in
-//! the socket, so a websocket connection still reaches soketto's handshake with
-//! nothing consumed.
+//! One port serving the embedded single-page app over HTTP and the state feed
+//! over a websocket at `/websocket`. Routing peeks at the request head, which
+//! leaves the bytes in the socket for soketto's handshake.
 
 use {
     crate::{
@@ -46,47 +42,23 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// bug or an attempt to make the server allocate, so the connection is closed.
 const MAX_CLIENT_MESSAGE: usize = 4096;
 
-/// How long one send may block before the client is treated as gone.
-///
-/// A viewer that stops reading — a closed laptop, a dropped link, or a caller
-/// that never meant to read — leaves the server parked on a write while still
-/// holding one of the limited connection slots. TCP alone takes minutes to
-/// notice, and sixty-four such connections deny the dashboard to real viewers.
-///
-/// This is deliberately not an inbound-idle timeout: the client never sends
-/// anything, so idleness on that side is what a healthy viewer looks like.
+/// How long one send may block before the client is treated as gone. A viewer
+/// that stops reading holds a connection slot until TCP notices, which takes
+/// minutes. Not an inbound-idle timeout: a healthy viewer never sends.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Websocket clients served at once.
-///
-/// Only websockets are capped. They are the long-lived resource: each holds a
-/// task, a socket and a broadcast receiver for as long as the viewer keeps the
-/// page open, and nothing else bounds how many a caller may open. HTTP requests
-/// are short and deliberately uncapped, since refusing those would stop the
-/// page loading at all under exactly the conditions where a cap matters.
-///
-/// The dashboard is meant for a handful of operators, so this is generous
-/// enough that a legitimate viewer with several tabs never notices it.
+/// Websocket clients served at once. They are the long-lived resource;
+/// generous enough that several tabs never notice it.
 const MAX_WEBSOCKET_CLIENTS: usize = 64;
 
-/// Connections being served at once, websockets included.
-///
-/// Every request in flight holds a copy of whatever it is answering with, and
-/// the largest asset is the bundle at a couple of hundred kilobytes. Serving
-/// is otherwise cheap, so what needs bounding is not the rate but how many
-/// copies can exist at once: unbounded, a request flood is a memory
-/// amplifier, in a process where being killed for it takes the validator too.
-///
-/// Loading the page takes four requests and a browser opens few connections
-/// for them, so this is two orders of magnitude above what a room full of
-/// operators would use. It is a ceiling, not a throttle.
+/// Connections served at once, websockets included. Every request in flight
+/// holds a copy of what it answers with, so unbounded a request flood is a
+/// memory amplifier in a process whose death takes the validator too. A
+/// ceiling, not a throttle.
 const MAX_CONNECTIONS: usize = 256;
 
-/// The caps a connection has to pass.
-///
-/// Named rather than two positional `Arc<Semaphore>` parameters: they are the
-/// same type and would sit next to each other, so transposing them would
-/// compile and quietly swap a limit of 256 with a limit of 64.
+/// The caps a connection has to pass. Named so the two semaphores cannot be
+/// transposed.
 #[derive(Clone)]
 struct Limits {
     connections: Arc<Semaphore>,
@@ -177,18 +149,15 @@ async fn handle(
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "request head"))??;
 
-    // Taken after the head is read, not before, so that a refusal can drain
-    // and answer properly rather than closing on unread bytes and sending a
-    // reset. The 8KB peek that costs is the cheap half; what this bounds is
-    // the response copy that follows.
+    // Taken after the head is read, so a refusal can drain and answer rather than
+    // closing on unread bytes and sending a reset.
     let Ok(_connection) = limits.connections.try_acquire_owned() else {
         log::info!("dashboard: refusing a connection, {MAX_CONNECTIONS} already being served");
         return refuse(socket, head_len, 503, b"too many dashboard connections").await;
     };
 
-    // Checked before anything is served, so a rebound name cannot reach the
-    // page either. Serving the document to an attacker's origin would make
-    // their page same-origin with the dashboard and undo the origin check.
+    // Checked before anything is served: a page served to a rebound name would be
+    // same-origin with the dashboard.
     if !host_is_allowed(&head, allowed_hosts) {
         log::debug!(
             "dashboard: refusing host {:?}; add it with --dashboard-allowed-host",
@@ -205,9 +174,7 @@ async fn handle(
             );
             return refuse(socket, head_len, 403, b"origin not allowed").await;
         }
-        // Held for the lifetime of the websocket below, and released when this
-        // function returns. A websocket holds a connection permit too: it is
-        // one of the connections being served.
+        // Held for the lifetime of the websocket.
         let Ok(_permit) = limits.websockets.try_acquire_owned() else {
             log::info!(
                 "dashboard: refusing a websocket, {MAX_WEBSOCKET_CLIENTS} clients already \
@@ -218,10 +185,8 @@ async fn handle(
         let path = request_path(&head).to_string();
         serve_websocket(socket, publisher, history, info, epochs, &path).await
     } else {
-        // Consume the bytes that were only peeked at. Closing a socket that
-        // still has unread data makes the kernel send RST rather than FIN,
-        // which discards anything left in the send buffer and truncates the
-        // response. Small files survive that; a large asset does not.
+        // Consume the peeked bytes. Closing with unread data makes the kernel send
+        // RST rather than FIN, which truncates a large response.
         let mut consumed = vec![0u8; head_len];
         socket.read_exact(&mut consumed).await?;
         serve_http(socket, &head)
@@ -230,10 +195,8 @@ async fn handle(
     }
 }
 
-/// Turns a request away with a status rather than a silent close.
-///
-/// Every refusal happens before any upgrade, so the caller is still speaking
-/// HTTP and gets something it can act on.
+/// Turns a request away with a status rather than a silent close. Every
+/// refusal happens before any upgrade, so the caller is still speaking HTTP.
 async fn refuse(
     mut socket: TcpStream,
     head_len: usize,
@@ -252,9 +215,9 @@ async fn refuse(
     Ok(())
 }
 
-/// Reads the request head without consuming it, so that a websocket connection
-/// can still be handed to soketto for its own handshake. Returns the head and
-/// its exact length in bytes, which the HTTP path needs in order to drain it.
+/// Reads the request head without consuming it, so a websocket connection can
+/// still be handed to soketto. Returns the head and its exact length, which the
+/// HTTP path drains.
 async fn peek_request_head(socket: &TcpStream) -> io::Result<(String, usize)> {
     let mut buffer = vec![0u8; MAX_REQUEST_HEAD];
     loop {
@@ -285,10 +248,7 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// The host part of an authority or origin, without scheme, port or brackets.
-///
-/// Ports are dropped deliberately. A dashboard reached on one port and proxied
-/// on another is the same machine, and refusing that would break more real
-/// deployments than the distinction protects.
+/// Ports are dropped: a dashboard proxied on another port is the same machine.
 fn host_of(value: &str) -> &str {
     let value = value
         .rsplit_once("//")
@@ -301,21 +261,16 @@ fn host_of(value: &str) -> &str {
     value.split(':').next().unwrap_or(value)
 }
 
-/// Whether the request names a host this dashboard answers to.
-///
-/// A request with no `Host` at all is rejected: every HTTP/1.1 client sends
-/// one, so its absence says more about the caller than about the deployment.
+/// Whether the request names a host this dashboard answers to. No `Host` at
+/// all is rejected; every HTTP/1.1 client sends one.
 fn host_is_allowed(head: &str, allowed: &[String]) -> bool {
     let Some(host) = header(head, "host") else {
         return false;
     };
     let host = host_of(host);
 
-    // An address literal is always accepted, and costs nothing to accept.
-    // Rebinding works by resolving a name the attacker owns to this machine,
-    // so the browser sends that name — never a bare address. Requiring one to
-    // be configured would only mean an operator testing on an IP is turned
-    // away by a defence that was never protecting them.
+    // An address literal is always accepted. Rebinding works by resolving a name
+    // the attacker owns, so the browser sends that name, never a bare address.
     if host.parse::<IpAddr>().is_ok() {
         return true;
     }
@@ -326,15 +281,9 @@ fn host_is_allowed(head: &str, allowed: &[String]) -> bool {
 }
 
 /// Whether a websocket upgrade comes from a page served by this dashboard.
-///
 /// Websockets are exempt from the same-origin policy, so without this any page
-/// a browser visits could open a socket here and read the whole feed —
-/// including against a dashboard bound to loopback, which is otherwise assumed
-/// to be private.
-///
-/// A missing `Origin` is allowed: browsers always send one on a websocket
-/// handshake, so its absence means the caller is not a browser and is not
-/// acting on some other page's behalf. A literal `null`, which is what a
+/// a browser visits could read the feed, loopback included. A missing `Origin`
+/// means the caller is not a browser and is allowed; a literal `null`, which a
 /// sandboxed frame sends, is refused.
 fn origin_is_allowed(head: &str) -> bool {
     let Some(origin) = header(head, "origin") else {
@@ -418,26 +367,12 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
         .map(|(_, content_type, body)| (*content_type, *body))
 }
 
-/// Sent with every response.
-///
-/// `img-src` is deliberately open to any https host: validator icons come
-/// from URLs their operators publish on chain, and there is no list to allow.
-/// What it does buy is that a plaintext icon cannot be fetched, which an https
-/// deployment already enforces as mixed content and a loopback one does not.
-///
-/// Scripts and styles permit inline because index.html carries both: a theme
-/// stamp that has to run before the first paint, and the splash styling that
-/// paints with it. Moving either to its own file would trade a round trip for
-/// the protection, and there is no dynamic HTML here for it to guard — every
-/// value the client renders goes through React, which escapes. The directives
-/// that cost nothing are set strictly.
-///
-/// `connect-src 'self'` covers the websocket: for an https page, `'self'`
-/// matches wss on the same host too.
-///
-/// Written one directive to a line. A single long literal has to be broken to
-/// fit, and where it breaks depends on which rustfmt features are enabled, so
-/// this form is also the one that formats the same everywhere.
+/// Sent with every response. `img-src` is open to any https host because
+/// validator icons are URLs operators publish on chain; plaintext is refused.
+/// Scripts and styles permit inline because index.html carries the theme stamp
+/// and splash styling, and every value the client renders goes through React.
+/// `connect-src 'self'` covers the websocket. One directive per line so it
+/// formats the same everywhere.
 const SECURITY_HEADERS: &str = concat!(
     "content-security-policy:",
     " default-src 'none';",
@@ -479,11 +414,8 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
 
 // ---- websocket ----------------------------------------------------------
 
-/// Fails the connection if a send cannot complete promptly.
-///
-/// Cancelling a partially written frame leaves the stream in an indeterminate
-/// state, so every caller treats a timeout as fatal and drops the connection
-/// rather than sending anything further over it.
+/// Fails the connection if a send cannot complete promptly. Cancelling a
+/// partly written frame leaves the stream indeterminate, so a timeout is fatal.
 macro_rules! send_or_timeout {
     ($expr:expr) => {
         timeout(WRITE_TIMEOUT, $expr)
@@ -523,9 +455,8 @@ async fn serve_websocket(
     let mut updates = publisher.subscribe();
     let snapshot = publisher.snapshot();
 
-    // One limit, both directions. It has to clear the largest message the
-    // server sends, and every byte above that is buffering a caller can make
-    // the validator do.
+    // One limit, both directions. It has to clear the largest message the server
+    // sends, and every byte above that is buffering a caller can cause.
     let mut builder = server.into_builder();
     builder.set_max_message_size(MAX_MESSAGE);
     builder.set_max_frame_size(MAX_MESSAGE);
@@ -537,9 +468,8 @@ async fn serve_websocket(
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "snapshot send"))?;
         if let Err(err) = sent {
-            // Losing the snapshot leaves the client with a blank dashboard, so
-            // report exactly where it stopped rather than letting it look like
-            // missing data.
+            // Losing the snapshot leaves the client blank, so say exactly where it
+            // stopped.
             log::warn!(
                 "dashboard: snapshot send failed on message {} of {} ({} bytes, {total} bytes \
                  total, starts {:.120}): {err}",
@@ -577,18 +507,14 @@ async fn serve_websocket(
                     update = updates.recv() => match update {
                         Ok(message) => {
                             send_or_timeout!(sender.send_text(&*message));
-                            // Drain whatever else is already queued before
-                            // flushing, so a burst costs one write, not one per
-                            // message.
+                            // Drain whatever else is queued before flushing, so a burst costs one write.
                             loop {
                                 match updates.try_recv() {
                                     Ok(message) => {
                                         send_or_timeout!(sender.send_text(&*message))
                                     }
                                     Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
-                                    // A client that cannot keep up gets
-                                    // dropped. The server never slows down to
-                                    // wait for one.
+                                    // A client that cannot keep up is dropped rather than waited for.
                                     Err(TryRecvError::Lagged(_)) => {
                                         return Err(ConnectionError::Lagged);
                                     }
@@ -616,14 +542,10 @@ async fn serve_websocket(
     }
 }
 
-/// Bounds and flattens a caller-supplied string before it reaches the log.
-///
-/// Request topics and keys, and the `Host` and `Origin` headers, are whatever
-/// the caller chose to send. A log is a shared artefact that operators read and
-/// tools parse: a newline forges a second entry, an escape sequence drives the
-/// terminal of whoever tails the file, and a right-to-left override reverses
-/// the text around it. Anything outside printable ASCII becomes `?`, and the
-/// result is short, so an 8 KB header cannot write an 8 KB line.
+/// Bounds and flattens a caller-supplied string before it reaches the log. A
+/// newline forges an entry, an escape sequence drives a terminal, a
+/// right-to-left override reverses text, and an 8 KB header must not write an
+/// 8 KB line.
 fn for_logging(value: &str) -> String {
     const LIMIT: usize = 48;
     let mut out: String = value
@@ -669,16 +591,9 @@ fn respond(
     match (request.topic.as_str(), request.key.as_str()) {
         ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
         ("summary", "displays") => {
-            // Asked for rather than published. It is a hundred and fifty
-            // kilobytes on a cluster this size, which is more than every other
-            // retained message together, and most of a session never needs it:
-            // a name is only wanted for a leader outside the window the peer
-            // table covers, which is a page that has searched into history.
-            //
-            // The whole table rather than the leaders of one epoch. Nothing
-            // here knows which epoch is being asked about, the cache is keyed
-            // by identity and not by schedule, and a validator's name does not
-            // change with the epoch anyway.
+            // Asked for rather than published: a hundred and fifty kilobytes on a cluster
+            // this size, wanted only by a page that has searched into history. The whole
+            // table rather than one epoch's leaders, since the cache is keyed by identity.
             let displays = match info.read() {
                 Ok(info) => info.displays(),
                 Err(_) => return Some(encode_with_id("summary", "displays", id, &())),
@@ -694,11 +609,9 @@ fn respond(
                     &serde_json::json!({ "error": "query needs an epoch" }),
                 ));
             };
-            // Only this epoch and the one before it are held. Anything else is
-            // answered with nothing rather than with an error: a page reading
-            // back through the history asks for whatever epoch its oldest slot
-            // fell in, and a validator that has not been up that long simply
-            // has no schedule for it to find.
+            // Only this epoch and the one before it are held. Anything else is answered
+            // with nothing rather than an error: a validator that has not been up that
+            // long has no schedule for it.
             let found = match epochs.read() {
                 Ok(epochs) => epochs
                     .iter()
@@ -709,9 +622,8 @@ fn respond(
             Some(encode_with_id("epoch", "query", id, &found))
         }
         ("slot", "range") => {
-            // Malformed parameters are answered rather than dropped, for the
-            // same reason an unknown request is: a client left waiting on an id
-            // that never comes back has no way to tell that from a slow one.
+            // Malformed parameters are answered rather than dropped: a client waiting on
+            // an id cannot tell silence from slowness.
             let Ok(params) = serde_json::from_value::<SlotRangeParams>(request.params) else {
                 return Some(encode_with_id(
                     "slot",
@@ -813,10 +725,8 @@ mod tests {
 
     #[test]
     fn test_an_epoch_older_than_the_validator_kept_is_answered_with_nothing() {
-        // Not an error. A page reads back through the history and asks about
-        // whichever epoch its oldest slot fell in; a validator that has not been
-        // up that long simply has no schedule for it, and the page draws those
-        // turns without a leader rather than failing.
+        // Not an error. A validator that has not been up that long has no schedule
+        // for it, and the page draws those turns without a leader.
         let epochs = RwLock::new(vec![epoch_record(842)]);
         let reply = respond(
             br#"{"topic":"epoch","key":"query","id":12,"params":{"epoch":700}}"#,
@@ -1204,10 +1114,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_connection_cap_refuses_rather_than_serving() {
-        // The cap exists so that a request flood cannot make the validator hold
-        // one copy of the bundle per request in flight. A refusal has to arrive
-        // as a complete response, not as a reset, or the caller cannot tell an
-        // overloaded dashboard from a broken one.
+        // A refusal has to arrive as a complete response, not a reset, or the caller
+        // cannot tell an overloaded dashboard from a broken one.
         let reply = request_with_no_connections_left(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
         assert!(
             reply.starts_with("HTTP/1.1 503 Service Unavailable"),
@@ -1240,11 +1148,8 @@ mod tests {
 
     #[test]
     fn test_every_status_the_server_sends_has_its_reason_phrase() {
-        // Every one of these is reachable: 403 from the origin check, 421 from
-        // the host check, 503 from either cap, 405 from a non-read method, 404
-        // from a missing asset with no index to fall back on. A status paired
-        // with the wrong phrase is the kind of thing a proxy logs and nobody
-        // reads until it matters.
+        // Every one of these is reachable. A status with the wrong phrase is what a
+        // proxy logs and nobody reads until it matters.
         assert_eq!(status_line(200, false), "HTTP/1.1 200 OK");
         assert_eq!(status_line(403, false), "HTTP/1.1 403 Forbidden");
         assert_eq!(status_line(404, false), "HTTP/1.1 404 Not Found");
@@ -1255,18 +1160,14 @@ mod tests {
 
     #[test]
     fn test_an_unlisted_status_still_produces_a_usable_line() {
-        // The fallback arm. Sending a status with someone else's phrase would
-        // be worse than a bare number, so this is worth knowing rather than
-        // discovering.
+        // The fallback arm.
         assert_eq!(status_line(418, false), "HTTP/1.1 418 OK");
     }
 
     #[test]
     fn test_hashed_assets_are_cached_forever_and_the_document_never_is() {
-        // Asset filenames carry a content hash, so a stale one cannot be served
-        // under a name that means something else. index.html has no hash, and
-        // caching it would leave a redeploy invisible until the browser
-        // happened to revalidate.
+        // Asset filenames carry a content hash; index.html does not, and caching it
+        // would hide a redeploy.
         assert!(
             String::from_utf8(response(200, "text/javascript", b"x", true))
                 .unwrap()
@@ -1281,9 +1182,8 @@ mod tests {
 
     #[test]
     fn test_the_content_length_counts_the_body_that_follows() {
-        // A length that disagrees with the body leaves the client waiting for
-        // bytes that never come, or reading the next response as this one's
-        // tail.
+        // A length that disagrees with the body leaves the client waiting, or reading
+        // the next response as this one's tail.
         for body in [b"".as_slice(), b"x".as_slice(), b"hello world".as_slice()] {
             let out = response(200, "text/plain", body, false);
             let text = String::from_utf8(out.clone()).unwrap();
@@ -1307,9 +1207,7 @@ mod tests {
 
     #[test]
     fn test_policy_still_permits_validator_icons() {
-        // Icons are third-party by nature: operators publish the URLs on chain,
-        // so there is no list to allow and blocking them would empty the
-        // sidebar. Only plaintext is refused.
+        // Icons are third-party by nature; only plaintext is refused.
         assert!(SECURITY_HEADERS.contains("img-src 'self' data: https:"));
         assert!(!SECURITY_HEADERS.contains("img-src 'self'\r\n"));
     }
@@ -1387,10 +1285,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_get_over_a_socket_serves_the_page() {
-        // The whole HTTP path end to end: peek the head, drain what was
-        // peeked, look the asset up, write it, shut down cleanly. The drain is
-        // the part that matters — closing on unread bytes makes the kernel send
-        // a reset, which discards the response that was just written.
+        // The whole HTTP path end to end. The drain is the part that matters: closing
+        // on unread bytes sends a reset that discards the response.
         let reply = request_with_hosts(
             b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
             vec!["localhost".to_string()],
@@ -1472,18 +1368,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_value_changing_reaches_a_connected_client() {
-        // The other half of the feed. The snapshot catches a client up; this is
-        // what keeps it current, and nothing had exercised the update arm of
-        // the select loop — so a server that only ever sent the snapshot would
-        // have passed every test here.
+        // The update arm of the select loop, which a server that only ever sent the
+        // snapshot would have passed every other test without.
         let publisher = Arc::new(Publisher::new());
         publisher.publish("summary", "cluster", &"testnet");
         let (addr, server) = serve_one(publisher.clone()).await;
         let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
 
-        // Reading the snapshot first is what orders this: the server subscribes
-        // before it sends, so a frame in hand proves the subscription exists
-        // and the publish below cannot land in the gap.
+        // Reading the snapshot first proves the subscription exists before the
+        // publish below.
         let mut first = Vec::new();
         receiver.receive_data(&mut first).await.unwrap();
 
@@ -1503,8 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn test_a_client_request_is_answered_on_the_same_socket() {
         // Client frames are polled ahead of the update stream, so a request is
-        // answered even while values are moving. One that went unanswered would
-        // leave the caller waiting on an id that never comes back.
+        // answered even while values are moving.
         let publisher = Arc::new(Publisher::new());
         publisher.publish("summary", "cluster", &"testnet");
         let (addr, server) = serve_one(publisher.clone()).await;
@@ -1533,10 +1425,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_an_oversized_client_message_ends_the_connection() {
-        // The connection-level limit has to clear the largest message the
-        // server sends, so the much smaller bound on what a client may send is
-        // applied by hand after the frame arrives. Without it a caller could
-        // make the validator buffer a megabyte per connection.
+        // The connection-level limit has to clear the largest server message, so the
+        // client bound is applied by hand after the frame arrives.
         let publisher = Arc::new(Publisher::new());
         publisher.publish("summary", "cluster", &"testnet");
         let (addr, server) = serve_one(publisher.clone()).await;
@@ -1559,10 +1449,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_websocket_client_is_sent_the_retained_snapshot() {
-        // The reason the feed works at all: a client connecting at any moment
-        // is caught up in one shot rather than waiting for each value to change
-        // again. Driven with a real soketto client so the handshake, the
-        // per-message flush and the frame encoding are all exercised.
+        // A client connecting at any moment is caught up in one shot. Driven with a
+        // real soketto client so the handshake and framing are exercised.
         let publisher = Arc::new(Publisher::new());
         publisher.publish("summary", "cluster", &"testnet");
         publisher.publish("summary", "root_slot", &7u64);

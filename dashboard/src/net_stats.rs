@@ -1,16 +1,8 @@
-//! Host network counters, read from `/proc/net/dev`.
-//!
-//! Agave already depends on this file: `SystemMonitorService` reads it, and
-//! `verify_net_stats_access` refuses to let the validator start when it cannot.
-//! So a running validator has already proved it can be read, with one exception
-//! worth handling: an operator who hit that check and passed
-//! `--no-os-network-stats-reporting` to get past it. In that case the read fails
-//! here too, and the dashboard reports nothing rather than publishing zeros.
-//!
-//! These are interface totals for the whole host, not the validator's own
-//! traffic. Nothing in Linux attributes bytes to a process without eBPF or
-//! netfilter accounting, so on a box running other network services the figures
-//! include those too.
+//! Host network counters from `/proc/net/dev`. `SystemMonitorService` reads
+//! the same file and refuses to start without it, unless the operator passed
+//! `--no-os-network-stats-reporting`, in which case this reports nothing
+//! rather than zeros. These are host-wide interface totals, not the
+//! validator's own traffic.
 
 use std::io;
 
@@ -35,10 +27,8 @@ pub fn read() -> io::Result<NetCounters> {
     ))
 }
 
-/// Sums every interface except loopback.
-///
-/// Each line is `name: rx_bytes rx_packets ... tx_bytes tx_packets ...`, with
-/// receive counters first and transmit counters starting at the ninth field.
+/// Sums every interface except loopback. Receive counters come first on each
+/// line and transmit counters start at the ninth field.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse(contents: &str) -> Option<NetCounters> {
     let mut totals = NetCounters {

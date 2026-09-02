@@ -1,59 +1,73 @@
-//! Publishing the validator's boot phase.
-//!
-//! Shared by the boot thread, which runs before the validator is assembled,
-//! and by the collector, which takes over once it is. Keeping one
-//! implementation means the handover between them does not change what the
-//! client sees.
+//! Publishing the validator's boot phase. Shared by the boot thread and the
+//! collector, so the handover between them is invisible to the client.
 
 use {
-    crate::{
-        context::{PhaseTiming, StartupProgress},
-        proto::{Debounced, Publisher, TOPIC_SUMMARY},
-    },
+    crate::proto::{Debounced, Publisher, TOPIC_SUMMARY},
+    serde::Serialize,
     solana_clock::Slot,
+    solana_core::validator::ValidatorStartProgress,
     std::time::{Duration, Instant},
 };
 
 pub const KEY_STARTUP_PROGRESS: &str = "startup_progress";
 
+/// What the client is sent about the boot sequence.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StartupProgress {
+    /// Machine-readable phase name, e.g. `"loading_ledger"`.
+    pub phase: String,
+    pub detail: Option<String>,
+    pub running: bool,
+    /// How far ledger replay has got, from 0 to 1, measured from where it
+    /// began.
+    pub fraction: Option<f64>,
+    /// Share of the cluster's stake seen in gossip while waiting for a
+    /// supermajority, from 0 to 1.
+    pub stake_percent: Option<f64>,
+    /// How long the validator has been in this phase, and how long each phase
+    /// before it took, since most phases cannot say how far along they are.
+    pub phase_elapsed_nanos: u64,
+    pub phases_taken: Vec<PhaseTiming>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PhaseTiming {
+    pub phase: String,
+    pub elapsed_nanos: u64,
+}
+
 #[derive(Default)]
 pub struct StartupPublisher {
     debounce: Debounced<StartupProgress>,
-    /// The first replay slot seen. Progress is measured from here: the
-    /// validator reports absolute slots, and replay starts from whatever
-    /// snapshot was loaded rather than from zero, so `slot / max_slot` would
-    /// sit at a useless 99-point-something percent throughout.
+    /// The first replay slot seen. Replay starts from a snapshot rather than
+    /// from zero, so `slot / max_slot` would sit near 100% throughout.
     replay_origin: Option<Slot>,
-
-    /// The phase currently being timed and when it began. The validator says
-    /// which phase it is in and nothing about when it got there, so the change
-    /// is watched for here.
+    /// The phase being timed and when it began. The validator says which
+    /// phase it is in and nothing about when it got there.
     current: Option<(String, Instant)>,
-    /// How long each finished phase took, in the order they finished.
-    ///
-    /// Accumulated rather than appended if a phase comes round again, which
-    /// `loading_ledger` does: the validator enters it once to load a snapshot
-    /// and again if it finds the blockstore still has slots to process. Two
-    /// rows for one phase would read as two different steps.
+    /// How long each finished phase took. Accumulated if a phase comes round
+    /// again, which `loading_ledger` does.
     taken: Vec<PhaseTiming>,
 }
 
 impl StartupPublisher {
-    pub fn publish(&mut self, publisher: &Publisher, mut progress: StartupProgress) {
-        progress.fraction = self.fraction(progress.replay_slots);
-        progress.phase_elapsed_nanos = self.elapsed(&progress.phase, Instant::now());
-        progress.phases_taken = self.taken.clone();
+    pub fn publish(&mut self, publisher: &Publisher, progress: ValidatorStartProgress) {
+        let phase = describe(progress);
+        let progress = StartupProgress {
+            phase: phase.name.to_string(),
+            detail: phase.detail,
+            running: matches!(progress, ValidatorStartProgress::Running),
+            fraction: self.fraction(phase.replay_slots),
+            stake_percent: phase.stake_percent,
+            phase_elapsed_nanos: self.elapsed(phase.name, Instant::now()),
+            phases_taken: self.taken.clone(),
+        };
         self.debounce
             .publish(publisher, TOPIC_SUMMARY, KEY_STARTUP_PROGRESS, progress);
     }
 
-    /// Time in the current phase, rounded down to whole seconds.
-    ///
-    /// Rounded because this is sent through a debounce that suppresses
-    /// unchanged values, and the boot thread polls four times a second. At
-    /// nanosecond resolution every poll would differ and the message would go
-    /// out four times a second for the length of a boot; at second resolution
-    /// it goes out when there is something new to say.
+    /// Time in the current phase, rounded down to whole seconds so that the
+    /// debounce does not send four messages a second for the length of a boot.
     fn elapsed(&mut self, phase: &str, now: Instant) -> u64 {
         match &mut self.current {
             Some((current, since)) if current == phase => whole_seconds(now, *since),
@@ -85,15 +99,64 @@ impl StartupPublisher {
     fn fraction(&mut self, slots: Option<(Slot, Slot)>) -> Option<f64> {
         let (current, target) = slots?;
         let origin = *self.replay_origin.get_or_insert(current);
-        // Replay can be handed a target it has already passed, and the origin
-        // is only an estimate of where it began. Neither should produce a
-        // meter that runs backwards or past the end.
+        // Replay can be handed a target it has already passed, and the origin is
+        // only an estimate; neither may run the meter backwards or past the end.
         let span = target.checked_sub(origin)?;
         if span == 0 {
             return Some(1.0);
         }
         let done = current.saturating_sub(origin).min(span);
         Some(done as f64 / span as f64)
+    }
+}
+
+/// What a phase reports about itself, as far as it reports anything.
+struct Phase {
+    name: &'static str,
+    detail: Option<String>,
+    replay_slots: Option<(Slot, Slot)>,
+    stake_percent: Option<f64>,
+}
+
+fn describe(progress: ValidatorStartProgress) -> Phase {
+    let (name, detail, replay_slots, stake_percent) = match progress {
+        ValidatorStartProgress::Initializing => ("initializing", None, None, None),
+        ValidatorStartProgress::SearchingForRpcService => {
+            ("searching_for_rpc_service", None, None, None)
+        }
+        ValidatorStartProgress::DownloadingSnapshot { slot, rpc_addr } => (
+            "downloading_snapshot",
+            Some(format!("slot {slot} from {rpc_addr}")),
+            None,
+            None,
+        ),
+        ValidatorStartProgress::CleaningBlockStore => ("cleaning_blockstore", None, None, None),
+        ValidatorStartProgress::CleaningAccounts => ("cleaning_accounts", None, None, None),
+        ValidatorStartProgress::LoadingLedger => ("loading_ledger", None, None, None),
+        ValidatorStartProgress::ProcessingLedger { slot, max_slot } => (
+            "processing_ledger",
+            Some(format!("slot {slot} of {max_slot}")),
+            Some((slot, max_slot)),
+            None,
+        ),
+        ValidatorStartProgress::StartingServices => ("starting_services", None, None, None),
+        ValidatorStartProgress::Halted => ("halted", None, None, None),
+        ValidatorStartProgress::WaitingForSupermajority {
+            slot,
+            gossip_stake_percent,
+        } => (
+            "waiting_for_supermajority",
+            Some(format!("slot {slot}")),
+            None,
+            Some(gossip_stake_percent as f64 / 100.0),
+        ),
+        ValidatorStartProgress::Running => ("running", None, None, None),
+    };
+    Phase {
+        name,
+        detail,
+        replay_slots,
+        stake_percent,
     }
 }
 
@@ -106,17 +169,8 @@ fn whole_seconds(now: Instant, since: Instant) -> u64 {
 mod tests {
     use super::*;
 
-    fn progress(slots: Option<(Slot, Slot)>) -> StartupProgress {
-        StartupProgress {
-            phase: "processing_ledger".to_string(),
-            detail: None,
-            running: false,
-            fraction: None,
-            replay_slots: slots,
-            stake_percent: None,
-            phase_elapsed_nanos: 0,
-            phases_taken: Vec::new(),
-        }
+    fn replaying(slot: Slot, max_slot: Slot) -> ValidatorStartProgress {
+        ValidatorStartProgress::ProcessingLedger { slot, max_slot }
     }
 
     #[test]
@@ -185,9 +239,8 @@ mod tests {
 
     #[test]
     fn test_a_phase_entered_twice_adds_to_its_own_total() {
-        // `loading_ledger` is entered once to load a snapshot and again if the
-        // blockstore still has slots to process. Two rows for one phase would
-        // read as two different steps of the boot.
+        // `loading_ledger` is entered once for the snapshot and again if the
+        // blockstore has slots to process.
         let mut publisher = StartupPublisher::default();
         let base = Instant::now();
         publisher.elapsed("loading_ledger", base);
@@ -220,8 +273,8 @@ mod tests {
     fn test_publishing_fills_in_the_fraction() {
         let publisher = Publisher::new();
         let mut startup = StartupPublisher::default();
-        startup.publish(&publisher, progress(Some((100, 200))));
-        startup.publish(&publisher, progress(Some((150, 200))));
+        startup.publish(&publisher, replaying(100, 200));
+        startup.publish(&publisher, replaying(150, 200));
 
         let snapshot = publisher.snapshot();
         assert_eq!(
@@ -237,10 +290,32 @@ mod tests {
     }
 
     #[test]
-    fn test_internal_slots_are_not_sent_to_clients() {
-        let publisher = Publisher::new();
-        let mut startup = StartupPublisher::default();
-        startup.publish(&publisher, progress(Some((100, 200))));
-        assert!(!publisher.snapshot()[0].contains("replay_slots"));
+    fn test_every_phase_has_a_name_and_running_is_the_only_running_one() {
+        let phases = [
+            ValidatorStartProgress::Initializing,
+            ValidatorStartProgress::SearchingForRpcService,
+            ValidatorStartProgress::CleaningBlockStore,
+            ValidatorStartProgress::CleaningAccounts,
+            ValidatorStartProgress::LoadingLedger,
+            replaying(1, 2),
+            ValidatorStartProgress::StartingServices,
+            ValidatorStartProgress::Halted,
+            ValidatorStartProgress::WaitingForSupermajority {
+                slot: 5,
+                gossip_stake_percent: 50,
+            },
+            ValidatorStartProgress::Running,
+        ];
+        for phase in phases {
+            let publisher = Publisher::new();
+            StartupPublisher::default().publish(&publisher, phase);
+            let sent = publisher.snapshot().pop().unwrap();
+            assert!(!sent.contains(r#""phase":"""#), "{sent}");
+            assert_eq!(
+                sent.contains(r#""running":true"#),
+                phase == ValidatorStartProgress::Running,
+                "{sent}"
+            );
+        }
     }
 }

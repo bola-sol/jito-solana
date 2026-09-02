@@ -29,39 +29,23 @@ pub enum SlotLevel {
 pub struct SlotEntry {
     pub slot: Slot,
     pub level: SlotLevel,
-    /// True when this validator was the scheduled leader.
-    ///
-    /// The leader itself is not here. It was three strings on every slot, and
-    /// across a window of them the same key, name and icon repeated for all
-    /// four slots of a turn: about a hundred bytes a slot, and a quarter of
-    /// what a client was sent on connect. The key now comes from the epoch's
-    /// turn array and the name and icon from the peer table, each holding one
-    /// copy per leader instead of one per slot.
-    ///
-    /// `mine` stays because it cannot be worked out from those without the
-    /// epoch arrays, which arrive on their own message and may not have yet.
+    /// True when this validator was the scheduled leader. The leader itself comes
+    /// from the epoch's turn array and the peer table, one copy per leader; `mine`
+    /// stays because those arrive on their own message.
     pub mine: bool,
     /// What replay found in the block. `None` until the slot freezes, and for
     /// a slot that was skipped or never replayed.
     pub block: Option<BlockDetail>,
     /// Wall-clock duration from the previous slot completing, in nanoseconds.
-    ///
-    /// Outside [`BlockDetail`] because it is measured from shred arrival rather
-    /// than read off the bank, and so exists for slots that have no block.
+    /// Outside [`BlockDetail`] because it is measured from shred arrival and exists
+    /// for slots with no block.
     pub duration_nanos: Option<u64>,
 }
 
-/// What one block contained, read off its bank at the moment it froze.
-///
-/// Every field is per block. Some of the bank's counters accumulate along the
-/// fork and some are reset for each bank, and which is which is not guessable
-/// from the names, so the caller differences the inherited ones before they
-/// reach here.
-///
-/// Grouped rather than spread across [`SlotEntry`] because they are all read at
-/// the same instant from the same bank, and because a client is sent five
-/// hundred of these at once: one absent object costs less on the wire than
-/// eight absent fields.
+/// What one block contained, read off its bank as it froze. Every field is per
+/// block: the caller differences the bank counters that accumulate along the
+/// fork before they reach here. Grouped so an absent block is one null rather
+/// than eight.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlockDetail {
     /// Transactions in this block. Differenced against the parent.
@@ -77,31 +61,16 @@ pub struct BlockDetail {
     /// against.
     pub block_cost: u64,
     pub block_cost_limit: u64,
-    /// The most compute any one account may be charged in a block.
-    ///
-    /// Taken from the bank rather than held as a constant here, because it is a
-    /// consensus limit that moves with feature activation. A block can be far
-    /// short of the block limit and still be unable to take another transaction
-    /// touching an account that has reached this one.
+    /// The most compute any one account may be charged in a block. From the bank,
+    /// since it is a consensus limit that moves with feature activation.
     pub account_cost_limit: u64,
-    /// Fees this block collected, in lamports. Held per bank rather than
-    /// accumulated along the fork, so neither is differenced.
-    ///
-    /// `total_fees` is base and priority together: the bank's
-    /// `total_transaction_fee` adds the two despite its name, so taking it as
-    /// the base fee alone would double-count the priority half.
+    /// Fees this block collected, in lamports, base and priority together: the
+    /// bank's `total_transaction_fee` adds the two despite its name.
     pub total_fees: u64,
     pub priority_fees: u64,
-    /// Lamports paid into the jito tip accounts during this slot.
-    ///
-    /// The measured figure, before jito's cut and before anybody's commission.
-    /// What a turn paid is a fact about the slot; what it earned a validator is
-    /// worked out where it is drawn, and only for the validator that is us.
-    ///
-    /// `None` where no tip program is configured, or where the bank's parent
-    /// had been pruned and there was nothing to difference against. Absent and
-    /// nought are different readings: a turn that genuinely took no tips is
-    /// worth seeing.
+    /// Lamports paid into the jito tip accounts during this slot, before jito's
+    /// cut and anyone's commission. `None` where no tip program is configured or
+    /// the parent was pruned; nought is a real reading.
     pub tips: Option<u64>,
 }
 
@@ -117,21 +86,11 @@ impl SlotEntry {
     }
 }
 
-/// This validator's own leader slots held back from pruning.
-///
-/// A validator leads roughly one slot in eight hundred, so a window sized for
-/// the live strip holds none of its own. Held back, a client that reconnects
-/// still receives them; pruned with everything else, the sidebar's own-slots
-/// view would be empty on every reload.
-///
-/// Sixty-four of them, which is what that rail needs and no more. The schedule
-/// page reaches our slots by searching the packed history instead, which goes
-/// back a hundred thousand rather than the few hours this does, so the deep
-/// view no longer comes from here.
-///
-/// They occupy the ring's capacity rather than extending it, so the oldest
-/// ordinary slots make way for them. Matches the browser's own retention, so a
-/// reload restores what was on screen rather than some other depth.
+/// This validator's own leader slots held back from pruning, so a reconnecting
+/// client still receives them: a window sized for the live strip holds none.
+/// Sixty-four is what the sidebar rail needs; the schedule page searches the
+/// packed history instead. They occupy the ring's capacity rather than
+/// extending it.
 const OWN_SLOTS_KEPT: usize = 64;
 
 /// A bounded, slot-keyed history. Slots more than `capacity` behind the highest
@@ -162,16 +121,8 @@ impl SlotRing {
     }
 
     /// What a newly connected client is sent: the most recent `count` slots,
-    /// preceded by this validator's own from further back.
-    ///
-    /// Without the second part a reload lost every leader slot on screen, since
-    /// the recent window almost never contains one.
-    ///
-    /// One message. It was two while a slot carried its leader's key, name and
-    /// icon, which put five hundred of ours and five hundred and twelve recent
-    /// ones past the frame ceiling in the worst case. Those strings live once
-    /// per leader elsewhere now, the worst case is a quarter of the ceiling,
-    /// and the split and the key ordering it depended on are both gone.
+    /// preceded by this validator's own from further back, without which a reload
+    /// lost every leader slot on screen.
     pub fn overview(&self, count: usize) -> Vec<SlotEntry> {
         let recent = self.recent(count);
         let floor = recent.first().map_or(Slot::MAX, |entry| entry.slot);
@@ -186,8 +137,7 @@ impl SlotRing {
     }
 
     /// Applies `update` to the entry for `slot`, creating it if needed, and
-    /// returns the entry if anything actually changed. Callers publish only on
-    /// a `Some` so that idle polling produces no traffic.
+    /// returns the entry if anything changed, so idle polling produces no traffic.
     pub fn update(&mut self, slot: Slot, update: impl FnOnce(&mut SlotEntry)) -> Option<SlotEntry> {
         let before = self.entries.get(&slot).cloned();
         let entry = match self.entries.entry(slot) {
@@ -196,9 +146,8 @@ impl SlotRing {
         };
         update(entry);
 
-        // A level never moves backwards. Replay and the commitment cache are
-        // sampled independently, so without this a slot can appear to regress
-        // from rooted to completed between polls.
+        // A level never moves backwards: replay and the commitment cache are sampled
+        // independently.
         if let Some(before) = &before
             && entry.level < before.level
         {
@@ -217,22 +166,16 @@ impl SlotRing {
         if self.entries.len() <= self.capacity {
             return;
         }
-        // Split by ownership rather than walked oldest-first and skipping ours,
-        // which would delete newer slots to make room for the ones it skipped.
-        // The map is ordered by slot, so both lists come out oldest first.
+        // Split by ownership rather than skipping ours oldest-first, which would
+        // delete newer slots to make room. The map is ordered by slot.
         let mut own = Vec::new();
         let mut rest = Vec::new();
         for (&slot, entry) in &self.entries {
             if entry.mine { &mut own } else { &mut rest }.push(slot);
         }
-        // Our own slots take up the ring's capacity rather than sitting on top
-        // of it. Kept on top, the map settled above the length the guard above
-        // returns early at, so the guard never fired again: every update ran
-        // this whole scan, removed nothing, and left the length where it was.
-        //
-        // The cost is that a validator holding its full allowance of leader
-        // slots keeps that many fewer ordinary ones, which out of four thousand
-        // is not a window anybody will miss.
+        // Our own slots take up the ring's capacity rather than sitting on top of it.
+        // Kept on top, the map settled above the guard's threshold and every update
+        // ran the whole scan for nothing.
         let drop_own = own.len().saturating_sub(OWN_SLOTS_KEPT);
         let kept_own = own.len().saturating_sub(drop_own);
         let drop_rest = rest
@@ -247,11 +190,9 @@ impl SlotRing {
         }
     }
 
-    /// Raises every replayed slot at or below `up_to` to `level`.
-    ///
-    /// Bank forks drops banks once they fall below the root, so a slot's level
-    /// would otherwise freeze at whatever it was when it left the fork tree and
-    /// never reach rooted or finalized.
+    /// Raises every replayed slot at or below `up_to` to `level`. Bank forks drops
+    /// banks once rooted, so a slot's level would otherwise freeze where it left
+    /// the fork tree.
     pub fn promote(&mut self, up_to: Slot, level: SlotLevel) -> Vec<SlotEntry> {
         let candidates: Vec<Slot> = self
             .entries
@@ -270,9 +211,8 @@ impl SlotRing {
             .collect()
     }
 
-    /// Marks every unstarted slot below `up_to` as skipped. Called once replay
-    /// has moved past them, since a slot the leader never produced is otherwise
-    /// indistinguishable from one that has not arrived yet.
+    /// Marks every unstarted slot below `up_to` as skipped, once replay has moved
+    /// past them.
     pub fn mark_skipped_below(&mut self, up_to: Slot) -> Vec<SlotEntry> {
         let stale: Vec<Slot> = self
             .entries
@@ -286,10 +226,8 @@ impl SlotRing {
             .collect()
     }
 
-    /// Records that this validator leads `slot`.
-    ///
-    /// The only thing about a leader a slot still carries. Everything else the
-    /// page shows about them is one copy per leader elsewhere.
+    /// Records that this validator leads `slot`, the only thing about a leader a
+    /// slot still carries.
     pub fn set_mine(&mut self, slot: Slot, mine: bool) -> Option<SlotEntry> {
         self.update(slot, |entry| entry.mine = mine)
     }
@@ -308,31 +246,21 @@ mod tests {
 
     #[test]
     fn test_marking_the_same_slot_ours_twice_reports_no_change() {
-        // The schedule is walked forwards on every tick, so a slot is labelled
-        // repeatedly. Republishing each time would put the strip's whole window
-        // on the wire five times a second.
+        // The schedule is walked on every tick, so a slot is labelled repeatedly.
+        // Republishing each time would put the strip's window on the wire five times
+        // a second.
         let mut ring = SlotRing::new(16);
         assert!(ring.set_mine(7, true).is_some());
         assert!(ring.set_mine(7, true).is_none());
     }
 
-    /// The two slot snapshots are the largest messages the server sends, and
-    /// the websocket ceiling is sized from them. If a field is added here, or
-    /// either grows, this is what notices before a client is cut off
-    /// mid-snapshot in production.
-    ///
-    /// Checked separately because they are sent separately. Added together
-    /// they are over the ceiling, which is why they were split, and asserting
-    /// on the sum would fail for a shape that ships perfectly well.
+    /// The two slot snapshots are the largest messages the server sends, and the
+    /// websocket ceiling is sized from them. Checked separately because they are
+    /// sent separately.
     #[test]
     fn test_the_largest_slot_snapshots_fit_the_message_ceiling() {
-        // Worst case throughout: a full ring, every counter at its ceiling.
-        // Far smaller than it was, the leader's key, name and icon having moved
-        // off the slot; the check stays because what bounds the frame is still
-        // this message and a field added here is what would grow it.
-        //
-        // The 512 mirrors `SLOT_OVERVIEW_LEN` in `collect`, which this module
-        // cannot see.
+        // Worst case throughout: a full ring, every counter at its ceiling. The 512
+        // mirrors `SLOT_OVERVIEW_LEN` in `collect`.
         let worst = |count: usize| -> Vec<SlotEntry> {
             (0..count as u64)
                 .map(|index| SlotEntry {
@@ -376,9 +304,7 @@ mod tests {
 
     #[test]
     fn test_our_own_slots_outlive_the_window() {
-        // Without this a client that reconnects is sent a window that almost
-        // never contains one of its own slots, and the sidebar's own-slots view
-        // comes back empty on every reload.
+        // Without this a reconnecting client's own-slots view comes back empty.
         let mut ring = SlotRing::new(8);
         for slot in 1..=4 {
             ring.update(slot, |entry| entry.mine = true);
@@ -391,9 +317,7 @@ mod tests {
 
     #[test]
     fn test_own_retention_is_bounded() {
-        // Saturating rather than bare `+`: the workspace denies
-        // `arithmetic_side_effects`, and a cast of a constant is not a literal
-        // as far as the lint is concerned.
+        // Saturating: the workspace denies `arithmetic_side_effects`.
         let led = (OWN_SLOTS_KEPT as Slot).saturating_add(100);
         let mut ring = SlotRing::new(8);
         for slot in 1..=led {
@@ -416,21 +340,17 @@ mod tests {
         for slot in 2..=100 {
             ring.update(slot, |entry| entry.level = SlotLevel::Rooted);
         }
-        // Seven ordinary slots and the one of ours, filling the capacity rather
-        // than overflowing it. The newest are all still here: what the retained
-        // slot costs is the oldest ordinary one, not a recent one.
+        // Seven ordinary slots and the one of ours, filling the capacity. What the
+        // retained slot costs is the oldest ordinary one.
         let recent: Vec<Slot> = ring.recent(8).iter().map(|entry| entry.slot).collect();
         assert_eq!(recent, vec![1, 94, 95, 96, 97, 98, 99, 100]);
     }
 
     #[test]
     fn test_pruning_settles_where_the_guard_will_leave_it_alone() {
-        // `prune` returns early at `capacity`, so it has to prune to at most
-        // that. When our own slots were kept on top of the capacity instead of
-        // within it, the map settled above the threshold and the guard never
-        // fired again: every update ran the whole scan, removed nothing, and
-        // left the length where it was. Nothing failed, it just burned the
-        // collector's tick.
+        // `prune` returns early at `capacity`, so it has to prune to at most that.
+        // With our slots kept on top, the guard never fired again and every update
+        // ran the whole scan.
         let mut ring = SlotRing::new(256);
         for slot in 1..=80 {
             ring.update(slot, |entry| entry.mine = true);

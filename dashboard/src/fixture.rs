@@ -167,6 +167,16 @@ impl Fixture {
 
     /// A collector over this fixture, ready to tick.
     pub fn collector(&self) -> Collector {
+        self.collector_with_startup(Arc::new(std::sync::Mutex::new(
+            crate::startup::StartupPublisher::default(),
+        )))
+    }
+
+    /// A collector handed a boot publisher that has already timed some phases.
+    pub fn collector_with_startup(
+        &self,
+        startup: Arc<std::sync::Mutex<crate::startup::StartupPublisher>>,
+    ) -> Collector {
         Collector::new(
             self.ctx.clone(),
             self.publisher.clone(),
@@ -174,6 +184,7 @@ impl Fixture {
             self.history.clone(),
             self.epochs.clone(),
             running(),
+            startup,
             // No tip program in the fixture; a meter over it would read nought for every
             // slot.
             None,

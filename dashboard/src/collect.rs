@@ -24,7 +24,7 @@ use {
     solana_runtime::bank::Bank,
     std::{
         collections::{HashMap, HashSet, VecDeque},
-        sync::{Arc, RwLock},
+        sync::{Arc, Mutex, RwLock},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
@@ -250,9 +250,10 @@ pub struct Collector {
     debounces: Debounces,
     slots: SlotRing,
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
-    /// Shared with the boot thread's implementation so the handover from it
-    /// to the collector is invisible to a connected client.
-    startup: StartupPublisher,
+    /// The boot thread's own publisher, handed over rather than replaced: it
+    /// holds what each phase took, and a fresh one here published `running`
+    /// with no phases at all.
+    startup: Arc<Mutex<StartupPublisher>>,
 
     /// Highest slot for which leaders have been resolved, so the schedule is
     /// only walked forwards.
@@ -333,6 +334,7 @@ impl Collector {
         history: Arc<RwLock<SlotHistory>>,
         epochs: Arc<RwLock<Vec<EpochInfo>>>,
         startup_progress: StartProgress,
+        startup: Arc<Mutex<StartupPublisher>>,
         tips: Option<TipMeter>,
         commission_bps: Option<u16>,
     ) -> Self {
@@ -344,7 +346,7 @@ impl Collector {
             startup_progress,
             debounces: Debounces::default(),
             info_cache,
-            startup: StartupPublisher::default(),
+            startup,
             leaders_resolved_to: 0,
             info_scanned_to: 0,
             first_observed_slot: None,
@@ -1489,7 +1491,10 @@ impl Collector {
 
     fn collect_startup_progress(&mut self) {
         let progress = *self.startup_progress.read().unwrap();
-        self.startup.publish(&self.publisher, progress);
+        self.startup
+            .lock()
+            .unwrap()
+            .publish(&self.publisher, progress);
     }
 }
 
@@ -1761,7 +1766,11 @@ pub(crate) fn system_time_nanos(time: SystemTime) -> u64 {
 mod tests {
     use {
         super::*,
-        crate::fixture::{Fixture, fixture},
+        crate::{
+            fixture::{Fixture, fixture},
+            startup::StartupPublisher,
+        },
+        solana_core::validator::ValidatorStartProgress,
         solana_keypair::Keypair,
     };
 
@@ -2589,6 +2598,36 @@ mod tests {
             collector.slot_time_window.len(),
             CAUGHT_UP_MIN_SAMPLES,
             "nothing was measured while behind, so nothing is thrown away"
+        );
+    }
+
+    #[test]
+    fn test_the_collector_keeps_the_phases_the_boot_thread_timed() {
+        // Each side had a publisher of its own, and the collector's, starting
+        // empty, published `running` with no phases at all. The page then read
+        // startup as nought and put the whole boot into catching up.
+        let harness = fixture();
+        let shared = Arc::new(Mutex::new(StartupPublisher::default()));
+        shared
+            .lock()
+            .unwrap()
+            .publish(&harness.publisher, ValidatorStartProgress::CleaningAccounts);
+        shared
+            .lock()
+            .unwrap()
+            .publish(&harness.publisher, ValidatorStartProgress::Running);
+
+        let mut collector = harness.collector_with_startup(shared);
+        collector.tick();
+
+        let last = harness
+            .published()
+            .into_iter()
+            .rfind(|message| message.contains(r#""key":"startup_progress""#))
+            .expect("the collector publishes startup progress");
+        assert!(
+            last.contains(r#""phase":"cleaning_accounts""#),
+            "the collector's own message must carry what the boot thread timed: {last}"
         );
     }
 

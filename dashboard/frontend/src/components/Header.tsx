@@ -284,7 +284,7 @@ function Boot({ boot }: { boot: BootTimes }) {
             <span>{duration(boot.catchUpMillis)} after running</span>
           </span>
           <span className="boot-note">
-            Counted from when the cluster clock settled, a few seconds after the tip was reached.
+            Counted to when replay drew level with the cluster, the moment behind cluster read nought.
           </span>
         </>
       )}

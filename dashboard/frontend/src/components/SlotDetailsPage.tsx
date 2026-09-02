@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { blockStamp, blockTime, bytes, count, percent, sol, units } from "../format";
 import { recurrence } from "../cost";
-import { blockAverages } from "../produced";
+import { blockAverages, sortBlocks, type SortDir, type SortKey } from "../produced";
 import { jitoShare, ourShare } from "../tips";
 import type { ProducedBlock, SlotCost, SlotWaterfall, TipRates } from "../types";
 import { useStore } from "../useStore";
@@ -32,6 +32,7 @@ export function SlotDetailsPage() {
   // is drawn at all.
   const rates = store.get<TipRates>("summary", "tip_rates");
   const [open, setOpen] = useState<number | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
 
   // Joined by slot rather than nested on the block, because the two are built
   // on different threads and either can arrive first. A block whose waterfall
@@ -56,13 +57,15 @@ export function SlotDetailsPage() {
   }
 
   // Newest first: a validator wants its last block, not its oldest.
-  const newest = [...blocks].reverse();
+  const listed = sort ? sortBlocks(blocks, sort.key, sort.dir) : [...blocks].reverse();
+  const toggle = (key: SortKey) =>
+    setSort(sort?.key === key ? { key, dir: sort.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
 
   return (
     <section className="slot-details">
       <div className="produced">
-        <AveragesRow blocks={blocks} />
-        {newest.map((block) => (
+        <AveragesRow blocks={blocks} sort={sort} onSort={toggle} onClear={() => setSort(null)} />
+        {listed.map((block) => (
           <BlockRow
             key={block.slot}
             block={block}
@@ -76,8 +79,9 @@ export function SlotDetailsPage() {
         ))}
       </div>
       <div className="card-footnote">
-        Captured as each block froze. {count(blocks.length)} kept, oldest first
-        to fall off.
+        {sort
+          ? `Sorted by ${SORT_WORD[sort.key]}, ${sort.dir === "desc" ? "highest" : "lowest"} first.`
+          : `Captured as each block froze. ${count(blocks.length)} kept, oldest first to fall off.`}
       </div>
     </section>
   );
@@ -95,7 +99,55 @@ export function SlotDetailsPage() {
  * Over the blocks held, which is what the page shows and what the footnote
  * counts. It is not an average over the epoch and does not claim to be.
  */
-function AveragesRow({ blocks }: { blocks: ProducedBlock[] }) {
+/** An average that sorts its column. Module-level: a component made inside the
+    row is a new type each render, so the buttons remounted under every click. */
+function SortButton({
+  column,
+  className,
+  sort,
+  onSort,
+  children,
+}: {
+  column: SortKey;
+  className: string;
+  sort: { key: SortKey; dir: SortDir } | null;
+  onSort: (key: SortKey) => void;
+  children: ReactNode;
+}) {
+  const on = sort?.key === column;
+  return (
+    <button
+      type="button"
+      className={`${className} produced-sort${on ? " is-on" : ""}`}
+      title={`Sort by ${SORT_WORD[column]}`}
+      onClick={() => onSort(column)}
+    >
+      <span className="produced-sort-arrow" aria-hidden="true">
+        {on ? (sort.dir === "desc" ? "↓" : "↑") : ""}
+      </span>
+      {children}
+    </button>
+  );
+}
+
+const SORT_WORD: Record<SortKey, string> = {
+  transactions: "transactions",
+  filled: "fullness",
+  fees: "fees",
+  duration: "duration",
+};
+
+function AveragesRow({
+  blocks,
+  sort,
+  onSort,
+  onClear,
+}: {
+  blocks: ProducedBlock[];
+  sort: { key: SortKey; dir: SortDir } | null;
+  onSort: (key: SortKey) => void;
+  onClear: () => void;
+}) {
   const avg = blockAverages(blocks);
   return (
     <div className="produced-averages">
@@ -106,14 +158,19 @@ function AveragesRow({ blocks }: { blocks: ProducedBlock[] }) {
         >
           avg
         </Explain>
+        {sort && (
+          <button type="button" className="produced-clear" onClick={onClear} aria-label="Clear sort">
+            ×<span className="produced-clear-word"> clear</span>
+          </button>
+        )}
       </span>
-      <span className="produced-txns">
+      <SortButton column="transactions" sort={sort} onSort={onSort} className="produced-txns">
         {avg.transactions === null ? "—" : `${count(Math.round(avg.transactions))} txns`}
-      </span>
-      <span className="produced-fill">
+      </SortButton>
+      <SortButton column="filled" sort={sort} onSort={onSort} className="produced-fill">
         {avg.filled === null ? "—" : `${percent(avg.filled, 1)} full`}
-      </span>
-      <span className="produced-fees">
+      </SortButton>
+      <SortButton column="fees" sort={sort} onSort={onSort} className="produced-fees">
         {avg.fees === null ? (
           "—"
         ) : (
@@ -122,10 +179,10 @@ function AveragesRow({ blocks }: { blocks: ProducedBlock[] }) {
             <span className="produced-fees-unit"> SOL</span>
           </>
         )}
-      </span>
-      <span className="produced-ms">
+      </SortButton>
+      <SortButton column="duration" sort={sort} onSort={onSort} className="produced-ms">
         {avg.durationMillis === null ? "—" : `${Math.round(avg.durationMillis)} ms`}
-      </span>
+      </SortButton>
     </div>
   );
 }

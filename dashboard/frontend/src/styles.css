@@ -1838,6 +1838,49 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* An average is a button that sorts its column. It keeps the cell's own type
+   and colour so the row does not change shape when it becomes clickable. */
+.produced-sort {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.produced-sort:hover,
+.produced-sort.is-on {
+  color: var(--text);
+}
+
+.produced-sort:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.produced-sort-arrow {
+  display: inline-block;
+  width: 11px;
+  color: var(--accent);
+}
+
+.produced-clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.produced-clear:hover {
+  color: var(--text-dim);
+}
+
 .produced-slot {
   font-family: ui-monospace, monospace;
   font-size: 12px;
@@ -1931,6 +1974,9 @@ body {
   .produced-head,
   .produced-averages {
     grid-template-columns: minmax(0, 1fr) 5.5em 6.5em 4.5em;
+  }
+  .produced-clear-word {
+    display: none;
   }
 
   .produced-fill {
@@ -3883,6 +3929,8 @@ body {
 }
 
 .schedule-leader-when {
+  display: block;
+  min-height: 16px;
   font-size: 11px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockAverages } from "./produced";
+import { blockAverages, sortBlocks } from "./produced";
 import type { ProducedBlock } from "./types";
 
 /** A produced block, to be overridden a field at a time. */
@@ -66,5 +66,29 @@ describe("blockAverages", () => {
       expect(empty.fees).toBeNull();
       expect(empty.durationMillis).toBeNull();
     }
+  });
+});
+
+describe("sortBlocks", () => {
+  const held = [
+    block({ slot: 1, transactions: 990, duration_nanos: 302e6 }),
+    block({ slot: 2, transactions: 1_214, duration_nanos: null }),
+    block({ slot: 3, transactions: 1_063, duration_nanos: 337e6 }),
+  ];
+  const slots = (blocks: ProducedBlock[]) => blocks.map((b) => b.slot);
+
+  it("orders by the column, highest first by default", () => {
+    expect(slots(sortBlocks(held, "transactions", "desc"))).toEqual([2, 3, 1]);
+    expect(slots(sortBlocks(held, "transactions", "asc"))).toEqual([1, 3, 2]);
+  });
+
+  it("puts a block with no figure last, whichever way round", () => {
+    expect(slots(sortBlocks(held, "duration", "desc"))).toEqual([3, 1, 2]);
+    expect(slots(sortBlocks(held, "duration", "asc"))).toEqual([1, 3, 2]);
+  });
+
+  it("leaves the list it was given alone", () => {
+    sortBlocks(held, "fees", "asc");
+    expect(slots(held)).toEqual([1, 2, 3]);
   });
 });

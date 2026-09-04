@@ -185,6 +185,7 @@ impl Fixture {
             self.epochs.clone(),
             running(),
             startup,
+            Arc::new(MetricsTap::default()),
             // No tip program in the fixture; a meter over it would read nought for every
             // slot.
             None,

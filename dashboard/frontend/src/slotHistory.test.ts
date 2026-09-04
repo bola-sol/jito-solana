@@ -4,6 +4,7 @@ import {
   entriesOf,
   HAS_BLOCK,
   HAS_CLOCK,
+  HAS_REPLAY,
   HAS_TIPS,
   type SlotRange,
   type WireRow,
@@ -32,7 +33,7 @@ function epochOf(over: Partial<EpochInfo> = {}): EpochInfo {
 function row(over: Partial<Record<number, number>> = {}): WireRow {
   const base: WireRow = [
     3,
-    HAS_BLOCK | HAS_CLOCK | HAS_TIPS,
+    HAS_BLOCK | HAS_CLOCK | HAS_TIPS | HAS_REPLAY,
     66,
     8_752,
     11_877_602,
@@ -40,6 +41,7 @@ function row(over: Partial<Record<number, number>> = {}): WireRow {
     12_480,
     7_400_000,
     1_000_000,
+    47_200,
   ];
   return base.map((value, index) => over[index] ?? value) as WireRow;
 }
@@ -82,6 +84,18 @@ describe("entriesOf", () => {
     expect(entry.block?.total_fees).toBe(44_100_000);
     expect(entry.block?.priority_fees).toBe(12_480);
     expect(entry.block?.tips).toBe(7_400_000);
+    expect(entry.block?.replay_micros).toBe(47_200);
+  });
+
+  it("leaves replay time absent for a block replay never timed", () => {
+    // Our own blocks are built rather than replayed, and read as absent rather
+    // than as a slot replayed in no time.
+    const [entry] = entriesOf(
+      range([row({ 1: HAS_BLOCK | HAS_CLOCK, 9: 47_200 })]),
+      epochOf(),
+      undefined,
+    );
+    expect(entry.block?.replay_micros).toBeNull();
   });
 
   it("keeps a tip figure that was never measured apart from one that was nought", () => {

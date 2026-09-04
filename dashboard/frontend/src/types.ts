@@ -195,6 +195,11 @@ export interface BlockDetail {
    * searchers passed that leader by.
    */
   tips: number | null;
+  /**
+   * Wall time replay's own thread spent on this slot, in microseconds. Null
+   * where replay never timed it, which includes a block this validator built.
+   */
+  replay_micros: number | null;
 }
 
 export interface Tps {

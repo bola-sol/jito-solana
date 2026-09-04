@@ -422,6 +422,8 @@ pub struct SlotCost {
 ///   partitions cleanly into the CPU one slot costs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReplaySlotTimes {
+    /// The slot the point described, so a row can be asked for its own figure.
+    pub slot: Slot,
     // Replay's own thread, sequential.
     pub fetch: u64,
     pub confirming: u64,
@@ -919,6 +921,10 @@ impl MetricsTap {
             let Some(micros) = field_u64(value) else {
                 continue;
             };
+            if *name == SLOT {
+                slot.slot = micros;
+                continue;
+            }
             let field = match *name {
                 "fetch_entries_time" => &mut slot.fetch,
                 "confirmation_without_replay_us" => &mut slot.confirming,
@@ -1053,6 +1059,22 @@ impl MetricsTap {
     }
 
     /// The replayed slots held, oldest first.
+    /// Wall time replay's own thread spent on `slot`, in microseconds, while
+    /// the record is still held. Newest first, in case a slot was replayed twice.
+    pub fn replay_serial_micros(&self, slot: Slot) -> Option<u64> {
+        let slots = self.replay_slots.lock().ok()?;
+        slots
+            .iter()
+            .rev()
+            .find(|times| times.slot == slot)
+            .map(|times| {
+                times
+                    .fetch
+                    .saturating_add(times.confirming)
+                    .saturating_add(times.completing)
+            })
+    }
+
     pub fn replay_slots(&self) -> Vec<ReplaySlotTimes> {
         self.replay_slots
             .lock()
@@ -1735,6 +1757,27 @@ mod tests {
         assert_eq!(counters.shreds_turbine, 900);
         assert_eq!(counters.packets_gossip, 42);
         assert_eq!(counters.packets_tpu_vote, 70);
+    }
+
+    #[test]
+    fn test_a_replayed_slot_can_be_asked_for_its_own_wall_time() {
+        // The three spans on replay's own thread, summed. The schedule page draws
+        // this beside the slot's duration, so it has to be reachable by slot rather
+        // than only as a window mean.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            REPLAY_SLOT_STATS,
+            &[
+                ("slot", "443895975i"),
+                ("fetch_entries_time", "4300i"),
+                ("confirmation_without_replay_us", "33500i"),
+                ("bank_complete_time_us", "9400i"),
+                ("execute_us", "231000i"),
+            ],
+        ));
+
+        assert_eq!(tap.replay_serial_micros(443_895_975), Some(47_200));
+        assert_eq!(tap.replay_serial_micros(443_895_974), None);
     }
 
     #[test]

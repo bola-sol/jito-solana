@@ -345,6 +345,9 @@ const TurnCard = memo(
               Tips
             </span>
             <span>Duration</span>
+            <span title="Wall time replay's own thread spent on the block. Absent for a block this validator built.">
+              Replay
+            </span>
             <span>Compute</span>
           </div>
           {turn.slots.map((slot) => (
@@ -441,6 +444,7 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
       <span>
         {entry?.duration_nanos == null ? "—" : `${Math.round(entry.duration_nanos / 1e6)} ms`}
       </span>
+      <span>{block?.replay_micros == null ? "—" : `${Math.round(block.replay_micros / 1000)} ms`}</span>
       <span>
         {block ? count(block.block_cost) : "—"}
         {filled !== null && <span className="schedule-fill">{percent(filled, 0)}</span>}

@@ -4143,10 +4143,10 @@ body {
 
 .schedule-row {
   display: grid;
-  /* Seven figure columns since the fees split in two and tips arrived. The
-     minimum drops with the count so the row does not grow its scroll by the
-     whole of the two new columns; the container scrolls sideways either way. */
-  grid-template-columns: 150px repeat(7, minmax(64px, 1fr));
+  /* Eight figure columns: the fees split in two, then tips and replay time
+     arrived. The minimum dropped with the count; the container scrolls
+     sideways either way. */
+  grid-template-columns: 150px repeat(8, minmax(64px, 1fr));
   gap: 8px;
   padding: 2px 0;
   font-size: 12px;

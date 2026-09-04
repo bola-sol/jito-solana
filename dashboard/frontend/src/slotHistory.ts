@@ -31,12 +31,14 @@ export const HAS_CLOCK = 1 << 1;
  * draws nothing at all.
  */
 export const HAS_TIPS = 1 << 2;
+/** Set where replay's time on the slot was seen. */
+export const HAS_REPLAY = 1 << 3;
 
 /**
  * One slot as the validator sends it: positional, not an object.
  *
  * Order: level, flags, votes, non-votes, compute, fees, priority fees, tips,
- * time. It is pinned by a test here and by another on the validator, because
+ * time, replay. It is pinned by a test here and by another on the validator, because
  * two positional formats only agree by being changed together.
  */
 export type WireRow = [
@@ -49,6 +51,7 @@ export type WireRow = [
   priorityFees: number,
   tips: number,
   timeMillis: number,
+  replayMicros: number,
 ];
 
 /** A span of history, oldest first, with `null` for slots it does not hold. */
@@ -92,7 +95,7 @@ export function entriesOf(
   range.rows.forEach((row, index) => {
     if (row === null) return;
     const slot = range.first_slot + index;
-    const [level, flags, votes, nonVotes, compute, fees, priorityFees, tips, timeMillis] =
+    const [level, flags, votes, nonVotes, compute, fees, priorityFees, tips, timeMillis, replay] =
       row;
     // Only to decide whether the slot was ours. Who the leader is, and what
     // they are called, the page resolves for itself through `store.leaderOf`,
@@ -120,6 +123,7 @@ export function entriesOf(
               total_fees: fees,
               priority_fees: priorityFees,
               tips: (flags & HAS_TIPS) === 0 ? null : tips,
+              replay_micros: (flags & HAS_REPLAY) === 0 ? null : replay,
             },
       duration_nanos:
         timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,

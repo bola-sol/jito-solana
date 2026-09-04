@@ -37,6 +37,9 @@ pub struct PackedSlot {
     /// where drawn, from rates a correction can still reach. Nought unless
     /// `HAS_TIPS` is set.
     pub tips: u64,
+    /// Wall time replay's own thread spent on the slot, in microseconds and
+    /// saturating into `u32`, which is over an hour. Nought unless `HAS_REPLAY`.
+    pub replay_micros: u32,
     /// Wall clock of the slot's first shred, in milliseconds. Absolute rather than
     /// an offset from the window, which would have to be rebased as the window
     /// moved.
@@ -50,8 +53,8 @@ pub const MAX_RANGE_SLOTS: usize = 8192;
 
 /// One slot as it goes on the wire. Positional because field names would
 /// outweigh the figures. Order: level, flags, votes, non-votes, compute, fees,
-/// priority fees, tips, time. The frontend mirrors it.
-pub type WireRow = (u8, u8, u32, u32, u32, u64, u64, u64, u64);
+/// priority fees, tips, time, replay. The frontend mirrors it.
+pub type WireRow = (u8, u8, u32, u32, u32, u64, u64, u64, u64, u32);
 
 /// A span of the history, as it goes on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -72,6 +75,9 @@ pub const HAS_CLOCK: u8 = 1 << 1;
 /// Set where the slot's tips were measured. Nought is a real reading: the
 /// searchers passed that leader by.
 pub const HAS_TIPS: u8 = 1 << 2;
+/// Set where replay's time on the slot was seen. Clear for a bank this validator
+/// built, which replay never timed.
+pub const HAS_REPLAY: u8 = 1 << 3;
 
 /// A fixed-size history of packed slots, direct-mapped at `slot % capacity`.
 /// The slot is stored beside its row so a row from a lap ago cannot answer for
@@ -113,6 +119,7 @@ impl SlotHistory {
                         row.priority_fees,
                         row.tips,
                         row.time_millis,
+                        row.replay_micros,
                     )
                 })
             })
@@ -141,6 +148,10 @@ impl SlotHistory {
             if let Some(tips) = block.tips {
                 row.flags |= HAS_TIPS;
                 row.tips = tips;
+            }
+            if let Some(micros) = block.replay_micros {
+                row.flags |= HAS_REPLAY;
+                row.replay_micros = clamp(micros);
             }
         }
     }
@@ -209,6 +220,7 @@ mod tests {
                 total_fees: 104_600_000,
                 priority_fees: 0,
                 tips: None,
+                replay_micros: None,
             }),
             ..entry(slot)
         }
@@ -316,7 +328,7 @@ mod tests {
         history.record(&with_block(10, 9_500, 8_752));
         history.record_time(10, 1_756_000_000_123);
 
-        let (level, flags, votes, non_votes, compute, fees, priority, tips, time) =
+        let (level, flags, votes, non_votes, compute, fees, priority, tips, time, replay) =
             history.range(10, 1).rows[0].expect("recorded");
         assert_eq!(level, SlotLevel::Rooted as u8);
         assert_eq!(flags, HAS_BLOCK | HAS_CLOCK);
@@ -330,6 +342,25 @@ mod tests {
         assert_eq!(tips, 0);
         assert_eq!(flags & HAS_TIPS, 0);
         assert_eq!(time, 1_756_000_000_123);
+        assert_eq!(replay, 0);
+        assert_eq!(flags & HAS_REPLAY, 0);
+    }
+
+    #[test]
+    fn test_replay_time_travels_with_its_flag() {
+        let mut history = SlotHistory::new(64);
+        let mut replayed = with_block(40, 100, 10);
+        if let Some(block) = replayed.block.as_mut() {
+            block.replay_micros = Some(47_200);
+        }
+        history.record(&replayed);
+        history.record(&with_block(41, 100, 10));
+
+        let read = history.get(40).expect("recorded");
+        assert_eq!(read.flags & HAS_REPLAY, HAS_REPLAY);
+        assert_eq!(read.replay_micros, 47_200);
+        let built = history.get(41).expect("recorded");
+        assert_eq!(built.flags & HAS_REPLAY, 0);
     }
 
     #[test]

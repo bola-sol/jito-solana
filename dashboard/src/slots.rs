@@ -75,6 +75,10 @@ pub struct BlockDetail {
     /// cut and anyone's commission. `None` where no tip program is configured or
     /// the parent was pruned; nought is a real reading.
     pub tips: Option<u64>,
+    /// Wall time replay's own thread spent on this slot, in microseconds. `None`
+    /// where no replay point was seen for it, which includes a bank this
+    /// validator built rather than replayed.
+    pub replay_micros: Option<u64>,
 }
 
 impl SlotEntry {
@@ -283,6 +287,7 @@ mod tests {
                         total_fees: u64::MAX,
                         priority_fees: u64::MAX,
                         tips: Some(u64::MAX),
+                        replay_micros: Some(u64::MAX),
                     }),
                     duration_nanos: Some(u64::MAX),
                 })

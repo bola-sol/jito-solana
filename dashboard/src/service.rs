@@ -236,6 +236,7 @@ impl DashboardService {
             let epochs = self.epochs.clone();
             let startup_progress = self.startup_progress.clone();
             let startup = self.startup.clone();
+            let metrics_tap = self.metrics_tap.clone();
             // Derived once here rather than per tick. Absent on a validator
             // with no tip payment program, and then no tips are read at all.
             let tips = self.tip_payment_program_id.as_ref().map(TipMeter::new);
@@ -251,6 +252,7 @@ impl DashboardService {
                         epochs,
                         startup_progress,
                         startup,
+                        metrics_tap,
                         tips,
                         commission_bps,
                     );

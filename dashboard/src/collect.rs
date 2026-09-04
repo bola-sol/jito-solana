@@ -10,6 +10,7 @@ use {
     crate::{
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
+        metrics_tap::MetricsTap,
         produced::{ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, SlotEntry, SlotLevel, SlotRing},
@@ -254,6 +255,8 @@ pub struct Collector {
     /// holds what each phase took, and a fresh one here published `running`
     /// with no phases at all.
     startup: Arc<Mutex<StartupPublisher>>,
+    /// For what replay spent on each slot, asked by slot as the bank freezes.
+    metrics_tap: Arc<MetricsTap>,
 
     /// Highest slot for which leaders have been resolved, so the schedule is
     /// only walked forwards.
@@ -333,6 +336,9 @@ pub struct Collector {
 }
 
 impl Collector {
+    /// Every argument is a handle the service already holds, passed once at
+    /// attach; a struct to carry them would exist for this call alone.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ctx: DashboardContext,
         publisher: Arc<Publisher>,
@@ -341,6 +347,7 @@ impl Collector {
         epochs: Arc<RwLock<Vec<EpochInfo>>>,
         startup_progress: StartProgress,
         startup: Arc<Mutex<StartupPublisher>>,
+        metrics_tap: Arc<MetricsTap>,
         tips: Option<TipMeter>,
         commission_bps: Option<u16>,
     ) -> Self {
@@ -353,6 +360,7 @@ impl Collector {
             debounces: Debounces::default(),
             info_cache,
             startup,
+            metrics_tap,
             leaders_resolved_to: 0,
             info_scanned_to: 0,
             first_observed_slot: None,
@@ -885,9 +893,12 @@ impl Collector {
             } else {
                 None
             };
+            let replay = fresh
+                .then(|| self.metrics_tap.replay_serial_micros(slot))
+                .flatten();
             let detail = counts
                 .filter(|_| fresh)
-                .map(|(total, non_vote)| block_detail(bank, total, non_vote, tips));
+                .map(|(total, non_vote)| block_detail(bank, total, non_vote, tips, replay));
 
             // Our own blocks carry a blockhash and a start time on top of that,
             // which the block panel shows and nothing else needs.
@@ -1710,7 +1721,13 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
 /// Reads a frozen bank's own figures for one block. `transactions` and
 /// `non_vote` are already differenced by the caller; the error and entry
 /// counters are reset per bank, so differencing them would be wrong.
-fn block_detail(bank: &Bank, transactions: u64, non_vote: u64, tips: Option<u64>) -> BlockDetail {
+fn block_detail(
+    bank: &Bank,
+    transactions: u64,
+    non_vote: u64,
+    tips: Option<u64>,
+    replay_micros: Option<u64>,
+) -> BlockDetail {
     // Poisoned only if a replay thread panicked while holding it, in which case
     // the validator has more pressing problems than a missing bar.
     let (block_cost, block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
@@ -1734,6 +1751,7 @@ fn block_detail(bank: &Bank, transactions: u64, non_vote: u64, tips: Option<u64>
         total_fees: fees.total_transaction_fee(),
         priority_fees: fees.total_priority_fee(),
         tips,
+        replay_micros,
     }
 }
 

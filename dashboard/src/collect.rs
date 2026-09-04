@@ -893,7 +893,11 @@ impl Collector {
             } else {
                 None
             };
-            let replay = fresh
+            // Replay reports a point for a bank this validator built too, at nought:
+            // it finds the block already executed and has nothing to do. Left
+            // absent rather than shown as replayed in no time.
+            let mine = self.slots.get(slot).is_some_and(|entry| entry.mine);
+            let replay = (fresh && !mine)
                 .then(|| self.metrics_tap.replay_serial_micros(slot))
                 .flatten();
             let detail = counts
@@ -903,7 +907,7 @@ impl Collector {
             // Our own blocks carry a blockhash and a start time on top of that,
             // which the block panel shows and nothing else needs.
             if let Some(detail) = &detail
-                && self.slots.get(slot).is_some_and(|entry| entry.mine)
+                && mine
             {
                 let block = self.capture_block(slot, bank, detail);
                 if self.produced.insert(block) {

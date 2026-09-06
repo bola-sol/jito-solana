@@ -43,6 +43,24 @@ pub struct SlotEntry {
     /// When the slot's first shred arrived, in milliseconds. Stamps a turn on the
     /// schedule page; the packed history keeps the same figure for older slots.
     pub time_millis: Option<u64>,
+    /// How the block's shreds arrived. `None` for a slot that never filled.
+    pub shreds: Option<ShredArrival>,
+    /// Milliseconds from the slot's first shred to replay finishing it. `None`
+    /// for a bank this validator built, which replay never timed.
+    pub replayed_millis: Option<u64>,
+}
+
+/// How a block's shreds arrived. Outside [`BlockDetail`] because a slot fills
+/// before it freezes, and a dead slot fills without ever freezing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ShredArrival {
+    /// Data shreds in the block.
+    pub count: u64,
+    /// Of those, the ones this validator had to ask for. Nought is the block
+    /// arriving whole over turbine.
+    pub repaired: u64,
+    /// Milliseconds from the first shred to the last.
+    pub full_millis: u64,
 }
 
 /// What one block contained, read off its bank as it froze. Every field is per
@@ -90,6 +108,8 @@ impl SlotEntry {
             block: None,
             duration_nanos: None,
             time_millis: None,
+            shreds: None,
+            replayed_millis: None,
         }
     }
 }
@@ -276,6 +296,12 @@ mod tests {
                     level: SlotLevel::OptimisticallyConfirmed,
                     mine: true,
                     time_millis: Some(u64::MAX),
+                    shreds: Some(ShredArrival {
+                        count: u64::MAX,
+                        repaired: u64::MAX,
+                        full_millis: u64::MAX,
+                    }),
+                    replayed_millis: Some(u64::MAX),
                     block: Some(BlockDetail {
                         transactions: u64::MAX,
                         non_vote_transactions: u64::MAX,

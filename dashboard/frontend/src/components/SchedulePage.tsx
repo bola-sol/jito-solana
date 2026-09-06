@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
 import { matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
+import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
 import type { EpochInfo, Peer, SlotEntry, StakeSummary, TipRates } from "../types";
 import { useStore } from "../useStore";
@@ -56,15 +57,15 @@ const MAX_TURNS = 1000;
 /**
  * Slots reached back through when somebody searches.
  *
- * The whole of what the validator retains. Fetching it is thirteen requests and
- * about four megabytes, and holding it is some twenty-seven, which is what a
+ * The whole of what the validator retains. Fetching it is twenty-five requests
+ * and about five megabytes, and holding it is some thirty, which is what a
  * search costs to be worth running: matching only what the list has loaded
  * would answer for the last few minutes and call it the answer.
  */
 const DEPTH_SLOTS = 100_000;
 
 /** Slots per request, the most the validator will answer at once. */
-const DEPTH_SPAN = 8192;
+const DEPTH_SPAN = 4096;
 
 export function SchedulePage() {
   const store = useStore();
@@ -345,8 +346,11 @@ const TurnCard = memo(
               Tips
             </span>
             <span>Duration</span>
-            <span title="Wall time replay's own thread spent on the block. Absent for a block this validator built.">
-              Replay
+            <span title="Data shreds in the block, and how many this validator had to ask for.">
+              Shreds
+            </span>
+            <span title="From the first shred to the block being full, then to replay finishing. Drawn against one second.">
+              Received → replayed
             </span>
             <span>Compute</span>
           </div>
@@ -413,6 +417,46 @@ function TurnLeader({
   );
 }
 
+/**
+ * From the first shred to the block being full, then to replay finishing, as
+ * a bar on a fixed track and the two spans as text. Replay's own thread time
+ * is on the hover: waiting for shreds is not on replay's clock, so on its own
+ * it read as complete when it was not.
+ */
+function Timeline({ entry }: { entry: SlotEntry | null }) {
+  const timeline = timelineOf(entry);
+  if (!timeline) {
+    return (
+      <span className="schedule-tl">
+        <span className="schedule-tl-text">—</span>
+      </span>
+    );
+  }
+  const spent =
+    entry?.block?.replay_micros == null
+      ? ""
+      : ` Replay's own thread spent ${Math.round(entry.block.replay_micros / 1000)} ms on it.`;
+  const title = entry?.mine
+    ? `Produced here: ${timeline.wait} ms from the first shred to the last. Nothing to wait for and nothing to replay.`
+    : timeline.run === null
+      ? `Block full ${timeline.wait} ms after its first shred. Replay's finish was not seen.`
+      : `Block full ${timeline.wait} ms after its first shred, replayed ${timeline.run} ms after that.${spent}`;
+  return (
+    <span className="schedule-tl" title={title}>
+      <span className="schedule-tl-track" aria-hidden="true">
+        <i className="is-wait" style={{ left: 0, width: `${timeline.waitShare * 100}%` }} />
+        {timeline.run !== null && (
+          <i
+            className="is-run"
+            style={{ left: `${timeline.waitShare * 100}%`, width: `${timeline.runShare * 100}%` }}
+          />
+        )}
+      </span>
+      <span className="schedule-tl-text">{timeline.label}</span>
+    </span>
+  );
+}
+
 /** One slot, empty until it has been produced. */
 function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined }) {
   const entry = slot.entry;
@@ -444,7 +488,13 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
       <span>
         {entry?.duration_nanos == null ? "—" : `${Math.round(entry.duration_nanos / 1e6)} ms`}
       </span>
-      <span>{block?.replay_micros == null ? "—" : `${Math.round(block.replay_micros / 1000)} ms`}</span>
+      <span>
+        {entry?.shreds ? count(entry.shreds.count) : "—"}
+        {entry?.shreds && entry.shreds.repaired > 0 && (
+          <span className="schedule-repaired">{count(entry.shreds.repaired)} rep</span>
+        )}
+      </span>
+      <Timeline entry={entry} />
       <span>
         {block ? count(block.block_cost) : "—"}
         {filled !== null && <span className="schedule-fill">{percent(filled, 0)}</span>}

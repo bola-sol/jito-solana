@@ -10,10 +10,10 @@ use {
     crate::{
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
-        metrics_tap::MetricsTap,
+        metrics_tap::{MetricsTap, ShredFill},
         produced::{ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
-        slots::{BlockDetail, SlotEntry, SlotLevel, SlotRing},
+        slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
         tips::{TipMeter, TipRates},
         validator_info::{self, ValidatorInfoCache},
@@ -623,10 +623,15 @@ impl Collector {
                 .last_shred_time
                 .filter(|(previous_slot, _)| slot > *previous_slot)
                 .map(|(_, previous_arrival)| arrived.saturating_sub(previous_arrival));
+            // Reported as the slot fills, which is before replay can freeze it.
+            let shreds = self.metrics_tap.shred_fill(slot).map(arrival);
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.time_millis = Some(arrived);
                 if let Some(elapsed) = elapsed {
                     entry.duration_nanos = Some(elapsed.saturating_mul(1_000_000));
+                }
+                if entry.shreds.is_none() {
+                    entry.shreds = shreds;
                 }
             }) {
                 changed.push(entry);
@@ -897,8 +902,23 @@ impl Collector {
             // it finds the block already executed and has nothing to do. Left
             // absent rather than shown as replayed in no time.
             let mine = self.slots.get(slot).is_some_and(|entry| entry.mine);
-            let replay = (fresh && !mine)
-                .then(|| self.metrics_tap.replay_serial_micros(slot))
+            let replayed = (fresh && !mine)
+                .then(|| self.metrics_tap.replayed(slot))
+                .flatten();
+            let replay = replayed.map(|times| times.serial());
+            // From the slot's first shred, on the blockstore's clock. The entry has
+            // it once the timing walk has passed; before that, the blockstore does.
+            let replayed_millis = replayed.and_then(|times| {
+                let first = self
+                    .slots
+                    .get(slot)
+                    .and_then(|entry| entry.time_millis)
+                    .or_else(|| self.first_shred_time(slot))?;
+                Some(times.observed_millis.saturating_sub(first))
+            });
+            // Also here, for a slot frozen before the timing walk reached it.
+            let shreds = fresh
+                .then(|| self.metrics_tap.shred_fill(slot).map(arrival))
                 .flatten();
             let detail = counts
                 .filter(|_| fresh)
@@ -920,6 +940,12 @@ impl Collector {
                 entry.level = level;
                 if let Some(detail) = &detail {
                     entry.block = Some(detail.clone());
+                }
+                if replayed_millis.is_some() {
+                    entry.replayed_millis = replayed_millis;
+                }
+                if entry.shreds.is_none() {
+                    entry.shreds = shreds;
                 }
             }) {
                 changed.push(entry);
@@ -1756,6 +1782,15 @@ fn block_detail(
         priority_fees: fees.total_priority_fee(),
         tips,
         replay_micros,
+    }
+}
+
+/// What goes on the wire from a fill record: the slot is the entry's own.
+fn arrival(fill: ShredFill) -> ShredArrival {
+    ShredArrival {
+        count: fill.shreds,
+        repaired: fill.repaired,
+        full_millis: fill.full_millis,
     }
 }
 

@@ -33,13 +33,18 @@ export const HAS_CLOCK = 1 << 1;
 export const HAS_TIPS = 1 << 2;
 /** Set where replay's time on the slot was seen. */
 export const HAS_REPLAY = 1 << 3;
+/** Set where the blockstore reported the slot filling. */
+export const HAS_SHREDS = 1 << 4;
+/** Set where replay's finish was seen, and so timed from the first shred. */
+export const HAS_REPLAYED = 1 << 5;
 
 /**
  * One slot as the validator sends it: positional, not an object.
  *
  * Order: level, flags, votes, non-votes, compute, fees, priority fees, tips,
- * time, replay. It is pinned by a test here and by another on the validator, because
- * two positional formats only agree by being changed together.
+ * time, replay, shreds, repaired, full, replayed. It is pinned by a test here
+ * and by another on the validator, because two positional formats only agree
+ * by being changed together.
  */
 export type WireRow = [
   level: number,
@@ -52,6 +57,10 @@ export type WireRow = [
   tips: number,
   timeMillis: number,
   replayMicros: number,
+  shreds: number,
+  repaired: number,
+  fullMillis: number,
+  replayedMillis: number,
 ];
 
 /** A span of history, oldest first, with `null` for slots it does not hold. */
@@ -95,8 +104,22 @@ export function entriesOf(
   range.rows.forEach((row, index) => {
     if (row === null) return;
     const slot = range.first_slot + index;
-    const [level, flags, votes, nonVotes, compute, fees, priorityFees, tips, timeMillis, replay] =
-      row;
+    const [
+      level,
+      flags,
+      votes,
+      nonVotes,
+      compute,
+      fees,
+      priorityFees,
+      tips,
+      timeMillis,
+      replay,
+      shreds,
+      repaired,
+      fullMillis,
+      replayedMillis,
+    ] = row;
     // Only to decide whether the slot was ours. Who the leader is, and what
     // they are called, the page resolves for itself through `store.leaderOf`,
     // the same way it does for a live slot.
@@ -128,6 +151,11 @@ export function entriesOf(
       duration_nanos:
         timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,
       time_millis: timed ? timeMillis : null,
+      shreds:
+        (flags & HAS_SHREDS) === 0
+          ? null
+          : { count: shreds, repaired, full_millis: fullMillis },
+      replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
     });
 
     if (timed) previousTime = timeMillis;

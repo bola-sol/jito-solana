@@ -5,6 +5,8 @@ import {
   HAS_BLOCK,
   HAS_CLOCK,
   HAS_REPLAY,
+  HAS_REPLAYED,
+  HAS_SHREDS,
   HAS_TIPS,
   type SlotRange,
   type WireRow,
@@ -33,7 +35,7 @@ function epochOf(over: Partial<EpochInfo> = {}): EpochInfo {
 function row(over: Partial<Record<number, number>> = {}): WireRow {
   const base: WireRow = [
     3,
-    HAS_BLOCK | HAS_CLOCK | HAS_TIPS | HAS_REPLAY,
+    HAS_BLOCK | HAS_CLOCK | HAS_TIPS | HAS_REPLAY | HAS_SHREDS | HAS_REPLAYED,
     66,
     8_752,
     11_877_602,
@@ -42,6 +44,10 @@ function row(over: Partial<Record<number, number>> = {}): WireRow {
     7_400_000,
     1_000_000,
     47_200,
+    1_203,
+    63,
+    341,
+    393,
   ];
   return base.map((value, index) => over[index] ?? value) as WireRow;
 }
@@ -85,6 +91,28 @@ describe("entriesOf", () => {
     expect(entry.block?.priority_fees).toBe(12_480);
     expect(entry.block?.tips).toBe(7_400_000);
     expect(entry.block?.replay_micros).toBe(47_200);
+    expect(entry.shreds).toEqual({ count: 1_203, repaired: 63, full_millis: 341 });
+    expect(entry.replayed_millis).toBe(393);
+  });
+
+  it("leaves the arrival and the replay end absent where neither was seen", () => {
+    // A fill reported before the dashboard was watching, and a block this
+    // validator built, both read as nothing rather than as noughts.
+    const [entry] = entriesOf(
+      range([row({ 1: HAS_BLOCK | HAS_CLOCK, 10: 1_203, 13: 393 })]),
+      epochOf(),
+      undefined,
+    );
+    expect(entry.shreds).toBeNull();
+    expect(entry.replayed_millis).toBeNull();
+  });
+
+  it("carries an arrival for a slot that filled and never froze", () => {
+    // A dead slot has shreds and no block, which is why the arrival is on the
+    // entry rather than inside the block.
+    const [entry] = entriesOf(range([row({ 1: HAS_CLOCK | HAS_SHREDS })]), epochOf(), undefined);
+    expect(entry.block).toBeNull();
+    expect(entry.shreds?.count).toBe(1_203);
   });
 
   it("leaves replay time absent for a block replay never timed", () => {

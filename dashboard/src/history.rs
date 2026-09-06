@@ -8,13 +8,13 @@
 use {crate::slots::SlotEntry, serde::Serialize, solana_clock::Slot};
 
 /// Slots kept in the packed history: a hundred thousand, about eleven hours,
-/// for under four megabytes. Allocated by the service because the server
+/// for about eight megabytes. Allocated by the service because the server
 /// answers range queries out of it before the collector exists.
 pub const PACKED_SLOTS: usize = 100_000;
 
-/// One slot, packed to the columns a schedule row draws: forty-eight bytes.
-/// The leader is not among them, it comes from the epoch's turn array; nor is
-/// the duration, which is the gap to the previous slot with a clock.
+/// One slot, packed to the columns a schedule row draws. The leader is not
+/// among them, it comes from the epoch's turn array; nor is the duration,
+/// which is the gap to the previous slot with a clock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PackedSlot {
     /// [`crate::slots::SlotLevel`] as its discriminant.
@@ -44,17 +44,44 @@ pub struct PackedSlot {
     /// an offset from the window, which would have to be rebased as the window
     /// moved.
     pub time_millis: u64,
+    /// Data shreds in the block, and how many had to be repaired. Nought unless
+    /// `HAS_SHREDS`.
+    pub shreds: u32,
+    pub repaired: u32,
+    /// Milliseconds from the slot's first shred to its last, and from its first
+    /// shred to replay finishing. Saturating into `u32`, which is over a month.
+    /// Nought unless `HAS_SHREDS` and `HAS_REPLAYED` respectively.
+    pub full_millis: u32,
+    pub replayed_millis: u32,
 }
 
-/// Most slots one range may carry. A row is about sixty-five bytes of JSON, so
-/// a full span is around half the frame ceiling, and the next field added here
-/// wants that arithmetic done again. Fifty times a screenful already.
-pub const MAX_RANGE_SLOTS: usize = 8192;
+/// Most slots one range may carry. A row of mainnet-sized figures is about a
+/// hundred and twenty bytes of JSON, so a full span is under half the frame
+/// ceiling, which a test below holds it to. Twenty-five times a screenful.
+pub const MAX_RANGE_SLOTS: usize = 4096;
 
-/// One slot as it goes on the wire. Positional because field names would
+/// One slot as it goes on the wire: a JSON array, because field names would
 /// outweigh the figures. Order: level, flags, votes, non-votes, compute, fees,
-/// priority fees, tips, time, replay. The frontend mirrors it.
-pub type WireRow = (u8, u8, u32, u32, u32, u64, u64, u64, u64, u32);
+/// priority fees, tips, time, replay, shreds, repaired, full, replayed. The
+/// frontend mirrors it. A struct rather than a tuple, which std stops
+/// deriving for at twelve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct WireRow(
+    pub u8,
+    pub u8,
+    pub u32,
+    pub u32,
+    pub u32,
+    pub u64,
+    pub u64,
+    pub u64,
+    pub u64,
+    pub u32,
+    pub u32,
+    pub u32,
+    pub u32,
+    pub u32,
+);
 
 /// A span of the history, as it goes on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -78,6 +105,10 @@ pub const HAS_TIPS: u8 = 1 << 2;
 /// Set where replay's time on the slot was seen. Clear for a bank this validator
 /// built, which replay never timed.
 pub const HAS_REPLAY: u8 = 1 << 3;
+/// Set where the blockstore reported the slot filling.
+pub const HAS_SHREDS: u8 = 1 << 4;
+/// Set where replay's finish was seen, and so timed from the first shred.
+pub const HAS_REPLAYED: u8 = 1 << 5;
 
 /// A fixed-size history of packed slots, direct-mapped at `slot % capacity`.
 /// The slot is stored beside its row so a row from a lap ago cannot answer for
@@ -109,7 +140,7 @@ impl SlotHistory {
         let rows = (0..count as u64)
             .map(|offset| {
                 self.get(first_slot.saturating_add(offset)).map(|row| {
-                    (
+                    WireRow(
                         row.level,
                         row.flags,
                         row.votes,
@@ -120,6 +151,10 @@ impl SlotHistory {
                         row.tips,
                         row.time_millis,
                         row.replay_micros,
+                        row.shreds,
+                        row.repaired,
+                        row.full_millis,
+                        row.replayed_millis,
                     )
                 })
             })
@@ -153,6 +188,16 @@ impl SlotHistory {
                 row.flags |= HAS_REPLAY;
                 row.replay_micros = clamp(micros);
             }
+        }
+        if let Some(shreds) = &entry.shreds {
+            row.flags |= HAS_SHREDS;
+            row.shreds = clamp(shreds.count);
+            row.repaired = clamp(shreds.repaired);
+            row.full_millis = clamp(shreds.full_millis);
+        }
+        if let Some(millis) = entry.replayed_millis {
+            row.flags |= HAS_REPLAYED;
+            row.replayed_millis = clamp(millis);
         }
     }
 
@@ -193,7 +238,7 @@ fn clamp(value: u64) -> u32 {
 mod tests {
     use {
         super::*,
-        crate::slots::{BlockDetail, SlotLevel},
+        crate::slots::{BlockDetail, ShredArrival, SlotLevel},
     };
 
     fn entry(slot: Slot) -> SlotEntry {
@@ -204,6 +249,8 @@ mod tests {
             block: None,
             duration_nanos: None,
             time_millis: None,
+            shreds: None,
+            replayed_millis: None,
         }
     }
 
@@ -328,8 +375,22 @@ mod tests {
         history.record(&with_block(10, 9_500, 8_752));
         history.record_time(10, 1_756_000_000_123);
 
-        let (level, flags, votes, non_votes, compute, fees, priority, tips, time, replay) =
-            history.range(10, 1).rows[0].expect("recorded");
+        let WireRow(
+            level,
+            flags,
+            votes,
+            non_votes,
+            compute,
+            fees,
+            priority,
+            tips,
+            time,
+            replay,
+            shreds,
+            repaired,
+            full,
+            replayed,
+        ) = history.range(10, 1).rows[0].expect("recorded");
         assert_eq!(level, SlotLevel::Rooted as u8);
         assert_eq!(flags, HAS_BLOCK | HAS_CLOCK);
         assert_eq!(votes, 748);
@@ -344,6 +405,78 @@ mod tests {
         assert_eq!(time, 1_756_000_000_123);
         assert_eq!(replay, 0);
         assert_eq!(flags & HAS_REPLAY, 0);
+        assert_eq!((shreds, repaired, full, replayed), (0, 0, 0, 0));
+        assert_eq!(flags & (HAS_SHREDS | HAS_REPLAYED), 0);
+    }
+
+    #[test]
+    fn test_shred_arrival_and_replay_end_travel_with_their_flags() {
+        // Both live on the entry rather than the block: a slot fills before it
+        // freezes, and a dead one fills without freezing at all.
+        let mut history = SlotHistory::new(64);
+        let mut filled = entry(50);
+        filled.shreds = Some(ShredArrival {
+            count: 928,
+            repaired: 63,
+            full_millis: 921,
+        });
+        history.record(&filled);
+        let mut replayed = with_block(51, 100, 10);
+        replayed.shreds = Some(ShredArrival {
+            count: 1_203,
+            repaired: 0,
+            full_millis: 341,
+        });
+        replayed.replayed_millis = Some(393);
+        history.record(&replayed);
+
+        let dead = history.get(50).expect("recorded");
+        assert_eq!(dead.flags, HAS_SHREDS);
+        assert_eq!(
+            (dead.shreds, dead.repaired, dead.full_millis),
+            (928, 63, 921)
+        );
+        assert_eq!(dead.replayed_millis, 0);
+
+        let live = history.get(51).expect("recorded");
+        assert_eq!(live.flags, HAS_BLOCK | HAS_SHREDS | HAS_REPLAYED);
+        assert_eq!(live.full_millis, 341);
+        assert_eq!(live.replayed_millis, 393);
+    }
+
+    #[test]
+    fn test_a_full_range_of_mainnet_sized_rows_fits_the_message_ceiling() {
+        // Every figure as large as a real slot's gets: fees in the thousands of
+        // SOL, a thirteen-digit clock, a compute figure at the row's clamp. The
+        // worst case the types allow does not fit and never did; this is the
+        // case the page will meet.
+        let mut history = SlotHistory::new(MAX_RANGE_SLOTS);
+        for slot in 0..MAX_RANGE_SLOTS as Slot {
+            let mut big = with_block(slot, 99_999, 99_999);
+            if let Some(block) = big.block.as_mut() {
+                block.block_cost = u64::from(u32::MAX);
+                block.total_fees = 9_999_999_999_999;
+                block.priority_fees = 9_999_999_999_999;
+                block.tips = Some(9_999_999_999_999);
+                block.replay_micros = Some(9_999_999);
+            }
+            big.shreds = Some(ShredArrival {
+                count: 99_999,
+                repaired: 99_999,
+                full_millis: 999_999,
+            });
+            big.replayed_millis = Some(999_999);
+            history.record(&big);
+            history.record_time(slot, 1_999_999_999_999);
+        }
+
+        let encoded = crate::proto::encode("slot", "range", &history.range(0, MAX_RANGE_SLOTS));
+        assert!(
+            encoded.len() < crate::proto::MAX_MESSAGE / 2,
+            "a full range is {} bytes against a {} byte ceiling",
+            encoded.len(),
+            crate::proto::MAX_MESSAGE
+        );
     }
 
     #[test]

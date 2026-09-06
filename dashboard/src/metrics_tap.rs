@@ -19,6 +19,7 @@ use {
             Arc, Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
+        time::{SystemTime, UNIX_EPOCH},
     },
 };
 
@@ -103,6 +104,10 @@ const XDP_NETWORK_CONFIG: &str = "xdp-network-config";
 /// unless the validator logs below `solana=info`.
 const REPLAY_SLOT_STATS: &str = "replay-slot-stats";
 
+/// Every slot the blockstore fills, timed from its first shred, with how many
+/// of its shreds had to be repaired. Sent with `datapoint_info!`.
+const SHRED_FULL: &str = "shred_insert_is_full";
+
 /// What the cost tracker made of a block. Reported for every slot and tagged
 /// with whether it was ours; only ours are kept.
 const COST_TRACKER: &str = "cost_tracker_stats";
@@ -116,6 +121,10 @@ const SLOT: &str = "slot";
 /// Replayed slots kept, about a minute and a half. Shorter samples missed the
 /// program cache's mean by a third, because compilation arrives in bursts.
 const REPLAY_SLOTS: usize = 256;
+
+/// Filled slots kept. A slot's record is read when replay freezes it, and
+/// during a catch-up the blockstore fills a long way ahead of replay.
+const SHRED_FILLS: usize = 4096;
 
 /// Leader slots kept, matched to the produced block panel's retention so every
 /// block it shows still has its waterfall and costs.
@@ -365,6 +374,9 @@ pub struct MetricsTap {
     /// because the panel wants the worst slot as well as the mean.
     replay_slots: Mutex<VecDeque<ReplaySlotTimes>>,
 
+    /// How each recent slot's shreds arrived, oldest first.
+    shred_fills: Mutex<VecDeque<ShredFill>>,
+
     /// How the XDP transmit path is configured. Latched: it cannot change while the
     /// process runs, and a config that stops being reported has not been turned
     /// off.
@@ -412,6 +424,19 @@ pub struct SlotCost {
     pub in_flight: u64,
 }
 
+/// How one slot's shreds arrived, reported by the blockstore as the slot
+/// filled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ShredFill {
+    pub slot: Slot,
+    /// Data shreds in the block: the last index plus one.
+    pub shreds: u64,
+    /// Of those, the ones this validator had to ask for.
+    pub repaired: u64,
+    /// Milliseconds from the first shred to the last.
+    pub full_millis: u64,
+}
+
 /// One replayed slot's timings, in microseconds, of three kinds:
 ///
 /// - `fetch`, `confirming` and `completing` are disjoint spans on replay's own
@@ -448,6 +473,10 @@ pub struct ReplaySlotTimes {
     pub other: u64,
 
     pub transactions: u64,
+
+    /// When the point arrived, in milliseconds since the epoch: replay reports as
+    /// it finishes a slot, on the clock the blockstore stamps shreds with.
+    pub observed_millis: u64,
 }
 
 impl ReplaySlotTimes {
@@ -802,6 +831,7 @@ impl MetricsTap {
             }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
+            SHRED_FULL => self.remember_fill(point),
             XDP_NETWORK_CONFIG => self.remember_xdp(point),
             COST_TRACKER => self.remember_cost(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
@@ -975,12 +1005,46 @@ impl MetricsTap {
             return;
         }
 
+        slot.observed_millis = now_millis();
         let Ok(mut slots) = self.replay_slots.lock() else {
             return;
         };
         slots.push_back(slot);
         while slots.len() > REPLAY_SLOTS {
             slots.pop_front();
+        }
+    }
+
+    /// Records how a slot's shreds arrived. The count is one more than the last
+    /// index, and the -1 the blockstore sends for an unknown one drops the point.
+    fn remember_fill(&self, point: &DataPoint) {
+        let mut fill = ShredFill::default();
+        let mut slot = None;
+        let mut last_index = None;
+        for (name, value) in &point.fields {
+            let Some(number) = field_u64(value) else {
+                continue;
+            };
+            match *name {
+                SLOT => slot = Some(number),
+                "last_index" => last_index = Some(number),
+                "num_repaired" => fill.repaired = number,
+                "total_time_ms" => fill.full_millis = number,
+                _ => (),
+            }
+        }
+        let (Some(slot), Some(last_index)) = (slot, last_index) else {
+            return;
+        };
+        fill.slot = slot;
+        fill.shreds = last_index.saturating_add(1);
+
+        let Ok(mut fills) = self.shred_fills.lock() else {
+            return;
+        };
+        fills.push_back(fill);
+        while fills.len() > SHRED_FILLS {
+            fills.pop_front();
         }
     }
 
@@ -1058,23 +1122,20 @@ impl MetricsTap {
         self.xdp.lock().ok().and_then(|held| held.clone())
     }
 
-    /// The replayed slots held, oldest first.
-    /// Wall time replay's own thread spent on `slot`, in microseconds, while
-    /// the record is still held. Newest first, in case a slot was replayed twice.
-    pub fn replay_serial_micros(&self, slot: Slot) -> Option<u64> {
+    /// The replay record for `slot`, while it is still held. Newest first, in
+    /// case a slot was replayed twice.
+    pub fn replayed(&self, slot: Slot) -> Option<ReplaySlotTimes> {
         let slots = self.replay_slots.lock().ok()?;
-        slots
-            .iter()
-            .rev()
-            .find(|times| times.slot == slot)
-            .map(|times| {
-                times
-                    .fetch
-                    .saturating_add(times.confirming)
-                    .saturating_add(times.completing)
-            })
+        slots.iter().rev().find(|times| times.slot == slot).copied()
     }
 
+    /// How `slot`'s shreds arrived, while the record is still held.
+    pub fn shred_fill(&self, slot: Slot) -> Option<ShredFill> {
+        let fills = self.shred_fills.lock().ok()?;
+        fills.iter().rev().find(|fill| fill.slot == slot).copied()
+    }
+
+    /// The replayed slots held, oldest first.
     pub fn replay_slots(&self) -> Vec<ReplaySlotTimes> {
         self.replay_slots
             .lock()
@@ -1638,6 +1699,14 @@ fn field_u64(value: &str) -> Option<u64> {
     value.strip_suffix('i')?.parse().ok()
 }
 
+/// Milliseconds since the epoch, the clock the blockstore stamps shreds with.
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 /// A string field without the line-protocol quotes `add_field_str` put round
 /// it. One pair is taken off, so a value that started with a quote keeps it.
 fn field_str(value: &str) -> String {
@@ -1776,8 +1845,81 @@ mod tests {
             ],
         ));
 
-        assert_eq!(tap.replay_serial_micros(443_895_975), Some(47_200));
-        assert_eq!(tap.replay_serial_micros(443_895_974), None);
+        assert_eq!(
+            tap.replayed(443_895_975).map(|times| times.serial()),
+            Some(47_200)
+        );
+        assert!(tap.replayed(443_895_974).is_none());
+    }
+
+    #[test]
+    fn test_a_replay_record_says_when_it_arrived() {
+        // Replay reports as it finishes a slot, so the arrival is when replay
+        // finished it, and the page measures that from the slot's first shred.
+        let tap = MetricsTap::default();
+        let before = now_millis();
+        tap.observe(&named(
+            REPLAY_SLOT_STATS,
+            &[("slot", "443895975i"), ("execute_us", "231000i")],
+        ));
+        let observed = tap.replayed(443_895_975).unwrap().observed_millis;
+        assert!(observed >= before && observed <= now_millis());
+    }
+
+    #[test]
+    fn test_a_filled_slot_is_read_as_a_shred_count_and_a_repair_count() {
+        // Names from `ledger/src/slot_stats.rs`. The last index is the highest
+        // shred, so the count is one more.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            SHRED_FULL,
+            &[
+                ("slot", "444422652i"),
+                ("total_time_ms", "921i"),
+                ("last_index", "927i"),
+                ("num_repaired", "63i"),
+                ("num_recovered", "12i"),
+            ],
+        ));
+
+        let fill = tap.shred_fill(444_422_652).unwrap();
+        assert_eq!(fill.shreds, 928);
+        assert_eq!(fill.repaired, 63);
+        assert_eq!(fill.full_millis, 921);
+        assert!(tap.shred_fill(444_422_651).is_none());
+    }
+
+    #[test]
+    fn test_a_fill_with_no_last_index_is_dropped() {
+        // The blockstore writes -1 where it has not seen the last shred, which
+        // is not a count and must not become one.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            SHRED_FULL,
+            &[
+                ("slot", "10i"),
+                ("total_time_ms", "400i"),
+                ("last_index", "-1i"),
+            ],
+        ));
+        assert!(tap.shred_fill(10).is_none());
+    }
+
+    #[test]
+    fn test_only_the_newest_filled_slots_are_kept() {
+        let tap = MetricsTap::default();
+        for slot in 0..SHRED_FILLS.saturating_add(10) {
+            tap.observe(&named(
+                SHRED_FULL,
+                &[("slot", &format!("{slot}i")), ("last_index", "99i")],
+            ));
+        }
+        assert!(tap.shred_fill(9).is_none(), "the first ten dropped");
+        assert!(tap.shred_fill(10).is_some());
+        assert!(
+            tap.shred_fill((SHRED_FILLS as u64).saturating_add(9))
+                .is_some()
+        );
     }
 
     #[test]

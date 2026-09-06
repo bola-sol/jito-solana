@@ -3,7 +3,16 @@ import { matchesQuery, turnKey, turnsOf, type LeaderRef } from "./schedule";
 import type { SlotEntry } from "./types";
 
 function held(slot: number): SlotEntry {
-  return { slot, level: "completed", mine: false, block: null, duration_nanos: null, time_millis: null };
+  return {
+    slot,
+    level: "completed",
+    mine: false,
+    block: null,
+    duration_nanos: null,
+    time_millis: null,
+    shreds: null,
+    replayed_millis: null,
+  };
 }
 
 /**

@@ -4143,10 +4143,11 @@ body {
 
 .schedule-row {
   display: grid;
-  /* Eight figure columns: the fees split in two, then tips and replay time
-     arrived. The minimum dropped with the count; the container scrolls
-     sideways either way. */
-  grid-template-columns: 150px repeat(8, minmax(64px, 1fr));
+  /* Nine figure columns. The timeline takes the width of two, and compute is
+     held at what its widest figure needs, or it overflows the row and puts a
+     scrollbar under every turn. The container scrolls sideways on a narrow
+     screen either way. */
+  grid-template-columns: 150px repeat(6, minmax(64px, 1fr)) minmax(80px, 1.1fr) minmax(150px, 2fr) minmax(92px, 1.1fr);
   gap: 8px;
   padding: 2px 0;
   font-size: 12px;
@@ -4203,6 +4204,53 @@ body {
 .schedule-fill {
   margin-left: 6px;
   color: var(--text-faint);
+}
+
+/* Shreds this validator had to ask for, beside the count. Toned, because a
+   repaired shred is a piece of the block that did not come over turbine. */
+.schedule-repaired {
+  margin-left: 6px;
+  color: var(--warn);
+}
+
+/* From the first shred to the block being full, then to replay finishing, on
+   one fixed track so rows compare with each other rather than each filling its
+   own cell. The text beside it is the same two spans. */
+.schedule-tl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.schedule-tl-track {
+  position: relative;
+  flex: 1;
+  max-width: 110px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+
+.schedule-tl-track i {
+  position: absolute;
+  top: 0;
+  height: 100%;
+}
+
+.schedule-tl-track .is-wait {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.schedule-tl-track .is-run {
+  background: color-mix(in srgb, var(--accent) 88%, transparent);
+}
+
+.schedule-tl-text {
+  min-width: 6em;
+  text-align: right;
 }
 
 @media (max-width: 700px) {

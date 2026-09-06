@@ -25,6 +25,26 @@ export interface SlotEntry {
   duration_nanos: number | null;
   /** When the slot's first shred arrived, in milliseconds. Null for a slot never timed. */
   time_millis: number | null;
+  /** How the block's shreds arrived. Null for a slot that never filled. */
+  shreds: ShredArrival | null;
+  /**
+   * Milliseconds from the slot's first shred to replay finishing it. Null for
+   * a bank this validator built, which replay never timed.
+   */
+  replayed_millis: number | null;
+}
+
+/**
+ * How a block's shreds arrived. Outside `BlockDetail` because a slot fills
+ * before it freezes, and a dead slot fills without ever freezing.
+ */
+export interface ShredArrival {
+  /** Data shreds in the block. */
+  count: number;
+  /** Of those, the ones this validator had to ask for. Nought is the block arriving whole over turbine. */
+  repaired: number;
+  /** Milliseconds from the first shred to the last. */
+  full_millis: number;
 }
 
 /**

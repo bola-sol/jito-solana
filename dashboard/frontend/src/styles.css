@@ -3469,6 +3469,115 @@ body {
   color: var(--text-dim);
 }
 
+/* The threads section folds the way the caches card's do and borrows its
+   rules; this is only the rule between it and the disk rows above, which the
+   other host groups carry on their headings. */
+.host-threads {
+  margin-top: 16px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+/* One thread, or a pool of them: the name, its count and cores, a minute of
+   bars, then the two figures. The same shape as a device row, since the two
+   groups answer the same question. */
+.host-thread {
+  display: grid;
+  /* The bars are capped: uncapped they ran to the card's edge with fifteen
+     pixel bars, while the device rows above end well short of it. */
+  grid-template-columns: minmax(0, 13em) 3.6em 7em minmax(120px, 440px) 4.4em 5.6em;
+  align-items: center;
+  gap: 5px 14px;
+  font-size: 11.5px;
+  padding: 4px 0;
+}
+
+.host-thread.is-head {
+  color: var(--text-faint);
+  padding-bottom: 1px;
+}
+
+.host-thread.is-head > * {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.host-thread.is-head .is-spark {
+  text-align: left;
+}
+
+.host-pin {
+  color: var(--text-dim);
+}
+
+/* The count and the pinned cores on the name line: phone only, where their
+   columns go. */
+.host-countline,
+.host-pinline {
+  display: none;
+}
+
+.host-spark {
+  display: block;
+  width: 100%;
+  height: 16px;
+}
+
+.host-spark rect {
+  fill: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* Only PoH's bars are toned, and only for a second it lost its core. */
+.host-spark rect.is-low {
+  fill: var(--warn);
+}
+
+@media (max-width: 700px) {
+  /* Two lines: the name and the two figures, then the bars across the whole
+     width. The count and the cores move onto the name line. */
+  .host-thread {
+    grid-template-columns: minmax(0, 1fr) 4.4em 5.6em;
+    grid-template-areas: "name now wait" "spark spark spark";
+    gap: 4px 12px;
+    padding: 6px 0;
+  }
+
+  .host-thread.is-head {
+    grid-template-areas: "name now wait";
+    padding: 4px 0 0;
+  }
+
+  .host-thread .is-count,
+  .host-thread .is-cores,
+  .host-thread .is-spark,
+  .host-thread .host-dev s {
+    display: none;
+  }
+
+  .host-thread .host-dev {
+    grid-area: name;
+  }
+
+  .host-countline,
+  .host-pinline {
+    display: inline;
+  }
+
+  .host-spark {
+    grid-area: spark;
+    height: 14px;
+  }
+
+  .host-thread .is-now {
+    grid-area: now;
+  }
+
+  .host-thread .is-wait {
+    grid-area: wait;
+  }
+}
+
 /* ---- caches and storage ---- */
 
 /* The two subsystems replay waits on, folded into one card. Ruled apart rather

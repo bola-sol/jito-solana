@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { bytes, count, decimal, percent } from "../format";
 import {
   availableTone,
@@ -10,7 +11,18 @@ import {
   swapTone,
   waitTone,
 } from "../host";
-import type { DeviceLoad, FilesystemUsage, Host } from "../types";
+import { readThreadsCollapsed, writeThreadsCollapsed } from "../layout";
+import { useNarrow } from "../narrow";
+import {
+  barLow,
+  busiest,
+  onCpuTone,
+  pinnedLabel,
+  threadRows,
+  THREADS_WINDOW,
+  type ThreadRow,
+} from "../threads";
+import type { DeviceLoad, FilesystemUsage, Host, ThreadsSample } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
@@ -141,6 +153,8 @@ export function HostCard() {
           ))}
         </>
       )}
+
+      <Threads samples={store.getThreads()} />
     </Card>
   );
 }
@@ -197,4 +211,164 @@ function Device({ device }: { device: DeviceLoad }) {
 function share(part: number, whole: number): string {
   if (whole <= 0) return "0%";
   return `${Math.min(100, (part / whole) * 100)}%`;
+}
+
+/**
+ * The validator's threads over the last minute. After the disks because it
+ * answers the same question, what is running out of headroom.
+ *
+ * Folds the way the caches card's sections do: a row with a figure, a gloss
+ * and a +/− at the right, the pointer's target being the row and the
+ * keyboard's the button. Folded on a phone by default, and wherever the
+ * viewer last left it. The figure is the busiest thread's share, untoned,
+ * because the group has no health to state: what a bad waiting figure looks
+ * like is not yet known, and every other reading is a thread doing its job.
+ */
+function Threads({ samples }: { samples: ThreadsSample[] }) {
+  const narrow = useNarrow();
+  const [collapsed, setCollapsed] = useState<boolean>(() => readThreadsCollapsed() ?? narrow);
+  const rows = threadRows(samples);
+  const last = samples[samples.length - 1];
+  if (!last || rows.length === 0) return null;
+
+  const top = busiest(rows);
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    writeThreadsCollapsed(next);
+  };
+
+  return (
+    <section className="cache-group host-threads">
+      <div className="cache-head" onClick={toggle}>
+        <span className="cache-name">Validator threads</span>
+        <span className="cache-rate">
+          <Explain text="The busiest thread's share of the last second on a core. Each row below is a thread's minute of the same; a pool row is the mean of its threads. Waiting is the minute's worst second spent runnable with no core to run on, and sleeping is whatever the bars leave over.">
+            {top ? percent(top.now, 0) : "—"}
+          </Explain>
+        </span>
+        <span className="cache-gloss">
+          {top && (
+            <i>
+              busiest {top.label}
+              {top.cores !== null && `, ${pinnedLabel(top.cores)}`}
+            </i>
+          )}
+          <i>{count(last.threads)} threads</i>
+          <i>last 60s</i>
+        </span>
+        <button
+          type="button"
+          className="cache-fold"
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? "Unfold" : "Fold"} validator threads`}
+          onClick={(event) => {
+            // The row under it toggles too, and two toggles are none.
+            event.stopPropagation();
+            toggle();
+          }}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="cache-open">
+          <div>
+            <div className="host-thread is-head">
+              <span>thread</span>
+              <span className="host-n is-count">count</span>
+              <span
+                className="host-n is-cores"
+                title="The cores the kernel may schedule the thread on, where that is fewer than the machine has."
+              >
+                pinned
+              </span>
+              <span className="is-spark">on cpu, each second</span>
+              <span className="host-n is-now">now</span>
+              <span className="host-n is-wait" title="Runnable but waiting for a core: the worst second of the minute.">
+                waiting
+              </span>
+            </div>
+            {rows.map((row) => (
+              <ThreadLine key={row.other ? "other" : row.name} row={row} />
+            ))}
+            <div className="card-footnote">
+              Fewer cores than the machine has means the thread is pinned.
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** One thread, or a pool of them, with its minute of bars. */
+function ThreadLine({ row }: { row: ThreadRow }) {
+  const onCpu = onCpuTone(row);
+  return (
+    <div
+      className="host-thread"
+      title={
+        row.poh
+          ? "Hashes continuously between ticks and is meant to hold a core. Toned when it drops below 90% on cpu."
+          : undefined
+      }
+    >
+      <span className="host-dev">
+        <b>{row.label}</b>
+        {/* The count and the pinned cores here as well as in their columns,
+            shown only where the columns are not: a phone. */}
+        <span className="host-countline host-faint"> {count(row.count)}</span>
+        {row.cores !== null && (
+          <span className="host-pinline host-pin"> · {pinnedLabel(row.cores)}</span>
+        )}
+        {row.poh && <s>holds a core</s>}
+      </span>
+      <span className="host-n is-count host-faint">{count(row.count)}</span>
+      <span className={`host-n is-cores ${row.cores === null ? "host-faint" : "host-pin"}`}>
+        {pinnedLabel(row.cores)}
+      </span>
+      <Spark row={row} />
+      <span className={`host-n is-now${onCpu ? ` tone-${onCpu}` : ""}`}>
+        {percent(row.now, row.now < 0.01 ? 1 : 0)}
+      </span>
+      <span className="host-n is-wait">{percent(row.waiting, 1)}</span>
+    </div>
+  );
+}
+
+const BAR_STEP = 6;
+const BAR_WIDTH = 5;
+const SPARK_HEIGHT = 16;
+
+/**
+ * A minute of one row's on-cpu share, one bar a second, drawn against the
+ * whole second so every row is on the same scale. A window shorter than a
+ * minute is right-aligned, so the live edge stays put while it fills.
+ */
+function Spark({ row }: { row: ThreadRow }) {
+  const offset = THREADS_WINDOW - row.series.length;
+  return (
+    <svg
+      className="host-spark"
+      viewBox={`0 0 ${THREADS_WINDOW * BAR_STEP - 1} ${SPARK_HEIGHT}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      {row.series.map((share, index) => {
+        if (share === null) return null;
+        const height = Math.max(1, Math.round(share * SPARK_HEIGHT));
+        return (
+          <rect
+            key={index}
+            x={(offset + index) * BAR_STEP}
+            y={SPARK_HEIGHT - height}
+            width={BAR_WIDTH}
+            height={height}
+            className={barLow(row, share) ? "is-low" : undefined}
+          />
+        );
+      })}
+    </svg>
+  );
 }

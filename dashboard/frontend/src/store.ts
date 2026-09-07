@@ -15,6 +15,7 @@ import type {
   NetworkSample,
   Peer,
   SlotEntry,
+  ThreadsSample,
   TpsSample,
 } from "./types";
 
@@ -39,6 +40,9 @@ const MAX_OWN_SLOTS = 64;
 /** TPS samples kept for the chart. */
 const MAX_TPS_SAMPLES = 300;
 
+/** Thread samples kept: the minute the host card draws. */
+const MAX_THREAD_SAMPLES = 60;
+
 export type ConnectionState = "connecting" | "open" | "closed";
 
 /**
@@ -59,6 +63,7 @@ export class Store {
   private slots = new Map<number, SlotEntry>();
   private tps: TpsSample[] = [];
   private network: NetworkSample[] = [];
+  private threads: ThreadsSample[] = [];
   private connection: ConnectionState = "connecting";
   private sender: ((frame: string) => void) | null = null;
   private pending = new Map<number, Pending>();
@@ -344,6 +349,10 @@ export class Store {
     return this.network;
   }
 
+  getThreads(): ThreadsSample[] {
+    return this.threads;
+  }
+
   apply(envelope: Envelope): void {
     const { topic, key, value } = envelope;
 
@@ -374,6 +383,14 @@ export class Store {
       const last = this.network[this.network.length - 1];
       if (!last || sample.timestamp_nanos > last.timestamp_nanos) {
         this.network = [...this.network, sample].slice(-MAX_TPS_SAMPLES);
+      }
+    } else if (topic === "summary" && key === "threads_history") {
+      this.threads = (value as ThreadsSample[]).slice(-MAX_THREAD_SAMPLES);
+    } else if (topic === "summary" && key === "threads_sample") {
+      const sample = value as ThreadsSample;
+      const last = this.threads[this.threads.length - 1];
+      if (!last || sample.timestamp_nanos > last.timestamp_nanos) {
+        this.threads = [...this.threads, sample].slice(-MAX_THREAD_SAMPLES);
       }
     } else if (topic === "summary" && key === "tps_history") {
       this.tps = (value as TpsSample[]).slice(-MAX_TPS_SAMPLES);

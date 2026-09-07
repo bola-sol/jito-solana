@@ -18,6 +18,7 @@ use {
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
+        thread_stats::{self, ThreadGroup, ThreadReading},
         udp_drops::{self, PortCounters, PortWindow},
     },
     serde::Serialize,
@@ -40,6 +41,13 @@ pub const METER_INTERVAL: Duration = Duration::from_secs(1);
 /// Samples retained for the transaction and network charts: five minutes at
 /// one a second, which is what the client keeps.
 const CHART_HISTORY: usize = 300;
+
+/// Samples the thread panel keeps: the minute it draws. Shorter than the
+/// charts because each sample is nine rows rather than two figures.
+const THREADS_HISTORY: usize = 60;
+
+/// Thread groups given a row of their own; the rest share one.
+const THREAD_ROWS: usize = 8;
 
 /// Window the reported socket drops accumulate over. Long enough that a burst
 /// stays visible for a while after it stops, short enough that it clears.
@@ -258,6 +266,16 @@ pub struct NetworkSample {
     pub timestamp_nanos: u64,
     #[serde(flatten)]
     pub rates: Network,
+}
+
+/// Where the validator's threads spent one second: the busiest groups by their
+/// minute's mean, and one row for the rest.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ThreadsSample {
+    pub timestamp_nanos: u64,
+    /// Threads in the process, every group included.
+    pub threads: usize,
+    pub groups: Vec<ThreadGroup>,
 }
 
 /// Kernel-side receive health for one of this validator's UDP ports.
@@ -659,6 +677,7 @@ pub struct Meters {
     accounts: AccountsMeter,
     program_cache: ProgramCacheMeter,
     tpu: TpuMeter,
+    threads: ThreadMeter,
 }
 
 impl Meters {
@@ -685,6 +704,7 @@ impl Meters {
             accounts: AccountsMeter::new(),
             program_cache: ProgramCacheMeter::new(),
             tpu: TpuMeter::new(),
+            threads: ThreadMeter::default(),
         }
     }
 
@@ -708,6 +728,7 @@ impl Meters {
         self.network.tick(&self.publisher);
         self.collect_xdp();
         self.host.tick(&self.ctx, &self.publisher);
+        self.threads.tick(&self.publisher);
         self.collect_ingest_paths();
         self.collect_from_metrics();
     }
@@ -989,6 +1010,88 @@ impl HostMeter {
             devices: device_loads(&paths, &current, &previous, interval_ms, seconds),
         };
         publisher.publish(TOPIC_SUMMARY, "host", &host);
+    }
+}
+
+/// Where the validator's threads spend each second, grouped by pool.
+#[derive(Default)]
+struct ThreadMeter {
+    last: Option<(HashMap<u64, ThreadReading>, Instant)>,
+    /// Each thread's pinning, read once when it is first seen: `Some` where it
+    /// may run on fewer cores than the machine has.
+    pinning: HashMap<u64, Option<String>>,
+    /// Each group's share per tick over the window, for ranking the rows.
+    recent: VecDeque<Vec<(String, f64)>>,
+    history: Vec<ThreadsSample>,
+    /// Set once the task directory proves unreadable, so the failure is logged
+    /// once rather than every second.
+    unavailable: bool,
+}
+
+impl ThreadMeter {
+    /// Publishes nothing where the counters cannot be read, so the group is
+    /// absent rather than a list of idle threads.
+    fn tick(&mut self, publisher: &Publisher) {
+        if self.unavailable {
+            return;
+        }
+        let current = match thread_stats::read() {
+            Ok(threads) => threads,
+            Err(err) => {
+                self.unavailable = true;
+                log::info!("dashboard: thread counters unavailable, panel disabled: {err}");
+                return;
+            }
+        };
+        let cores = num_cpus();
+        for thread in &current {
+            // Read once: affinity is set at start and does not move.
+            self.pinning.entry(thread.tid).or_insert_with(|| {
+                thread_stats::cores_allowed(thread.tid)
+                    .filter(|list| thread_stats::cores_in(list) < cores)
+            });
+        }
+        let live: HashSet<u64> = current.iter().map(|thread| thread.tid).collect();
+        self.pinning.retain(|tid, _| live.contains(tid));
+
+        let now = Instant::now();
+        let by_tid: HashMap<u64, ThreadReading> = current
+            .iter()
+            .cloned()
+            .map(|thread| (thread.tid, thread))
+            .collect();
+        let Some((previous, sampled_at)) = self.last.replace((by_tid, now)) else {
+            return;
+        };
+        let interval = now.duration_since(sampled_at).as_nanos() as u64;
+        if interval == 0 {
+            return;
+        }
+
+        let groups = thread_stats::group_shares(&previous, &current, &self.pinning, interval);
+        self.recent.push_back(
+            groups
+                .iter()
+                .map(|group| (group.name.clone(), group.on_cpu))
+                .collect(),
+        );
+        while self.recent.len() > THREADS_HISTORY {
+            self.recent.pop_front();
+        }
+        let means = thread_stats::window_means(&self.recent);
+        let sample = ThreadsSample {
+            timestamp_nanos: system_time_nanos(SystemTime::now()),
+            threads: current.len(),
+            groups: thread_stats::select_rows(groups, &means, THREAD_ROWS),
+        };
+        publisher.publish_ephemeral(TOPIC_SUMMARY, "threads_sample", &sample);
+        push_history_of(
+            &mut self.history,
+            sample,
+            THREADS_HISTORY,
+            publisher,
+            "threads_history",
+        );
     }
 }
 
@@ -1706,9 +1809,20 @@ fn at_baseline(baseline: Option<&HashMap<u16, u64>>, port: u16) -> u64 {
 /// Appends a chart sample and republishes the retained series, which a
 /// connecting client needs whole.
 fn push_history<T: Serialize>(history: &mut Vec<T>, sample: T, publisher: &Publisher, key: &str) {
+    push_history_of(history, sample, CHART_HISTORY, publisher, key);
+}
+
+/// The same, keeping `keep` samples.
+fn push_history_of<T: Serialize>(
+    history: &mut Vec<T>,
+    sample: T,
+    keep: usize,
+    publisher: &Publisher,
+    key: &str,
+) {
     history.push(sample);
-    if history.len() > CHART_HISTORY {
-        let excess = history.len().saturating_sub(CHART_HISTORY);
+    if history.len() > keep {
+        let excess = history.len().saturating_sub(keep);
         history.drain(..excess);
     }
     publisher.retain_only(TOPIC_SUMMARY, key, history);
@@ -2306,6 +2420,24 @@ mod tests {
             published.contains(&format!(r#""received":{expected}"#)),
             "{published}"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_the_threads_are_published_from_the_second_tick() {
+        // The first reading is the baseline; the panel wants a difference.
+        let harness = fixture();
+        let mut meters = harness.meters();
+        meters.tick();
+        assert!(
+            harness
+                .published_key("summary", "threads_history")
+                .is_none()
+        );
+        sleep(Duration::from_millis(20));
+        meters.tick();
+        let published = harness.published_key("summary", "threads_history").unwrap();
+        assert!(published.contains(r#""groups":["#), "{published}");
     }
 
     #[test]

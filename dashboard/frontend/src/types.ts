@@ -660,6 +660,33 @@ export interface Host {
   devices: DeviceLoad[];
 }
 
+/**
+ * One group of the validator's threads over one second, mean per thread.
+ *
+ * A pool's threads share a name and differ by a trailing number, which the
+ * validator strips; `count` says how many stand behind the row.
+ */
+export interface ThreadGroup {
+  /** Empty on the folded row. */
+  name: string;
+  count: number;
+  /** The cores the threads may run on, where that is fewer than the machine has. */
+  cores: string | null;
+  /** Share of the second on a core, and runnable but waiting for one. */
+  on_cpu: number;
+  waiting: number;
+  /** True for the one row every group not shown is folded into. */
+  other: boolean;
+}
+
+/** Where the threads spent one second: the busiest groups by their minute's mean, and the rest. */
+export interface ThreadsSample {
+  timestamp_nanos: number;
+  /** Threads in the process, every group included. */
+  threads: number;
+  groups: ThreadGroup[];
+}
+
 /** How full one filesystem is. A level, so nothing here is a rate. */
 export interface FilesystemUsage {
   name: string;

@@ -5,7 +5,11 @@
 
 use {
     serde::Serialize,
-    std::{cmp::Ordering, collections::HashMap, io},
+    std::{
+        cmp::Ordering,
+        collections::{BTreeSet, HashMap},
+        io,
+    },
 };
 
 /// A thread's scheduler counters, cumulative since it started.
@@ -25,8 +29,9 @@ pub struct ThreadGroup {
     /// row.
     pub name: String,
     pub count: usize,
-    /// The cores the threads may run on, where that is fewer than the machine
-    /// has and the same for every thread in the group.
+    /// The cores the threads may run on, where every thread in the group is
+    /// held to fewer than the machine has: the union, since a pool is often
+    /// pinned one thread to a core. `None` where any thread is free to roam.
     pub cores: Option<String>,
     /// Share of the second on a core, and runnable but waiting for one.
     pub on_cpu: f64,
@@ -110,16 +115,45 @@ fn parse_cpus_allowed(status: &str) -> Option<String> {
 
 /// How many cores a list names: `0-3,8` is five.
 pub fn cores_in(list: &str) -> usize {
+    parse_cores(list).len()
+}
+
+/// The cores a list names, as the kernel writes it: `0-3,8`.
+fn parse_cores(list: &str) -> BTreeSet<usize> {
     list.split(',')
-        .map(|part| match part.trim().split_once('-') {
+        .flat_map(|part| match part.trim().split_once('-') {
             Some((from, to)) => {
                 let from: usize = from.parse().unwrap_or(0);
                 let to: usize = to.parse().unwrap_or(0);
-                to.saturating_sub(from).saturating_add(1)
+                from..=to
             }
-            None => 1,
+            None => {
+                let core: usize = part.trim().parse().unwrap_or(0);
+                core..=core
+            }
         })
-        .fold(0, usize::saturating_add)
+        .collect()
+}
+
+/// Cores back into the kernel's form, runs folded: `{2, 4, 5, 6, 7}` is `2,4-7`.
+fn format_cores(cores: &BTreeSet<usize>) -> String {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for &core in cores {
+        match runs.last_mut() {
+            Some((_, end)) if end.saturating_add(1) == core => *end = core,
+            _ => runs.push((core, core)),
+        }
+    }
+    runs.iter()
+        .map(|(from, to)| {
+            if from == to {
+                from.to_string()
+            } else {
+                format!("{from}-{to}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A pool's threads share a name and differ by a trailing number.
@@ -133,9 +167,9 @@ struct GroupSum {
     count: usize,
     on_cpu_nanos: u64,
     waiting_nanos: u64,
-    /// `None` until the first thread; then the pinning every thread so far has
-    /// agreed on, or `Some(None)` where they differ or none is pinned.
-    cores: Option<Option<String>>,
+    /// `None` until the first thread; then the union of every thread's pinning
+    /// so far, or `Some(None)` once one of them is not pinned.
+    cores: Option<Option<BTreeSet<usize>>>,
 }
 
 /// Each group's second, from two readings of every thread. A thread with no
@@ -163,12 +197,18 @@ pub fn group_shares(
         sum.waiting_nanos = sum
             .waiting_nanos
             .saturating_add(thread.waiting_nanos.saturating_sub(before.waiting_nanos));
-        let allowed = pinning.get(&thread.tid).cloned().flatten();
-        match &sum.cores {
-            None => sum.cores = Some(allowed),
-            Some(held) if *held != allowed => sum.cores = Some(None),
-            Some(_) => (),
-        }
+        let allowed = pinning
+            .get(&thread.tid)
+            .and_then(|list| list.as_deref())
+            .map(parse_cores);
+        sum.cores = match (sum.cores.take(), allowed) {
+            (None, allowed) => Some(allowed),
+            (Some(Some(mut held)), Some(allowed)) => {
+                held.extend(allowed);
+                Some(Some(held))
+            }
+            _ => Some(None),
+        };
     }
 
     let span = interval_nanos as f64;
@@ -178,7 +218,7 @@ pub fn group_shares(
         .map(|(name, sum)| ThreadGroup {
             name: name.to_string(),
             count: sum.count,
-            cores: sum.cores.flatten(),
+            cores: sum.cores.flatten().as_ref().map(format_cores),
             on_cpu: share(sum.on_cpu_nanos, sum.count, span),
             waiting: share(sum.waiting_nanos, sum.count, span),
             other: false,
@@ -307,6 +347,14 @@ mod tests {
     }
 
     #[test]
+    fn test_a_core_list_survives_the_round_trip() {
+        assert_eq!(format_cores(&parse_cores("2,4-7")), "2,4-7");
+        assert_eq!(format_cores(&parse_cores("3")), "3");
+        assert_eq!(format_cores(&parse_cores("0-23")), "0-23");
+        assert_eq!(format_cores(&parse_cores("7,5,4,6")), "4-7");
+    }
+
+    #[test]
     fn test_a_pool_is_named_without_its_trailing_number() {
         // What the unified scheduler names its handlers, and what PoH names
         // its one thread.
@@ -390,6 +438,30 @@ mod tests {
             groups[1].cores, None,
             "one pinned and one not is not a pinned pool"
         );
+    }
+
+    #[test]
+    fn test_a_pool_pinned_one_thread_to_a_core_reports_the_union() {
+        let before = by_tid(&[
+            reading(10, "solTransmIO00", 0, 0),
+            reading(11, "solTransmIO01", 0, 0),
+            reading(12, "solTransmIO02", 0, 0),
+            reading(13, "solTransmIO03", 0, 0),
+        ]);
+        let now = [
+            reading(10, "solTransmIO00", 1, 0),
+            reading(11, "solTransmIO01", 1, 0),
+            reading(12, "solTransmIO02", 1, 0),
+            reading(13, "solTransmIO03", 1, 0),
+        ];
+        let pinning = HashMap::from([
+            (10, Some("4".to_string())),
+            (11, Some("5".to_string())),
+            (12, Some("6".to_string())),
+            (13, Some("7".to_string())),
+        ]);
+        let groups = group_shares(&before, &now, &pinning, SECOND);
+        assert_eq!(groups[0].cores.as_deref(), Some("4-7"));
     }
 
     fn group(name: &str, count: usize, on_cpu: f64) -> ThreadGroup {

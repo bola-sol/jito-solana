@@ -47,6 +47,18 @@ export const AVAILABLE_WARN = 0.1;
 export const AVAILABLE_BAD = 0.05;
 
 /**
+ * Share of the last second the cores together were busy, past which a burst
+ * has nowhere to go.
+ *
+ * A duty cycle over every core, like a device's, and read the same way: what
+ * matters is the idle time left to absorb a leader slot or a repair storm,
+ * not the figure itself. A pinned PoH core runs near full by design and is
+ * one core of many, so it barely moves this.
+ */
+export const CPU_WARN = 0.8;
+export const CPU_BAD = 0.9;
+
+/**
  * What is genuinely spoken for, and what is only being borrowed.
  *
  * There are two conventions for "used" and they disagree by tens of gigabytes.
@@ -97,6 +109,12 @@ export function waitTone(waitMs: number | null): HostTone {
   if (waitMs === null) return "muted";
   if (waitMs >= WAIT_BAD_MS) return "bad";
   if (waitMs >= WAIT_WARN_MS) return "warn";
+  return "good";
+}
+
+export function cpuTone(busy: number): HostTone {
+  if (busy >= CPU_BAD) return "bad";
+  if (busy >= CPU_WARN) return "warn";
   return "good";
 }
 

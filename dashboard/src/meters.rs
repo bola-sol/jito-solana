@@ -10,7 +10,7 @@ use {
     crate::{
         collect::{CATCH_UP_SLOTS_PER_SECOND, system_time_nanos},
         context::{DashboardContext, StartProgress},
-        host_stats::{self, HostSnapshot},
+        host_stats::{self, CpuUse, HostSnapshot},
         metrics_tap::{
             AccountsTotals, BundleTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals,
             QuicLevels, QuicTotals, ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost,
@@ -200,9 +200,9 @@ pub struct Network {
     pub sent_per_second: u64,
 }
 
-/// The host the validator runs on. Load and memory are what the process has to
-/// work with, `filesystems` what will run out of room, `devices` what will run
-/// out of throughput.
+/// The host the validator runs on. Load, processor time and memory are what
+/// the process has to work with, `filesystems` what will run out of room,
+/// `devices` what will run out of throughput.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Host {
     pub cores: usize,
@@ -211,6 +211,8 @@ pub struct Host {
     pub load_fifteen: f64,
     pub threads: u64,
     pub running: u64,
+    /// Absent where `/proc/stat` could not be read, or a counter went backwards.
+    pub cpu: Option<CpuUse>,
 
     pub memory_total: u64,
     pub memory_available: u64,
@@ -986,6 +988,10 @@ impl HostMeter {
             load_fifteen: current.load.fifteen,
             threads: current.load.threads,
             running: current.load.running,
+            cpu: current
+                .cpu
+                .zip(previous.cpu)
+                .and_then(|(now, before)| now.since(&before)?.shares()),
             memory_total: current.memory.total,
             memory_available: current.memory.available,
             memory_reclaimable: current.memory.reclaimable,

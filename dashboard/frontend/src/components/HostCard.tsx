@@ -3,6 +3,7 @@ import { bytes, count, decimal, percent } from "../format";
 import {
   availableTone,
   busyTone,
+  cpuTone,
   deviceLabel,
   fullness,
   fullnessTone,
@@ -77,6 +78,35 @@ export function HostCard() {
             </span>
           </div>
         </div>
+
+        {/* Absent where /proc/stat could not be read; the rest of the row
+            does not depend on it. */}
+        {host.cpu && (
+          <div className="host-figure">
+            <div className="host-label">
+              <Explain text="Share of the last second the cores together spent working, so a hundred percent is every core busy the whole second. Load average counts the threads that wanted to run; this counts the time they got. User is the validator and whatever else runs here, system is the kernel on their behalf, interrupts included, and iowait is cores idle with a disk request outstanding, the lighter part of the bar. Steal appears only when a hypervisor is taking time from this machine.">
+                CPU busy
+              </Explain>
+            </div>
+            <div className={`host-value tone-${cpuTone(host.cpu.busy)}`}>
+              {percent(host.cpu.busy, 0)} <small>of {count(host.cores)} cores</small>
+            </div>
+            <div className="host-memory" aria-hidden="true">
+              <i className="is-used" style={{ width: share(host.cpu.busy, 1) }} />
+              <i className="is-cache" style={{ width: share(host.cpu.iowait, 1) }} />
+            </div>
+            <div className="host-sub">
+              user {percent(host.cpu.user, 0)} · system {percent(host.cpu.system, 0)} ·{" "}
+              iowait {percent(host.cpu.iowait, 0)}
+              {host.cpu.steal >= 0.001 && (
+                <>
+                  {" "}
+                  · <span className="tone-warn">steal {percent(host.cpu.steal, 1)}</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="host-figure">
           <div className="host-label">

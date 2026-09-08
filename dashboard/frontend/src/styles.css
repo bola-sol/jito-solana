@@ -3266,9 +3266,9 @@ body {
   flex-direction: column;
 }
 
-/* Load, memory and swap across the top. Swap is absent on a machine without
-   any, so the row is sized by what is there rather than by three fixed
-   columns. */
+/* Load, processor time, memory and swap across the top. Swap is absent on a
+   machine without any, so the row is sized by what is there rather than by
+   fixed columns. */
 .host-top {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -3314,7 +3314,8 @@ body {
 /* Two segments of one bar: what is committed, and the page cache beside it.
    Drawn together because the question the bar answers is how much of this
    machine's memory is spoken for, and the second segment is the part of the
-   answer that is only borrowed. */
+   answer that is only borrowed. The processor tile draws the same shape, its
+   busy time and then the time idle on a disk request. */
 .host-memory {
   display: flex;
   height: 11px;

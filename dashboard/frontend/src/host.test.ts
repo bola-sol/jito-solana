@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   availableTone,
   busyTone,
+  cpuTone,
   deviceLabel,
   fullness,
   fullnessTone,
@@ -22,6 +23,7 @@ function host(over: Partial<Host> = {}): Host {
     load_fifteen: 10.9,
     threads: 1847,
     running: 14,
+    cpu: { busy: 0.31, user: 0.24, system: 0.06, iowait: 0.01, steal: 0 },
     memory_total: 384 * GB,
     memory_available: 88 * GB,
     memory_reclaimable: 64 * GB,
@@ -98,6 +100,14 @@ describe("thresholds", () => {
     expect(busyTone(0.34)).toBe("good");
     expect(busyTone(0.7)).toBe("warn");
     expect(busyTone(0.85)).toBe("bad");
+  });
+
+  it("turns the cores amber at eighty percent busy and red at ninety", () => {
+    // A duty cycle over every core: what matters is the idle time left to
+    // absorb a burst, and a pinned PoH core near full is one core of many.
+    expect(cpuTone(0.31)).toBe("good");
+    expect(cpuTone(0.8)).toBe("warn");
+    expect(cpuTone(0.9)).toBe("bad");
   });
 
   it("reads wait against what NVMe should manage", () => {

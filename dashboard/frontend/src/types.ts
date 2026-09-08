@@ -640,6 +640,19 @@ export interface SlotWaterfall extends Waterfall {
  * `devices` is what will run out of throughput. A box can be in trouble on any
  * one of them while the other two read perfectly healthy.
  */
+/** Where every core's time went over the last second, as shares of it. */
+export interface CpuUse {
+  /** Everything but idle and iowait. */
+  busy: number;
+  user: number;
+  /** The kernel, including interrupt handling. */
+  system: number;
+  /** Idle with a disk request outstanding. */
+  iowait: number;
+  /** Taken by a hypervisor. Nought on bare metal. */
+  steal: number;
+}
+
 export interface Host {
   cores: number;
   load_one: number;
@@ -647,6 +660,8 @@ export interface Host {
   load_fifteen: number;
   threads: number;
   running: number;
+  /** Absent where the validator could not read `/proc/stat`. */
+  cpu: CpuUse | null;
 
   memory_total: number;
   memory_available: number;

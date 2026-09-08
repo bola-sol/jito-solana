@@ -1,15 +1,18 @@
-//! Host load, memory, filesystem capacity and disk saturation, read from
-//! `/proc` and `statvfs` rather than the metrics tap, so the panel works on a
-//! node logging below the default. Capacity and saturation are kept apart: a
-//! machine can be in trouble on one while the other reads healthy.
+//! Host load, processor time, memory, filesystem capacity and disk saturation,
+//! read from `/proc` and `statvfs` rather than the metrics tap, so the panel
+//! works on a node logging below the default. Capacity and saturation are kept
+//! apart: a machine can be in trouble on one while the other reads healthy.
 
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStrExt;
-use std::{
-    collections::BTreeMap,
-    ffi::CString,
-    io,
-    path::{Path, PathBuf},
+use {
+    serde::Serialize,
+    std::{
+        collections::BTreeMap,
+        ffi::CString,
+        io,
+        path::{Path, PathBuf},
+    },
 };
 
 /// Bytes in a disk sector as `/proc/diskstats` counts them: always 512,
@@ -39,6 +42,81 @@ pub struct Memory {
     pub free: u64,
     pub swap_total: u64,
     pub swap_free: u64,
+}
+
+/// Cumulative ticks for every core together, straight out of the `cpu` line of
+/// `/proc/stat`. Guest time is already inside `user` and `nice`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CpuCounters {
+    pub user: u64,
+    pub nice: u64,
+    pub system: u64,
+    pub idle: u64,
+    /// Idle with a disk request outstanding: not busy, but not free either.
+    pub iowait: u64,
+    pub irq: u64,
+    pub softirq: u64,
+    /// Time a hypervisor gave to someone else. Always nought on bare metal.
+    pub steal: u64,
+}
+
+/// One interval's ticks as shares of it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct CpuUse {
+    /// Everything but idle and iowait.
+    pub busy: f64,
+    pub user: f64,
+    /// The kernel, including interrupt handling.
+    pub system: f64,
+    pub iowait: f64,
+    pub steal: f64,
+}
+
+impl CpuCounters {
+    /// This sample less the one before, or `None` if a counter went backwards.
+    pub fn since(&self, previous: &Self) -> Option<Self> {
+        Some(Self {
+            user: self.user.checked_sub(previous.user)?,
+            nice: self.nice.checked_sub(previous.nice)?,
+            system: self.system.checked_sub(previous.system)?,
+            idle: self.idle.checked_sub(previous.idle)?,
+            iowait: self.iowait.checked_sub(previous.iowait)?,
+            irq: self.irq.checked_sub(previous.irq)?,
+            softirq: self.softirq.checked_sub(previous.softirq)?,
+            steal: self.steal.checked_sub(previous.steal)?,
+        })
+    }
+
+    /// `None` where no time passed, since nought of nothing is not idle.
+    pub fn shares(&self) -> Option<CpuUse> {
+        let total = [
+            self.user,
+            self.nice,
+            self.system,
+            self.idle,
+            self.iowait,
+            self.irq,
+            self.softirq,
+            self.steal,
+        ]
+        .into_iter()
+        .fold(0u64, u64::saturating_add);
+        if total == 0 {
+            return None;
+        }
+        let share = |part: u64| part as f64 / total as f64;
+        Some(CpuUse {
+            busy: 1.0 - share(self.idle.saturating_add(self.iowait)),
+            user: share(self.user.saturating_add(self.nice)),
+            system: share(
+                self.system
+                    .saturating_add(self.irq)
+                    .saturating_add(self.softirq),
+            ),
+            iowait: share(self.iowait),
+            steal: share(self.steal),
+        })
+    }
 }
 
 /// Cumulative counters for one block device, straight out of `/proc/diskstats`.
@@ -116,6 +194,8 @@ pub struct Filesystem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostSnapshot {
     pub load: LoadAverage,
+    /// Absent where `/proc/stat` could not be read, so only that tile goes.
+    pub cpu: Option<CpuCounters>,
     pub memory: Memory,
     /// Keyed by the kernel's device name, before partitions are folded into
     /// their parent disk.
@@ -126,11 +206,15 @@ pub struct HostSnapshot {
 pub fn read() -> io::Result<HostSnapshot> {
     let load = parse_load(&std::fs::read_to_string("/proc/loadavg")?)
         .ok_or_else(|| invalid("unrecognised /proc/loadavg"))?;
+    let cpu = std::fs::read_to_string("/proc/stat")
+        .ok()
+        .and_then(|contents| parse_stat(&contents));
     let memory = parse_memory(&std::fs::read_to_string("/proc/meminfo")?)
         .ok_or_else(|| invalid("unrecognised /proc/meminfo"))?;
     let disks = parse_diskstats(&std::fs::read_to_string("/proc/diskstats")?);
     Ok(HostSnapshot {
         load,
+        cpu,
         memory,
         disks,
     })
@@ -255,6 +339,33 @@ fn parse_load(contents: &str) -> Option<LoadAverage> {
     })
 }
 
+/// `cpu  1234 5 678 90000 12 0 34 0 0 0`: the line summing every core, ahead
+/// of one per core. User, nice, system and idle, then iowait, irq, softirq and
+/// steal, which older kernels leave off.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_stat(contents: &str) -> Option<CpuCounters> {
+    let line = contents.lines().find(|line| line.starts_with("cpu "))?;
+    let fields: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .map(|value| value.parse().unwrap_or_default())
+        .collect();
+    if fields.len() < 4 {
+        return None;
+    }
+    let at = |index: usize| fields.get(index).copied().unwrap_or_default();
+    Some(CpuCounters {
+        user: at(0),
+        nice: at(1),
+        system: at(2),
+        idle: at(3),
+        iowait: at(4),
+        irq: at(5),
+        softirq: at(6),
+        steal: at(7),
+    })
+}
+
 /// `MemTotal:       395264000 kB`, one key per line, values in kibibytes.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_memory(contents: &str) -> Option<Memory> {
@@ -371,6 +482,87 @@ SwapCached:             0 kB
 SwapTotal:        8388608 kB
 SwapFree:         8388608 kB
 ";
+
+    const STAT: &str = "\
+cpu  2400 10 600 20000 100 20 80 0 0 0
+cpu0 1200 5 300 10000 50 10 40 0 0 0
+cpu1 1200 5 300 10000 50 10 40 0 0 0
+intr 12345 0 0
+ctxt 6789
+";
+
+    #[test]
+    fn test_reads_the_line_summing_every_core() {
+        let cpu = parse_stat(STAT).unwrap();
+        assert_eq!(cpu.user, 2400);
+        assert_eq!(cpu.nice, 10);
+        assert_eq!(cpu.system, 600);
+        assert_eq!(cpu.idle, 20000);
+        assert_eq!(cpu.iowait, 100);
+        assert_eq!(cpu.irq, 20);
+        assert_eq!(cpu.softirq, 80);
+        assert_eq!(cpu.steal, 0);
+    }
+
+    #[test]
+    fn test_survives_a_stat_from_before_steal_was_counted() {
+        let cpu = parse_stat("cpu  10 0 20 70\n").unwrap();
+        assert_eq!(cpu.idle, 70);
+        assert_eq!(cpu.iowait, 0);
+        assert_eq!(cpu.steal, 0);
+    }
+
+    #[test]
+    fn test_refuses_a_stat_without_the_sum_line() {
+        assert!(parse_stat("cpu0 10 0 20 70\n").is_none());
+        assert!(parse_stat("cpu  10 0\n").is_none());
+    }
+
+    #[test]
+    fn test_busy_leaves_out_idle_and_iowait_alone() {
+        let delta = CpuCounters {
+            user: 20,
+            nice: 4,
+            system: 5,
+            idle: 60,
+            iowait: 5,
+            irq: 2,
+            softirq: 3,
+            steal: 1,
+        };
+        let shares = delta.shares().unwrap();
+        assert!((shares.busy - 0.35).abs() < 1e-9);
+        assert!((shares.user - 0.24).abs() < 1e-9);
+        assert!((shares.system - 0.10).abs() < 1e-9);
+        assert!((shares.iowait - 0.05).abs() < 1e-9);
+        assert!((shares.steal - 0.01).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_no_ticks_is_no_reading() {
+        // Nought of nothing would read as a wholly idle machine.
+        assert_eq!(CpuCounters::default().shares(), None);
+    }
+
+    #[test]
+    fn test_discards_cpu_counters_that_went_backwards() {
+        let previous = CpuCounters {
+            user: 100,
+            ..CpuCounters::default()
+        };
+        let current = CpuCounters {
+            user: 5,
+            ..CpuCounters::default()
+        };
+        assert!(current.since(&previous).is_none());
+        assert_eq!(
+            previous.since(&current),
+            Some(CpuCounters {
+                user: 95,
+                ..CpuCounters::default()
+            })
+        );
+    }
 
     #[test]
     fn test_reads_memory_in_bytes_and_adds_the_reclaimable_parts() {

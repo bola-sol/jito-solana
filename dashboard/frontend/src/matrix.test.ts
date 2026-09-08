@@ -5,10 +5,17 @@ import {
   geometry,
   MATRIX_WINDOW_SECONDS,
   columnsFor,
+  meanSample,
   MIN_PITCH,
   ROWS_TALL,
+  sampleSecond,
   slotsFor,
 } from "./matrix";
+import type { TpsSample } from "./types";
+
+/** Numbered samples: the number is the second, and the merge keeps the newest. */
+const second = (sample: number) => sample;
+const newest = (bucket: number[]) => bucket[bucket.length - 1];
 
 /** A mainnet-shaped second: vote, then failed, then succeeded on top. */
 const MAINNET = [1654.28, 412, 1087.44];
@@ -87,32 +94,69 @@ describe("the grid's columns", () => {
     // stride up makes that a stride of two, and the grid visibly halves and
     // un-halves every time a sample lands.
     const over = Array.from({ length: 61 }, (_unused, index) => index);
-    const columns = columnsFor(over, 60);
+    const columns = columnsFor(over, 60, second, newest);
     expect(columns).toHaveLength(60);
     expect(columns.filter((column) => column === null)).toHaveLength(0);
     expect(columns[columns.length - 1]).toBe(60);
     expect(columns[0]).toBe(1);
   });
 
-  it("thins to fit and keeps the newest sample last", () => {
-    // Counted forward instead, the newest is dropped whenever the stride does
-    // not divide evenly and the leading edge stops moving.
-    const columns = columnsFor(samples, 26);
+  it("merges the seconds a column stands for and keeps the newest last", () => {
+    // Picking every second sample instead made the grid blink on a phone: the
+    // picked set flipped between the even seconds and the odd ones each tick.
+    const columns = columnsFor(samples, 26, second, (bucket) => bucket.join("+"));
     expect(columns).toHaveLength(26);
-    expect(columns[columns.length - 1]).toBe(59);
+    expect(columns[columns.length - 1]).toBe("58+59");
+    expect(columns[0]).toBe("8+9");
+    expect(columns.filter((column) => column === null)).toHaveLength(0);
+  });
+
+  it("keeps a column's seconds from one tick to the next", () => {
+    // Bucketed by the clock, a tick changes only the live column until its
+    // bucket fills, and then the grid steps left by one whole column.
+    const at = (from: number) => {
+      const window = Array.from({ length: 61 }, (_unused, index) => from + index);
+      return columnsFor(window, 24, second, (bucket) => bucket.join("+"));
+    };
+    const before = at(0);
+    const filling = at(1);
+    const stepped = at(2);
+    expect(before[before.length - 1]).toBe("60");
+    expect(filling[filling.length - 1]).toBe("60+61");
+    expect(filling.slice(0, -1)).toEqual(before.slice(0, -1));
+    expect(stepped[stepped.length - 1]).toBe("62");
+    expect(stepped.slice(0, -1)).toEqual(filling.slice(1));
   });
 
   it("pads the left with nothing while the window is still filling", () => {
     // The unlit columns are what make a validator that has just started look
     // like a grid waiting to fill rather than a panel that has failed.
-    const columns = columnsFor([1, 2, 3], 10);
+    const columns = columnsFor([1, 2, 3], 10, second, newest);
     expect(columns).toHaveLength(10);
     expect(columns.slice(0, 7)).toEqual([null, null, null, null, null, null, null]);
     expect(columns.slice(7)).toEqual([1, 2, 3]);
   });
 
   it("returns a grid of nothing before any sample arrives", () => {
-    expect(columnsFor([], 5)).toEqual([null, null, null, null, null]);
+    expect(columnsFor([], 5, second, newest)).toEqual([null, null, null, null, null]);
+  });
+
+  it("draws a merged column as the mean of its seconds, stamped as the newest", () => {
+    const sample = (timestamp_nanos: number, total: number, vote: number): TpsSample => ({
+      slot: timestamp_nanos,
+      timestamp_nanos,
+      total,
+      vote,
+      non_vote_success: total - vote - 10,
+      non_vote_failed: 10,
+    });
+    const merged = meanSample([sample(1e9, 3000, 1500), sample(2e9, 1000, 500)]);
+    expect(merged.total).toBe(2000);
+    expect(merged.vote).toBe(1000);
+    expect(merged.non_vote_success).toBe(990);
+    expect(merged.non_vote_failed).toBe(10);
+    expect(merged.timestamp_nanos).toBe(2e9);
+    expect(sampleSecond(sample(2.7e9, 0, 0))).toBe(2);
   });
 });
 

@@ -5,8 +5,10 @@ import {
   geometry,
   MATRIX_WINDOW_SECONDS,
   columnsFor,
+  meanSample,
   ROWS_SHORT,
   ROWS_TALL,
+  sampleSecond,
   slotsFor,
 } from "../matrix";
 import type { TpsSample } from "../types";
@@ -70,7 +72,7 @@ function Grid({
   height: number;
   rows: number;
 }) {
-  const columns = columnsFor(samples, slotsFor(width));
+  const columns = columnsFor(samples, slotsFor(width), sampleSecond, meanSample);
   const peak = Math.max(...samples.map((sample) => sample.total), 0);
   const ceiling = ceilingFor(peak);
   const { pitch, rowHeight, dot } = geometry(width, height, columns.length, rows);

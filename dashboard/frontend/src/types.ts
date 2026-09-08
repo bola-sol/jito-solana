@@ -680,7 +680,7 @@ export interface ThreadGroup {
   /** Empty on the folded row. */
   name: string;
   count: number;
-  /** The cores the threads may run on, where that is fewer than the machine has. */
+  /** The cores the threads may run on, where every thread is held to fewer than the machine has. */
   cores: string | null;
   /** Share of the second on a core, and runnable but waiting for one. */
   on_cpu: number;

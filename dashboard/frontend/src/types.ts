@@ -815,9 +815,16 @@ export interface StartupProgress {
   /**
    * Share of the cluster's stake visible in gossip, while waiting for a
    * supermajority. Null in every other phase, and on the many validators that
-   * never wait at all.
+   * never wait at all. A whole percent: the validator truncates it before it
+   * reaches the progress report.
    */
   stake_percent: number | null;
+  /**
+   * The same wait as the validator counts it, in lamports, from the point it
+   * submits every tenth check. Exact where `stake_percent` is rounded, and a
+   * few seconds behind it. Null until the first point, and outside the wait.
+   */
+  stake_in_gossip: StakeInGossip | null;
   /**
    * How long the current phase has been running, and what each finished phase
    * took.
@@ -834,6 +841,13 @@ export interface StartupProgress {
 export interface PhaseTiming {
   phase: string;
   elapsed_nanos: number;
+}
+
+/** Stake the validator could see in gossip when it last counted, in lamports. */
+export interface StakeInGossip {
+  online: number;
+  offline: number;
+  total: number;
 }
 
 export interface Health {

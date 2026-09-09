@@ -63,7 +63,7 @@ export function StatusCard() {
   // where it has got to in its boot sequence instead.
   if (startup && !startup.running) {
     return (
-      <Card title="Status">
+      <Card title="Status" lit>
         <StartupPhases startup={startup} />
       </Card>
     );

@@ -6,7 +6,7 @@
 
 use {
     crate::{
-        collect::{Collector, EpochInfo},
+        collect::{Collector, CollectorShared, EpochInfo},
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
         meters::Meters,
@@ -177,20 +177,18 @@ impl Fixture {
         &self,
         startup: Arc<std::sync::Mutex<crate::startup::StartupPublisher>>,
     ) -> Collector {
-        Collector::new(
-            self.ctx.clone(),
-            self.publisher.clone(),
-            Arc::new(RwLock::new(ValidatorInfoCache::default())),
-            self.history.clone(),
-            self.epochs.clone(),
-            running(),
+        let shared = CollectorShared {
+            publisher: self.publisher.clone(),
+            info_cache: Arc::new(RwLock::new(ValidatorInfoCache::default())),
+            history: self.history.clone(),
+            epochs: self.epochs.clone(),
+            startup_progress: running(),
             startup,
-            Arc::new(MetricsTap::default()),
-            // No tip program in the fixture; a meter over it would read nought for every
-            // slot.
-            None,
-            None,
-        )
+            metrics_tap: Arc::new(MetricsTap::default()),
+        };
+        // No tip program in the fixture; a meter over it would read nought for every
+        // slot.
+        Collector::new(self.ctx.clone(), shared, None, None)
     }
 
     /// The once-a-second readings over this fixture, ready to tick.

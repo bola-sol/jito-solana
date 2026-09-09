@@ -515,6 +515,30 @@ body {
   gap: 12px;
 }
 
+/* While the validator boots, every card but the one carrying the boot
+   sequence is blurred and dimmed, and takes no clicks. The one that stays
+   sharp is raised so the blur of a neighbour cannot bleed over its edge. */
+.app.is-booting .card:not(.is-lit) {
+  filter: blur(3px);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+  transition:
+    filter 300ms ease,
+    opacity 300ms ease;
+}
+
+.app.is-booting .card.is-lit {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app.is-booting .card:not(.is-lit) {
+    transition: none;
+  }
+}
+
 /* Always the first row of the card, never a cell in the body's own layout. */
 .card-head {
   display: flex;
@@ -1179,6 +1203,38 @@ body {
 
 .startup-measure-value {
   font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+}
+
+/* The bar with the share the wait ends at marked on it. */
+.startup-meter {
+  position: relative;
+}
+
+.startup-meter .meter {
+  margin-top: 0;
+}
+
+.startup-target {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  background: var(--warn);
+  transform: translateX(-1px);
+}
+
+.startup-measure-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.startup-measure-sub b {
+  font-family: ui-monospace, monospace;
+  font-weight: 400;
   color: var(--text-dim);
 }
 

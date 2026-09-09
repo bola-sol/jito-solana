@@ -19,6 +19,7 @@ import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
 import { SlotStrip } from "./components/SlotStrip";
 import { usePage, type Page } from "./route";
+import type { StartupProgress } from "./types";
 import { useStore } from "./useStore";
 
 /** Base title, kept in step with index.html so the tab reads the same before
@@ -49,6 +50,11 @@ export function App() {
   const classes = ["app"];
   if (rail && collapsed) classes.push("is-collapsed");
   if (!rail) classes.push("is-full");
+  // While the validator boots every card but the one showing the boot sequence
+  // is blurred: the rest have nothing to say yet, and the eye goes to the one
+  // that does. The same test the status card makes to show the phases.
+  const startup = store.get<StartupProgress>("summary", "startup_progress");
+  if (startup && !startup.running) classes.push("is-booting");
 
   return (
     <div className={classes.join(" ")}>

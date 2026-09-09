@@ -198,6 +198,7 @@ export function Card({
   aside,
   children,
   className,
+  lit,
 }: {
   title?: string;
   /**
@@ -209,11 +210,16 @@ export function Card({
   aside?: ReactNode;
   children: ReactNode;
   className?: string;
+  /**
+   * Kept sharp while the validator boots and every other card is blurred.
+   * Only the card showing the boot sequence wants this.
+   */
+  lit?: boolean;
 }) {
   // The body is a separate element so that a card can lay its content out as a
   // grid without the heading becoming one of the cells.
   return (
-    <section className="card">
+    <section className={`card${lit ? " is-lit" : ""}`}>
       {(title || aside) && (
         <div className="card-head">
           {title && <h2 className="card-title">{title}</h2>}

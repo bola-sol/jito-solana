@@ -397,7 +397,8 @@ mod tests {
     }
 
     #[test]
-    fn test_a_reused_thread_id_is_not_differenced_against_its_predecessor() {
+    fn test_reused_thread_id_is_not_differenced() {
+        // A reused thread id is not differenced against its predecessor.
         let before = by_tid(&[reading(10, "solOldThread", SECOND, 0)]);
         let now = [reading(10, "solNewThread", SECOND / 10, 0)];
         assert!(group_shares(&before, &now, &HashMap::new(), SECOND).is_empty());
@@ -413,7 +414,8 @@ mod tests {
     }
 
     #[test]
-    fn test_pinning_is_reported_only_where_the_whole_group_shares_it() {
+    fn test_pinning_needs_the_whole_group() {
+        // Pinning is reported only where the whole group shares it.
         let before = by_tid(&[
             reading(1, "solPohTickProd", 0, 0),
             reading(10, "solScHandleV00", 0, 0),
@@ -476,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn test_the_rows_are_the_top_groups_by_their_window_mean_and_one_for_the_rest() {
+    fn test_rows_are_top_groups_plus_the_rest() {
         // Ranked on the window: gossip is quiet this second but was busy all
         // minute, so it keeps its row above the handler that just spiked.
         let groups = vec![

@@ -408,7 +408,8 @@ mod tests {
     }
 
     #[test]
-    fn test_the_overview_carries_our_own_slots_from_before_the_window() {
+    fn test_overview_carries_own_slots_before_the_window() {
+        // The overview carries our own slots from before the window.
         let mut ring = SlotRing::new(512);
         for slot in [1, 2] {
             ring.update(slot, |entry| entry.mine = true);

@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_range_carries_the_columns_in_the_order_the_frontend_reads_them() {
+    fn test_range_column_order() {
         // The one place the wire order is pinned.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 9_500, 8_752));
@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_full_range_of_mainnet_sized_rows_fits_the_message_ceiling() {
+    fn test_full_range_fits_the_message_ceiling() {
         // Every figure as large as a real slot's gets: fees in the thousands of
         // SOL, a thirteen-digit clock, a compute figure at the row's clamp. The
         // worst case the types allow does not fit and never did; this is the
@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_block_that_landed_empty_is_not_a_block_that_was_never_seen() {
+    fn test_empty_block_differs_from_no_block() {
         // Both are nought in every count, which is why the flag exists.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(900, 0, 0));

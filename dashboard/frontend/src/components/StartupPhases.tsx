@@ -1,4 +1,5 @@
-import { duration, percent } from "../format";
+import { duration, percent, solCompact } from "../format";
+import { stakeSeen, SUPERMAJORITY_PERCENT } from "../startup";
 import type { StartupProgress } from "../types";
 import { Meter } from "./primitives";
 
@@ -52,12 +53,12 @@ export function StartupPhases({ startup }: { startup: StartupProgress }) {
   // Replay measures itself in slots; the supermajority wait measures itself in
   // stake. They are different things and the bar means something different
   // under each, so which one is showing is said rather than left to be assumed.
-  const measured =
-    startup.phase === "waiting_for_supermajority" && startup.stake_percent !== null
-      ? { fraction: startup.stake_percent, label: "of stake visible in gossip" }
-      : startup.fraction !== null && startup.fraction !== undefined
-        ? { fraction: startup.fraction, label: "of the ledger replayed" }
-        : null;
+  const stake = stakeSeen(startup);
+  const measured = stake
+    ? { fraction: stake.fraction, label: "of stake visible in gossip", decimals: stake.decimals }
+    : startup.fraction !== null && startup.fraction !== undefined
+      ? { fraction: startup.fraction, label: "of the ledger replayed", decimals: 1 }
+      : null;
 
   return (
     <div className="startup">
@@ -88,11 +89,33 @@ export function StartupPhases({ startup }: { startup: StartupProgress }) {
       </ol>
       {measured && (
         <div className="startup-measure">
-          <Meter fraction={measured.fraction} />
+          {/* The wait ends at a fixed share, so the bar carries a tick there. */}
+          <div className="startup-meter">
+            <Meter fraction={measured.fraction} />
+            {stake && (
+              <span
+                className="startup-target"
+                style={{ left: `${SUPERMAJORITY_PERCENT}%` }}
+                title={`The wait ends at ${SUPERMAJORITY_PERCENT}%`}
+              />
+            )}
+          </div>
           <div className="startup-measure-label">
-            <span className="startup-measure-value">{percent(measured.fraction, 1)}</span>{" "}
+            <span className="startup-measure-value">{percent(measured.fraction, measured.decimals)}</span>{" "}
             {measured.label}
           </div>
+          {/* Only once the validator's own count has arrived: the whole percent
+              has no lamports behind it. */}
+          {stake && stake.online !== null && stake.total !== null && (
+            <div className="startup-measure-sub">
+              <span>
+                <b>{solCompact(stake.online)}</b> of <b>{solCompact(stake.total)}</b> SOL online
+              </span>
+              <span>
+                needs <b>{SUPERMAJORITY_PERCENT}%</b>
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -119,7 +119,8 @@ pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     // takes hours and cannot be interrupted.
     if !bank.account_indexes_include_key(&config_id) {
         log::info!(
-            "dashboard: the config program is excluded from the account index, so validator              names are unavailable and the dashboard will show pubkeys"
+            "dashboard: the config program is excluded from the account index, so validator \
+             names are unavailable and the dashboard will show pubkeys"
         );
         return Vec::new();
     }
@@ -140,7 +141,9 @@ pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     // index never built answers none rather than failing.
     if accounts.is_empty() {
         log::info!(
-            "dashboard: found no validator info accounts. Start the validator with              --account-index program-id --account-index-include-key {config_id} to show              validator names instead of pubkeys"
+            "dashboard: found no validator info accounts. Start the validator with \
+             --account-index program-id --account-index-include-key {config_id} to show \
+             validator names instead of pubkeys"
         );
     }
 

@@ -9,7 +9,7 @@
 
 use {
     crate::{
-        collect::{Collector, EpochInfo, system_time_nanos},
+        collect::{Collector, CollectorShared, EpochInfo, system_time_nanos},
         config::DashboardConfig,
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
@@ -151,12 +151,17 @@ impl DashboardService {
             let attached = attached.clone();
             let startup_progress = startup_progress.clone();
             let startup = startup.clone();
+            let metrics_tap = metrics_tap.clone();
             thread::Builder::new()
                 .name("solDashBoot".to_string())
                 .spawn(move || {
                     while !attached.load(Ordering::Relaxed) && !exit.load(Ordering::Relaxed) {
                         let progress = *startup_progress.read().unwrap();
-                        startup.lock().unwrap().publish(&publisher, progress);
+                        startup.lock().unwrap().publish(
+                            &publisher,
+                            progress,
+                            metrics_tap.stake_in_gossip(),
+                        );
                         thread::sleep(BOOT_POLL);
                     }
                 })?
@@ -244,8 +249,7 @@ impl DashboardService {
             thread::Builder::new()
                 .name("solDashColl".to_string())
                 .spawn(move || {
-                    let mut collector = Collector::new(
-                        context,
+                    let shared = CollectorShared {
                         publisher,
                         info_cache,
                         history,
@@ -253,9 +257,8 @@ impl DashboardService {
                         startup_progress,
                         startup,
                         metrics_tap,
-                        tips,
-                        commission_bps,
-                    );
+                    };
+                    let mut collector = Collector::new(context, shared, tips, commission_bps);
                     collector.publish_static();
                     while !exit.load(Ordering::Relaxed) {
                         collector.tick();

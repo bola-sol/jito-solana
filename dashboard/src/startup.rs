@@ -2,7 +2,10 @@
 //! collector, so the handover between them is invisible to the client.
 
 use {
-    crate::proto::{Debounced, Publisher, TOPIC_SUMMARY},
+    crate::{
+        metrics_tap::StakeInGossip,
+        proto::{Debounced, Publisher, TOPIC_SUMMARY},
+    },
     serde::Serialize,
     solana_clock::Slot,
     solana_core::validator::ValidatorStartProgress,
@@ -22,8 +25,12 @@ pub struct StartupProgress {
     /// began.
     pub fraction: Option<f64>,
     /// Share of the cluster's stake seen in gossip while waiting for a
-    /// supermajority, from 0 to 1.
+    /// supermajority, from 0 to 1. A whole percent, truncated by the validator.
     pub stake_percent: Option<f64>,
+    /// The same wait as the validator counted it, in lamports, from the point
+    /// it submits every tenth check. Exact, and a few seconds behind. Only
+    /// during the wait, and only once a point has arrived.
+    pub stake_in_gossip: Option<StakeInGossip>,
     /// How long the validator has been in this phase, and how long each phase
     /// before it took, since most phases cannot say how far along they are.
     pub phase_elapsed_nanos: u64,
@@ -51,14 +58,26 @@ pub struct StartupPublisher {
 }
 
 impl StartupPublisher {
-    pub fn publish(&mut self, publisher: &Publisher, progress: ValidatorStartProgress) {
+    /// `stake_in_gossip` is the tap's latest count, and rides along only while
+    /// the phase is the wait it describes.
+    pub fn publish(
+        &mut self,
+        publisher: &Publisher,
+        progress: ValidatorStartProgress,
+        stake_in_gossip: Option<StakeInGossip>,
+    ) {
         let phase = describe(progress);
+        let waiting = matches!(
+            progress,
+            ValidatorStartProgress::WaitingForSupermajority { .. }
+        );
         let progress = StartupProgress {
             phase: phase.name.to_string(),
             detail: phase.detail,
             running: matches!(progress, ValidatorStartProgress::Running),
             fraction: self.fraction(phase.replay_slots),
             stake_percent: phase.stake_percent,
+            stake_in_gossip: stake_in_gossip.filter(|_| waiting),
             phase_elapsed_nanos: self.elapsed(phase.name, Instant::now()),
             phases_taken: self.taken.clone(),
         };
@@ -273,8 +292,8 @@ mod tests {
     fn test_publishing_fills_in_the_fraction() {
         let publisher = Publisher::new();
         let mut startup = StartupPublisher::default();
-        startup.publish(&publisher, replaying(100, 200));
-        startup.publish(&publisher, replaying(150, 200));
+        startup.publish(&publisher, replaying(100, 200), None);
+        startup.publish(&publisher, replaying(150, 200), None);
 
         let snapshot = publisher.snapshot();
         assert_eq!(
@@ -290,7 +309,37 @@ mod tests {
     }
 
     #[test]
-    fn test_every_phase_has_a_name_and_running_is_the_only_running_one() {
+    fn test_the_stake_count_rides_only_on_the_wait() {
+        // The tap holds the last count for the life of the process; once the
+        // validator is running it describes nothing on screen.
+        let seen = Some(StakeInGossip {
+            online: 3,
+            offline: 7,
+            total: 10,
+        });
+        let waiting = ValidatorStartProgress::WaitingForSupermajority {
+            slot: 5,
+            gossip_stake_percent: 30,
+        };
+        for (phase, carried) in [
+            (waiting, true),
+            (ValidatorStartProgress::Running, false),
+            (ValidatorStartProgress::StartingServices, false),
+        ] {
+            let publisher = Publisher::new();
+            StartupPublisher::default().publish(&publisher, phase, seen);
+            let sent = publisher.snapshot().pop().unwrap();
+            assert_eq!(
+                sent.contains(r#""stake_in_gossip":{"online":3,"offline":7,"total":10}"#),
+                carried,
+                "{sent}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_every_phase_is_named_and_only_running_runs() {
+        // Every phase has a name and running is the only running one.
         let phases = [
             ValidatorStartProgress::Initializing,
             ValidatorStartProgress::SearchingForRpcService,
@@ -308,7 +357,7 @@ mod tests {
         ];
         for phase in phases {
             let publisher = Publisher::new();
-            StartupPublisher::default().publish(&publisher, phase);
+            StartupPublisher::default().publish(&publisher, phase, None);
             let sent = publisher.snapshot().pop().unwrap();
             assert!(!sent.contains(r#""phase":"""#), "{sent}");
             assert_eq!(

@@ -701,7 +701,8 @@ ctxt 6789
     }
 
     #[test]
-    fn test_clamps_busy_where_the_kernel_clock_runs_past_the_interval() {
+    fn test_busy_is_clamped_to_the_interval() {
+        // Clamps busy where the kernel clock runs past the interval.
         let delta = DiskCounters {
             busy_ms: 1004,
             ..DiskCounters::default()

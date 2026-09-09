@@ -560,7 +560,7 @@ pub fn execute(
             .map(|address| {
                 solana_net_utils::parse_host(address).expect("invalid dashboard_bind_address")
             })
-            .unwrap_or_else(|| solana_net_utils::parse_host("127.0.0.1").unwrap());
+            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
         let mut config = DashboardConfig::new(SocketAddr::new(bind_address, port));
         // Read from the flags directly rather than from the tip manager's
         // config, which substitutes freshly generated keys when voting is

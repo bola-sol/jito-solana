@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_payload_that_cannot_encode_does_not_take_the_feed_down() {
+    fn test_unencodable_payload_keeps_the_feed_up() {
         // One broken topic costs that topic and nothing else.
         let message = encode("summary", "broken", &Unserializable);
         assert_eq!(

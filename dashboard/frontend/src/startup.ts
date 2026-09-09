@@ -14,6 +14,44 @@ const NAMED: Record<string, string> = {
 
 const REST = "everything else";
 
+/**
+ * The share of stake the validator waits to see in gossip before it starts.
+ * The validator keeps this figure private, so it is written down here; it is
+ * a cluster-wide rule rather than a setting.
+ */
+export const SUPERMAJORITY_PERCENT = 80;
+
+/** What the supermajority wait has seen, in the form the status card draws. */
+export interface StakeSeen {
+  /** In `[0, 1]`. */
+  fraction: number;
+  /** Decimals worth drawing: three from the exact count, none from the whole percent. */
+  decimals: number;
+  /** Lamports, or null while only the whole percent has arrived. */
+  online: number | null;
+  total: number | null;
+}
+
+/**
+ * The wait's progress, from the validator's own count where it has arrived
+ * and from the whole percent in the progress report before then. Null outside
+ * the wait.
+ */
+export function stakeSeen(startup: StartupProgress): StakeSeen | null {
+  if (startup.phase !== "waiting_for_supermajority") return null;
+  const counted = startup.stake_in_gossip;
+  if (counted && counted.total > 0) {
+    return {
+      fraction: Math.min(1, counted.online / counted.total),
+      decimals: 3,
+      online: counted.online,
+      total: counted.total,
+    };
+  }
+  if (startup.stake_percent === null) return null;
+  return { fraction: startup.stake_percent, decimals: 0, online: null, total: null };
+}
+
 export interface BootPhase {
   label: string;
   millis: number;

@@ -20,6 +20,7 @@ use {
     },
     serde::Serialize,
     solana_clock::{Clock, Epoch, Slot},
+    solana_gossip::contact_info::ContactInfo,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -335,22 +336,34 @@ pub struct Collector {
     tips_residual: Option<u64>,
 }
 
+/// The handles the service holds and the collector reads or writes through.
+/// The server reads most of them too, which is why they live on the service.
+pub struct CollectorShared {
+    pub publisher: Arc<Publisher>,
+    pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
+    pub history: Arc<RwLock<SlotHistory>>,
+    pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    pub startup_progress: StartProgress,
+    pub startup: Arc<Mutex<StartupPublisher>>,
+    pub metrics_tap: Arc<MetricsTap>,
+}
+
 impl Collector {
-    /// Every argument is a handle the service already holds, passed once at
-    /// attach; a struct to carry them would exist for this call alone.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ctx: DashboardContext,
-        publisher: Arc<Publisher>,
-        info_cache: Arc<RwLock<ValidatorInfoCache>>,
-        history: Arc<RwLock<SlotHistory>>,
-        epochs: Arc<RwLock<Vec<EpochInfo>>>,
-        startup_progress: StartProgress,
-        startup: Arc<Mutex<StartupPublisher>>,
-        metrics_tap: Arc<MetricsTap>,
+        shared: CollectorShared,
         tips: Option<TipMeter>,
         commission_bps: Option<u16>,
     ) -> Self {
+        let CollectorShared {
+            publisher,
+            info_cache,
+            history,
+            epochs,
+            startup_progress,
+            startup,
+            metrics_tap,
+        } = shared;
         let now = Instant::now();
         Self {
             slots: SlotRing::new(SLOT_HISTORY),
@@ -465,12 +478,15 @@ impl Collector {
             .unwrap_or_default();
 
         self.collect_slot_positions(&root_bank, highest_slot, completed);
-        self.mark_caught_cluster();
+        // Read once: before Alpenglow it opens a blockstore iterator, and two
+        // readers want it every tick.
+        let cluster_tip = self.ctx.cluster_tip();
+        self.mark_caught_cluster(cluster_tip);
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank, &frozen);
         // From the working bank: the root trails the tip by the thirty-two slots it
         // takes to root.
-        self.collect_identity_and_vote(&working_bank);
+        self.collect_identity_and_vote(&working_bank, cluster_tip);
         self.collect_epoch(&working_bank);
         self.collect_startup_progress();
 
@@ -496,13 +512,16 @@ impl Collector {
         if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
             self.collect_validator_info(&frozen);
-            self.collect_peers(&working_bank);
+            // One snapshot for both walks below: it clones the whole table under
+            // the gossip lock.
+            let peers = self.ctx.cluster_info.all_peers();
+            self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
             // Ahead of the peer table, which covers the leaders of both the
             // slots already sent and the ones about to be.
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
-            self.collect_peer_table(&working_bank, ahead);
+            self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
         }
     }
@@ -786,7 +805,12 @@ impl Collector {
     /// Publishes stake, client version and address for the leaders on screen, and
     /// no more: a table of every node would be the largest message the dashboard
     /// sends. Sorted by identity so the debounce has a stable value.
-    fn collect_peer_table(&mut self, bank: &Bank, mut leaders: HashSet<String>) {
+    fn collect_peer_table(
+        &mut self,
+        bank: &Bank,
+        mut leaders: HashSet<String>,
+        peers: &[(ContactInfo, u64)],
+    ) {
         // The leaders of the window a client holds, from the schedule: a leader takes
         // four slots at a time, so a quarter as many lookups as slots.
         let highest = self.last_completed_slot;
@@ -817,7 +841,7 @@ impl Collector {
         }
 
         let mut gossip: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
-        for (contact_info, _) in self.ctx.cluster_info.all_peers() {
+        for (contact_info, _) in peers {
             let identity = contact_info.pubkey().to_string();
             if !leaders.contains(&identity) {
                 continue;
@@ -1019,7 +1043,7 @@ impl Collector {
 
     // ---- identity, vote account, stake ----------------------------------
 
-    fn collect_identity_and_vote(&mut self, bank: &Bank) {
+    fn collect_identity_and_vote(&mut self, bank: &Bank, cluster_tip: Option<Slot>) {
         let identity = self.ctx.identity();
         self.debounces.identity_key.publish(
             &self.publisher,
@@ -1116,10 +1140,7 @@ impl Collector {
         // hundreds of slots back votes promptly on a stale tip and passes every other
         // check. `collect_slot_positions` ran earlier this tick, so the completed slot
         // is current.
-        let behind_cluster = self
-            .ctx
-            .cluster_tip()
-            .map(|tip| tip.saturating_sub(self.last_completed_slot));
+        let behind_cluster = cluster_tip.map(|tip| tip.saturating_sub(self.last_completed_slot));
         self.debounces.behind_cluster.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -1367,17 +1388,14 @@ impl Collector {
     /// Counts the cluster: who holds stake, who is behind, and what they run.
     /// Accumulated straight into the counters rather than building a record per
     /// validator first.
-    fn collect_peers(&mut self, bank: &Bank) {
+    fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
 
         // Gossip reports a client version; vote accounts report stake. A
         // validator can appear in one and not the other, so both are walked.
-        let versions: HashMap<Pubkey, String> = self
-            .ctx
-            .cluster_info
-            .all_peers()
-            .into_iter()
+        let versions: HashMap<Pubkey, String> = peers
+            .iter()
             .map(|(contact_info, _)| (*contact_info.pubkey(), contact_info.version().to_string()))
             .collect();
 
@@ -1461,11 +1479,11 @@ impl Collector {
     /// Stamps, once, the moment replay draws level with a cluster tip it was
     /// seen trailing: caught up as an operator means it. On the fast path, since
     /// the health figures only run while someone is watching.
-    fn mark_caught_cluster(&mut self) {
+    fn mark_caught_cluster(&mut self, cluster_tip: Option<Slot>) {
         if self.caught_cluster {
             return;
         }
-        let Some(tip) = self.ctx.cluster_tip() else {
+        let Some(tip) = cluster_tip else {
             return;
         };
         if tip > self.last_completed_slot {
@@ -1561,10 +1579,11 @@ impl Collector {
 
     fn collect_startup_progress(&mut self) {
         let progress = *self.startup_progress.read().unwrap();
-        self.startup
-            .lock()
-            .unwrap()
-            .publish(&self.publisher, progress);
+        self.startup.lock().unwrap().publish(
+            &self.publisher,
+            progress,
+            self.metrics_tap.stake_in_gossip(),
+        );
     }
 }
 
@@ -1880,7 +1899,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_rooted_slot_is_not_demoted_when_confirmed_lags_the_root() {
+    fn test_rooted_slot_not_demoted_by_lagging_confirmed() {
         // During startup the commitment cache trails the root bank, so `confirmed`
         // can sit below a rooted slot.
         assert_eq!(level_for(100, 100, 50, 0), SlotLevel::Rooted);
@@ -2033,7 +2052,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_mismatched_stride_publishes_nothing_rather_than_a_wrong_schedule() {
+    fn test_mismatched_stride_publishes_no_schedule() {
         // Asking for the real epoch against the wrong length is the same failure as
         // the schedule's repeat drifting from the constant.
         let harness = fixture();
@@ -2096,7 +2115,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_swapped_identity_rebuilds_the_epoch_rather_than_keeping_the_old_answer() {
+    fn test_swapped_identity_rebuilds_the_epoch() {
         // A validator that boots on a dummy identity and swaps had the dummy's leader
         // slots, none, latched for the epoch while the countdown beside it kept
         // working.
@@ -2562,7 +2581,7 @@ mod tests {
     }
 
     #[test]
-    fn test_the_epoch_rate_is_its_own_elapsed_time_over_its_own_slots() {
+    fn test_epoch_rate_is_elapsed_time_over_slots() {
         // Six hours across sixty thousand slots is 360ms a slot.
         let nanos = epoch_anchored_nanos(&clock_at(21_600), 100, 60_100);
         assert_eq!(nanos, Some(360_000_000));
@@ -2588,7 +2607,7 @@ mod tests {
     }
 
     #[test]
-    fn test_an_estimate_that_barely_moved_does_not_move_the_countdown() {
+    fn test_small_drift_does_not_move_the_countdown() {
         // Half a minute either way, on a figure hours out. Following this is
         // what made the readout restless while telling nobody anything.
         let held = at(10_000);
@@ -2694,14 +2713,15 @@ mod tests {
         // startup as nought and put the whole boot into catching up.
         let harness = fixture();
         let shared = Arc::new(Mutex::new(StartupPublisher::default()));
+        shared.lock().unwrap().publish(
+            &harness.publisher,
+            ValidatorStartProgress::CleaningAccounts,
+            None,
+        );
         shared
             .lock()
             .unwrap()
-            .publish(&harness.publisher, ValidatorStartProgress::CleaningAccounts);
-        shared
-            .lock()
-            .unwrap()
-            .publish(&harness.publisher, ValidatorStartProgress::Running);
+            .publish(&harness.publisher, ValidatorStartProgress::Running, None);
 
         let mut collector = harness.collector_with_startup(shared);
         collector.tick();
@@ -2718,7 +2738,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_stale_tip_below_the_snapshot_does_not_count_as_caught_up() {
+    fn test_stale_tip_is_not_caught_up() {
         // The blockstore keeps optimistic slots from before a restart, so the
         // first tip read is below what replay started from. That stamped catch-up
         // at nought seconds on a node still twenty-five slots behind.
@@ -2761,7 +2781,7 @@ mod tests {
     }
 
     #[test]
-    fn test_the_marker_is_set_once_and_falling_behind_does_not_move_it() {
+    fn test_marker_is_set_once() {
         // Re-testing the rate continuously and clearing the window fed back on
         // itself: a shorter window trips more easily.
         let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);

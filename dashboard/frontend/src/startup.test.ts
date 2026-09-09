@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootTimes } from "./startup";
+import { bootTimes, stakeSeen, SUPERMAJORITY_PERCENT } from "./startup";
 import type { StartupProgress } from "./types";
 
 const SECOND = 1e9;
@@ -11,6 +11,7 @@ function running(phases: [string, number][]): StartupProgress {
     running: true,
     fraction: null,
     stake_percent: null,
+    stake_in_gossip: null,
     phase_elapsed_nanos: 0,
     phases_taken: phases.map(([phase, seconds]) => ({ phase, elapsed_nanos: seconds * SECOND })),
   };
@@ -83,5 +84,35 @@ describe("bootTimes", () => {
   it("has nothing to say before the validator is running", () => {
     const booting = { ...running([]), running: false, phase: "processing_ledger" };
     expect(bootTimes(booting, UPTIME, NOW, undefined)).toBeNull();
+  });
+});
+
+describe("stakeSeen", () => {
+  const waiting = { ...running([]), running: false, phase: "waiting_for_supermajority" };
+
+  it("draws the whole percent alone until the validator's count arrives", () => {
+    const seen = stakeSeen({ ...waiting, stake_percent: 0.01 });
+    expect(seen).toEqual({ fraction: 0.01, decimals: 0, online: null, total: null });
+  });
+
+  it("prefers the exact count, with the lamports behind it", () => {
+    const seen = stakeSeen({
+      ...waiting,
+      stake_percent: 0.01,
+      stake_in_gossip: { online: 2_350_000, offline: 401_650_000, total: 404_000_000 },
+    });
+    expect(seen?.decimals).toBe(3);
+    expect(seen?.fraction).toBeCloseTo(0.005817, 6);
+    expect(seen?.online).toBe(2_350_000);
+    expect(seen?.total).toBe(404_000_000);
+  });
+
+  it("says nothing outside the wait, and nothing with no figure at all", () => {
+    expect(stakeSeen({ ...running([]), stake_percent: 0.5 })).toBeNull();
+    expect(stakeSeen(waiting)).toBeNull();
+  });
+
+  it("holds the threshold the validator waits for", () => {
+    expect(SUPERMAJORITY_PERCENT).toBe(80);
   });
 });

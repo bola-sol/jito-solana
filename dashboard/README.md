@@ -50,7 +50,8 @@ the domain in the site block is the name to allow, and nothing else is needed.
   same-origin policy, so without this any page open in a viewer's browser could
   connect to a dashboard that viewer can reach.
 - **Caps connections** at 256 being served at once, and websockets at 64 of
-  those. A refused request gets a 503 rather than a dropped socket.
+  those. A connection over the cap is closed without being read; a websocket
+  over its own cap gets a 503.
 - **Sends a content security policy** that permits no external code, styles,
   fonts or connections. Images are the one exception, because validator icons
   come from URLs operators publish on chain, and those are limited to `https`.
@@ -74,10 +75,14 @@ the domain in the site block is the name to allow, and nothing else is needed.
 
 ### What it costs the validator
 
-The expensive sampling, meaning the cluster-wide validator list and the per-slot
-account sweep behind validator names, only runs while at least one viewer is
-connected. With nobody watching, the collector does slot bookkeeping and little
-else.
+The expensive sampling only runs while at least one viewer is connected: on the
+collector, the cluster-wide validator list and the per-slot account sweep
+behind validator names; on the meters, the `/proc` walks behind the host,
+thread and socket panels. With nobody watching, the collector does slot
+bookkeeping, the meters keep the clock, throughput, network counters and the
+totals lifted from metrics points, and little else runs. A viewer connecting
+finds the throughput and network charts whole; the host, thread and socket
+panels fill from that moment.
 
 The one-off read that maps identities to names runs once, when the collector
 attaches. It asks the secondary index which accounts the config program owns and

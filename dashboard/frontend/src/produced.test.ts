@@ -19,6 +19,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     total_fees: 0,
     priority_fees: 0,
     tips: null,
+    bundles: null,
     ...over,
   };
 }

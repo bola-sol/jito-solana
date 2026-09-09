@@ -10,8 +10,8 @@ use {
     crate::{
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
-        metrics_tap::{MetricsTap, ShredFill},
-        produced::{ProducedBlock, ProducedRing},
+        metrics_tap::{BundleLanding, MetricsTap, ShredFill},
+        produced::{Bundles, ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
@@ -994,7 +994,13 @@ impl Collector {
         if !changed.is_empty() {
             self.retain_slot_overview();
         }
-        if captured {
+        // The bundle stage reports a slot a moment after its bank freezes, so a
+        // block captured without its bundles is filled in on a later tick.
+        let tap = &self.metrics_tap;
+        let filled = self
+            .produced
+            .fill_bundles(|slot| tap.bundles_landed(slot).map(landed));
+        if captured || filled {
             self.publisher
                 .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
         }
@@ -1019,6 +1025,7 @@ impl Collector {
             total_fees: detail.total_fees,
             priority_fees: detail.priority_fees,
             tips: detail.tips,
+            bundles: self.metrics_tap.bundles_landed(slot).map(landed),
         }
     }
 
@@ -1801,6 +1808,14 @@ fn block_detail(
         priority_fees: fees.total_priority_fee(),
         tips,
         replay_micros,
+    }
+}
+
+/// What goes on the wire from the stage's record: the slot is the block's own.
+fn landed(bundles: BundleLanding) -> Bundles {
+    Bundles {
+        sanitized: bundles.sanitized,
+        executed: bundles.executed,
     }
 }
 

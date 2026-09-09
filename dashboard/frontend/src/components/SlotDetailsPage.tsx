@@ -5,7 +5,14 @@ import { blockAverages, sortBlocks, type SortDir, type SortKey } from "../produc
 import { jitoShare, ourShare } from "../tips";
 import type { ProducedBlock, SlotCost, SlotWaterfall, TipRates } from "../types";
 import { useStore } from "../useStore";
-import { capacity, schedulerView, shareOfGroup, type Capacity, type SchedulerView } from "../slotDetail";
+import {
+  bundlesValue,
+  capacity,
+  schedulerView,
+  shareOfGroup,
+  type Capacity,
+  type SchedulerView,
+} from "../slotDetail";
 import type { WaterfallRow } from "../waterfall";
 import { Copyable } from "./Copyable";
 import { Explain } from "./primitives";
@@ -365,6 +372,15 @@ function BlockCompute({
               className="sx-fee"
               value={`${sol(ourShare(block.tips, rates) ?? 0, 6)} SOL`}
               title={`${sol(jitoShare(block.tips, rates), 6)} SOL reached the distribution account, of ${sol(block.tips, 6)} paid. Derived from the configured rates, not measured.`}
+            />
+          )}
+          {/* Beside the tips, which is what they paid. Absent where no bundle
+              stage reported the slot: a stock validator, or one under BAM. */}
+          {block.bundles && (
+            <Stat
+              label="Bundles"
+              value={bundlesValue(block.bundles)}
+              title={`${count(block.bundles.sanitized)} bundles sanitised, ${count(block.bundles.executed)} executed and in the block.`}
             />
           )}
         </div>

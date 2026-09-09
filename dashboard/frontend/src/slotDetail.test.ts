@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capacity, schedulerView, shareOfGroup } from "./slotDetail";
+import { bundlesValue, capacity, schedulerView, shareOfGroup } from "./slotDetail";
 import type { ProducedBlock, SlotCost, SlotWaterfall } from "./types";
 import { waterfallRows } from "./waterfall";
 
@@ -19,6 +19,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     total_fees: 20_060,
     priority_fees: 12_480,
     tips: null,
+    bundles: null,
     ...over,
   };
 }
@@ -220,5 +221,13 @@ describe("a counter's share of its group", () => {
     const view = schedulerView(slot());
     const buffer = view.groups.find((g) => g.key === "buffer")!;
     expect(shareOfGroup(buffer, buffer.rows[0])).toBe(0);
+  });
+});
+
+describe("bundlesValue", () => {
+  it("names the executed count, and the sanitised count only where some were not", () => {
+    expect(bundlesValue({ sanitized: 17, executed: 14 })).toBe("14 of 17");
+    expect(bundlesValue({ sanitized: 14, executed: 14 })).toBe("14");
+    expect(bundlesValue({ sanitized: 0, executed: 0 })).toBe("0");
   });
 });

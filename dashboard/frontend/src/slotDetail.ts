@@ -12,6 +12,7 @@
  * waterfall rows it is built on.
  */
 
+import { count } from "./format";
 import type { ProducedBlock, SlotCost, SlotWaterfall } from "./types";
 import { waterfallRows, type WaterfallRow } from "./waterfall";
 
@@ -216,4 +217,12 @@ export function schedulerView(w: SlotWaterfall): SchedulerView {
  */
 export function shareOfGroup(group: CounterGroup, row: WaterfallRow): number {
   return group.total > 0 ? row.count / group.total : 0;
+}
+
+/** Executed, and out of how many sanitised where the two differ. */
+export function bundlesValue(bundles: { sanitized: number; executed: number }): string {
+  const executed = count(bundles.executed);
+  return bundles.sanitized > bundles.executed
+    ? `${executed} of ${count(bundles.sanitized)}`
+    : executed;
 }

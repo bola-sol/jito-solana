@@ -88,6 +88,11 @@ const TPU_VERIFIER: &str = "tpu-verifier";
 /// idle, and under BAM, which supersedes it.
 const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 
+/// The bundle stage's count for each leader slot: bundles it sanitised and
+/// bundles it executed into the block. One point per stage thread, summed.
+/// Silent under BAM, which drains the stage.
+const BUNDLE_SLOT_STATS: &str = "bundle_stage-stats";
+
 /// The worker threads, one point each under an `id` tag that is not read:
 /// summing them gives the stage's total. Submitted at trace level, which does
 /// not matter here because the observer runs before the level is consulted.
@@ -386,6 +391,9 @@ pub struct MetricsTap {
     /// How each recent slot's shreds arrived, keyed by slot for the same reason.
     shred_fills: Mutex<BTreeMap<Slot, ShredFill>>,
 
+    /// What the bundle stage landed in each of our recent leader slots.
+    bundle_slots: Mutex<BTreeMap<Slot, BundleLanding>>,
+
     /// How the XDP transmit path is configured. Latched: it cannot change while the
     /// process runs, and a config that stops being reported has not been turned
     /// off.
@@ -458,6 +466,16 @@ pub struct ShredFill {
     pub repaired: u64,
     /// Milliseconds from the first shred to the last.
     pub full_millis: u64,
+}
+
+/// What the bundle stage did in one of our leader slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BundleLanding {
+    pub slot: Slot,
+    /// Bundles that passed sanitisation.
+    pub sanitized: u64,
+    /// Of those, the ones executed into the block.
+    pub executed: u64,
 }
 
 /// One replayed slot's timings, in microseconds, of three kinds:
@@ -852,6 +870,7 @@ impl MetricsTap {
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
             SHRED_FULL => self.remember_fill(point),
+            BUNDLE_SLOT_STATS => self.remember_bundles(point),
             XDP_NETWORK_CONFIG => self.remember_xdp(point),
             WFSM_GOSSIP => self.remember_stake_in_gossip(point),
             COST_TRACKER => self.remember_cost(point),
@@ -1071,6 +1090,41 @@ impl MetricsTap {
         }
     }
 
+    /// Records what the bundle stage landed in a leader slot, summed across the
+    /// stage's threads.
+    fn remember_bundles(&self, point: &DataPoint) {
+        let mut slot = None;
+        let mut sanitized = 0;
+        let mut executed = 0;
+        for (name, value) in &point.fields {
+            let Some(number) = field_u64(value) else {
+                continue;
+            };
+            match *name {
+                SLOT => slot = Some(number),
+                "num_sanitized_ok" => sanitized = number,
+                "execution_results_ok" => executed = number,
+                _ => (),
+            }
+        }
+        let Some(slot) = slot else {
+            return;
+        };
+
+        let Ok(mut slots) = self.bundle_slots.lock() else {
+            return;
+        };
+        let landing = slots.entry(slot).or_insert(BundleLanding {
+            slot,
+            ..BundleLanding::default()
+        });
+        landing.sanitized = landing.sanitized.saturating_add(sanitized);
+        landing.executed = landing.executed.saturating_add(executed);
+        while slots.len() > SLOT_WATERFALLS {
+            slots.pop_first();
+        }
+    }
+
     /// Records what one of this validator's own blocks cost. Other validators'
     /// blocks are dropped on the `is_leader` tag.
     fn remember_cost(&self, point: &DataPoint) {
@@ -1185,6 +1239,11 @@ impl MetricsTap {
     /// How `slot`'s shreds arrived, while the record is still held.
     pub fn shred_fill(&self, slot: Slot) -> Option<ShredFill> {
         self.shred_fills.lock().ok()?.get(&slot).copied()
+    }
+
+    /// What the bundle stage landed in `slot`, while the record is still held.
+    pub fn bundles_landed(&self, slot: Slot) -> Option<BundleLanding> {
+        self.bundle_slots.lock().ok()?.get(&slot).copied()
     }
 
     /// The replayed slots held, lowest slot first.
@@ -1972,6 +2031,42 @@ mod tests {
             tap.shred_fill((SHRED_FILLS as u64).saturating_add(9))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn test_a_leader_slots_bundles_are_summed_across_the_stage_threads() {
+        // Names from jito's `bundle_stage_leader_metrics.rs`, one point per
+        // stage thread under its own `id`.
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            BUNDLE_SLOT_STATS,
+            &[
+                ("id", "0i"),
+                ("slot", "445527719i"),
+                ("num_sanitized_ok", "10i"),
+                ("execution_results_ok", "8i"),
+            ],
+        ));
+        tap.observe(&named(
+            BUNDLE_SLOT_STATS,
+            &[
+                ("id", "1i"),
+                ("slot", "445527719i"),
+                ("num_sanitized_ok", "7i"),
+                ("execution_results_ok", "6i"),
+            ],
+        ));
+
+        let landed = tap.bundles_landed(445_527_719).unwrap();
+        assert_eq!((landed.sanitized, landed.executed), (17, 14));
+        assert!(tap.bundles_landed(445_527_718).is_none());
+    }
+
+    #[test]
+    fn test_a_bundle_point_without_a_slot_is_dropped() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(BUNDLE_SLOT_STATS, &[("num_sanitized_ok", "3i")]));
+        assert!(tap.bundle_slots.lock().unwrap().is_empty());
     }
 
     #[test]

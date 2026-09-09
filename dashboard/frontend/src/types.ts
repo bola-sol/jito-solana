@@ -356,6 +356,11 @@ export interface ProducedBlock {
    * searchers passed that leader by.
    */
   tips: number | null;
+  /**
+   * Bundles the stage sanitised and executed into the block. `null` where no
+   * bundle stage reported the slot.
+   */
+  bundles: { sanitized: number; executed: number } | null;
 }
 
 /**

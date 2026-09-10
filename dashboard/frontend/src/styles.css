@@ -2136,6 +2136,30 @@ body {
   color: var(--text-faint);
 }
 
+/* Where the list steps from one epoch into the next. Drawn only while the
+   blocks held span more than one epoch. */
+.produced-epoch {
+  padding: 12px 4px 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* On a phone the slot, time and epoch take the width between them, so the
+   hash gets a line of its own rather than seven characters and an ellipsis. */
+@media (max-width: 700px) {
+  .produced-foot {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .produced-hash {
+    flex-basis: 100%;
+  }
+}
+
 /* On a narrow screen the four figure columns leave too little for the slot
    number, which is the one thing in the row that must not be cut. The fill
    percentage goes, since the meter states it whenever the row is open.

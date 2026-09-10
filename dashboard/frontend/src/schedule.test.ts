@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesQuery, turnKey, turnsOf, type LeaderRef } from "./schedule";
+import { epochOf, matchesQuery, turnKey, turnsOf, type LeaderRef } from "./schedule";
 import type { SlotEntry } from "./types";
 
 function held(slot: number): SlotEntry {
@@ -142,5 +142,39 @@ describe("turnKey", () => {
     // them would identify nothing.
     const [turn] = turnsOf([held(100), held(101)], resolver());
     expect(turnKey(turn)).toBe("turn:100");
+  });
+});
+
+describe("epochOf", () => {
+  // Epoch 900 runs 432,000 slots from 388,800,000.
+  const current = {
+    epoch: 900,
+    start_slot: 388_800_000,
+    end_slot: 389_231_999,
+    slots_in_epoch: 432_000,
+    my_leader_slots: [],
+    leaders: [],
+    turns: [],
+    block_cost_limit: 0,
+    account_cost_limit: 0,
+  };
+
+  it("places a slot in the current epoch by its bounds", () => {
+    expect(epochOf(current, 388_800_000)).toBe(900);
+    expect(epochOf(current, 389_231_999)).toBe(900);
+  });
+
+  it("counts whole epochs back for older slots", () => {
+    expect(epochOf(current, 388_799_999)).toBe(899);
+    expect(epochOf(current, 388_800_000 - 432_000 * 3)).toBe(897);
+  });
+
+  it("counts forward as well, for a slot past the end", () => {
+    expect(epochOf(current, 389_232_000)).toBe(901);
+  });
+
+  it("has no answer without an epoch, or before the chain", () => {
+    expect(epochOf(undefined, 5)).toBeNull();
+    expect(epochOf({ ...current, epoch: 0, start_slot: 0 }, -1)).toBeNull();
   });
 });

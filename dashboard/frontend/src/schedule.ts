@@ -1,6 +1,6 @@
 /** The slot list folded into the leader turns the schedule page shows. */
 
-import type { EpochInfo, SlotEntry } from "./types";
+import type { EpochInfo, SlotEntry, VoteCerts } from "./types";
 
 /** Slots the leader schedule hands out at a time. Eight in a row is two
  *  turns, drawn as two cards. */
@@ -107,3 +107,10 @@ export function turnKey(turn: Turn): string {
   return `turn:${turn.slots.at(-1)?.slot}`;
 }
 
+/** What the two certificate marks on a slot say, for the cell's title. */
+export function certsTitle(certs: VoteCerts | undefined): string {
+  const word = (verdict: boolean | null | undefined) =>
+    verdict == null ? "Not yet seen in" : verdict ? "In" : "Left out of";
+  const finalization = `${word(certs?.finalized)} the finalization certificate.`;
+  return `${finalization} ${word(certs?.rewarded)} the reward certificate.`;
+}

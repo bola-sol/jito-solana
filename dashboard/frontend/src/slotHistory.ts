@@ -20,6 +20,12 @@ export const HAS_REPLAY = 1 << 3;
 export const HAS_SHREDS = 1 << 4;
 /** Set where replay's finish was seen, and so timed from the first shred. */
 export const HAS_REPLAYED = 1 << 5;
+/** Set once the slot's finalization certificate was seen, and beside it whether
+ *  this node's vote was in it. Reward likewise. */
+export const FINAL_SEEN = 1 << 6;
+export const FINAL_WITH_VOTE = 1 << 7;
+export const REWARD_SEEN = 1 << 8;
+export const REWARD_WITH_VOTE = 1 << 9;
 
 /** One slot as the validator sends it, positional: level, flags, votes,
  *  non-votes, compute, fees, priority fees, tips, time, replay, shreds,
@@ -125,10 +131,19 @@ export function entriesOf(
           ? null
           : { count: shreds, repaired, full_millis: fullMillis },
       replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
+      certs: {
+        finalized: verdict(flags, FINAL_SEEN, FINAL_WITH_VOTE),
+        rewarded: verdict(flags, REWARD_SEEN, REWARD_WITH_VOTE),
+      },
     });
 
     if (timed) previousTime = timeMillis;
   });
 
   return entries;
+}
+
+/** A certificate's verdict from its two flag bits: unseen is null. */
+function verdict(flags: number, seen: number, withVote: number): boolean | null {
+  return (flags & seen) === 0 ? null : (flags & withVote) !== 0;
 }

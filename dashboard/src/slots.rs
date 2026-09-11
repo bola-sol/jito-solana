@@ -48,6 +48,16 @@ pub struct SlotEntry {
     /// Milliseconds from the slot's first shred to replay finishing it. `None`
     /// for a bank this validator built, which replay never timed.
     pub replayed_millis: Option<u64>,
+    /// Whether this node's vote was in the slot's certificates. Only written
+    /// under alpenglow.
+    pub certs: VoteCerts,
+}
+
+/// Each `None` until that certificate has been seen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct VoteCerts {
+    pub finalized: Option<bool>,
+    pub rewarded: Option<bool>,
 }
 
 /// How a block's shreds arrived. Outside [`BlockDetail`] because a slot fills
@@ -108,6 +118,7 @@ impl SlotEntry {
             time_millis: None,
             shreds: None,
             replayed_millis: None,
+            certs: VoteCerts::default(),
         }
     }
 }
@@ -297,6 +308,10 @@ mod tests {
                         full_millis: u64::MAX,
                     }),
                     replayed_millis: Some(u64::MAX),
+                    certs: VoteCerts {
+                        finalized: Some(true),
+                        rewarded: Some(false),
+                    },
                     block: Some(BlockDetail {
                         transactions: u64::MAX,
                         non_vote_transactions: u64::MAX,

@@ -17,7 +17,7 @@ pub struct PackedSlot {
     pub level: u8,
     /// Bit 0: a block was recorded. Bit 1: the slot's clock is known. Both needed
     /// because nought is a real reading for every count here.
-    pub flags: u8,
+    pub flags: u16,
     pub votes: u32,
     pub non_votes: u32,
     /// Compute units the block used, saturating into `u32`, seventy times the
@@ -60,7 +60,7 @@ pub const MAX_RANGE_SLOTS: usize = 4096;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireRow(
     pub u8,
-    pub u8,
+    pub u16,
     pub u32,
     pub u32,
     pub u32,
@@ -88,19 +88,36 @@ pub struct SlotRange {
 
 /// Set where the slot recorded a block, as against one that has not frozen or
 /// was skipped.
-pub const HAS_BLOCK: u8 = 1;
+pub const HAS_BLOCK: u16 = 1;
 /// Set where the slot's first shred was timed.
-pub const HAS_CLOCK: u8 = 1 << 1;
+pub const HAS_CLOCK: u16 = 1 << 1;
 /// Set where the slot's tips were measured. Nought is a real reading: the
 /// searchers passed that leader by.
-pub const HAS_TIPS: u8 = 1 << 2;
+pub const HAS_TIPS: u16 = 1 << 2;
 /// Set where replay's time on the slot was seen. Clear for a bank this validator
 /// built, which replay never timed.
-pub const HAS_REPLAY: u8 = 1 << 3;
+pub const HAS_REPLAY: u16 = 1 << 3;
 /// Set where the blockstore reported the slot filling.
-pub const HAS_SHREDS: u8 = 1 << 4;
+pub const HAS_SHREDS: u16 = 1 << 4;
 /// Set where replay's finish was seen, and so timed from the first shred.
-pub const HAS_REPLAYED: u8 = 1 << 5;
+pub const HAS_REPLAYED: u16 = 1 << 5;
+/// Set once the slot's finalization certificate was seen, and beside it
+/// whether this node's vote was in it. Reward likewise.
+pub const FINAL_SEEN: u16 = 1 << 6;
+pub const FINAL_WITH_VOTE: u16 = 1 << 7;
+pub const REWARD_SEEN: u16 = 1 << 8;
+pub const REWARD_WITH_VOTE: u16 = 1 << 9;
+
+/// Sets `seen` once a certificate has been read, and `with` where this
+/// node's vote was in it.
+fn mark(flags: &mut u16, verdict: Option<bool>, seen: u16, with: u16) {
+    if let Some(with_vote) = verdict {
+        *flags |= seen;
+        if with_vote {
+            *flags |= with;
+        }
+    }
+}
 
 /// A fixed-size history of packed slots, direct-mapped at `slot % capacity`.
 /// The slot is stored beside its row so a row from a lap ago cannot answer for
@@ -191,6 +208,18 @@ impl SlotHistory {
             row.flags |= HAS_REPLAYED;
             row.replayed_millis = clamp(millis);
         }
+        mark(
+            &mut row.flags,
+            entry.certs.finalized,
+            FINAL_SEEN,
+            FINAL_WITH_VOTE,
+        );
+        mark(
+            &mut row.flags,
+            entry.certs.rewarded,
+            REWARD_SEEN,
+            REWARD_WITH_VOTE,
+        );
     }
 
     /// When the slot's first shred arrived, which the collector reads from the
@@ -230,7 +259,7 @@ fn clamp(value: u64) -> u32 {
 mod tests {
     use {
         super::*,
-        crate::slots::{BlockDetail, ShredArrival, SlotLevel},
+        crate::slots::{BlockDetail, ShredArrival, SlotLevel, VoteCerts},
     };
 
     fn entry(slot: Slot) -> SlotEntry {
@@ -243,7 +272,25 @@ mod tests {
             time_millis: None,
             shreds: None,
             replayed_millis: None,
+            certs: VoteCerts::default(),
         }
+    }
+
+    #[test]
+    fn test_certificate_verdicts_pack_into_the_flags() {
+        let mut history = SlotHistory::new(64);
+        let mut seen = entry(10);
+        seen.certs = VoteCerts {
+            finalized: Some(true),
+            rewarded: Some(false),
+        };
+        history.record(&seen);
+        let flags = history.get(10).expect("recorded").flags;
+        assert_eq!(flags, FINAL_SEEN | FINAL_WITH_VOTE | REWARD_SEEN);
+
+        // Unseen leaves both bits clear, which the page reads as not yet known.
+        history.record(&entry(11));
+        assert_eq!(history.get(11).expect("recorded").flags, 0);
     }
 
     fn with_block(slot: Slot, transactions: u64, non_vote: u64) -> SlotEntry {

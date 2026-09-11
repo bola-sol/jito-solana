@@ -1,11 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
-import { matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
+import { certsTitle, matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
-import type { EpochInfo, Peer, SlotEntry, StakeSummary, TipRates } from "../types";
+import type { EpochInfo, Peer, SlotEntry, StakeSummary, TipRates, VoteCerts } from "../types";
 import { useStore } from "../useStore";
+import { useAlpenglow } from "../consensus";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
@@ -256,14 +257,15 @@ const TurnCard = memo(
     totalStake: number | undefined;
     rates: TipRates | undefined;
   }) {
+    const alpenglow = useAlpenglow();
     return (
       <div className="schedule-group">
         <TurnLeader turn={turn} peer={peer} totalStake={totalStake} />
         <div className="schedule-slots">
           <div className="schedule-row schedule-head">
             <span className="schedule-slot">Slot</span>
-            <span>Votes</span>
-            <span>Non-votes</span>
+            <span>{alpenglow ? "Voted" : "Votes"}</span>
+            <span>{alpenglow ? "Transactions" : "Non-votes"}</span>
             <span>Base</span>
             <span>Priority</span>
             <span title="Reaching the distribution account, after jito's cut. Derived, not measured.">
@@ -379,6 +381,7 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
 
 /** One slot, empty until it has been produced. */
 function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined }) {
+  const alpenglow = useAlpenglow();
   const entry = slot.entry;
   const block = entry?.block ?? null;
   // Votes are what is left of the block once the rest is taken out. Clamped
@@ -395,7 +398,11 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
         {count(slot.slot)}
         <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />
       </span>
-      <span>{votes === null ? "—" : count(votes)}</span>
+      {alpenglow ? (
+        <VoteMarks certs={entry?.certs} />
+      ) : (
+        <span>{votes === null ? "—" : count(votes)}</span>
+      )}
       <span>{block ? count(block.non_vote_transactions) : "—"}</span>
       <span>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
       <span>{block ? sol(block.priority_fees, 4) : "—"}</span>
@@ -421,4 +428,20 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
       </span>
     </div>
   );
+}
+
+/** Under alpenglow, whether this node's vote was in the slot's finalization
+ *  certificate and then its reward certificate. */
+function VoteMarks({ certs }: { certs: VoteCerts | undefined }) {
+  return (
+    <span className="vote-marks" title={certsTitle(certs)}>
+      <VoteMark verdict={certs?.finalized ?? null} />
+      <VoteMark verdict={certs?.rewarded ?? null} />
+    </span>
+  );
+}
+
+function VoteMark({ verdict }: { verdict: boolean | null }) {
+  if (verdict === null) return <i className="vote-mark is-unknown">–</i>;
+  return verdict ? <i className="vote-mark is-yes">✓</i> : <i className="vote-mark is-no">✗</i>;
 }

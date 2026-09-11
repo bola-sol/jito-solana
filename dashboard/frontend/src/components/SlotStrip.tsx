@@ -4,6 +4,7 @@ import type { LeaderRef } from "../schedule";
 import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
+import { useAlpenglow } from "../consensus";
 import { Logo } from "./Logo";
 import { Explain, PeakLine } from "./primitives";
 
@@ -27,6 +28,7 @@ const LEVEL_NAMES = new Map<SlotLevel, string>(
 
 export function SlotStrip() {
   const store = useStore();
+  const alpenglow = useAlpenglow();
   const processed = store.get<number>("summary", "completed_slot");
   const observedSlotNanos = store.get<number | null>(
     "summary",
@@ -59,26 +61,36 @@ export function SlotStrip() {
 
   // Ordered from most settled to least, so the deltas read monotonically from
   // left to right. Deltas are relative to Processed, this validator's own tip.
+  // Under alpenglow confirmed, root and finalized are one slot, and a vote
+  // shows by landing in a certificate.
   const positions: Array<[string, number | undefined, string]> = [
     [
       "Finalized",
       store.get<number>("summary", "finalized_slot"),
-      "Highest slot a supermajority of stake has rooted",
+      alpenglow
+        ? "Highest slot with a finalization certificate"
+        : "Highest slot a supermajority of stake has rooted",
     ],
     [
       "Root",
       store.get<number>("summary", "root_slot"),
       "Highest slot this validator has rooted",
     ],
-    [
-      "Confirmed",
-      store.get<number>("summary", "optimistically_confirmed_slot"),
-      "Highest slot the cluster has voted to confirm",
-    ],
+    ...(alpenglow
+      ? []
+      : [
+          [
+            "Confirmed",
+            store.get<number>("summary", "optimistically_confirmed_slot"),
+            "Highest slot the cluster has voted to confirm",
+          ] as [string, number | undefined, string],
+        ]),
     [
       "Voted",
       store.get<number | null>("summary", "vote_slot") ?? undefined,
-      "The slot this validator last voted on",
+      alpenglow
+        ? "Last slot a certificate carrying this node's vote landed"
+        : "The slot this validator last voted on",
     ],
     ["Processed", processed, "Highest slot this validator has replayed and frozen"],
     [
@@ -87,6 +99,10 @@ export function SlotStrip() {
       "Highest slot this validator holds a bank for, whether or not it has been replayed",
     ],
   ];
+
+  const levels = alpenglow
+    ? LEVELS.filter(([level]) => level !== "optimistically_confirmed")
+    : LEVELS;
 
   const release = () => {
     setPinned(null);
@@ -204,7 +220,7 @@ export function SlotStrip() {
       </div>
 
       <div className="slot-key">
-        {LEVELS.map(([level, label, explanation]) => (
+        {levels.map(([level, label, explanation]) => (
           <Explain className="slot-key-item" text={explanation} key={level}>
             <i className={`slot-key-swatch level-${level}`} />
             {label}

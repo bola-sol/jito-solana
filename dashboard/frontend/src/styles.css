@@ -4364,6 +4364,28 @@ body {
   color: var(--text);
 }
 
+.vote-marks {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.vote-mark {
+  font-style: normal;
+}
+
+.vote-mark.is-yes {
+  color: var(--good);
+}
+
+.vote-mark.is-no {
+  color: var(--bad);
+}
+
+.vote-mark.is-unknown {
+  color: var(--text-faint);
+}
+
 .schedule-level {
   width: 4px;
   height: 12px;

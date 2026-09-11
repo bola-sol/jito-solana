@@ -1,6 +1,7 @@
 //! Rolling history of recent slots, backing the slot strip and the sidebar.
 
 use {
+    crate::certs::Reward,
     serde::Serialize,
     solana_clock::Slot,
     std::collections::{BTreeMap, btree_map::Entry},
@@ -48,16 +49,9 @@ pub struct SlotEntry {
     /// Milliseconds from the slot's first shred to replay finishing it. `None`
     /// for a bank this validator built, which replay never timed.
     pub replayed_millis: Option<u64>,
-    /// Whether this node's vote was in the slot's certificates. Only written
-    /// under alpenglow.
-    pub certs: VoteCerts,
-}
-
-/// Each `None` until that certificate has been seen.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct VoteCerts {
-    pub finalized: Option<bool>,
-    pub rewarded: Option<bool>,
+    /// Whether this node's vote was paid for the slot. `None` until the reward
+    /// certificate has been seen, and always under TowerBFT.
+    pub reward: Option<Reward>,
 }
 
 /// How a block's shreds arrived. Outside [`BlockDetail`] because a slot fills
@@ -118,7 +112,7 @@ impl SlotEntry {
             time_millis: None,
             shreds: None,
             replayed_millis: None,
-            certs: VoteCerts::default(),
+            reward: None,
         }
     }
 }
@@ -308,10 +302,7 @@ mod tests {
                         full_millis: u64::MAX,
                     }),
                     replayed_millis: Some(u64::MAX),
-                    certs: VoteCerts {
-                        finalized: Some(true),
-                        rewarded: Some(false),
-                    },
+                    reward: Some(Reward::NoCertificate),
                     block: Some(BlockDetail {
                         transactions: u64::MAX,
                         non_vote_transactions: u64::MAX,

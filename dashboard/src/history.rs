@@ -1,7 +1,11 @@
 //! A flat history of what each recent slot contained: fixed-size rows with
 //! only the columns the schedule page draws, a hundred thousand deep.
 
-use {crate::slots::SlotEntry, serde::Serialize, solana_clock::Slot};
+use {
+    crate::{certs::Reward, slots::SlotEntry},
+    serde::Serialize,
+    solana_clock::Slot,
+};
 
 /// Slots kept in the packed history: a hundred thousand, about eleven hours,
 /// for about eight megabytes. Allocated by the service because the server
@@ -101,21 +105,20 @@ pub const HAS_REPLAY: u16 = 1 << 3;
 pub const HAS_SHREDS: u16 = 1 << 4;
 /// Set where replay's finish was seen, and so timed from the first shred.
 pub const HAS_REPLAYED: u16 = 1 << 5;
-/// Set once the slot's finalization certificate was seen, and beside it
-/// whether this node's vote was in it. Reward likewise.
-pub const FINAL_SEEN: u16 = 1 << 6;
-pub const FINAL_WITH_VOTE: u16 = 1 << 7;
-pub const REWARD_SEEN: u16 = 1 << 8;
-pub const REWARD_WITH_VOTE: u16 = 1 << 9;
+/// Two bits for the reward certificate's verdict on this node's vote: unseen,
+/// paid, unpaid, or no certificate written.
+pub const REWARD_SHIFT: u16 = 6;
+pub const REWARD_MASK: u16 = 0b11 << REWARD_SHIFT;
+pub const REWARD_PAID: u16 = 1 << REWARD_SHIFT;
+pub const REWARD_UNPAID: u16 = 2 << REWARD_SHIFT;
+pub const REWARD_NONE: u16 = 3 << REWARD_SHIFT;
 
-/// Sets `seen` once a certificate has been read, and `with` where this
-/// node's vote was in it.
-fn mark(flags: &mut u16, verdict: Option<bool>, seen: u16, with: u16) {
-    if let Some(with_vote) = verdict {
-        *flags |= seen;
-        if with_vote {
-            *flags |= with;
-        }
+fn reward_bits(reward: Option<Reward>) -> u16 {
+    match reward {
+        None => 0,
+        Some(Reward::Paid) => REWARD_PAID,
+        Some(Reward::Unpaid) => REWARD_UNPAID,
+        Some(Reward::NoCertificate) => REWARD_NONE,
     }
 }
 
@@ -208,18 +211,7 @@ impl SlotHistory {
             row.flags |= HAS_REPLAYED;
             row.replayed_millis = clamp(millis);
         }
-        mark(
-            &mut row.flags,
-            entry.certs.finalized,
-            FINAL_SEEN,
-            FINAL_WITH_VOTE,
-        );
-        mark(
-            &mut row.flags,
-            entry.certs.rewarded,
-            REWARD_SEEN,
-            REWARD_WITH_VOTE,
-        );
+        row.flags = (row.flags & !REWARD_MASK) | reward_bits(entry.reward);
     }
 
     /// When the slot's first shred arrived, which the collector reads from the
@@ -259,7 +251,7 @@ fn clamp(value: u64) -> u32 {
 mod tests {
     use {
         super::*,
-        crate::slots::{BlockDetail, ShredArrival, SlotLevel, VoteCerts},
+        crate::slots::{BlockDetail, ShredArrival, SlotLevel},
     };
 
     fn entry(slot: Slot) -> SlotEntry {
@@ -272,25 +264,24 @@ mod tests {
             time_millis: None,
             shreds: None,
             replayed_millis: None,
-            certs: VoteCerts::default(),
+            reward: None,
         }
     }
 
     #[test]
-    fn test_certificate_verdicts_pack_into_the_flags() {
+    fn test_the_reward_verdict_packs_into_two_bits() {
         let mut history = SlotHistory::new(64);
-        let mut seen = entry(10);
-        seen.certs = VoteCerts {
-            finalized: Some(true),
-            rewarded: Some(false),
-        };
-        history.record(&seen);
-        let flags = history.get(10).expect("recorded").flags;
-        assert_eq!(flags, FINAL_SEEN | FINAL_WITH_VOTE | REWARD_SEEN);
-
-        // Unseen leaves both bits clear, which the page reads as not yet known.
-        history.record(&entry(11));
-        assert_eq!(history.get(11).expect("recorded").flags, 0);
+        for (reward, bits) in [
+            (Some(Reward::Paid), REWARD_PAID),
+            (Some(Reward::Unpaid), REWARD_UNPAID),
+            (Some(Reward::NoCertificate), REWARD_NONE),
+            (None, 0),
+        ] {
+            let mut seen = entry(10);
+            seen.reward = reward;
+            history.record(&seen);
+            assert_eq!(history.get(10).expect("recorded").flags & REWARD_MASK, bits);
+        }
     }
 
     fn with_block(slot: Slot, transactions: u64, non_vote: u64) -> SlotEntry {

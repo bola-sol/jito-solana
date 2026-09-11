@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        certs::{self, Cert},
+        certs,
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
         metrics_tap::{BundleLanding, MetricsTap, ShredFill},
@@ -1150,10 +1150,9 @@ impl Collector {
             if mark.slot < floor {
                 continue;
             }
-            let updated = self.slots.update(mark.slot, |entry| match mark.cert {
-                Cert::Finalization => entry.certs.finalized = Some(mark.with_vote),
-                Cert::Reward => entry.certs.rewarded = Some(mark.with_vote),
-            });
+            let updated = self
+                .slots
+                .update(mark.slot, |entry| entry.reward = Some(mark.reward));
             if let Some(entry) = updated {
                 self.publish_slot(&entry);
             }

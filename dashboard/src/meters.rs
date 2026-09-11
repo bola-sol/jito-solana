@@ -27,11 +27,16 @@ use {
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         path::PathBuf,
         sync::Arc,
+        thread,
         time::{Duration, Instant, SystemTime},
     },
 };
 
 pub const METER_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Tries at bank forks before a tick goes without a throughput sample.
+const LOCK_ATTEMPTS: u32 = 5;
+const LOCK_RETRY: Duration = Duration::from_millis(5);
 
 /// Samples retained for the transaction and network charts: five minutes at
 /// one a second, which is what the client keeps.
@@ -701,15 +706,19 @@ impl Meters {
     pub fn tick(&mut self) {
         self.collect_clock();
 
-        // Taken without waiting: replay holds bank forks to advance, and this thread
-        // exists so the readings survive a busy validator.
-        let working_bank = match self.ctx.bank_forks.try_read() {
-            Ok(bank_forks) => {
-                self.throughput.count_frozen(&bank_forks);
-                Some(bank_forks.working_bank())
+        // Taken without waiting long: replay holds bank forks to advance, and
+        // this thread exists so the readings survive a busy validator.
+        let mut working_bank = None;
+        for attempt in 0..LOCK_ATTEMPTS {
+            if attempt > 0 {
+                thread::sleep(LOCK_RETRY);
             }
-            Err(_) => None,
-        };
+            if let Ok(bank_forks) = self.ctx.bank_forks.try_read() {
+                self.throughput.count_frozen(&bank_forks);
+                working_bank = Some(bank_forks.working_bank());
+                break;
+            }
+        }
         if let Some(working_bank) = working_bank {
             self.throughput.tick(&working_bank, &self.publisher);
             self.tpu.note_epoch(&working_bank);

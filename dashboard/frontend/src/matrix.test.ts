@@ -7,6 +7,7 @@ import {
   columnsFor,
   meanSample,
   MIN_PITCH,
+  readoutMean,
   ROWS_TALL,
   sampleSecond,
   slotsFor,
@@ -139,6 +140,26 @@ describe("the grid's columns", () => {
 
   it("returns a grid of nothing before any sample arrives", () => {
     expect(columnsFor([], 5, second, newest)).toEqual([null, null, null, null, null]);
+  });
+
+  it("leaves a skipped second as a hole where it was", () => {
+    // The validator skips a sample now and then. Padding the gap at the left
+    // edge put the whole minute a column out of place.
+    expect(columnsFor([1, 2, 4, 5], 5, second, newest)).toEqual([1, 2, null, 4, 5]);
+    expect(columnsFor([3, 5], 5, second, newest)).toEqual([null, null, 3, null, 5]);
+  });
+
+  it("averages the readout over the newest seconds", () => {
+    const sample = (total: number): TpsSample => ({
+      slot: total,
+      timestamp_nanos: total,
+      total,
+      vote: 0,
+      non_vote_success: total,
+      non_vote_failed: 0,
+    });
+    expect(readoutMean([sample(10), sample(20), sample(0)], 2)?.total).toBe(10);
+    expect(readoutMean([], 5)).toBeUndefined();
   });
 
   it("draws a merged column as the mean of its seconds, stamped as the newest", () => {

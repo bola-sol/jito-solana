@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
+import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import type {
@@ -8,7 +9,6 @@ import type {
   Shreds,
   SkipRate,
   StartupProgress,
-  Tps,
   ValidatorCounts,
 } from "../types";
 import { useNarrow } from "../narrow";
@@ -211,8 +211,8 @@ export function ValidatorsCard() {
 export function TransactionsCard() {
   const store = useStore();
   const alpenglow = useAlpenglow();
-  const tps = store.get<Tps>("summary", "estimated_tps");
   const samples = store.getTps();
+  const tps = readoutMean(samples);
   const narrow = useNarrow();
   const peak = samples.length > 0 ? Math.max(...samples.map((sample) => sample.total)) : null;
 
@@ -248,14 +248,17 @@ export function TransactionsCard() {
             <Explain
               text={
                 alpenglow
-                  ? "Transactions confirmed per second."
-                  : "Transactions confirmed per second, with votes as the base of each column."
+                  ? "Transactions confirmed per second, averaged over the newest samples."
+                  : "Transactions confirmed per second, averaged over the newest samples, with votes as the base of each column."
               }
             >
               Total TPS
             </Explain>
           </div>
-          <div className="tps-total-value">{decimal(tps?.total)}</div>
+          <div className="tps-total-value">
+            {decimal(tps?.total)}
+            <span className="tps-total-unit">{READOUT_SECONDS}s mean</span>
+          </div>
         </div>
         {!narrow && figures}
       </div>

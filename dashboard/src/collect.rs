@@ -119,9 +119,10 @@ const EPOCH_END_DRIFT_DIVISOR: u32 = 64;
 const MAX_SLOTS_TIMED_PER_TICK: u64 = 512;
 
 /// Above this rate of slots replayed per second the validator is catching up
-/// rather than following the cluster, so throughput samples are discarded. A
-/// healthy cluster produces about two and a half slots a second.
-pub(crate) const CATCH_UP_SLOTS_PER_SECOND: f64 = 6.0;
+/// rather than following the cluster, so throughput samples are discarded.
+/// Well above any slot time a cluster runs at, and well below replay's pace
+/// when it has a backlog.
+pub(crate) const CATCH_UP_SLOTS_PER_SECOND: f64 = 20.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StakeSummary {

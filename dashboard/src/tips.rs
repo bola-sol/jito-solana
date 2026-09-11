@@ -1,12 +1,6 @@
-//! Jito tips, read as the movement of the tip payment accounts across a slot.
-//!
-//! Tips are lamport transfers into eight program accounts, swept to the
-//! previous receiver when the next jito leader cranks the receiver change.
-//! Differencing a frozen bank's balances against its parent's gives what a
-//! block paid exactly, as the net movement of those accounts. Only the
-//! measured figure is kept; what reached a distribution account and what a
-//! validator earned are derived where drawn, so a corrected rate corrects the
-//! whole history.
+//! Jito tips, read as the movement of the eight tip payment accounts between
+//! a frozen bank and its parent. Only the measured figure is kept; shares are
+//! derived where drawn.
 
 use {serde::Serialize, solana_pubkey::Pubkey, solana_runtime::bank::Bank};
 
@@ -27,9 +21,7 @@ const TIP_ACCOUNT_SEEDS: [&[u8]; 8] = [
 pub const TIP_ACCOUNTS: usize = TIP_ACCOUNT_SEEDS.len();
 
 /// What jito takes before anything reaches a distribution account, in basis
-/// points: three per cent at the end of the block and three at distribution.
-/// Applied to every leader's turn as one stated approximation, which is why the
-/// column it feeds is labelled derived.
+/// points. One stated approximation applied to every leader.
 pub const JITO_CUT_BPS: u16 = 600;
 
 /// Basis points in the whole.
@@ -52,10 +44,8 @@ pub fn jito_share(paid: u64) -> u64 {
     paid.saturating_sub(scale(paid, JITO_CUT_BPS))
 }
 
-/// A validator's own cut of what reached the distribution account, only for
-/// slots this validator led and only where the commission is known. An
-/// estimate even for us: the account is initialised once per epoch with
-/// whatever the commission was then.
+/// A validator's own cut of what reached the distribution account, for its
+/// own slots where the commission is known. An estimate.
 pub fn our_share(paid: u64, commission_bps: u16) -> u64 {
     scale(jito_share(paid), commission_bps)
 }
@@ -72,9 +62,8 @@ pub struct TipRates {
 }
 
 /// Reads what each slot paid in tips. Keeps a floor, since the accounts never
-/// empty, and a running total credited to the current receiver, so the sweep
-/// can be checked against it. The caller sorts slots into order, which the
-/// checksum needs.
+/// empty, and a running total the sweep is checked against. Slots must arrive
+/// in order.
 pub struct TipMeter {
     accounts: [Pubkey; TIP_ACCOUNTS],
     /// The lowest total the accounts have been seen to hold. Learned rather than
@@ -105,10 +94,9 @@ impl TipMeter {
         &self.accounts
     }
 
-    /// What the last observed sweep says was paid before the crank landed, and so
-    /// counted nowhere. `None` until a sweep has been seen. The only check this
-    /// measurement gets: near nought means the turn's readings were complete. It
-    /// audits the arithmetic and does not repair the display.
+    /// What the last sweep says was paid before the crank and counted nowhere.
+    /// `None` until a sweep has been seen. Near nought means the readings were
+    /// complete.
     pub fn residual(&self) -> Option<u64> {
         self.residual
     }

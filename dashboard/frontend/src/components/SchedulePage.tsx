@@ -10,58 +10,18 @@ import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
 
-/**
- * What each leader's turn at producing contained.
- *
- * The slots are the ones the sidebar lists and the block figures are the ones
- * the collector reads off each bank as it freezes, so this is a second reading
- * of what is on the wire rather than a second feed.
- *
- * Newest first, and a turn appears whole the moment its first slot begins: all
- * four slots share a leader by definition, so the rest are drawn as empty rows
- * and filled where they stand. Nothing below a turn moves while it fills.
- *
- * The live edge is the top, which is the same arrangement as the slot list down
- * the side, so it wants the same handling and gets it from the same component:
- * arrivals are seen while the top is on screen, and held off what is being read
- * once it is not.
- */
-/**
- * Slots asked for each time the reader wants more.
- *
- * Five hundred and twelve, a hundred and twenty-eight turns, which is a few
- * screenfuls. The list is not virtualised, so this bounds the DOM as much as
- * the request: the depth the validator retains is far past what a browser will
- * happily render at once, and the reader asking for more is what decides how
- * much of it is worth rendering.
- */
+/** What each leader's turn at producing contained, newest first, each turn
+ *  drawn whole from its first slot. */
+/** Slots asked for each time the reader wants more: a few screenfuls, since
+ *  the list is not virtualised. */
 const OLDER_SPAN = 512;
 
-/**
- * Turns drawn at once, however many are loaded or matched.
- *
- * The list is not virtualised, so every turn on it is about fifty elements of
- * real DOM and the browser lays all of them out. Measured on this stylesheet: a
- * thousand turns is fifty-four thousand elements, half a second to render and
- * thirty milliseconds of layout on every scroll, which is the edge of
- * comfortable. Two and a half thousand is a second and a half and sixty-seven
- * milliseconds a scroll, which is not.
- *
- * The depth beyond this is reached by searching rather than by scrolling to it.
- * Nobody walks a hundred thousand slots four at a time; they look for a
- * validator or paste a slot number, and a search narrows to a few hundred turns
- * long before this bites.
- */
+/** Turns drawn at once: about fifty DOM elements each, and a thousand is
+ *  thirty milliseconds of layout per scroll. Deeper is reached by search. */
 const MAX_TURNS = 1000;
 
-/**
- * Slots reached back through when somebody searches.
- *
- * The whole of what the validator retains. Fetching it is twenty-five requests
- * and about five megabytes, and holding it is some thirty, which is what a
- * search costs to be worth running: matching only what the list has loaded
- * would answer for the last few minutes and call it the answer.
- */
+/** Slots reached back through when somebody searches: everything the
+ *  validator retains, about five megabytes over twenty-five requests. */
 const DEPTH_SLOTS = 100_000;
 
 /** Slots per request, the most the validator will answer at once. */
@@ -82,37 +42,15 @@ export function SchedulePage() {
   const rates = store.get<TipRates>("summary", "tip_rates");
   const live = store.getSlots();
 
-  // Spans fetched from the validator's packed history, oldest first, below
-  // whatever the live window still holds. Held here rather than in the store:
-  // they are this page's working set, and putting a hundred thousand
-  // reconstructed entries into the shared slot map is the thing this design
-  // exists to avoid.
-  // The cluster's names and icons, fetched the first time somebody searches.
-  //
-  // Not on load: it is a hundred and fifty kilobytes and most visits never
-  // search. Not per query either, since the store only fetches it once. Until
-  // it arrives a search still matches on key and on slot number, which is what
-  // most searches are; a name search before it lands finds the leaders of the
-  // live window and no more.
-  // Filtering to ours counts as searching. Only sixty-four of our own slots are
-  // pushed, enough for the sidebar's rail and a few hours here; the rest are in
-  // the packed history like everybody else's, so asking for ours means reading
-  // back through it.
+  // Filtering to ours counts as searching: only sixty-four of our own slots
+  // are pushed, the rest are in the packed history.
   const searching = query.trim().length > 0 || oursOnly;
 
-  // Everything the validator still holds, fetched once, the first time somebody
-  // searches. Kept apart from the list's own slots on purpose: `turnsOf` over a
-  // hundred thousand entries is thirty milliseconds, and folded into the list
-  // it would run again on every slot that arrives. Here it is built once, when
-  // the fetch lands, and the live list stays cheap.
+  // Everything the validator holds, fetched on the first search and kept
+  // apart from the live list so `turnsOf` over it runs once.
   const [deep, setDeep] = useState<SlotEntry[] | null>(null);
   const [deepLoading, setDeepLoading] = useState(false);
-  // Moves whenever a leader could newly resolve: the names arriving, an
-  // epoch's arrays arriving, the epoch turning. The memo below is keyed on it
-  // because the store is one object for the life of the page, and a re-render
-  // does not re-run a memo whose dependencies are unchanged: without this the
-  // turns built before any of that landed would keep their bare keys for as
-  // long as the page stayed open.
+  // Moves whenever a leader could newly resolve, so the memo below re-runs.
   const leaderRevision = store.getLeaderRevision();
 
   const [older, setOlder] = useState<SlotEntry[]>([]);
@@ -136,10 +74,8 @@ export function SchedulePage() {
           count: end - first,
         });
         const got = entriesOf(range, epoch, identity);
-        // A span with nothing in it is older than the validator has kept, and
-        // everything below it is too. On a node that started an hour ago this
-        // is what stops the walk after the second request rather than the
-        // thirteenth.
+        // An empty span is older than the validator has kept, and so is
+        // everything below it.
         if (got.length === 0) break;
         spans.unshift(got);
         end = first;
@@ -147,10 +83,8 @@ export function SchedulePage() {
       const all = spans.flat();
       setDeep(all);
 
-      // Reading this far back leaves the epoch the page was sent whenever the
-      // tip is within the history's depth of a boundary, which is about a
-      // quarter of every epoch. Without the epoch before it, every slot on the
-      // far side has no leader the page can name.
+      // The history crosses an epoch boundary about a quarter of the time,
+      // and the far side needs the previous epoch to name its leaders.
       const oldest = all[0]?.slot;
       if (oldest !== undefined && epoch && oldest < epoch.start_slot) {
         await store.loadEpoch(epoch.epoch - 1);
@@ -208,11 +142,8 @@ export function SchedulePage() {
   // rebuilds the list below it.
   const deepTurns = useMemo(
     () => (deep === null ? [] : turnsOf(deep, (slot, mine) => store.leaderOf(slot, mine))),
-    // Everything a leader is resolved from: the epoch's arrays, which arrive as
-    // one object and are replaced when the epoch turns, and the names, which
-    // arrive once. The peer table is left out on purpose. It is rebuilt every
-    // few seconds and rebuilding a hundred thousand entries with it would cost
-    // more than the handful of deep turns it could newly name.
+    // The peer table is left out: it changes every few seconds and would
+    // rebuild a hundred thousand entries for a handful of names.
     [deep, store, leaderRevision],
   );
 
@@ -229,10 +160,8 @@ export function SchedulePage() {
     return [...near, ...far].sort(
       (a, b) => (b.slots[0]?.slot ?? 0) - (a.slots[0]?.slot ?? 0),
     );
-    // `slots` is a fresh array on every render, the store building it from its
-    // own map each time, so this recomputes whenever the page does and picks up
-    // a new peer table without being told. That is affordable here and only
-    // here: this side is bounded by the cap, and the deep side above is not.
+    // `slots` is a fresh array every render, so this recomputes with the
+    // page. Affordable here because the cap bounds it.
   }, [store, slots, deep, deepTurns, searching, query, oursOnly]);
 
   // Newest first, so the cap keeps the newest and drops the tail. A search that
@@ -313,13 +242,8 @@ export function SchedulePage() {
   );
 }
 
-/**
- * One leader's turn, the same height from the moment it appears.
- *
- * Memoised on the slots themselves. The store replaces only the entries that
- * changed, so a turn whose slots have all settled is skipped rather than
- * rebuilt as the page updates around it.
- */
+/** One leader's turn, memoised on its slot entries so a settled turn is
+ *  skipped. */
 const TurnCard = memo(
   function TurnCard({
     turn,
@@ -417,12 +341,8 @@ function TurnLeader({
   );
 }
 
-/**
- * From the first shred to the block being full, then to replay finishing, as
- * a bar on a fixed track and the two spans as text. Replay's own thread time
- * is on the hover: waiting for shreds is not on replay's clock, so on its own
- * it read as complete when it was not.
- */
+/** First shred to full, then to replayed, on a fixed track. Replay's own
+ *  thread time is on the hover. */
 function Timeline({ entry }: { entry: SlotEntry | null }) {
   const timeline = timelineOf(entry);
   if (!timeline) {

@@ -1,7 +1,5 @@
-//! Where each of the validator's threads spent the last second, from the
-//! scheduler's own accounting under `/proc/self/task`. Read here rather than
-//! through the metrics tap for the same reason as the host figures: it works
-//! on a node logging below the default.
+//! Where each of the validator's threads spent the last second, from
+//! `/proc/self/task`.
 
 use {
     serde::Serialize,

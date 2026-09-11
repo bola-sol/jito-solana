@@ -1,8 +1,6 @@
-//! A validator small enough to test against: the handles the collectors read
-//! through, gathered into one `DashboardContext` so a test can call `tick` and
-//! look at what came out. The node is its own staked leader, since a genesis
-//! with no stake produces no leader schedule and every collector takes its
-//! empty path.
+//! A validator small enough to test against, gathered into one
+//! `DashboardContext`. The node is its own staked leader so a leader schedule
+//! exists.
 
 use {
     crate::{

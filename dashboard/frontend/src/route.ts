@@ -1,13 +1,5 @@
-/**
- * Which page is on screen, kept in the URL hash.
- *
- * The hash rather than the path because the server answers unknown paths with
- * index.html and a path would therefore work on the first load and break on a
- * refresh behind a proxy that does not. A hash never reaches the server at all.
- *
- * Pure functions so the parsing is testable without a document; the hook below
- * is the only part that touches one.
- */
+/** Which page is on screen, kept in the URL hash, which never reaches the
+ *  server. */
 
 import { useEffect, useState } from "react";
 
@@ -29,13 +21,7 @@ export function pageHash(page: Page): string {
   return page === "overview" ? "#" : `#/${page}`;
 }
 
-/**
- * The current page, following the address bar.
- *
- * Listening for `hashchange` rather than only setting state means the back
- * button works, which is what a viewer expects of something that changed the
- * URL.
- */
+/** The current page, following the address bar so the back button works. */
 export function usePage(): [Page, (page: Page) => void] {
   const [page, setPage] = useState<Page>(() => readPage(window.location.hash));
 

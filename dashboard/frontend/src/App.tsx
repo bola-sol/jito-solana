@@ -42,10 +42,8 @@ export function App() {
     document.title = label ? `${TITLE} | ${label}` : TITLE;
   }, [name, identity]);
 
-  // Only the overview keeps the slot rail. The schedule lists the same slots in
-  // more detail, so the rail beside it would be the same thing twice, and the
-  // block detail wants the width more than it wants the context. The collapsed
-  // state is remembered rather than reset, so coming back finds it as it was.
+  // Only the overview keeps the slot rail; the collapsed state is remembered
+  // across pages.
   const rail = page === "overview";
   const classes = ["app"];
   if (rail && collapsed) classes.push("is-collapsed");
@@ -128,11 +126,8 @@ const PAGES: { page: Page; label: string }[] = [
   { page: "schedule", label: "Schedule" },
 ];
 
-/**
- * Anchors rather than buttons, so a page can be opened in a new tab and the
- * address bar says which one is on screen. The click is still handled, to keep
- * the switch to a re-render rather than a reload.
- */
+/** Anchors rather than buttons, so a page can open in a new tab; the click is
+ *  still handled to avoid a reload. */
 function Nav({ page, onSelect }: { page: Page; onSelect: (page: Page) => void }) {
   return (
     <nav className="nav" aria-label="Pages">

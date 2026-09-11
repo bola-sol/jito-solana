@@ -1,10 +1,6 @@
 //! The once-a-second readings: throughput, host, network, sockets, caches and
-//! the TPU path.
-//!
-//! On their own thread, apart from the slot sampling in [`crate::collect`], so
-//! a slow blockstore read does not stall every panel. Bank forks is taken with
-//! `try_read`: if replay holds it the sample is skipped. A gap in a chart is
-//! honest; a stalled heartbeat is not.
+//! the TPU path. On their own thread; bank forks is taken with `try_read` and
+//! a sample skipped when replay holds it.
 
 use {
     crate::{
@@ -293,12 +289,9 @@ pub struct IngestPath {
     /// Bytes waiting unread at the instant of the sample.
     pub queued_bytes: u64,
 
-    /// Packets the port handed over across the same window, so the panel can show
-    /// a share lost. Missing for a port with no receiver reporting one, which is
-    /// four of the seven; nought received alongside drops would read as total
-    /// loss. `Some(0)` is possible where the validator logs below info and the
-    /// counting points never fire, so the panel shows a share only where something
-    /// was counted.
+    /// Packets the port handed over across the same window. `None` for a port
+    /// with no receiver reporting one; `Some(0)` where the validator logs below
+    /// info and the points never fire.
     pub received_recent: Option<u64>,
     pub received_total: Option<u64>,
 
@@ -327,10 +320,8 @@ pub struct QuicPort {
 pub struct QuicPaths {
     pub window_seconds: f64,
     pub ports: Vec<QuicPort>,
-    /// Whether the TPU address advertised in gossip is a socket on this host. It is
-    /// not behind a relayer or block-assembly proxy, and the listener then reports
-    /// almost nothing, which reads as a fault without this. Says only that the
-    /// address is answered elsewhere, never by what.
+    /// Whether the TPU address advertised in gossip is a socket on this host.
+    /// False behind a relayer or block-assembly proxy.
     pub tpu_offhost: bool,
 }
 
@@ -523,9 +514,7 @@ struct IngestPort {
 }
 
 /// Cumulative transaction counters, differenced between samples for a rate.
-/// Total and non-vote are inherited from the parent bank; the error count
-/// resets per bank, so `errors` is a running sum the caller adds to as banks
-/// freeze.
+/// `errors` resets per bank, so it is a running sum the caller keeps.
 #[derive(Clone, Copy)]
 struct TxnCounters {
     slot: Slot,
@@ -728,10 +717,8 @@ impl Meters {
 
         self.network.tick(&self.publisher);
         self.tpu.collect_xdp(&self.metrics_tap, &self.publisher);
-        // The three readings that walk `/proc` run only while somebody is
-        // watching: the thread walk alone is two files per thread every second.
-        // The rest is a small file or a set of atomics, and keeps running so the
-        // charts are whole when a viewer connects.
+        // The `/proc` walks run only while somebody is watching. The rest is
+        // cheap and keeps the charts whole for a viewer connecting.
         if self.publisher.subscriber_count() > 0 {
             self.host.tick(&self.ctx, &self.publisher);
             self.threads.tick(&self.publisher);
@@ -1203,10 +1190,7 @@ impl SocketMeter {
             .filter_map(|port| Some((port.port, port.received?)))
             .collect();
 
-        // Taken the first tick the validator reports itself running, which is where
-        // the startup burst ends; before that the raw counters stand so the burst is
-        // visible. Both baselines at the same instant, so the two totals can be
-        // divided.
+        // Both baselines at the first running tick, where the startup burst ends.
         if self.drops_baseline.is_none() && running {
             self.drops_baseline = Some(drops.clone());
             self.received_baseline = Some(received.clone());
@@ -1270,11 +1254,8 @@ impl SocketMeter {
     }
 }
 
-/// This validator's own UDP ports, in the order the panel lists them, from what
-/// the node advertises in gossip: behind a port forward the match finds
-/// nothing. Each is paired with the validator's own count of what it delivered,
-/// where anything counts it, because this is the one place that knows which
-/// socket is which.
+/// This validator's UDP ports as advertised in gossip, in the panel's order,
+/// each with its receiver's packet count where one reports.
 fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
     let info = ctx.cluster_info.my_contact_info();
     [
@@ -1572,10 +1553,8 @@ struct TpuMeter {
     /// How the XDP transmit path is configured, or nothing where the
     /// validator is not running one.
     xdp: Debounced<Option<XdpConfig>>,
-    /// Where the chain had got to in its epoch as of the last tick that could take
-    /// bank forks. Held because the totals are summed in the metrics pass, which
-    /// has no bank; kept across a missed read, which is a missing sample and not a
-    /// new epoch.
+    /// Epoch position as of the last tick that could take bank forks. Kept across
+    /// a missed read.
     epoch_now: Option<EpochPosition>,
     /// The two stages that only run while this validator is leader, gathered
     /// over the epoch rather than over the window the sections above use.
@@ -1668,12 +1647,9 @@ impl TpuMeter {
             }),
         );
 
-        // One row per QUIC port, sent as a list so the panel draws the ports it was
-        // given. Present once any port has ever taken a connection, rather than within
-        // the window: behind a proxy the only inbound QUIC is vote traffic during
-        // leader slots, and a windowed test left the card off the grid for the half
-        // hour between. A lifetime at nought is a port nothing has used, which below
-        // `solana=info` is every port.
+        // Present once any port has ever taken a connection, not within the
+        // window: behind a proxy the only inbound QUIC is vote traffic during
+        // leader slots.
         let ports: Vec<QuicPort> = [
             (
                 "tpu",
@@ -1723,12 +1699,8 @@ impl TpuMeter {
             }),
         );
 
-        // The last two stages are counted over the epoch rather than the window. Both
-        // only run while this validator is leader, and a five-minute window of a stage
-        // that fires for a few slots every few hours is not a rate. Safe over an epoch
-        // because every field is a difference the reporter itself resets. Nothing
-        // published until a bank has said which epoch, since an unlabelled total is
-        // worse than none.
+        // Summed over the epoch, not the window: these stages run only while
+        // leader. Nothing is published until a bank has said which epoch.
         if let Some(at) = self.epoch_now {
             self.leader_totals.add(
                 at,

@@ -1,9 +1,5 @@
-//! A flat history of what each recent slot contained.
-//!
-//! The slot ring in [`crate::slots`] holds whole [`SlotEntry`] records, the
-//! right shape for the few hundred slots a client is sent and the wrong one
-//! for a hundred thousand. This holds the same span as fixed-size rows carrying
-//! only the columns the schedule page draws.
+//! A flat history of what each recent slot contained: fixed-size rows with
+//! only the columns the schedule page draws, a hundred thousand deep.
 
 use {crate::slots::SlotEntry, serde::Serialize, solana_clock::Slot};
 
@@ -33,9 +29,7 @@ pub struct PackedSlot {
     /// The priority half of `fees`, so the split survives into history.
     pub priority_fees: u64,
     /// Lamports paid into the jito tip accounts during this slot, as measured.
-    /// What reached a distribution account and what it earned us are worked out
-    /// where drawn, from rates a correction can still reach. Nought unless
-    /// `HAS_TIPS` is set.
+    /// Nought unless `HAS_TIPS` is set.
     pub tips: u64,
     /// Wall time replay's own thread spent on the slot, in microseconds and
     /// saturating into `u32`, which is over an hour. Nought unless `HAS_REPLAY`.
@@ -60,11 +54,9 @@ pub struct PackedSlot {
 /// ceiling, which a test below holds it to. Twenty-five times a screenful.
 pub const MAX_RANGE_SLOTS: usize = 4096;
 
-/// One slot as it goes on the wire: a JSON array, because field names would
-/// outweigh the figures. Order: level, flags, votes, non-votes, compute, fees,
-/// priority fees, tips, time, replay, shreds, repaired, full, replayed. The
-/// frontend mirrors it. A struct rather than a tuple, which std stops
-/// deriving for at twelve.
+/// One slot as it goes on the wire, a JSON array in this order: level, flags,
+/// votes, non-votes, compute, fees, priority fees, tips, time, replay, shreds,
+/// repaired, full, replayed. The frontend mirrors it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireRow(
     pub u8,
@@ -446,10 +438,8 @@ mod tests {
 
     #[test]
     fn test_full_range_fits_the_message_ceiling() {
-        // Every figure as large as a real slot's gets: fees in the thousands of
-        // SOL, a thirteen-digit clock, a compute figure at the row's clamp. The
-        // worst case the types allow does not fit and never did; this is the
-        // case the page will meet.
+        // Every figure as large as a real slot's gets; the worst case the types
+        // allow does not fit and never did.
         let mut history = SlotHistory::new(MAX_RANGE_SLOTS);
         for slot in 0..MAX_RANGE_SLOTS as Slot {
             let mut big = with_block(slot, 99_999, 99_999);

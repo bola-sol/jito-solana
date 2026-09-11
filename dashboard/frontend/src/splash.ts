@@ -1,20 +1,12 @@
-/**
- * Removes the boot splash defined in index.html.
- *
- * The splash is held until the store has something worth showing, so the first
- * frame behind it is a populated dashboard rather than a grid of placeholders.
- */
+/** Removes the boot splash from index.html once the store has something to
+ *  show. */
 
 import type { Store } from "./store";
 
 /** Long enough that a fast local load still reads as a transition, not a flash. */
 const MIN_VISIBLE_MS = 650;
 
-/**
- * A validator that is still loading a snapshot may not report a slot for some
- * time. Past this point the dashboard is more useful than the splash, however
- * empty it is.
- */
+/** Past this the dashboard is more useful than the splash, however empty. */
 const MAX_VISIBLE_MS = 6000;
 
 /** Must match the #splash transition duration in index.html. */

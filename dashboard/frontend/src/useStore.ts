@@ -9,13 +9,8 @@ function useStoreInstance(): Store {
   return store;
 }
 
-/**
- * Re-renders the caller whenever anything in the store changes.
- *
- * This is coarse on purpose. The store already coalesces updates to one per
- * frame, and the dashboard is small enough that per-key subscriptions would
- * cost more in complexity than they would save in renders.
- */
+/** Re-renders the caller whenever anything in the store changes. Coarse on
+ *  purpose; the store coalesces to one update per frame. */
 export function useStore(): Store {
   const store = useStoreInstance();
   useSyncExternalStore(store.subscribe, store.getRevision, store.getRevision);

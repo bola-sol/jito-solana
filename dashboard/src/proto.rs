@@ -1,10 +1,7 @@
-//! Wire protocol for the dashboard websocket.
-//!
-//! Every message is a JSON envelope with a `topic`, a `key` within it, and a
-//! `value`. Retained messages carry state; the newest value per `(topic, key)`
-//! is kept so a client connecting late is caught up in one shot. Ephemeral
-//! messages describe an event and reach only the clients connected at the
-//! time. A request carries an `id`, and its reply goes to that `id` alone.
+//! Wire protocol: JSON envelopes of `topic`, `key` and `value`. Retained
+//! messages keep their newest value per key for clients connecting late;
+//! ephemeral ones reach only the clients connected at the time. A request
+//! carries an `id` and its reply goes to that `id` alone.
 
 use {
     serde::{Deserialize, Serialize},
@@ -15,10 +12,8 @@ use {
     tokio::sync::broadcast,
 };
 
-/// Ceiling on a single websocket message, both directions: soketto takes one
-/// limit per connection, and a client's frame is buffered whole before any
-/// smaller limit applies. The largest server message is the 512-slot overview
-/// at under half a megabyte.
+/// Ceiling on a websocket message in either direction, soketto having one
+/// limit per connection. The largest server message is under half of it.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
 
 /// Messages buffered per client before it counts as too slow and is dropped.

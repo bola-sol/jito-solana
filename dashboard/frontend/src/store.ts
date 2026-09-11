@@ -1,11 +1,5 @@
-/**
- * Holds everything the websocket has told us, and notifies React when it
- * changes.
- *
- * Updates arrive far faster than a person can read, so notifications are
- * coalesced to one per animation frame. Without that, a busy validator would
- * re-render the tree several hundred times a second to no visible effect.
- */
+/** Everything the websocket has told us. Notifications are coalesced to one
+ *  per animation frame. */
 
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
 import type {
@@ -22,19 +16,8 @@ import type {
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
 const MAX_SLOTS = 512;
 
-/**
- * This validator's own leader slots kept beyond that window.
- *
- * A validator leads about four slots in every eight hundred, so five hundred
- * slots of history usually contains none of its own. Kept separately, the
- * sidebar's own-slots view has something to show; pruned with everything else
- * it would be empty almost all the time.
- *
- * Sixty-four, which is what that rail needs. The schedule page reaches ours by
- * searching the packed history instead. Matches `OWN_SLOTS_KEPT` on the server:
- * the two are one figure split across the wire and only agree by being kept the
- * same.
- */
+/** This validator's own leader slots kept beyond that window, for the
+ *  sidebar rail. Matches `OWN_SLOTS_KEPT` on the server. */
 const MAX_OWN_SLOTS = 64;
 
 /** TPS samples kept for the chart. */
@@ -45,13 +28,8 @@ const MAX_THREAD_SAMPLES = 60;
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
-/**
- * A request sent to the validator and not yet answered.
- *
- * The server answers everything it can parse as a request, including keys it
- * does not recognise, so an entry that is never settled means the connection
- * went away rather than the request being ignored.
- */
+/** A request sent to the validator and not yet answered. The server answers
+ *  every request, so one never settled means the connection went away. */
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -71,44 +49,19 @@ export class Store {
   /** The peer list the index below was built from, to know when it is stale. */
   private peers: Peer[] | null = null;
   private peerIndex = new Map<string, Peer>();
-  /**
-   * Resolved leaders by slot, so that repeated lookups return the same object.
-   *
-   * Not for speed. The rows that show a leader are memoised on their props, and
-   * a freshly built object every render would defeat that and rebuild the whole
-   * list on every meter sample. Cleared whenever the epoch or the peer table
-   * changes, which is the only way an answer here can change.
-   */
+  /** Resolved leaders by slot, so lookups return the same object and the
+   *  memoised rows hold. Cleared when the epoch or peer table changes. */
   private leaderCache = new Map<number, LeaderRef>();
   /** Us, rebuilt only when one of the three values it is made of changes. */
   private ours: LeaderRef = NO_LEADER;
   private oursFrom = "";
-  /**
-   * Names and icons for the whole cluster, once something has asked for them.
-   *
-   * The peer table only reaches the leaders of the window a client holds, so a
-   * turn from further back has a key and nothing else until this arrives.
-   * Empty until `loadDisplays` is called, which the schedule page does the
-   * first time somebody searches.
-   */
+  /** Names and icons for the whole cluster, empty until `loadDisplays`. */
   private displays = new Map<string, { name: string | null; icon: string | null }>();
-  /**
-   * Epochs other than the current one, once something has asked for them.
-   *
-   * The current epoch arrives on its own message; this holds the ones reached
-   * by reading back through the history, which crosses a boundary whenever the
-   * tip is within a hundred thousand slots of one. `null` for an epoch the
-   * validator no longer has a schedule for, remembered so it is asked once.
-   */
+  /** Epochs other than the current one, fetched on demand. `null` for one the
+   *  validator no longer holds, remembered so it is asked once. */
   private epochs = new Map<number, EpochInfo | null>();
-  /**
-   * Bumped whenever a leader could newly resolve: an epoch's arrays arriving,
-   * the names arriving, the epoch turning.
-   *
-   * Read by anything memoising over resolved leaders. The store is one object
-   * for the life of the page, so a memo keyed on it alone never re-runs, and
-   * the turns built before this moved would keep their bare keys.
-   */
+  /** Bumped whenever a leader could newly resolve, for memos over resolved
+   *  leaders. */
   private leaderRevision = 0;
 
   private listeners = new Set<() => void>();
@@ -131,11 +84,7 @@ export class Store {
     return this.connection;
   }
 
-  /**
-   * True once enough has arrived for the dashboard to be worth looking at.
-   * The identity comes from the static publish on connect and the slots from
-   * the retained overview, so both land in the first burst of messages.
-   */
+  /** True once enough has arrived for the dashboard to be worth looking at. */
   isReady(): boolean {
     // A validator that is still booting has no slots and no identity to report,
     // but the boot sequence is exactly what should be on screen then, so the
@@ -151,10 +100,8 @@ export class Store {
   setConnection(state: ConnectionState): void {
     this.connection = state;
     if (state !== "open") {
-      // A reply can only come back on the socket that carried the request, so
-      // losing one ends every request in flight. Left pending they would be
-      // promises that never settle, and a caller waiting on one shows a
-      // loading state that never resolves.
+      // A reply comes back only on the socket that carried the request, so
+      // losing it ends every request in flight.
       this.sender = null;
       const inflight = [...this.pending.values()];
       this.pending.clear();
@@ -163,25 +110,13 @@ export class Store {
     this.touch();
   }
 
-  /**
-   * How to write to the current socket, installed by `connect` when one opens.
-   *
-   * Held rather than reached for, because the store is what callers have and
-   * the socket is replaced on every reconnect.
-   */
+  /** How to write to the current socket, installed by `connect`. */
   setSender(sender: (frame: string) => void): void {
     this.sender = sender;
   }
 
-  /**
-   * Asks the validator for something, rather than waiting for it to be pushed.
-   *
-   * For data too large to send to every client on connect and too rarely read
-   * to send at all: a span of slot history is the first of it. Rejects rather
-   * than queues when there is no connection, since a request made now and
-   * answered after the next reconnect would arrive against a page that has
-   * moved on.
-   */
+  /** Asks the validator for something too large or too rarely read to push.
+   *  Rejects rather than queues without a connection. */
   request<T>(topic: string, key: string, params: unknown): Promise<T> {
     const sender = this.sender;
     if (sender === null) return Promise.reject(new Error("not connected"));
@@ -199,28 +134,11 @@ export class Store {
     });
   }
 
-  /**
-   * Who leads a slot, and what to call them.
-   *
-   * The one place that knows how a leader is put back together, because it is
-   * no longer in one place on the wire: the key comes from the epoch's turn
-   * array and the name and icon from the peer table. A slot carries neither.
-   *
-   * The peer table covers the leaders of the window a client holds and the ones
-   * about to lead, so a live turn is named before it is drawn. A turn from
-   * further back than that, or from an epoch whose schedule the page does not
-   * have, resolves to a key with no name or to nothing at all, and the callers
-   * fall back in that order.
-   */
+  /** Who leads a slot and what to call them: the key from the epoch's turn
+   *  array, the name and icon from the peer table. */
   getLeaderRevision = (): number => this.leaderRevision;
 
-  /**
-   * Fetches an epoch's schedule, once.
-   *
-   * Only the current one is published, it being half a megabyte and wanted by
-   * the pages that read back far enough to leave it. Asked for rather than sent
-   * for the same reason the names are.
-   */
+  /** Fetches an epoch's schedule, once. Only the current one is pushed. */
   async loadEpoch(epoch: number): Promise<void> {
     if (this.epochs.has(epoch)) return;
     const record = await this.request<EpochInfo | null>("epoch", "query", { epoch });
@@ -238,11 +156,8 @@ export class Store {
   }
 
   leaderOf(slot: number, mine: boolean): LeaderRef {
-    // Ours takes no lookup, and must not depend on one. Both sources have a
-    // reach, and our own slots are kept well past both: five hundred of them is
-    // about eleven hours, which is far outside the peer table's window and
-    // crosses an epoch boundary often enough that the turn array cannot answer
-    // for them either. The validator tells us who we are directly.
+    // Ours takes no lookup: our own slots are kept past the reach of both
+    // sources, and the validator says who we are directly.
     if (mine) return this.ourLeader();
 
     const cached = this.leaderCache.get(slot);
@@ -259,13 +174,7 @@ export class Store {
     return leader;
   }
 
-  /**
-   * Who leads a slot, from whichever epoch's arrays cover it.
-   *
-   * The published one first, being the one nearly every slot on the page falls
-   * in. The fetched ones are only consulted for a slot outside it, which is a
-   * page that has read back past a boundary.
-   */
+  /** Who leads a slot, from whichever epoch's arrays cover it. */
   private leaderAtAny(slot: number): string | null {
     const here = leaderAt(this.values.get("epoch.new") as EpochInfo | undefined, slot);
     if (here !== null) return here;
@@ -277,14 +186,7 @@ export class Store {
     return null;
   }
 
-  /**
-   * Fetches the cluster's names and icons, once.
-   *
-   * Called when something needs a name for a leader the peer table does not
-   * reach, which in practice means a search that has gone into history. Later
-   * calls are free: the table does not change often enough to be worth asking
-   * twice in a session, and a stale name is a great deal better than none.
-   */
+  /** Fetches the cluster's names and icons, once per session. */
   async loadDisplays(): Promise<void> {
     if (this.displays.size > 0) return;
     const table = await this.request<Displays>("summary", "displays", {});
@@ -296,13 +198,7 @@ export class Store {
     this.leadersChanged();
   }
 
-  /**
-   * This validator, from what it publishes about itself.
-   *
-   * The same three values the header is drawn from, so a turn of ours is
-   * labelled exactly as the header labels us rather than by a second route that
-   * can disagree with it.
-   */
+  /** This validator, from the same three values the header is drawn from. */
   private ourLeader(): LeaderRef {
     const key = (this.values.get("summary.identity_key") as string | undefined) ?? null;
     const name = (this.values.get("summary.identity_name") as string | undefined) ?? null;
@@ -317,12 +213,7 @@ export class Store {
     return this.ours;
   }
 
-  /**
-   * The peer table by identity, rebuilt only when the table itself changes.
-   *
-   * Compared by reference: the store replaces the whole array when a new one is
-   * published and never mutates it, so a different array is a different table.
-   */
+  /** The peer table by identity, rebuilt when the array is replaced. */
   private peersByIdentity(): Map<string, Peer> {
     const peers = (this.values.get("peers.all") as Peer[] | undefined) ?? [];
     if (this.peers !== peers) {

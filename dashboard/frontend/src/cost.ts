@@ -1,9 +1,4 @@
-/**
- * Reading a block's cost against the recent blocks around it.
- *
- * Kept out of the component so the counting can be tested without a DOM, in the
- * same way as the waterfall rows and the replay rows.
- */
+/** A block's cost against the recent blocks around it, testable without a DOM. */
 
 import type { SlotCost } from "./types";
 
@@ -19,18 +14,8 @@ export interface Recurrence {
   peakSlot: number;
 }
 
-/**
- * Whether the same account keeps topping this validator's blocks.
- *
- * One block topped by an account says very little: something has to be the
- * largest. The same account topping several says the throttle is standing
- * rather than incidental, which is the difference between a block that happened
- * to be quiet and an account worth doing something about.
- *
- * Counted across every produced block held, not the last few, so the figure
- * does not change meaning as the queue fills after a restart. `of` is sent
- * alongside so the panel can say what the count is out of.
- */
+/** How often the same account tops this validator's blocks, over every block
+ *  held. `of` says what the count is out of. */
 export function recurrence(costs: SlotCost[], account: string): Recurrence | null {
   if (!account) return null;
   const matching = costs.filter((cost) => cost.costliest_account === account);

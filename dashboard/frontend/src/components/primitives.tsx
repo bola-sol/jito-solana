@@ -3,34 +3,17 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 /** Gap kept between an open explanation and the edge of the window. */
 const EDGE_MARGIN = 12;
 
-/**
- * Where the highest value on screen sits, as a fraction of a chart's height.
- *
- * Charts are scaled to leave room above their peak so the peak line has
- * somewhere to be. Scaled to fill, the line would sit exactly on the top edge
- * and read as a border.
- */
+/** Where the highest value on screen sits, as a fraction of a chart's
+ *  height, leaving room for the peak line. */
 export const PEAK_HEADROOM = 0.85;
 
-/**
- * Vertical position of `value` in a chart scaled so `peak` lands on the peak
- * line.
- *
- * Shared by both charts so the line and the series it marks cannot drift apart:
- * they are drawn from opposite ends, the line from the bottom as a percentage
- * and the series from the top in viewBox units, and nothing but this would keep
- * them agreeing.
- */
+/** Vertical position of `value` in a chart scaled so `peak` lands on the peak
+ *  line. Shared so the line and the series agree. */
 export function chartY(value: number, peak: number, height: number): number {
   return height - (value / (peak / PEAK_HEADROOM)) * height;
 }
 
-/**
- * The dotted line marking the highest value on screen.
- *
- * Shared by the slot strip and both charts so that a peak is drawn and read the
- * same way wherever it appears.
- */
+/** The dotted line marking the highest value on screen. */
 export function PeakLine({ fraction, label }: { fraction: number; label: string }) {
   const height = Math.max(0, Math.min(100, fraction * 100));
   return (
@@ -45,13 +28,7 @@ export function PeakLine({ fraction, label }: { fraction: number; label: string 
   );
 }
 
-/**
- * How far to slide an open explanation so it sits inside the window.
- *
- * Negative pulls it left off the right edge, positive pushes it right off the
- * left. Overflow on the right wins when a bubble is somehow wider than the
- * window, since the left edge is where reading starts.
- */
+/** How far to slide an open explanation so it sits inside the window. */
 export function edgeShift(left: number, right: number, viewportWidth: number): number {
   const past = right - (viewportWidth - EDGE_MARGIN);
   const before = EDGE_MARGIN - left;
@@ -63,15 +40,8 @@ export function edgeShift(left: number, right: number, viewportWidth: number): n
 /** Space left between an explanation and the label it belongs to. */
 const ANCHOR_GAP = 6;
 
-/**
- * Whether an explanation should open above its label instead of below.
- *
- * An explanation hanging off the bottom of the page makes the document taller,
- * which raises a scrollbar on a page that did not have one and shifts the whole
- * layout. It flips up instead, but only when there is room up there: with no
- * room either way, below is the lesser problem, since a bubble running off the
- * top cannot be scrolled to at all.
- */
+/** Whether an explanation opens above its label: when it would run off the
+ *  bottom and there is room above. */
 export function shouldFlipAbove(
   bubbleBottom: number,
   bubbleHeight: number,
@@ -83,18 +53,8 @@ export function shouldFlipAbove(
   return overflowsBelow && fitsAbove;
 }
 
-/**
- * Wraps a label with an explanation that opens on tap as well as on hover.
- *
- * The explanations used to be `title` attributes, which a browser only reveals
- * on hover — so on a touch screen there was no way to reach any of them. The
- * trigger is a real button rather than a styled span because that is what
- * reliably takes focus from a tap on iOS, and focus is what holds it open.
- *
- * Hover and focus are tracked separately rather than leaning on CSS. A tap
- * fires both enter and focus, and moving away fires only leave, so a single
- * `:hover`-or-`:focus-within` rule would strand the bubble open on touch.
- */
+/** A label with an explanation that opens on tap as well as hover. Hover and
+ *  focus are tracked apart: a tap fires both and leaves only one. */
 export function Explain({
   text,
   children,
@@ -104,18 +64,8 @@ export function Explain({
   text: ReactNode;
   children: ReactNode;
   className?: string;
-  /**
-   * Whether the bubble can be reached with the pointer and the keyboard.
-   *
-   * Off by default, and that default is the right one for an explanation: a
-   * bubble that took the pointer would swallow clicks meant for whatever it
-   * happens to cover. It is turned on for the few that hold something to be
-   * copied, where a bubble you cannot reach is only half of what was wanted.
-   *
-   * An interactive bubble is not a tooltip in the ARIA sense, since a tooltip
-   * may not contain a control, so it drops the role and the trigger says
-   * whether it is open instead.
-   */
+  /** Whether the bubble takes the pointer and keyboard, for the few that
+   *  hold something to copy. Then not an ARIA tooltip. */
   interactive?: boolean;
 }) {
   const id = useId();
@@ -127,10 +77,7 @@ export function Explain({
   const [above, setAbove] = useState(false);
   const open = hovered || focused;
 
-  // A bubble anchored to its label runs off the side of the window when the
-  // label sits near an edge — the right-hand column of a card pushed it two
-  // hundred pixels past the viewport and gave the whole page a horizontal
-  // scrollbar. Measured on open and slid back inside.
+  // Measured on open and slid back inside the window.
   useLayoutEffect(() => {
     if (!open || !bubble.current || !anchor.current) {
       setShift(0);
@@ -201,19 +148,12 @@ export function Card({
   lit,
 }: {
   title?: string;
-  /**
-   * A figure that belongs to the card rather than to any row in it, set beside
-   * the heading. The replay panel's transactions per slot is the denominator
-   * every timing below it is an average over, which makes it the wrong shape
-   * for the grid those timings sit in.
-   */
+  /** A figure that belongs to the card rather than any row, set beside the
+   *  heading. */
   aside?: ReactNode;
   children: ReactNode;
   className?: string;
-  /**
-   * Kept sharp while the validator boots and every other card is blurred.
-   * Only the card showing the boot sequence wants this.
-   */
+  /** Kept sharp while the validator boots and every other card is blurred. */
   lit?: boolean;
 }) {
   // The body is a separate element so that a card can lay its content out as a

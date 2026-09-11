@@ -1,9 +1,5 @@
-/**
- * Keeps a websocket to the validator open, reconnecting with backoff.
- *
- * The server sends a full snapshot on connect, so a reconnect needs no catch-up
- * logic. Whatever arrives overwrites the store.
- */
+/** Keeps a websocket to the validator open, reconnecting with backoff. The
+ *  server sends a full snapshot on connect, so nothing needs catching up. */
 
 import type { Store } from "./store";
 import type { Envelope } from "./types";
@@ -14,21 +10,10 @@ const MIN_RETRY_MS = 500;
 const MAX_RETRY_MS = 10_000;
 
 /**
- * How long the page waits for anything at all before treating the connection
- * as dead.
- *
- * A socket can stop delivering without ever closing — a NAT table dropping the
- * flow, a VPN reconnecting, a laptop waking up. The browser leaves it `OPEN`,
- * no event fires, and nothing here would ever notice: the page goes on showing
- * the last values it received, which look like live ones. The charts empty a
- * minute later because their window slides past the newest sample, while the
- * figures beside them stay frozen and plausible.
- *
- * Silence is a sound signal because the validator publishes its clock every
- * second whether or not anything else changed, so a working connection is never
- * quiet for long. Eight of those rather than two, because a mobile handover can
- * stall a connection for several seconds and the cost of being wrong is a
- * reconnect that pulls the whole snapshot down again.
+ * Silence before the connection counts as dead. A socket can stop delivering
+ * without closing; the validator publishes its clock every second, so a
+ * working one is never quiet this long. Eight seconds rides out a mobile
+ * handover.
  */
 const SILENCE_LIMIT_MS = 8_000;
 
@@ -54,14 +39,8 @@ export function connect(store: Store): () => void {
     watchdog = null;
   };
 
-  /**
-   * Gives up on a socket that has gone quiet and starts another.
-   *
-   * Handlers are detached and the reconnect scheduled here rather than left to
-   * `onclose`. Closing a socket whose peer is unreachable need not produce a
-   * close event promptly — that is the same unreachability being worked around
-   * — so waiting for one risks never reconnecting at all.
-   */
+  /** Gives up on a quiet socket and starts another. Not left to `onclose`,
+   *  which an unreachable peer may never deliver. */
   const abandon = () => {
     stopWatchdog();
     const dead = socket;

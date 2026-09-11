@@ -1,7 +1,4 @@
-/**
- * What the Uptime hover shows: when the validator started, how long the boot
- * took and where, and how long it then trailed the cluster tip.
- */
+/** What the Uptime hover shows: start time, boot phases, catch-up. */
 
 import type { StartupProgress } from "./types";
 
@@ -14,11 +11,8 @@ const NAMED: Record<string, string> = {
 
 const REST = "everything else";
 
-/**
- * The share of stake the validator waits to see in gossip before it starts.
- * The validator keeps this figure private, so it is written down here; it is
- * a cluster-wide rule rather than a setting.
- */
+/** The share of stake the validator waits to see in gossip. Private in core,
+ *  so written down here. */
 export const SUPERMAJORITY_PERCENT = 80;
 
 /** What the supermajority wait has seen, in the form the status card draws. */
@@ -32,11 +26,8 @@ export interface StakeSeen {
   total: number | null;
 }
 
-/**
- * The wait's progress, from the validator's own count where it has arrived
- * and from the whole percent in the progress report before then. Null outside
- * the wait.
- */
+/** The wait's progress: the validator's count once it has arrived, the whole
+ *  percent before then. Null outside the wait. */
 export function stakeSeen(startup: StartupProgress): StakeSeen | null {
   if (startup.phase !== "waiting_for_supermajority") return null;
   const counted = startup.stake_in_gossip;
@@ -66,11 +57,8 @@ export interface BootTimes {
   catchUpMillis: number | null;
 }
 
-/**
- * Phases under a second go into the rest rather than showing as nought, and
- * the rest is dropped if that is all it holds, so the lines shown always add
- * up to the total.
- */
+/** Phases under a second fold into the rest, so the lines add up to the
+ *  total. */
 export function bootTimes(
   startup: StartupProgress | undefined,
   uptimeNanos: number | undefined,

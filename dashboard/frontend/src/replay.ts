@@ -1,9 +1,4 @@
-/**
- * Arranging replay's timings into the rows the panel draws.
- *
- * Kept out of the component for the same reason as the waterfall's rows: the
- * arithmetic here is the part worth testing, and none of it needs a DOM.
- */
+/** Replay's timings arranged into the rows the panel draws. */
 
 import type { ReplayWindow } from "./types";
 
@@ -30,20 +25,8 @@ function rowsOf(
   }));
 }
 
-/**
- * What replay's own thread spent on the average slot.
- *
- * Three spans measured one after another, so they are disjoint and their sum is
- * a real duration, and it is the one to hold against how long a slot lasts.
- * This is the
- * serial bottleneck: however many cores a node has, if this exceeds the slot
- * time it falls behind.
- *
- * Deliberately not drawn from the wall clock between first seeing a slot and
- * finishing it. That gap is far larger, but replay works several slots at once
- * and does fork choice and voting in between, so what fills it is not
- * attributable to this slot or to anything else in particular.
- */
+/** What replay's own thread spent on the average slot: three disjoint spans
+ *  whose sum is the serial bottleneck against the slot time. */
 export function serialRows(r: ReplayWindow): ReplayRow[] {
   const total = r.fetch + r.confirming + r.completing;
   return rowsOf(total, [
@@ -68,15 +51,8 @@ export function serialRows(r: ReplayWindow): ReplayRow[] {
   ]);
 }
 
-/**
- * Which half of verification costs more.
- *
- * Relative only, and the panel says so. These are sums of asynchronous job
- * durations: the jobs overlap one another and each is itself spread across the
- * thread pool, so the figures routinely add to several times the window they
- * happened in. Each is measured the same way as the others, which is what makes
- * comparing them sound and comparing them to anything else unsound.
- */
+/** Which half of verification costs more. Relative only: these are sums of
+ *  overlapping jobs. */
 export function verifyRows(r: ReplayWindow): ReplayRow[] {
   const total = r.poh_verify + r.tx_verify + r.dispatch;
   return rowsOf(total, [
@@ -101,15 +77,8 @@ export function verifyRows(r: ReplayWindow): ReplayRow[] {
   ]);
 }
 
-/**
- * Where the thread time went, across every worker.
- *
- * Accumulated per thread and summed, so this is CPU time rather than wall
- * clock and will normally exceed the slot it describes, which is what running
- * on many cores looks like. The phases are sequential within a thread, so
- * unlike the verification figures above these partition cleanly and their total
- * is a real quantity: what one slot costs the machine.
- */
+/** Where the thread time went across every worker: CPU time, which
+ *  partitions cleanly and normally exceeds the slot. */
 export function cpuRows(r: ReplayWindow): ReplayRow[] {
   const total = r.execute + r.load + r.store + r.program_cache + r.checking + r.other;
   return rowsOf(total, [
@@ -169,16 +138,8 @@ export interface ReplayParts {
   compiling: ReplayPart;
 }
 
-/**
- * The figures that nest inside a phase above them.
- *
- * Kept out of the rows because the panel now draws each section as one bar cut
- * into its phases. These are already counted inside `execute` and
- * `program_cache`, so a segment for any of them would draw the same
- * microseconds twice and leave the bar claiming more than the slot cost. They
- * are read as a sentence underneath instead, where nesting is something prose
- * can say and a stacked bar cannot.
- */
+/** Figures already counted inside `execute` and `program_cache`, read as a
+ *  sentence under the bar rather than drawn twice. */
 export function parts(r: ReplayWindow): ReplayParts {
   return {
     bytecode: {

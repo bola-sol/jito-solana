@@ -27,24 +27,8 @@ import type { DeviceLoad, FilesystemUsage, Host, ThreadsSample } from "../types"
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
-/**
- * The machine underneath the validator.
- *
- * The one panel here describing the box rather than the software. Everything
- * else says what the validator is doing; this says whether it can keep doing
- * it, which is the first thing anyone looks at when slots start skipping and
- * the last thing the rest of the dashboard can tell them.
- *
- * Read from /proc and statvfs rather than from the metrics tap, so unlike the
- * replay panel it keeps working on a validator configured to log less than the
- * default.
- *
- * A bar means a container that can fill: memory, and each filesystem. Load
- * average has no ceiling, so a bar ending at the core count would peg full and
- * stop saying anything at exactly the moment it mattered. Device saturation is
- * a duty cycle rather than a level, and drawing it in the same shape as a
- * filesystem is what makes people read it as space.
- */
+/** The machine underneath the validator, from /proc and statvfs. A bar means
+ *  a container that can fill; load and device saturation get none. */
 export function HostCard() {
   const store = useStore();
   const host = store.get<Host | null>("summary", "host");
@@ -211,14 +195,7 @@ function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
   );
 }
 
-/**
- * A device, which is not a container, so it gets no bar of any kind.
- *
- * Two rows of figures are read by eye without help. A bar here would only start
- * earning its width on a machine with several devices, and it would cost more
- * than it bought: set beside the capacity bars above, an identical shape is
- * what makes a duty cycle read as space.
- */
+/** A device, which is not a container, so no bar. */
 function Device({ device }: { device: DeviceLoad }) {
   return (
     <div className="host-device">
@@ -243,17 +220,8 @@ function share(part: number, whole: number): string {
   return `${Math.min(100, (part / whole) * 100)}%`;
 }
 
-/**
- * The validator's threads over the last minute. After the disks because it
- * answers the same question, what is running out of headroom.
- *
- * Folds the way the caches card's sections do: a row with a figure, a gloss
- * and a +/− at the right, the pointer's target being the row and the
- * keyboard's the button. Folded on a phone by default, and wherever the
- * viewer last left it. The figure is the busiest thread's share, untoned,
- * because the group has no health to state: what a bad waiting figure looks
- * like is not yet known, and every other reading is a thread doing its job.
- */
+/** The validator's threads over the last minute, folded like the caches
+ *  card's sections: on a phone by default, else as the viewer left it. */
 function Threads({ samples }: { samples: ThreadsSample[] }) {
   const narrow = useNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => readThreadsCollapsed() ?? narrow);
@@ -371,11 +339,8 @@ const BAR_STEP = 6;
 const BAR_WIDTH = 5;
 const SPARK_HEIGHT = 16;
 
-/**
- * A minute of one row's on-cpu share, one bar a second, drawn against the
- * whole second so every row is on the same scale. A window shorter than a
- * minute is right-aligned, so the live edge stays put while it fills.
- */
+/** A minute of one row's on-cpu share, one bar a second, right-aligned while
+ *  the window fills. */
 function Spark({ row }: { row: ThreadRow }) {
   const offset = THREADS_WINDOW - row.series.length;
   return (

@@ -1,11 +1,6 @@
-//! Owns the dashboard's threads and ties the collector to the server.
-//!
-//! The server and a boot-progress thread come up near the top of validator
-//! startup, so a snapshot download or ledger replay is visible rather than
-//! blank; the collector attaches once bank forks and the blockstore exist.
-//! Sampling runs on two threads, the collector for slots and the meters for the
-//! once-a-second readings, so a slow blockstore read does not stall every
-//! panel.
+//! Owns the dashboard's threads. The server and a boot-progress thread start
+//! early in validator startup; the collector and meters attach once bank forks
+//! and the blockstore exist.
 
 use {
     crate::{
@@ -34,10 +29,8 @@ use {
     tokio::{net::TcpListener, runtime::Builder},
 };
 
-/// Worker threads the dashboard's runtime is allowed. `Runtime::new()` takes
-/// one per core, in the same process as replay, banking and PoH. The
-/// dashboard's work is almost all socket writes, so two is generous; what this
-/// bounds is the hostile case.
+/// Worker threads the dashboard's runtime is allowed, in the same process as
+/// replay and banking. Two is generous for socket writes.
 const RUNTIME_THREADS: usize = 2;
 
 /// How often the boot thread samples the startup phase. Phases last seconds at

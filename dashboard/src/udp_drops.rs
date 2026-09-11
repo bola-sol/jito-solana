@@ -1,15 +1,6 @@
-//! Per-socket UDP receive counters, read from `/proc/net/udp`.
-//!
-//! `sk_drops` counts packets the kernel discarded because the receive buffer
-//! was full, which the validator's own counters never see and which is the
-//! common way shreds go missing. Delivered plus discarded is everything that
-//! arrived at a socket, the only denominator a drop count can be judged
-//! against; [`crate::metrics_tap`] supplies the delivered half. QUIC runs over
-//! UDP, so the TPU sockets appear here too.
-//!
-//! Counters are cumulative per socket and keyed here by port. Attribution to a
-//! service is the caller's job: this file describes every UDP socket in the
-//! namespace.
+//! Per-socket UDP receive counters from `/proc/net/udp`, cumulative and keyed
+//! by port. `sk_drops` is what the kernel discarded before the validator could
+//! read it; [`crate::metrics_tap`] supplies the delivered half.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -32,10 +23,7 @@ pub struct PortCounters {
 pub type PortMap = HashMap<u16, PortCounters>;
 
 /// A cumulative per-port counter over a trailing window, so a startup burst
-/// ages out and the panel answers whether packets are being lost now. Also
-/// holds what each port delivered, driven from the same tick with the same
-/// ports so the two windows cover the same span, which the share lost divides
-/// them by.
+/// ages out.
 #[derive(Debug)]
 pub struct PortWindow {
     span: Duration,
@@ -119,16 +107,8 @@ pub fn read() -> io::Result<PortMap> {
 }
 
 /// Accumulates one `/proc/net/udp`-format table into `ports`, returning the
-/// rows understood. Both families share the layout; only the address width
-/// differs, and only the port after the colon is wanted:
-///
-/// ```text
-///  sl  local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode ref pointer drops
-/// 308: 00000000:14E9 00000000:0000 07 00000000:00000000 00:00000000 00000000   0        0 22359 2 0000000000000000 0
-/// ```
-///
-/// `drops` is read as the thirteenth column rather than the last, so a kernel
-/// that appends a column is ignored rather than misread.
+/// rows understood. Both address families share the layout. `drops` is the
+/// thirteenth column, not the last, so an appended column is ignored.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
     let mut rows: usize = 0;

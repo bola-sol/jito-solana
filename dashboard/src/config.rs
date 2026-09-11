@@ -6,11 +6,8 @@ use {solana_pubkey::Pubkey, std::net::SocketAddr};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardConfig {
     pub listen_addr: SocketAddr,
-    /// Host names this dashboard answers to. Pinning `Host` is what stops DNS
-    /// rebinding, where a name the attacker controls resolves to loopback and
-    /// counts as same-origin. Address literals cannot be rebound and are always
-    /// accepted; a reverse proxy forwards the name the visitor typed, so that name
-    /// must be listed.
+    /// Host names this dashboard answers to, which is what stops DNS rebinding.
+    /// Address literals are always accepted.
     pub allowed_hosts: Vec<String>,
     /// The jito tip payment program, where this validator runs one. The eight tip
     /// accounts are derived from it, since the id differs between clusters. `None`

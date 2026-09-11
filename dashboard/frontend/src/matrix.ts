@@ -1,9 +1,5 @@
-/**
- * Lighting the transaction matrix: how many rows each series takes in a column.
- *
- * Kept out of the component because the dot geometry is easy to get subtly
- * wrong and none of it needs a DOM.
- */
+/** Lighting the transaction matrix: how many rows each series takes in a
+ *  column. */
 
 import type { TpsSample } from "./types";
 
@@ -14,30 +10,16 @@ export const MATRIX_WINDOW_SECONDS = 60;
 export const ROWS_TALL = 11;
 export const ROWS_SHORT = 8;
 
-/**
- * How far above the window's peak the top of the scale sits.
- *
- * A fixed ceiling rather than one fitted to each frame. Refitted every sample
- * the whole silhouette rescales whenever a spike arrives and leaves, so the
- * shape moves for reasons that have nothing to do with the traffic.
- */
+/** How far above the window's peak the top of the scale sits. Fixed, so the
+ *  silhouette does not rescale as spikes come and go. */
 export const CEILING_HEADROOM = 1.1;
 
 /** The narrowest a column may be before samples start being dropped. */
 export const MIN_PITCH = 13;
 
 /**
- * How many rows each series lights, counting from the bottom of the column.
- *
- * Given bottom to top, and returned the same way. The series stack rather than
- * overlap: each one starts where the one beneath it stopped, so the height of
- * the lit part of a column is the total.
- *
- * Any series with something in it lights at least one row. Rounded honestly a
- * small band takes no rows at all, and an unlit band does not read as "too
- * small to draw" but as "this did not happen", which is a wrong statement
- * rather than an imprecise one. Failed transactions are the series this
- * matters for: they are the smallest and the one worth seeing.
+ * How many rows each series lights, bottom to top, stacked. Any series with
+ * something in it lights at least one row: unlit reads as "did not happen".
  */
 export function columnRows(values: number[], ceiling: number, rows: number): number[] {
   if (ceiling <= 0 || rows <= 0) return values.map(() => 0);
@@ -76,36 +58,15 @@ export function columnRows(values: number[], ceiling: number, rows: number): num
   return lit;
 }
 
-/**
- * How many columns the grid has at this width.
- *
- * Never more than the window holds, so a full minute fills the grid exactly.
- * Sized from the sample count instead, a short history would spread a handful
- * of columns across the whole card with enormous gaps, which reads as a broken
- * chart rather than as one still filling up.
- */
+/** Columns at this width, never more than the window holds. */
 export function slotsFor(width: number): number {
   return Math.max(1, Math.min(MATRIX_WINDOW_SECONDS, Math.floor(width / MIN_PITCH)));
 }
 
 /**
- * The sample each column draws, newest last, with nulls where nothing has
- * arrived yet.
- *
- * A card too narrow for a column per second gets a column per two or three,
- * and that column is the merge of its seconds, not one of them. Picking every
- * second sample instead made the grid blink on a phone: each tick the picked
- * set flipped between the even seconds and the odd ones, so a busy second
- * showed, vanished, and showed again.
- *
- * The seconds are bucketed by the clock, not counted back from the newest, so
- * a column keeps the same seconds from one tick to the next. The grid then
- * steps left once a bucket fills rather than reshuffling every second, and
- * only the live column, a bucket still filling, changes in between.
- *
- * The empty columns are returned rather than left out: their unlit dots are
- * what make a validator that has just started look like a grid waiting to fill
- * rather than a panel that has failed.
+ * The sample each column draws, newest last, null where nothing has arrived.
+ * A narrow card merges several seconds per column, bucketed by the clock so a
+ * column keeps the same seconds from one tick to the next.
  */
 export function columnsFor<T, C>(
   samples: T[],
@@ -113,10 +74,8 @@ export function columnsFor<T, C>(
   second: (sample: T) => number,
   merge: (bucket: T[]) => C,
 ): Array<C | null> {
-  // Rounded down, not up. The window deliberately carries one sample past its
-  // left edge so a line can leave the view continuously, which means a full
-  // minute arrives here as sixty-one samples against sixty columns. Rounded up
-  // that would be two seconds a column with half the grid dark.
+  // Rounded down: a full minute arrives as sixty-one samples for sixty
+  // columns.
   const stride = Math.max(1, Math.floor(samples.length / slots));
   const buckets: T[][] = [];
   let last: number | null = null;
@@ -138,11 +97,8 @@ export function sampleSecond(sample: TpsSample): number {
   return Math.floor(sample.timestamp_nanos / 1e9);
 }
 
-/**
- * One column for several seconds: the mean of each series, stamped as the
- * newest. A mean rather than a peak so a column of two seconds sits where a
- * column of one would, and the ceiling still comes from the samples.
- */
+/** One column for several seconds: the mean of each series, stamped as the
+ *  newest. */
 export function meanSample(bucket: TpsSample[]): TpsSample {
   const newest = bucket[bucket.length - 1];
   const mean = (of: (sample: TpsSample) => number): number =>
@@ -165,12 +121,7 @@ export interface Geometry {
   dot: number;
 }
 
-/**
- * Where the dots go, in pixels.
- *
- * Square, and sized to leave a gap on both axes: the dark grid between them is
- * what makes it read as an instrument rather than as a bar chart with gaps.
- */
+/** Where the dots go, in pixels: square, with a gap on both axes. */
 export function geometry(width: number, height: number, columns: number, rows: number): Geometry {
   const pitch = columns > 0 ? width / columns : width;
   const rowHeight = rows > 0 ? height / rows : height;

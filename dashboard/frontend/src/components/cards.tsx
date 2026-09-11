@@ -20,12 +20,8 @@ export function EpochCard() {
   const store = useStore();
   const epoch = store.get<EpochInfo>("epoch", "new");
   const slot = store.get<number>("summary", "completed_slot");
-  // Sent by the server rather than derived here. It used to be the remaining
-  // slots times the configured slot duration, which is what the cluster aims
-  // at rather than what it does, and the gap between the two is an hour or
-  // more across a whole epoch. The server measures the rate instead, and holds
-  // the answer still unless it really moves — neither of which the client can
-  // do from one duration and a slot number.
+  // Sent by the server, which measures the slot rate and holds the answer
+  // still unless it really moves.
   const remainingNanos = store.get<number>("summary", "epoch_remaining_nanos");
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
@@ -83,13 +79,8 @@ export function StatusCard() {
         <Stat
           label="Vote Status"
           value={health?.vote === "not_voting" ? "not voting" : (health?.vote ?? "—")}
-          // How far replay trails the cluster, which reads whether or not this
-          // node votes. Named rather than left as a bare "behind": the figure
-          // this replaced said only that, and nobody could tell behind what,
-          // which is how it went years reporting another machine's progress.
-          //
-          // Deliberately untoned. The status word above carries the colour, and
-          // amber on both would be shouting the same thing twice.
+          // How far replay trails the cluster. Untoned: the status word above
+          // carries the colour.
           sub={
             behindCluster === null || behindCluster === undefined
               ? undefined
@@ -131,19 +122,8 @@ export function StatusCard() {
   );
 }
 
-/**
- * Staked SOL as fifty ticks, with the delinquent share eating them from the
- * right.
- *
- * A ring drawn at this ratio was unreadable: healthy stake sits between 98 and
- * 100 percent, and an arc at 99 percent is the same picture as an arc at 100.
- * Counting marks separates the two, because a share too small to see as an
- * angle is still a visible part of one tick, and severity reads as how far the
- * red has travelled rather than as a curve that was already closed.
- *
- * It grows from the right so the boundary between the two colours starts in
- * one place and moves in one direction.
- */
+/** Staked SOL as fifty ticks, the delinquent share eating them from the
+ *  right. Ticks show a share too small for an arc. */
 function StakeStrip({ delinquent, total }: { delinquent: number; total: number }) {
   const { full, partial } = stakeTicks(delinquent, total);
 
@@ -157,10 +137,8 @@ function StakeStrip({ delinquent, total }: { delinquent: number; total: number }
             <i
               key={index}
               className="is-part"
-              // Filled upwards from the base rather than in from the side: at
-              // the card's narrow width a tick is a few pixels across, and a
-              // fraction of that is a smudge, where a fraction of its height
-              // is still a mark.
+              // Filled upwards: a fraction of a tick's width is a smudge, of
+              // its height a mark.
               style={{ "--fill": `${partial * 100}%` } as CSSProperties}
             />
           );
@@ -227,17 +205,8 @@ export function ValidatorsCard() {
   );
 }
 
-/**
- * Throughput now, and the shape of the last minute.
- *
- * The figures are the chart's key. Each carries the colour its series is lit in
- * beside it, which is what the stacked areas this replaced never had: two bands
- * with nothing anywhere saying which was which, and a green success figure that
- * was not the green in the chart.
- *
- * The window's peak is a figure rather than a line across the grid. A line
- * would have to sit between two rows of dots and would read as one of them.
- */
+/** Throughput now and the shape of the last minute. The figures are the
+ *  chart's key, each in its series' colour. */
 export function TransactionsCard() {
   const store = useStore();
   const tps = store.get<Tps>("summary", "estimated_tps");

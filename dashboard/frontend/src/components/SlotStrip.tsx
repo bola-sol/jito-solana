@@ -10,14 +10,8 @@ import { Explain, PeakLine } from "./primitives";
 /** Slots shown in the strip. Beyond this the bars are too thin to read. */
 const STRIP_LENGTH = 64;
 
-/**
- * What each bar colour means, in the order a slot passes through them.
- *
- * The names deliberately match the position readouts above the strip, so that
- * "Confirmed" in the header and a confirmed-coloured bar are recognisably the
- * same thing. Pending and Skipped have no position equivalent: a position is
- * one slot number, whereas these are states many slots can be in.
- */
+/** What each bar colour means, in the order a slot passes through them,
+ *  named to match the position readouts above. */
 const LEVELS: Array<[SlotLevel, string, string]> = [
   ["incomplete", "Pending", "Received but not yet replayed, or still arriving"],
   ["completed", "Processed", "Replayed and frozen by this validator"],
@@ -43,11 +37,8 @@ export function SlotStrip() {
   // one it is aimed at. Entering the strip pins what is on screen; leaving
   // releases it and the view jumps forward to live.
   const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
-  // The slot being inspected, by number rather than by position in the window.
-  // Both the pointer and the arrow keys set it, so only one of them is ever in
-  // charge — and a slot number survives the strip scrolling underneath it,
-  // which a position does not: every bar's index changes when a slot arrives,
-  // which would rebuild all sixty four of them on every tick.
+  // The slot being inspected, by number rather than position, so it survives
+  // the strip scrolling and the bars stay memoised.
   const [cursor, setCursor] = useState<number | null>(null);
   const live = store.getSlots().slice(-STRIP_LENGTH);
   const slots = pinned ?? live;
@@ -234,16 +225,8 @@ export function SlotStrip() {
   );
 }
 
-/**
- * The hovered slot, shown in a fixed place rather than in a tooltip.
- *
- * A tooltip over a bar is clipped at the ends of the strip, waits on the
- * browser's hover delay, and covers the very bars it describes. This appears
- * at once and always in the same spot.
- *
- * `role="status"` so that arrowing along the strip is announced. The bars
- * themselves are not focusable, so their labels would otherwise never be read.
- */
+/** The hovered slot, in a fixed place rather than a tooltip. `role="status"`
+ *  so arrowing along the strip is announced. */
 function SlotDetail({ entry, leader }: { entry: SlotEntry | null; leader: LeaderRef }) {
   if (!entry) {
     return (
@@ -271,15 +254,8 @@ function SlotDetail({ entry, leader }: { entry: SlotEntry | null; leader: Leader
   );
 }
 
-/**
- * Memoised, and the reason the cursor is a slot number rather than a position.
- *
- * The strip re-renders on every published value, several times a second, and
- * the store keeps entry identity for slots that did not change — so all but the
- * one or two bars that actually moved are skipped. Passing a position instead
- * would change every bar's props each time a slot arrived and the memo would
- * never hold. `onPoint` is the raw setState, which React keeps stable.
- */
+/** Memoised on the entry, which the store keeps stable for slots that did
+ *  not change. `onPoint` is the raw setState. */
 const SlotBar = memo(function SlotBar({
   entry,
   leader,
@@ -293,10 +269,8 @@ const SlotBar = memo(function SlotBar({
   nominalMs: number;
   onPoint: (slot: number) => void;
 }) {
-  // Height carries how long the slot took and colour carries consensus level.
-  // The duration comes from when the blockstore first saw a shred for the
-  // slot, so a slot with none yet — or one that was skipped, which never gets
-  // any — shows as a stub.
+  // Height is duration, colour is consensus level. A slot with no shreds yet
+  // shows as a stub.
   const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
   const height = barHeight(durationMs, nominalMs);
   // Named the same way the sidebar names them, so the two agree on who a slot

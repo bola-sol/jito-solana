@@ -1,20 +1,9 @@
-/**
- * Averaging the blocks this validator produced.
- *
- * Kept out of the component so it can be tested without a DOM, in the same way
- * as the waterfall rows and the schedule folding.
- */
+/** Averages over the blocks this validator produced. */
 
 import type { ProducedBlock } from "./types";
 
-/**
- * The mean of each figure the row shows, over the blocks currently held.
- *
- * Every field is null when nothing could be averaged, rather than nought: no
- * blocks yet, or none of them carrying that particular figure. A nought here
- * would read as "these blocks were empty" beside a column of blocks that
- * plainly were not.
- */
+/** The mean of each figure over the blocks held. Null, not nought, where
+ *  nothing could be averaged. */
 export interface BlockAverages {
   blocks: number;
   transactions: number | null;
@@ -65,10 +54,7 @@ export function blockAverages(blocks: ProducedBlock[] | undefined): BlockAverage
   return {
     blocks: held.length,
     transactions: meanOf(held, (block) => block.transactions),
-    // The mean of the blocks' own percentages, not the total cost over the
-    // total limit. Each row shows its own share and this sits at the head of
-    // that column, so it has to be the average of what is under it — the other
-    // reading would weight a block by how large its limit happened to be.
+    // The mean of the blocks' own shares, since it heads that column.
     filled: meanOf(held, (block) =>
       block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null,
     ),

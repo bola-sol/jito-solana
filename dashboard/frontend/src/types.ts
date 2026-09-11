@@ -11,14 +11,8 @@ export type SlotLevel =
 export interface SlotEntry {
   slot: number;
   level: SlotLevel;
-  /**
-   * True when this validator was the scheduled leader.
-   *
-   * The leader itself is not here. It was three strings on every slot, the same
-   * key, name and icon repeated for all four slots of a turn. The key now comes
-   * from the epoch's turn array and the name and icon from the peer table, each
-   * holding one copy per leader. Resolve them with `store.leaderOf`.
-   */
+  /** True when this validator was the scheduled leader. The leader itself is
+   *  resolved with `store.leaderOf`. */
   mine: boolean;
   /** What replay found in the block. Null for a slot with no block. */
   block: BlockDetail | null;
@@ -27,17 +21,13 @@ export interface SlotEntry {
   time_millis: number | null;
   /** How the block's shreds arrived. Null for a slot that never filled. */
   shreds: ShredArrival | null;
-  /**
-   * Milliseconds from the slot's first shred to replay finishing it. Null for
-   * a bank this validator built, which replay never timed.
-   */
+  /** Milliseconds from the slot's first shred to replay finishing it. Null for
+   *  a bank this validator built. */
   replayed_millis: number | null;
 }
 
-/**
- * How a block's shreds arrived. Outside `BlockDetail` because a slot fills
- * before it freezes, and a dead slot fills without ever freezing.
- */
+/** How a block's shreds arrived. Outside `BlockDetail` because a slot fills
+ *  before it freezes. */
 export interface ShredArrival {
   /** Data shreds in the block. */
   count: number;
@@ -47,45 +37,26 @@ export interface ShredArrival {
   full_millis: number;
 }
 
-/**
- * Where this validator's shreds came from over the last five minutes.
- *
- * Turbine should deliver nearly all of them; repair is the fallback for what
- * never arrived. Null while none have arrived at all.
- */
+/** Where this validator's shreds came from over the last five minutes. Null
+ *  while none have arrived. */
 export interface Shreds {
   received: number;
   repaired: number;
   repair_rate: number;
 }
 
-/**
- * How often an account replay needed was already in memory, over the last
- * minute.
- *
- * Lifted from the measurements the accounts database submits about itself,
- * which carry a second's work each. Null while nothing has been read.
- */
+/** How often an account replay needed was already in memory, over the last
+ *  minute. Null while nothing has been read. */
 export interface AccountsCache {
-  /**
-   * The read cache's own lookups and hit rate, which are narrower than they
-   * look and are deliberately not the card's headline.
-   *
-   * The write cache is consulted first, so these cover only the reads that got
-   * past it. Led with, the rate cannot be squared with the three-way split that
-   * counts every load. The card derives its headline from that split instead
-   * and leaves these to whoever is reading the feed directly.
-   */
+  /** The read cache's own lookups and hit rate, covering only reads past the
+   *  write cache. Not the card's headline. */
   read: number;
   hit_rate: number;
   evictions: number;
   cache_bytes: number;
   cache_entries: number;
-  /**
-   * Where reads were answered from. `from_storage` is the only one that touches
-   * a file, and is the nearest thing here to a disk read rate — counted in
-   * accounts rather than bytes, because nothing counts the bytes on that path.
-   */
+  /** Where reads were answered from, in accounts. `from_storage` is the only
+   *  one that touches a file. */
   from_write_cache: number;
   from_read_cache: number;
   from_storage: number;
@@ -105,13 +76,8 @@ export interface AccountsDisk {
   storages: number;
 }
 
-/**
- * How often replay found a program already compiled, over the last minute.
- *
- * The counters behind this are reset for each bank, so `looked_up` is what was
- * seen in the window rather than since startup. Null while nothing has been
- * looked up at all.
- */
+/** How often replay found a program already compiled, over the last minute.
+ *  Null while nothing has been looked up. */
 export interface ProgramCache {
   looked_up: number;
   hits: number;
@@ -125,29 +91,14 @@ export interface ProgramCache {
   one_hit_wonders: number;
   prunes_orphan: number;
   prunes_environment: number;
-  /**
-   * The most entries seen loaded at any eviction in the window, against the
-   * limit eviction keeps them under. Null until an eviction has happened at
-   * all: the figure behind it is only written when one runs.
-   */
+  /** The most entries loaded at any eviction in the window. Null until one
+   *  has run. */
   peak_entries: number | null;
   entry_limit: number;
 }
 
-/**
- * What is known about a leader beyond the name its slot rows carry.
- *
- * Published only for the leaders on screen, so a leader may be missing from
- * this table briefly after a reconnection, before the next slow tick.
- */
-/**
- * What every validator that published anything calls itself.
- *
- * Asked for rather than pushed: it is a hundred and fifty kilobytes on a
- * cluster this size and most of a session never needs it. Three arrays sharing
- * an index, because an object would carry the words name and icon once per
- * validator.
- */
+/** What every validator that published anything calls itself: three arrays
+ *  sharing an index. Fetched on demand. */
 export interface Displays {
   keys: string[];
   names: (string | null)[];
@@ -165,12 +116,8 @@ export interface Peer {
   icon: string | null;
 }
 
-/**
- * A slot the leader schedule has assigned that has not happened yet.
- *
- * Published on the slow tier, so the front of the list has usually happened by
- * the time it is read. Filter against the completed slot before rendering.
- */
+/** A scheduled slot that has not happened yet. Published on the slow tier;
+ *  filter against the completed slot before rendering. */
 export interface UpcomingSlot {
   slot: number;
   leader: string;
@@ -179,13 +126,8 @@ export interface UpcomingSlot {
   mine: boolean;
 }
 
-/**
- * The rates the page needs to turn a measured tip figure into the two it draws.
- *
- * Absent on a validator with no tip payment program, and then no tip column is
- * drawn at all. `commission_bps` is absent where the flag was not set, which
- * leaves the page able to say what a turn paid and not what it earned.
- */
+/** The rates that turn a measured tip figure into the two drawn. Absent
+ *  without a tip payment program; `commission_bps` absent without the flag. */
 export interface TipRates {
   jito_cut_bps: number;
   commission_bps: number | null;
@@ -203,22 +145,12 @@ export interface BlockDetail {
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
-  /**
-   * Lamports paid into the jito tip accounts during this slot, as measured.
-   *
-   * The measurement, not anyone's income. What reached a distribution account
-   * and what it earned us are worked out from it in `tips.ts`, using rates the
-   * validator sends, so that a corrected rate corrects the whole history.
-   *
-   * `null` where no tip program is configured, or where the slot's bank had no
-   * parent to difference against. Distinct from nought, which says the
-   * searchers passed that leader by.
-   */
+  /** Lamports paid into the jito tip accounts during this slot, as measured;
+   *  shares are derived in `tips.ts`. `null` where unmeasured, nought where
+   *  nobody tipped. */
   tips: number | null;
-  /**
-   * Wall time replay's own thread spent on this slot, in microseconds. Null
-   * where replay never timed it, which includes a block this validator built.
-   */
+  /** Wall time replay's own thread spent on this slot, in microseconds. Null
+   *  for a block this validator built. */
   replay_micros: number | null;
 }
 
@@ -267,15 +199,9 @@ export interface EpochInfo {
 
   /** Every leader of this epoch, in the order they first take a turn. */
   leaders: string[];
-  /**
-   * One index into `leaders` per run of consecutive slots given to a single
-   * leader, so the leader of a slot is
-   * `leaders[turns[(slot - start_slot) / 4]]`, four being the run length the
-   * cluster guarantees.
-   *
-   * Empty where the validator could not derive the schedule, which is not the
-   * same as an epoch with no leaders and must not be drawn as one.
-   */
+  /** One index into `leaders` per turn of four slots:
+   *  `leaders[turns[(slot - start_slot) / 4]]`. Empty where the validator
+   *  could not derive the schedule. */
   turns: number[];
 
   /** Consensus limits every block of this epoch is measured against. */
@@ -292,11 +218,8 @@ export interface NetworkSample extends Network {
   timestamp_nanos: number;
 }
 
-/**
- * The share of egress two senders account for, in bytes per second. Null until
- * a sender has reported. Turbine goes out over XDP and reports no bytes, so
- * the rest of egress cannot be named.
- */
+/** The share of egress two senders account for, in bytes per second. Null
+ *  until a sender has reported. */
 export interface EgressSplit {
   gossip_per_second: number | null;
   repair_per_second: number | null;
@@ -308,24 +231,11 @@ export interface IngestPath {
   drops_recent: number;
   drops_total: number;
   queued_bytes: number;
-  /**
-   * Packets the port delivered, over the same window and from the same instant
-   * as the drops beside them, so that one can be divided by their sum.
-   *
-   * Null for a port whose traffic nothing counts in datagrams: the three QUIC
-   * ports, whose counters count transactions pulled out of streams, and serve
-   * repair, whose receiver keeps counters that nothing reports.
-   */
+  /** Packets the port delivered over the same window as the drops. Null for
+   *  a port nothing counts in datagrams. */
   received_recent: number | null;
   received_total: number | null;
-  /**
-   * Whether the port speaks QUIC, which decides which card draws it.
-   *
-   * The socket card takes the ports that do not, where a drop count has a
-   * delivered count to be a share of. The TPU path card takes the ones that do,
-   * where the listener's own account of what it admitted stands in for the
-   * share this list cannot give them.
-   */
+  /** Whether the port speaks QUIC, which decides which card draws it. */
   quic: boolean;
 }
 
@@ -344,68 +254,33 @@ export interface ProducedBlock {
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
-  /**
-   * Lamports paid into the jito tip accounts during this slot, as measured.
-   *
-   * The measurement, not anyone's income. What reached a distribution account
-   * and what it earned us are worked out from it in `tips.ts`, using rates the
-   * validator sends, so that a corrected rate corrects the whole history.
-   *
-   * `null` where no tip program is configured, or where the slot's bank had no
-   * parent to difference against. Distinct from nought, which says the
-   * searchers passed that leader by.
-   */
+  /** Lamports paid into the jito tip accounts during this slot, as measured.
+   *  `null` where unmeasured, nought where nobody tipped. */
   tips: number | null;
-  /**
-   * Bundles the stage sanitised and executed into the block. `null` where no
-   * bundle stage reported the slot.
-   */
+  /** Bundles the stage sanitised and executed into the block. `null` where no
+   *  bundle stage reported the slot. */
   bundles: { sanitized: number; executed: number } | null;
 }
 
-/**
- * Which of the process's schedulers built a slot.
- *
- * A stock validator runs one and always reports `scheduler`. jito runs a second
- * beside it for BAM, which builds the block itself whenever it is connected,
- * and counts what arrived in a different unit.
- */
+/** Which of the process's schedulers built a slot. BAM counts what arrived
+ *  in batches. */
 export type SchedulerSource = "scheduler" | "bam";
 
 /**
  * Where the transactions handed to the banking stage went, over the window.
- *
- * Counts of what happened inside the window, not a queue depth: the scheduler
- * reports these once a second with its own counters reset as it does, and the
- * server sums a window of them.
- *
- * The first stretch is an identity — `received` is exactly `buffered` plus
- * every loss from `not_held` through `nonce_conflict`. The later stretches are
- * not, and cannot be, because the queue holds a standing population: what was
- * scheduled in this window was largely buffered in an earlier one.
- *
- * None of that first stretch holds on a slot BAM built. It counts what it
- * rejected before parsing in batches and everything it rejected after parsing
- * in transactions, so `received` and `not_held` are in a unit of their own and
- * add up to nothing alongside the rest.
+ * `received` equals `buffered` plus the losses through `nonce_conflict`; the
+ * later stretches are not identities. On a BAM slot `received` and `not_held`
+ * are in batches.
  */
 export interface Waterfall {
   received: number;
 
-  /**
-   * Which scheduler these counts came from. Sent per slot and absent on the
-   * live card, which covers both without distinguishing them.
-   */
+  /** Which scheduler these counts came from. Sent per slot, absent on the
+   *  live card. */
   source?: SchedulerSource;
 
-  /**
-   * Lost at the door, before ever being queued. These plus `buffered` are
-   * `received` — on a slot the validator's own scheduler built.
-   *
-   * On a BAM slot none of that holds. `not_held` is fed by a different check
-   * there and counts batches BAM sent past their own deadline, so it is neither
-   * in the same unit as the rest nor part of any identity with them.
-   */
+  /** Lost at the door, before being queued. On a BAM slot `not_held` counts
+   *  batches sent past their deadline instead. */
   not_held: number;
   check_queue_full: number;
   unparsable: number;
@@ -435,27 +310,9 @@ export interface Waterfall {
 }
 
 /**
- * The three stages either side of the scheduler.
- *
- * Sent under keys of their own and drawn as separate sections rather than as one
- * flow with the scheduler. They are instrumented independently, report on
- * different cadences, and each hands on a population the next does not quite
- * receive, so a single chain across them would imply an arithmetic that does not
- * hold. Each section balances against itself and nothing else.
- */
-/**
- * One QUIC listener's account of the traffic offered to it.
- *
- * Three groups of figure in one object, and they are not interchangeable. The
- * first eight are the connection funnel, and they very nearly partition the
- * offer: the listener sheds at each gate in turn and moves on, so an attempt is
- * shed, or fails its handshake, or is admitted. The next six are streams opened
- * on connections that were admitted. The four after that are what came out
- * towards verification.
- *
- * `open` and `active_streams` are levels rather than counts. They say how the
- * port stands at the instant of the last reading and mean nothing summed over
- * the window the rest of this covers.
+ * One QUIC listener's account of the traffic offered to it: the connection
+ * funnel, then streams on admitted connections, then what came out towards
+ * verification. `open` and `active_streams` are levels.
  */
 export interface QuicPort {
   /** Matches the socket row of the same name on the ingest list. */
@@ -469,13 +326,8 @@ export interface QuicPort {
   handshake_error: number;
   /** Cleared the handshake and the rate limiters' second look. A checkpoint. */
   handshook: number;
-  /**
-   * Refused a place in the connection table, under four overlapping names.
-   *
-   * One refusal can raise two of these — the unstaked path runs through the
-   * same insert that raises `add_failed` — so they are never added together.
-   * `refusedTable` in `tpuPath.ts` is where they are reconciled.
-   */
+  /** Refused a place in the connection table, under four overlapping
+   *  counters. Never summed; `refusedTable` in `tpuPath.ts` reconciles them. */
   add_failed: number;
   add_failed_staked: number;
   add_failed_unstaked: number;
@@ -498,15 +350,8 @@ export interface QuicPort {
   open: number;
   active_streams: number;
 
-  /**
-   * Datagrams the kernel discarded on this port, over the same span as the
-   * counts above.
-   *
-   * Null where the port was not found among the bound sockets, which is not the
-   * same as a port that dropped nothing. Counted in datagrams while everything
-   * else here is connections or transactions, so it is drawn without a bar and
-   * never added to anything.
-   */
+  /** Datagrams the kernel discarded on this port over the same span. Null
+   *  where the port was not found among the bound sockets. */
   kernel_drops: number | null;
 }
 
@@ -514,28 +359,14 @@ export interface QuicPaths {
   /** What the counts above actually span, which is short until it has filled. */
   window_seconds: number;
   ports: QuicPort[];
-  /**
-   * Whether the TPU address this validator advertises is a socket on this host.
-   *
-   * It is not, behind a relayer or a block-assembly proxy: those overwrite the
-   * advertised address, so the cluster connects to them and this host's own
-   * listener sees almost nothing. True says the address is answered somewhere
-   * else and never by what, because the validator cannot tell which of them it
-   * is and a guess printed as fact is worse than the silence.
-   */
+  /** Whether the advertised TPU address is a socket on this host. False
+   *  behind a relayer or block-assembly proxy, which the validator cannot
+   *  tell apart. */
   tpu_offhost: boolean;
 }
 
-/**
- * What the two per-epoch sections of the TPU path card cover.
- *
- * In slots rather than as a fraction, so the wording is the panel's own. Two
- * figures rather than one because an epoch is only counted whole where the
- * validator was up for the whole of it: `counted_slots` short of
- * `elapsed_slots` is a restart part way through, and saying so is the
- * difference between a quiet epoch and one that was only watched for its last
- * hour.
- */
+/** What the two per-epoch sections of the TPU path card cover, in slots.
+ *  `counted_slots` short of `elapsed_slots` is a restart part way through. */
 export interface EpochSpan {
   epoch: number;
   /** Slots of this epoch that have happened. */
@@ -545,15 +376,9 @@ export interface EpochSpan {
   slots_in_epoch: number;
 }
 
-/**
- * Bundles the block engine sent this epoch, and the transactions in them.
- *
- * Counted where they arrive rather than where they execute, so this is an
- * upper bound on how much of the executed section came in this way rather than
- * an exact share of it: some are dropped before a worker ever sees them, and
- * the executed subset is not reported apart. Absent on a validator with no
- * block engine, and on one running BAM, which supersedes that path.
- */
+/** Bundles the block engine sent this epoch, counted where they arrive, so
+ *  an upper bound on the executed share. Absent without a block engine and
+ *  under BAM. */
 export interface BundleStage {
   received: number;
   packets: number;
@@ -576,19 +401,8 @@ export interface ExecutedStage {
   processed: number;
   succeeded: number;
 
-  /**
-   * Why a transaction the workers took up never reached the block, from the
-   * error counters the same worker reports beside the counts above.
-   *
-   * Only the reasons that end a transaction are here. The ones that hand it
-   * back — account in use, and the four cost-limit errors — are already drawn
-   * as retries, and an instruction error is a transaction that did reach the
-   * block having failed, which is drawn as that. Counting any of them again
-   * here would be counting the same transaction twice.
-   *
-   * These do not sum to the whole of the loss: the long tail of rarer errors is
-   * gathered into a derived row rather than given one each.
-   */
+  /** Why a transaction the workers took up never reached the block. Only the
+   *  terminal reasons; retries and instruction errors are drawn elsewhere. */
   too_many_locks: number;
   account_missing: number;
   fee_payer_broke: number;
@@ -602,44 +416,20 @@ export interface ExecutedStage {
   program_restricted: number;
 }
 
-/**
- * One leader slot's waterfall, sent as its own list rather than nested on the
- * produced block it belongs to.
- *
- * The two are built on different threads and arrive moments apart in either
- * order — the block when its bank freezes, this when the scheduler notices the
- * leader slot has changed — so they are joined here by slot number instead of
- * one waiting on the other.
- *
- * Only ever present for slots this validator led: the counters behind it are
- * tagged with the bank being produced, and there is no bank unless we are the
- * one producing.
- */
+/** One leader slot's waterfall, sent as its own list and joined to the
+ *  produced block by slot, since either can arrive first. Only for slots
+ *  this validator led. */
 export interface SlotWaterfall extends Waterfall {
   slot: number;
 }
 
 /**
- * What replay did with the last few hundred slots.
- *
- * Every figure is microseconds. All but the two peaks are means for one slot,
- * because what one slot costs is what compares against how long a slot lasts.
- *
- * The three groups are measured in three different ways and cannot be mixed.
- * `fetch`, `confirming` and `completing` are disjoint spans of replay's own
- * thread and add up. `poh_verify`, `tx_verify` and `dispatch` are sums of
- * overlapping asynchronous jobs and are worth only relative to each other.
- * Everything from `execute` down is thread time summed across the workers, so
- * it partitions cleanly and routinely exceeds the slot it describes.
+ * What replay did with the last few hundred slots, in microseconds, as means
+ * per slot bar the two peaks. `fetch`, `confirming` and `completing` are
+ * disjoint spans; the verify figures are overlapping jobs, relative only;
+ * everything from `execute` down is worker thread time.
  */
-/**
- * The machine the validator runs on, sampled once a second from /proc.
- *
- * Three questions that must not be run together. Load and memory are what the
- * process has to work with, `filesystems` is what will run out of room, and
- * `devices` is what will run out of throughput. A box can be in trouble on any
- * one of them while the other two read perfectly healthy.
- */
+/** The machine the validator runs on, sampled once a second from /proc. */
 /** Where every core's time went over the last second, as shares of it. */
 export interface CpuUse {
   /** Everything but idle and iowait. */
@@ -675,12 +465,8 @@ export interface Host {
   devices: DeviceLoad[];
 }
 
-/**
- * One group of the validator's threads over one second, mean per thread.
- *
- * A pool's threads share a name and differ by a trailing number, which the
- * validator strips; `count` says how many stand behind the row.
- */
+/** One group of the validator's threads over one second, mean per thread.
+ *  `count` says how many stand behind the row. */
 export interface ThreadGroup {
   /** Empty on the folded row. */
   name: string;
@@ -755,16 +541,8 @@ export interface ReplayWindow {
   cpu_peak: number;
 }
 
-/**
- * What one block this validator produced cost, and which account took the most
- * of it.
- *
- * Sent as its own list and joined to produced blocks by slot, because the cost
- * tracker reports as the bank freezes while the block is captured on another
- * thread, so either can arrive first. Only blocks this validator built are
- * sent; the point arrives for every slot replayed, and other people's blocks
- * are not this operator's to act on.
- */
+/** What one block this validator produced cost and which account took the
+ *  most of it. Sent as its own list and joined by slot. */
 export interface SlotCost {
   slot: number;
   /** Pubkey of the account that consumed the most compute in this block. */
@@ -784,25 +562,11 @@ export interface IngestSummary {
   paths: IngestPath[];
 }
 
-/**
- * How the XDP transmit path is set up, on a validator running one.
- *
- * Absent entirely otherwise: the validator only reports this where it was given
- * a config. Describes the path under turbine, repair and gossip alike despite
- * the flags being named for retransmit, and says nothing about receiving.
- *
- * A configuration rather than a measurement. It answers whether the flags took
- * and on what card, not whether the path is fast. Nothing the validator reports
- * answers that.
- */
+/** How the XDP transmit path is set up, absent where the validator was given
+ *  no config. A configuration, not a measurement. */
 export interface XdpConfig {
-  /**
-   * Whether the socket bound with zero-copy rather than copy.
-   *
-   * True is trustworthy: the flag goes straight to the bind, which fails
-   * outright on a driver that cannot do it rather than falling back, so a
-   * validator that is running and reporting this really has it.
-   */
+  /** Whether the socket bound with zero-copy. The bind fails rather than
+   *  falls back, so true is trustworthy. */
   zero_copy: boolean;
   driver: string;
   /** Both of these read "unknown" where the PCI database could not be read. */
@@ -817,28 +581,13 @@ export interface StartupProgress {
   running: boolean;
   /** Ledger replay progress from 0 to 1, on the phases that can measure it. */
   fraction: number | null;
-  /**
-   * Share of the cluster's stake visible in gossip, while waiting for a
-   * supermajority. Null in every other phase, and on the many validators that
-   * never wait at all. A whole percent: the validator truncates it before it
-   * reaches the progress report.
-   */
+  /** Share of stake visible in gossip during the supermajority wait, as a
+   *  whole percent. Null in every other phase. */
   stake_percent: number | null;
-  /**
-   * The same wait as the validator counts it, in lamports, from the point it
-   * submits every tenth check. Exact where `stake_percent` is rounded, and a
-   * few seconds behind it. Null until the first point, and outside the wait.
-   */
+  /** The same wait in lamports, from the point the validator submits every
+   *  tenth check. Null until the first point, and outside the wait. */
   stake_in_gossip: StakeInGossip | null;
-  /**
-   * How long the current phase has been running, and what each finished phase
-   * took.
-   *
-   * Most of the boot sequence cannot say how far through it is — nothing counts
-   * the accounts left to index or the archive left to unpack — so how long it
-   * has been going stands in. On a boot that has stopped somewhere that is the
-   * figure actually being looked for.
-   */
+  /** How long the current phase has run, and what each finished phase took. */
   phase_elapsed_nanos: number;
   phases_taken: PhaseTiming[];
 }

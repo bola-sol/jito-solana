@@ -9,20 +9,9 @@ import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
-/**
- * Who this validator is, what it runs, and what it is worth.
- *
- * Laid out two ways rather than one that bends. On a screen everything is on
- * show, which at 1400px costs 81px of height. On a phone the same header came
- * to 313px, nearly two fifths of an 812px screen before a single card, because
- * six stats wrapped into a grid and the identity key ran off the edge unread.
- * The narrow arrangement keeps the five things worth a glance and puts the rest
- * behind the name.
- *
- * The branch is in JavaScript rather than in CSS so that the name is a button
- * only where pressing it does something, and so that every figure is rendered
- * once instead of once per layout. See `useNarrow`.
- */
+/** Who this validator is, what it runs, and what it is worth. Two layouts:
+ *  everything on a screen, five figures and a panel behind the name on a
+ *  phone. See `useNarrow`. */
 export function Header() {
   const store = useStore();
   const identity = store.get<string>("summary", "identity_key");
@@ -144,14 +133,8 @@ export function Header() {
   );
 }
 
-/**
- * The name, the stake, and everything else behind a press.
- *
- * The panel is not an `Explain`. That one opens on hover and its bubble takes
- * no pointer events, both of which are right for a sentence and wrong for this:
- * there is no hover on a phone, and the identity key inside has to be reachable
- * to be copied.
- */
+/** The name, the stake, and everything else behind a press. Not an
+ *  `Explain`: there is no hover on a phone and the key must be copyable. */
 function Identity({
   name,
   icon,
@@ -292,14 +275,7 @@ function Boot({ boot }: { boot: BootTimes }) {
   );
 }
 
-/**
- * The websocket's state.
- *
- * The word is dropped once the connection is open, where a green dot says the
- * same thing in a tenth of the width. It comes back the moment it is anything
- * else, because a bare amber dot in a corner is not enough to notice that the
- * figures on the page have stopped moving.
- */
+/** The websocket's state; the word is dropped while it is open. */
 function Connection({ state, showLabel }: { state: string; showLabel: boolean }) {
   return (
     <div className={`connection connection-${state}`} title={`websocket ${state}`}>
@@ -309,15 +285,8 @@ function Connection({ state, showLabel }: { state: string; showLabel: boolean })
   );
 }
 
-/**
- * One figure, with an optional something behind it.
- *
- * Where there is a detail the value carries the dotted underline the rest of
- * the page uses for "there is more here", and the bubble takes the pointer so
- * that what is inside can be copied. Where there is not, the value is plain
- * text with no affordance, because a figure that looks like it explains itself
- * and then does not is worse than one that never offered.
- */
+/** One figure, with an optional detail behind it. The affordance appears
+ *  only where there is a detail. */
 function HeaderStat({
   label,
   value,

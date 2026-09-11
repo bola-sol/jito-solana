@@ -3,14 +3,8 @@ import type { VersionShare } from "../types";
 import { useStore } from "../useStore";
 import { Card } from "./primitives";
 
-/**
- * How the cluster's stake divides across client versions.
- *
- * Ordered and measured by stake rather than by node count: during an upgrade
- * what matters is how much of the vote has moved, not how many nodes are
- * carrying it. The counts beside each row are staked validators, the same
- * population the validator card counts, so the two cards add up to each other.
- */
+/** How the cluster's stake divides across client versions, ordered by stake.
+ *  The counts are staked validators, matching the validator card. */
 export function VersionsCard() {
   const store = useStore();
   const shares = store.get<VersionShare[]>("summary", "versions");

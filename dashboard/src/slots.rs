@@ -63,10 +63,8 @@ pub struct ShredArrival {
     pub full_millis: u64,
 }
 
-/// What one block contained, read off its bank as it froze. Every field is per
-/// block: the caller differences the bank counters that accumulate along the
-/// fork before they reach here. Grouped so an absent block is one null rather
-/// than eight.
+/// What one block contained, read off its bank as it froze. Every field is
+/// per block; the caller differences the cumulative counters first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlockDetail {
     /// Transactions in this block. Differenced against the parent.
@@ -114,11 +112,8 @@ impl SlotEntry {
     }
 }
 
-/// This validator's own leader slots held back from pruning, so a reconnecting
-/// client still receives them: a window sized for the live strip holds none.
-/// Sixty-four is what the sidebar rail needs; the schedule page searches the
-/// packed history instead. They occupy the ring's capacity rather than
-/// extending it.
+/// This validator's own leader slots held back from pruning, within the
+/// ring's capacity. Sixty-four is what the sidebar rail needs.
 const OWN_SLOTS_KEPT: usize = 64;
 
 /// A bounded, slot-keyed history. Slots more than `capacity` behind the highest

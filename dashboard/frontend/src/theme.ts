@@ -1,11 +1,5 @@
-/**
- * Light/dark selection.
- *
- * The chosen theme is stamped on the root element as `data-theme` and read
- * back from localStorage on the next visit. index.html stamps it again inline
- * before the bundle runs, so a light-themed dashboard does not flash dark on
- * every reload.
- */
+/** Light/dark selection, stamped on the root as `data-theme` and kept in
+ *  localStorage. index.html stamps it inline first to avoid a flash. */
 
 export type Theme = "dark" | "light";
 

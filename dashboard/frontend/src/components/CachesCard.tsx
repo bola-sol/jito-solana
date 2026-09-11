@@ -12,25 +12,8 @@ import type { AccountsCache, ProgramCache } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
 
-/**
- * The two things replay waits on, and how well each is going.
- *
- * One panel rather than two because they answer the same question in the same
- * shape: what share of what was asked for came back without the slow path, over
- * the same minute, from counters each subsystem resets and reports itself. Side
- * by side they were a row in the grid, which sizes every card in it to the
- * tallest, and the accounts panel is half again the height of the program cache
- * one, so the shorter of the two sat over a block of nothing.
- *
- * Either section folds to its heading, and both start folded. The two headings
- * are what the panel is for at a glance: a dot, a rate and four figures each,
- * saying whether the thing is healthy without asking anyone to read a grid. The
- * figures under them are for when the answer is no.
- *
- * Which sections are open is remembered per host, on the same reasoning as the
- * sidebar collapse: someone who opened one to watch it wants it open on the
- * next reload rather than having to open it again.
- */
+/** The two caches replay waits on. Each section folds to a heading that
+ *  states its health; both start folded, and the choice is remembered. */
 export function CachesCard() {
   const store = useStore();
   const programs = store.get<ProgramCache | null>("summary", "program_cache");
@@ -77,15 +60,8 @@ export function CachesCard() {
   );
 }
 
-/**
- * One foldable section: a heading that states its own health, and a body.
- *
- * The heading is a row with a button in it rather than a row that is a button,
- * which is how the produced blocks on the slot page do it. The rate here is the
- * one figure on either section that most needs explaining, and an explanation
- * is itself a button, which cannot be nested inside another one. So the chevron
- * carries the control and the row carries a click for the pointer.
- */
+/** One foldable section. The row holds a button rather than being one,
+ *  since the rate's explanation is itself a button. */
 function Group({
   name,
   rate,
@@ -142,30 +118,16 @@ function Group({
   );
 }
 
-/**
- * Every figure here is a rate rather than a standing total. The cache resets its
- * counters each time a bank is made from a parent, two or three times a second,
- * and reports them as it does, so what is summed is a minute of real work rather
- * than anything the cache is holding.
- *
- * The one exception is the entry peak, which is a level and is treated as one:
- * it is written only when an eviction runs, so the highest reading across the
- * window is taken rather than the latest.
- *
- * Size is shown in entries rather than in bytes. This cache is a map on the
- * heap, bounded by how many entries it may hold and given no byte budget at all,
- * so entries against that limit is the only fill figure it can honestly report.
- */
+/** Every figure is a minute's rate except the entry peak, a level. Size is
+ *  in entries: the cache has an entry limit and no byte budget. */
 function ProgramBody({ cache }: { cache: ProgramCache }) {
   const filled =
     cache.peak_entries !== null && cache.entry_limit > 0
       ? cache.peak_entries / cache.entry_limit
       : null;
 
-  // Both halves of the same figure. Insertions alone counts only keys the cache
-  // had never seen, so shown on its own beside a much larger eviction count it
-  // reads as a cache collapsing when it is holding its size: the reloads make up
-  // the difference, and they belong here rather than under evictions.
+  // Insertions and reloads together: insertions alone counts only keys never
+  // seen before.
   const compiled = cache.insertions + cache.reloads;
   const compiledBreakdown = [
     `${count(cache.insertions)} new`,
@@ -229,16 +191,8 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
   );
 }
 
-/**
- * Reads are counted in accounts and writes in bytes, which is lopsided and
- * deliberate. Agave measures the load path in accounts and never in bytes, so
- * there is nothing to build a read throughput from. The write path is measured
- * both ways, so that one gets a rate.
- *
- * Not built from `/proc/self/io`, which would give true bytes for both and be
- * the wrong number: it is process-wide, so the blockstore's writes, snapshot
- * archiving and the log would all land under a heading saying Accounts.
- */
+/** Reads in accounts and writes in bytes: the load path is not measured in
+ *  bytes, and `/proc/self/io` is process-wide. */
 function AccountsBody({ accounts }: { accounts: AccountsCache }) {
   const perSecond = (total: number) =>
     accounts.window_seconds > 0 ? total / accounts.window_seconds : 0;

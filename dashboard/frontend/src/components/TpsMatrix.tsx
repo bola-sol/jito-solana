@@ -18,28 +18,9 @@ import { useWidth } from "../useWidth";
 /** The three series, bottom of the column upwards. */
 const SERIES = ["vote", "failed", "success"] as const;
 
-/**
- * A minute of throughput as a grid of lit dots, one column per sample.
- *
- * Each column is lit from the bottom: vote first, then the non-vote traffic
- * that failed, then the non-vote traffic that succeeded on top. So the height
- * of the lit part reads as total throughput and the three colours read as the
- * split, which the stacked areas this replaces never managed. Nothing on that
- * chart said which band was which.
- *
- * Failures sit between the two rather than on top because they are the band
- * that changes most and the eye finds a moving band more easily against a
- * still one above and below it.
- *
- * Drawn as one path per colour rather than one element per dot. Sixty columns
- * of eleven rows is six hundred and sixty squares, and six paths reconcile in
- * a fraction of the time six hundred elements do, while staying SVG: the
- * colours still come from the stylesheet and both themes still work.
- *
- * The scale is fixed at a tenth above the window's peak rather than fitted to
- * each frame, so the silhouette does not rescale every time a spike arrives
- * and leaves.
- */
+/** A minute of throughput as a grid of lit dots, one column per sample, lit
+ *  from the bottom: votes, failed, succeeded. One path per colour rather
+ *  than an element per dot. */
 export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);

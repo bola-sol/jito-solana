@@ -1,27 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-/**
- * Text that copies itself to the clipboard when clicked.
- *
- * A button rather than a styled span so it is reachable by keyboard, and it
- * shrinks with an ellipsis rather than forcing its container wider, so a long
- * value shows in full when there is room and truncates when there is not.
- *
- * The confirmation is drawn over the value rather than replacing it. Swapping a
- * forty-four character address for the word "copied" collapsed the button's
- * width, and in a header that wraps, that relaid out everything after it — so
- * the act of copying an address made the page jump under the pointer.
- */
+/** Text that copies itself when clicked. A button, truncated with an
+ *  ellipsis; the confirmation is drawn over the value so nothing reflows. */
 export function Copyable({
   text,
   label,
   className,
 }: {
   text: string;
-  /**
-   * What to show, when that differs from what to copy. A slot number reads
-   * better grouped and pastes better without the separators.
-   */
+  /** What to show, when that differs from what to copy. */
   label?: ReactNode;
   className?: string;
 }) {
@@ -55,11 +42,8 @@ export function Copyable({
   );
 }
 
-/**
- * `navigator.clipboard` only exists in a secure context, and the dashboard is
- * commonly served over plain HTTP on a private address, so fall back to the
- * deprecated selection-based copy when it is missing.
- */
+/** `navigator.clipboard` needs a secure context; fall back to the
+ *  selection-based copy over plain HTTP. */
 async function writeToClipboard(text: string): Promise<boolean> {
   if (navigator.clipboard && window.isSecureContext) {
     try {

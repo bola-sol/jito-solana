@@ -1,35 +1,17 @@
-/**
- * Arranging the scheduler's counters into the rows the waterfall draws.
- *
- * Kept out of the component so it can be tested without a DOM, in the same way
- * as the turn folding and the bar scale.
- */
+/** The scheduler's counters arranged into the rows the waterfall draws. */
 
 import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
 
-/**
- * A count as a share of the stage's total, capped at the whole of it.
- *
- * Capped rather than allowed past a hundred percent, and the overflow reported
- * rather than hidden. A stage fed from the queue can genuinely exceed the total
- * it is drawn against, most visibly over a single slot, and a bar longer than
- * its own track or a figure above a hundred percent reads as a bug rather than
- * as the queue draining.
- */
+/** A count as a share of the stage's total, capped at one. A stage fed from
+ *  the queue can exceed its total; the overflow is reported separately. */
 function against(total: number, count: number): { share: number; over: boolean } {
   if (total <= 0) return { share: 0, over: false };
   const share = count / total;
   return { share: Math.min(1, share), over: share > 1 };
 }
 
-/**
- * A row's share of its section, which a `count` row does not have.
- *
- * Zeroed at the source rather than hidden at the last moment by whatever draws
- * it. A count is in a different unit from the total, so `count / total` is a
- * number with no meaning, and leaving it in the row for the component to
- * remember to ignore is how it ends up drawn somewhere else later.
- */
+/** A row's share of its section; nought for a `count` row, which is in
+ *  another unit. */
 function shareOf(
   kind: RowKind,
   total: number,
@@ -46,11 +28,7 @@ export type RowKind =
   | "loss"
   /** Neither: something that happened without anything being lost. */
   | "note"
-  /**
-   * A figure counted in a different unit from the rest, so it has no share of
-   * them and is drawn without a bar. Showing one would invite a comparison the
-   * numbers do not support.
-   */
+  /** A figure in a different unit from the rest, drawn without a bar. */
   | "count";
 
 export interface WaterfallRow {
@@ -60,45 +38,17 @@ export interface WaterfallRow {
   count: number;
   /** Of everything received, in `[0, 1]`. The bar's length. */
   share: number;
-  /**
-   * Whether the count is larger than the total it is drawn against, which makes
-   * `share` a cap rather than a measurement.
-   *
-   * This is ordinary rather than a fault, and routine over a single slot. The
-   * scheduler's queue holds transactions across slots, so a slot can dispatch
-   * more than arrived in it by taking the difference from what was already
-   * waiting. There is no denominator that fixes it: the work simply did not all
-   * arrive in the window being measured. The row shows its count and no
-   * percentage, rather than one over a hundred that reads as a broken figure.
-   */
+  /** Whether the count exceeds the total it is drawn against, which the queue
+   *  makes routine over a single slot. The row then shows no percentage. */
   over: boolean;
   explain: string;
 }
 
-/**
- * The rows, in the order a transaction meets them.
- *
- * Always the same rows in the same order, including the ones reading nought.
- * Two reasons. A row that appeared only when it fired would change the card's
- * height under whoever was reading it, which this dashboard has been bitten by
- * more than once. And a zero is worth reading: it is the difference between
- * "no transaction failed its fee payer check" and "nothing here counts that".
- */
+/** The rows in the order a transaction meets them, always all of them: a
+ *  nought is a reading, and the card must not change height. */
 export function waterfallRows(w: Waterfall): WaterfallRow[] {
-  // BAM is sent atomic batches rather than packets, and counts them, so on a
-  // slot it built `received` is in a different unit from every row beneath it
-  // and cannot be their denominator — a batch carries however many
-  // transactions it carries. What parsed out of those batches can be, and is
-  // the first figure in the same unit as the rest. It sits below the door
-  // losses rather than above them, so those rows can run past it; they show
-  // their count and no percentage when they do, which is the same treatment a
-  // slot that dispatched more than arrived in it already gets.
-  //
-  // Two rows are in batches, not one. BAM counts what it rejected before
-  // parsing per batch, in `prevalidate_batches`, and everything it rejected
-  // after parsing per transaction, in `parse_batch`. So the first loss row is
-  // in the same unit as the figure above it and a different one from every
-  // loss below it, and it is counting something else entirely besides.
+  // On a BAM slot `received` and the first loss row are in batches, so
+  // `buffered` is the denominator and those two rows show no share.
   const batches = w.source === "bam";
   const total = batches ? w.buffered : w.received;
 
@@ -130,14 +80,8 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
           "Transactions handed to the banking stage after signature verification. Everything below is what became of them.",
         ),
 
-    // Lost at the door. These and `buffered` account for every one of the
-    // above exactly — it is an identity the validator's own tests assert.
-    //
-    // Except on a BAM slot, where the same counter is fed by a different check
-    // and holds something unrelated: batches BAM sent that were already past
-    // the slot they named, or that arrived empty. Labelling that as forwarding
-    // would be plainly wrong, and it is the one figure on a BAM slot worth
-    // acting on — work the marketplace offered that the slot could not take.
+    // Lost at the door: these plus `buffered` equal `received` exactly. On a
+    // BAM slot the counter holds batches sent past their slot instead.
     batches
       ? row(
           "not_held",
@@ -294,15 +238,8 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
   ];
 }
 
-/**
- * Building the rows for a stage, against a denominator of its own.
- *
- * Every stage is measured against what *it* was given rather than against a
- * figure from the stage before. That is why the panels drawing these keep them
- * as separate sections rather than one flow: what the listener hands on is not
- * what verify receives, and a bar drawn against the wrong stage's total would
- * be a quiet lie.
- */
+/** The rows for a stage, against the stage's own total rather than the one
+ *  before it. */
 function rowsOf(
   total: number,
   rows: Array<[key: string, label: string, kind: RowKind, count: number, explain: string]>,
@@ -373,12 +310,8 @@ export function verifyRows(v: VerifyStage): WaterfallRow[] {
 export function executedRows(e: ExecutedStage): WaterfallRow[] {
   const failed = Math.max(0, e.processed - e.succeeded);
 
-  // What the workers took up and neither committed nor handed back. Derived
-  // rather than reported: no counter holds it, because the reasons live in a
-  // separate point from the outcomes and the two are only reconciled here.
-  // Without it the section did not close — a quarter of what was attempted
-  // appeared in no row at all — while the card's own footnote claimed each
-  // section adds up against itself.
+  // Taken up and neither committed nor handed back. Derived: no counter
+  // holds it, and without it the section does not close.
   const dropped = Math.max(0, e.attempted - e.processed - e.retryable);
   const named =
     e.too_many_locks +
@@ -392,10 +325,8 @@ export function executedRows(e: ExecutedStage): WaterfallRow[] {
     e.account_data_too_large +
     e.program_not_executable +
     e.program_restricted;
-  // The rarer errors, gathered rather than given a row each: a dozen more rows
-  // that read nought for ever would bury the ones that do not. Floored, because
-  // the two figures come from counters reported separately and a window can
-  // catch one without the other.
+  // The rarer errors gathered into one row. Floored: the two counters are
+  // reported separately.
   const otherReasons = Math.max(0, dropped - named);
 
   return rowsOf(e.attempted, [

@@ -9,20 +9,9 @@ import type {
 import { executedRows, verifyRows, type WaterfallRow } from "./waterfall";
 
 /**
- * What happened to transactions on their way in, before the scheduler saw them.
- *
- * The first two sections describe the QUIC listener rather than the
- * transactions themselves, which is deliberate. Loss on the TPU port mostly
- * does not happen to transactions at all: it happens to the connections
- * carrying them, at a rate limiter or a connection table, long before anything
- * has been read. The socket card sees the floor below this, where the kernel
- * discarded a datagram outright, and nothing inside the validator sees that.
- *
- * Each section is one bar cut into what got through and what did not, rather
- * than a bar per row. A row's own bar is a sliver at these ratios: most of
- * these losses are under two percent, which across the width of a card is a
- * mark a few pixels wide that cannot be compared with the one above it. One bar
- * can be read, and the figures beside it carry the precision.
+ * What happened to transactions on their way in, before the scheduler. The
+ * first two sections describe the QUIC listener's connections, where most of
+ * the loss happens. Each section is one bar cut into outcomes.
  */
 
 /** A loss, and what it was a loss out of. */
@@ -32,29 +21,14 @@ export interface PathLoss {
   count: number;
   /** Of the section's total, in `[0, 1]`. */
   share: number;
-  /**
-   * Whether this one means the validator could not keep up.
-   *
-   * Most of these are refusals working exactly as designed, and toning them
-   * would turn a healthy card into a wall of warnings. The few that are marked
-   * are the ones where something had already been accepted and was then thrown
-   * away for want of room.
-   */
+  /** Whether this loss means the validator could not keep up, as against a
+   *  refusal working as designed. */
   warn: boolean;
   explain: string;
 }
 
-/**
- * A figure counted in something other than what the bar is counting.
- *
- * Drawn beside the heading with no segment and no share. There are two: the
- * datagrams the kernel discarded, against a bar counting connections, and the
- * batches sigverify evicted, against a bar counting transactions. Neither can
- * be converted into the other's unit — a batch carries however many
- * transactions were grouped into it and nothing reports that number — so a
- * segment for either would be a length with no meaning, beside a percentage of
- * a population it is not part of.
- */
+/** A figure in a different unit from the bar, drawn beside the heading with
+ *  no segment and no share. */
 export interface PathAside {
   label: string;
   count: number;
@@ -65,22 +39,11 @@ export interface PathAside {
 
 export interface PathSection {
   key: string;
-  /**
-   * What the section counts, in the words the counter itself would use.
-   *
-   * Named for the quantity rather than for the place in the pipeline it sits.
-   * The three QUIC sections were once "at the door", "once connected" and "out
-   * of the listener", which read as an order of events and told an operator
-   * nothing they could match against a metric or a log line. The stage names
-   * that survive that test keep them: verify and executed are what those
-   * subsystems are actually called.
-   */
+  /** What the section counts, named for the quantity rather than its place
+   *  in the pipeline. */
   title: string;
-  /**
-   * What the total is scoped to, which is the one thing the head cannot
-   * otherwise say. No section is drawn against the one above it, and the notes
-   * read down the card as the chain of denominators that makes that true.
-   */
+  /** What the total is scoped to. No section is drawn against the one
+   *  above it. */
   note: string;
   explain: string;
   /** What the bar is drawn against. */
@@ -89,24 +52,11 @@ export interface PathSection {
   through: { label: string; count: number };
   /** Losses, largest first, with the ones at nought left out. */
   losses: PathLoss[];
-  /**
-   * Reasons behind one of the losses above, rather than siblings of it.
-   *
-   * Only the executed section has any: a dozen reasons a transaction failed to
-   * load, which roll up into a single row above and are almost always nought.
-   * Shown only once the section is expanded, and never drawn in the bar, where
-   * they would be counted twice.
-   */
+  /** Reasons behind one of the losses above. Shown when expanded, never in
+   *  the bar, where they would count twice. */
   detail: PathLoss[];
-  /**
-   * How many of the counters this section watches stayed at nought.
-   *
-   * Kept as a figure rather than as rows. A counter at nought is worth
-   * knowing — it is the difference between "no transaction failed its fee payer
-   * check" and "nothing here counts that" — but twenty rows of nought is what
-   * made this card twice the height it needed. The count keeps the statement
-   * and drops the rows.
-   */
+  /** How many of the section's counters stayed at nought, as a figure rather
+   *  than rows. */
   zeros: number;
   aside: PathAside | null;
 }
@@ -119,22 +69,10 @@ export const LOSSES_SHOWN_NARROW = 3;
 const REFUSAL_NAMES = 4;
 
 /**
- * The connections refused a place in the table, under four overlapping names.
- *
- * The listener does not partition this. A staked peer that spills into the
- * unstaked table and is turned away there raises three counters; an unstaked
- * peer turned away raises two, because the path runs through the same insert
- * that raises `add_failed`; a banned peer on the vote port raises one that no
- * other path touches. Adding them would report a port refusing several times
- * the connections it refused.
- *
- * So take the larger of the two readings. `add_failed` is raised only on
- * connections that were refused, and the other three are mutually exclusive
- * with each other, so each is a lower bound on the true figure and the larger
- * is the tighter one. It can still undercount — a refusal that raises only a
- * name in the smaller group when the other group is larger — and what it
- * undercounts by falls into the unaccounted row below it rather than
- * disappearing.
+ * Connections refused a place in the table, under four overlapping counters
+ * that must not be summed. The larger of `add_failed` and the other three
+ * together is the tighter lower bound; any shortfall lands in the unaccounted
+ * row.
  */
 export function refusedTable(q: QuicPort): number {
   return Math.max(
@@ -148,15 +86,7 @@ function shareOf(total: number, count: number): number {
   return Math.min(1, count / total);
 }
 
-/**
- * Sorting the losses and counting the ones that did not fire.
- *
- * Largest first rather than in the order a transaction meets them. The bar
- * above already carries that order, and it is the one place it can be read
- * without arithmetic; the list is better spent answering which of them
- * mattered. It also keeps the card still: a counter firing for the first time
- * joins the bottom of the list rather than appearing in the middle of it.
- */
+/** The losses largest first, and a count of the ones that did not fire. */
 function sorted(
   total: number,
   rows: Array<
@@ -178,24 +108,10 @@ function sorted(
 }
 
 /**
- * The connection funnel.
- *
- * Closer to a partition than anything else on the dashboard: the listener
- * checks each gate in turn and moves on when one closes, so an attempt is shed
- * once, fails its handshake, or is admitted. Not exactly, though. A connection
- * can meet the rate limiter again after its handshake, which charges it to a
- * gate it has already passed, so the segments can total slightly more than the
- * offer. That is why the bar is drawn against the offer and clipped rather than
- * against the sum of its own parts.
- *
- * They can also total less, and that gap is now a row rather than a silence.
- * The listener drops a connection without counting it in two places — an
- * `accept()` that errors before the handshake, and a QoS that declines by
- * returning nothing after it — and both are silent upstream, no counter and
- * only a debug log. The handshake count is what separates them: everything
- * unaccounted for above it died at the first, everything below it at the
- * second. Neither says which peer or why, and nothing here can; what they say
- * is which half of the listener to go and read.
+ * The connection funnel, drawn against the offer and clipped: a connection
+ * can be rate-limited again after its handshake. The listener drops uncounted
+ * on either side of the handshake, and those gaps are rows here, split by
+ * the handshake count.
  */
 export function doorSection(
   q: QuicPort,
@@ -203,11 +119,8 @@ export function doorSection(
 ): PathSection {
   const admitted = q.admitted_staked + q.admitted_unstaked;
   const refused = refusedTable(q);
-  // Everything the listener counts, taken off the offer. The two rate limits
-  // are charged either side of the handshake and share one counter each, so
-  // where they fired cannot be known — but that is exactly why they can be
-  // subtracted here: whichever side they fired on, they are off the offer by
-  // the time the handshake is counted, and the split cancels.
+  // Everything the listener counts, off the offer. The rate limits fire on
+  // either side of the handshake, and the split cancels here.
   const beforeHandshake = Math.max(
     0,
     q.offered -
@@ -308,10 +221,8 @@ export function doorSection(
     through: { label: "admitted", count: admitted },
     losses,
     detail,
-    // The two unaccounted rows are worked out rather than counted, so a nought
-    // in one of them says the listener accounted for everything — not that a
-    // counter sat still. This tally is about counters, so they come back out of
-    // it, and the four refusal names go in.
+    // The unaccounted rows are derived, not counters, so they come out of
+    // this tally and the four refusal names go in.
     zeros: zeros - derivedAtZero + (REFUSAL_NAMES - detail.length),
     aside:
       kernelDrops === null
@@ -383,12 +294,8 @@ export function streamSection(q: QuicPort): PathSection {
   };
 }
 
-/**
- * What came out of the listener towards verification.
- *
- * Drawn against the three outcomes added together, because the listener keeps
- * no total of what it finished reading.
- */
+/** What came out of the listener towards verification, drawn against the
+ *  three outcomes summed. */
 export function listenerSection(q: QuicPort): PathSection {
   const read = q.handed_on + q.queue_full + q.disconnected;
   const { losses, zeros } = sorted(read, [
@@ -428,14 +335,8 @@ function pick(rows: WaterfallRow[], key: string): number {
   return rows.find((row) => row.key === key)?.count ?? 0;
 }
 
-/**
- * Signature verification, reshaped from the rows the old card drew.
- *
- * Built through `verifyRows` rather than from the payload directly, because the
- * count of bad signatures is not reported and has to be worked out from what is
- * left once the other outcomes are taken off. That arithmetic is tested where
- * it lives and is not worth a second copy here.
- */
+/** Signature verification, built through `verifyRows`, which derives the
+ *  unreported bad-signature count. */
 export function verifySection(v: VerifyStage): PathSection {
   const rows = verifyRows(v);
   const { losses, zeros } = sorted(v.received, [
@@ -503,14 +404,8 @@ const LOAD_REASONS: Array<[key: string, label: string]> = [
   ["exec_other_reasons", "other reasons"],
 ];
 
-/**
- * The worker threads, reshaped from the rows the old card drew.
- *
- * Two levels rather than one. The top level is what became of a transaction the
- * workers took up; the dozen reasons a load failed sit beneath one of those
- * rows rather than beside it, and are kept out of the bar, where they would be
- * counted a second time.
- */
+/** The worker threads: what became of each transaction, with the load
+ *  failure reasons nested under one row and out of the bar. */
 export function executedSection(
   e: ExecutedStage,
   bundles: BundleStage | null,
@@ -577,12 +472,8 @@ export function executedSection(
     losses,
     detail,
     zeros: zeros + (LOAD_REASONS.length - detail.length),
-    // What the bar above is partly made of, rather than a share of it. Bundles
-    // reach the workers by their own path and their transactions are already
-    // inside the figures here, so this is a note on the composition of the
-    // section and not a stage of it: no segment, no percentage, nothing to
-    // subtract. Absent where nothing sent any, which leaves the section exactly
-    // as it stood rather than adding a row of noughts.
+    // A note on the section's composition, not a stage of it: bundle
+    // transactions are already inside the figures above.
     aside:
       bundles === null
         ? null
@@ -597,34 +488,14 @@ export function executedSection(
   };
 }
 
-/**
- * The share of connection attempts that were let in.
- *
- * The card's headline, because the offer on its own says more about the cluster
- * than about this node. What the node decides is how much of it to take.
- *
- * Null before anything has been offered, which is a port nothing is using
- * rather than a port refusing everything.
- */
-/**
- * Slots of an epoch that may go uncounted before the gap is worth saying.
- *
- * The totals start over on the first tick that reads a bank in the new epoch,
- * a second or two after it actually turned. Counted strictly, that would put a
- * caveat on every epoch the validator sat through in full, and a caveat that
- * is always there is one nobody reads when it matters.
- */
+/** The share of connection attempts let in. Null before anything was
+ *  offered. */
+/** Slots of an epoch that may go uncounted before the gap is worth saying:
+ *  the totals start over a tick after the epoch turns. */
 const EPOCH_START_SLACK = 32;
 
-/**
- * What the per-epoch sections are counted over, as a line of text.
- *
- * Two clauses, and the second only where it is true. How far into the epoch we
- * are says what a total this size means; where counting began says whether it
- * is the epoch's total at all. A restart takes the second away from the first,
- * and without it a validator that came up an hour ago reads as one that spent
- * the epoch idle.
- */
+/** What the per-epoch sections are counted over, as a line of text, with a
+ *  second clause where counting began after the epoch did. */
 export function epochSpanLabel(span: EpochSpan): string {
   if (span.slots_in_epoch <= 0) return `Epoch ${span.epoch}`;
   const elapsed = percent(span.elapsed_slots / span.slots_in_epoch, 0);
@@ -652,33 +523,13 @@ export function portNamed(ports: QuicPort[], name: string): QuicPort | null {
   return ports.find((port) => port.name === name) ?? null;
 }
 
-/**
- * The ports in the order they are worth reading, busiest first.
- *
- * Only used where the TPU address is answered off this host. There the card
- * has no leading port to build sections from, and the fixed order it is sent
- * in would put the two ports nothing arrives on above the one that carries all
- * the traffic this host still sees, which on most such validators is the vote
- * port.
- *
- * Sorted on the window rather than on the lifetime figure. The question a
- * folded row answers is what has been happening lately, and a port that was
- * busy an hour ago should not outrank one that is busy now. Ties keep the
- * order they were sent in, which is stable across ticks, so a row does not
- * swap places with its neighbour while it is being read.
- */
+/** The ports busiest first over the window, used where the TPU address is
+ *  answered off this host. Ties keep the order sent. */
 export function portsBusiestFirst(ports: QuicPort[]): QuicPort[] {
   return [...ports].sort((a, b) => b.offered - a.offered);
 }
 
-/**
- * Which of the quieter ports the reader last left unfolded, remembered per host.
- *
- * The same key shape and the same reasoning as the caches panel and the sidebar
- * collapse: someone who opened a port to watch it wants it open on the next
- * reload rather than having to open it again. Names rather than a count, so a
- * port appearing or going away cannot silently unfold a different one.
- */
+/** Which of the quieter ports the reader last left unfolded. */
 export const TPU_PATH_STORAGE_KEY = "agave-dashboard-tpu-path-open";
 
 export function readOpenPorts(): string[] {

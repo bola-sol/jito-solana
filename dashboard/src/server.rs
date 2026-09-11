@@ -51,10 +51,8 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 /// generous enough that several tabs never notice it.
 const MAX_WEBSOCKET_CLIENTS: usize = 64;
 
-/// Connections served at once, websockets included. Every request in flight
-/// holds a copy of what it answers with, so unbounded a request flood is a
-/// memory amplifier in a process whose death takes the validator too. A
-/// ceiling, not a throttle.
+/// Connections served at once, websockets included. A ceiling, not a
+/// throttle: every request in flight holds a copy of its answer.
 const MAX_CONNECTIONS: usize = 256;
 
 /// The caps a connection has to pass. Named so the two semaphores cannot be
@@ -145,10 +143,8 @@ async fn handle(
     limits: Limits,
     allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
-    // Taken before the head is read. A connection over the cap is closed
-    // without reading it, so a flood cannot hold a task and a buffer each for
-    // the ten seconds a head is waited for. Only a connection under the cap
-    // is answered with a reason.
+    // Taken before the head is read, so a flood over the cap holds no task or
+    // buffer for the ten seconds a head is waited for.
     let Ok(_connection) = limits.connections.try_acquire_owned() else {
         log::info!("dashboard: refusing a connection, {MAX_CONNECTIONS} already being served");
         socket.shutdown().await?;
@@ -218,10 +214,8 @@ async fn refuse(
     Ok(())
 }
 
-/// How long to wait for more of a head that has stopped arriving. `peek`
-/// leaves the bytes in the socket, so its readiness never clears and
-/// `readable` returns at once; without a pause the loop would spin until the
-/// timeout.
+/// Pause between peeks of a head that has stopped arriving: `peek` never
+/// clears readiness, so `readable` returns at once.
 const HEAD_POLL: Duration = Duration::from_millis(20);
 
 /// Reads the request head without consuming it, so a websocket connection can
@@ -295,11 +289,9 @@ fn host_is_allowed(head: &str, allowed: &[String]) -> bool {
         .any(|candidate| host_of(candidate).eq_ignore_ascii_case(host))
 }
 
-/// Whether a websocket upgrade comes from a page served by this dashboard.
-/// Websockets are exempt from the same-origin policy, so without this any page
-/// a browser visits could read the feed, loopback included. A missing `Origin`
-/// means the caller is not a browser and is allowed; a literal `null`, which a
-/// sandboxed frame sends, is refused.
+/// Whether a websocket upgrade comes from a page this dashboard served.
+/// No `Origin` is not a browser and is allowed; `null` is a sandboxed frame
+/// and is refused.
 fn origin_is_allowed(head: &str) -> bool {
     let Some(origin) = header(head, "origin") else {
         return true;
@@ -382,12 +374,9 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
         .map(|(_, content_type, body)| (*content_type, *body))
 }
 
-/// Sent with every response. `img-src` is open to any https host because
-/// validator icons are URLs operators publish on chain; plaintext is refused.
-/// Scripts and styles permit inline because index.html carries the theme stamp
-/// and splash styling, and every value the client renders goes through React.
-/// `connect-src 'self'` covers the websocket. One directive per line so it
-/// formats the same everywhere.
+/// Sent with every response. `img-src` allows any https host for validator
+/// icons; inline scripts and styles are for index.html's theme stamp and
+/// splash.
 const SECURITY_HEADERS: &str = concat!(
     "content-security-policy:",
     " default-src 'none';",
@@ -557,10 +546,8 @@ async fn serve_websocket(
     }
 }
 
-/// Bounds and flattens a caller-supplied string before it reaches the log. A
-/// newline forges an entry, an escape sequence drives a terminal, a
-/// right-to-left override reverses text, and an 8 KB header must not write an
-/// 8 KB line.
+/// Bounds and flattens a caller-supplied string before it reaches the log:
+/// no forged lines, terminal escapes or 8 KB entries.
 fn for_logging(value: &str) -> String {
     const LIMIT: usize = 48;
     let mut out: String = value

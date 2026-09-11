@@ -6,22 +6,11 @@ import type { SlotEntry } from "../types";
 import { useStore } from "../useStore";
 import { Logo } from "./Logo";
 
-/**
- * Rows in the live slot list, newest first.
- *
- * Everything the client holds. The server sends 512 slots on connect and the
- * store keeps that many, so a smaller figure here threw away rows that had
- * already been paid for over the wire.
- */
+/** Rows in the live slot list: everything the client holds. */
 const ROWS = 512;
 
-/**
- * The live slot list, with a filter down to this validator's own leader slots.
- *
- * The filter is local to the sidebar on purpose. The strip in the Slots panel
- * is a picture of what the cluster is doing and stays whole whichever view is
- * chosen here.
- */
+/** The live slot list, with a filter down to this validator's own leader
+ *  slots. The filter is local to the sidebar. */
 export function Sidebar({
   collapsed,
   onToggle,
@@ -107,13 +96,8 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-/**
- * Memoised because the list is long and the store is chatty: it notifies on
- * every published value, including the once-a-second meter samples that touch
- * no slot at all. The store replaces only the entries that changed, so identity
- * holds for the rest and five hundred untouched rows are skipped rather than
- * diffed.
- */
+/** Memoised: the store notifies on every value and replaces only the entries
+ *  that changed, so untouched rows are skipped. */
 const SidebarRow = memo(function SidebarRow({
   entry,
   leader,

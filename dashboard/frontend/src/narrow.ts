@@ -1,27 +1,13 @@
 import { useSyncExternalStore } from "react";
 
-/**
- * The width below which a phone is being held rather than a screen looked at.
- *
- * The same 700px the waterfall rows, the schedule groups and the cache headings
- * change shape at, so a layout does not rearrange itself twice on the way down.
- */
+/** The width below which a phone is being held: the same 700px the stylesheet
+ *  changes shape at. */
 export const NARROW_QUERY = "(max-width: 700px)";
 
 /**
- * Whether the window is narrow, as a value a component can branch on.
- *
- * Most of the frontend answers this in CSS, which is the right place: a media
- * query costs no JavaScript and cannot fall out of step with what is rendered.
- * This exists for the one case CSS cannot reach, which is not *how* a thing is
- * drawn but *whether it is a control at all*. The header's name opens a panel
- * on a phone and opens nothing on a desktop, and a button that opens nothing is
- * worse than no button: it gets pressed once and then nothing on the page is
- * trusted to do anything again.
- *
- * Branching here rather than in CSS also means each figure is rendered once.
- * Hiding a desktop copy and showing a phone copy would put every value in the
- * page twice, where a screen reader reads both.
+ * Whether the window is narrow, for the cases CSS cannot reach: whether a
+ * thing is a control at all, and rendering each figure once rather than a
+ * hidden copy per layout.
  */
 export function useNarrow(): boolean {
   return useSyncExternalStore(subscribe, isNarrow, alwaysWide);
@@ -37,13 +23,7 @@ function subscribe(onChange: () => void): () => void {
   return () => query.removeEventListener("change", onChange);
 }
 
-/**
- * Whether the window matches, read afresh each time it is asked.
- *
- * Exported for its own sake: it is the only part of this module with a branch
- * in it, and nothing here renders a component, so it is the only part a test
- * can reach.
- */
+/** Whether the window matches, read afresh. Exported for tests. */
 export function isNarrow(): boolean {
   // Older embedded webviews are missing matchMedia entirely. Answering "wide"
   // there gives a header with everything in it, which is the arrangement that

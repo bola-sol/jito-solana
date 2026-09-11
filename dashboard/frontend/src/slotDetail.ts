@@ -1,30 +1,12 @@
-/**
- * Arranging one produced block's figures for the expanded slot row.
- *
- * The row's body is led by what filled the block rather than by the scheduler's
- * counters. Most of those counters are nought on most slots, and drawn as a
- * flat list of two dozen rows they were several hundred pixels saying nothing.
- * They are still all here, grouped by the stage that dropped them and folded
- * behind a control, so a slot that did lose something says where in one line
- * and shows the detail on request.
- *
- * Kept out of the component so it can be tested without a DOM, like the
- * waterfall rows it is built on.
- */
+/** One produced block's figures arranged for the expanded slot row: what
+ *  filled the block first, the scheduler's counters grouped and folded. */
 
 import { count } from "./format";
 import type { ProducedBlock, SlotCost, SlotWaterfall } from "./types";
 import { waterfallRows, type WaterfallRow } from "./waterfall";
 
-/**
- * How the block's compute limit was spent.
- *
- * Three shares of the limit that add to one, which is the only reading under
- * which unused headroom belongs on the same bar as the used part. Note that
- * this makes the costliest account's segment its share of the *limit*, not of
- * the block: an account can be most of a block and still a sliver of the limit,
- * and those two figures differ by however empty the block was.
- */
+/** How the block's compute limit was spent: three shares of the limit that
+ *  add to one. The costliest account's share is of the limit, not the block. */
 export interface Capacity {
   /** The costliest account's share of the limit, or nought where none is known. */
   top: number;
@@ -51,16 +33,8 @@ export function capacity(block: ProducedBlock, cost: SlotCost | undefined): Capa
 /** The scheduler rows that mark a point every transaction passes through. */
 const CHAIN_KEYS = ["received", "buffered", "scheduled", "finished"] as const;
 
-/**
- * Which stage each counter belongs to, by key rather than by position.
- *
- * Listed rather than derived from where a row falls between two stage rows,
- * because on a BAM slot the first two rows are counted in batches and are not
- * stages at all, so there is no stage above them to fall after. A list also
- * fails loudly: the coverage test asserts every row the waterfall produces is
- * either a chain stage or in exactly one group here, so a counter added
- * upstream shows up as a failure rather than quietly vanishing from the drawer.
- */
+/** Which stage each counter belongs to, by key. A coverage test asserts every
+ *  waterfall row is a stage or in exactly one group. */
 const GROUPS: { key: string; title: string; members: string[] }[] = [
   {
     key: "intake",
@@ -93,30 +67,15 @@ const GROUPS: { key: string; title: string; members: string[] }[] = [
 export interface CounterGroup {
   key: string;
   title: string;
-  /**
-   * The group's counters: those above nought first, largest down, then the
-   * rest in the order the pipeline meets them.
-   *
-   * Sorted rather than left in pipeline order because the drawer is opened to
-   * answer "what went wrong", and on a slot with one bad counter among fifteen
-   * quiet ones the answer should not have to be hunted for. The quiet ones keep
-   * their canonical order below, where the order is the only thing making a
-   * column of noughts readable.
-   */
+  /** The group's counters: those above nought first, largest down, then the
+   *  rest in pipeline order. */
   rows: WaterfallRow[];
   /** How many rows are above nought, and so where the quiet ones begin. */
   hits: number;
   /** The group's own total, in transactions. */
   total: number;
-  /**
-   * Rows counted in batches rather than transactions, which BAM reports and a
-   * stock validator does not.
-   *
-   * Held apart from `rows` and left out of `total`. A batch carries however
-   * many transactions it carries, so adding one to the other, or drawing it as
-   * a share of the group, would be combining two units into a figure that means
-   * nothing.
-   */
+  /** Rows counted in batches, which BAM reports. Kept out of `rows` and
+   *  `total`: a different unit. */
   aside: WaterfallRow[];
 }
 
@@ -137,13 +96,8 @@ export interface SchedulerView {
   /** How many counters are above nought, out of how many there are. */
   nonZero: number;
   counters: number;
-  /**
-   * What finished, against the first figure counted in transactions.
-   *
-   * On a BAM slot that is `buffered` rather than `received`, because `received`
-   * is a count of batches there and dividing transactions by batches would
-   * produce a percentage of nothing.
-   */
+  /** What finished, against the first figure counted in transactions:
+   *  `buffered` on a BAM slot, where `received` is batches. */
   completion: number | null;
 }
 
@@ -207,14 +161,7 @@ export function schedulerView(w: SlotWaterfall): SchedulerView {
   };
 }
 
-/**
- * A counter's share of its own group, for the bar beside it.
- *
- * Of the group rather than of everything lost, so the bars answer "what did
- * this stage lose it to" and the group headers answer "which stage lost the
- * most". Drawn against the whole would leave every bar in a quiet group a
- * sliver regardless of how lopsided that group was on its own.
- */
+/** A counter's share of its own group, for the bar beside it. */
 export function shareOfGroup(group: CounterGroup, row: WaterfallRow): number {
   return group.total > 0 ? row.count / group.total : 0;
 }

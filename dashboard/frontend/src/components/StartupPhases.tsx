@@ -3,22 +3,9 @@ import { stakeSeen, SUPERMAJORITY_PERCENT } from "../startup";
 import type { StartupProgress } from "../types";
 import { Meter } from "./primitives";
 
-/**
- * The boot sequence in the order the validator moves through it, mirroring
- * `ValidatorStartProgress`.
- *
- * Several phases are conditional: a validator starting from a local ledger
- * downloads no snapshot, and one that is not waiting on a supermajority skips
- * that step. Rather than guess which will run, anything above the current
- * phase is shown as done or skipped, which is true either way.
- *
- * Two phases can say how far through they are and the rest cannot. Replay
- * counts slots and the supermajority wait counts stake; unpacking an archive
- * and building an accounts index report nothing at all while they run, and
- * there is no bank forks yet to read them from either. What every phase can
- * offer is how long it has taken, which on a boot that has stopped somewhere is
- * the figure being looked for anyway.
- */
+/** The boot sequence in the validator's order, mirroring
+ *  `ValidatorStartProgress`. Anything above the current phase is shown as
+ *  done or skipped. */
 const PHASES: Array<[string, string]> = [
   ["initializing", "Initializing"],
   ["searching_for_rpc_service", "Searching for an RPC service"],

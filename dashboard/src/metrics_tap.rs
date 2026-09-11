@@ -1,16 +1,8 @@
 //! Counters lifted from the metrics points the validator submits about itself.
-//!
-//! The counters behind most panels are private to the module keeping them and
-//! reset as they are reported, so this watches the points on their way out
-//! instead. The observer runs on the submitting thread: a name comparison, and
-//! for the few points wanted a scan of fields into atomics. Only the per-slot
-//! points take a lock, and those arrive once per leader slot.
-//!
-//! The points carry deltas, so accumulating them gives totals that only climb
-//! and can be differenced between readings like every other rate here. A few
-//! fields are levels instead: how something stands at the instant of the
-//! point. Those are replaced by the latest reading and never summed or
-//! differenced.
+//! The observer runs on the submitting thread: a name match, then atomics;
+//! only the per-slot points take a lock. Points carry deltas, accumulated into
+//! totals. A few fields are levels, replaced by the latest reading and never
+//! summed.
 
 use {
     serde::Serialize,
@@ -52,10 +44,8 @@ const TPU_VOTE_RECEIVER: &str = "tpu_vote_receiver";
 /// Packets seen, which for the shred receivers is shreds.
 const PACKETS_COUNT: &str = "packets_count";
 
-/// The scheduler's account of everything handed to it, reported once a second
-/// with its counters reset as it reports. Submitted only when there is something
-/// to report, and through `solana_metrics::submit` directly, so it arrives at
-/// any log level.
+/// The scheduler's counters, reported once a second and reset as reported.
+/// Submitted directly, so it arrives at any log level.
 const SCHEDULER_COUNTS: &str = "banking_stage_scheduler_counts";
 /// Why a worker's transaction never reached the block. Same worker, tick and
 /// `id` as the counts point, so the two are read into one set of counters.
@@ -82,10 +72,8 @@ const QUIC_TPU_VOTE: &str = "quic_streamer_tpu_vote";
 /// is left alone: votes never reach the scheduler below.
 const TPU_VERIFIER: &str = "tpu-verifier";
 
-/// The bundle stage's loop, on builds that have one. Bundles arrive over gRPC
-/// and skip the QUIC ports and sigverify, so this annotates the executed stage
-/// rather than adding one. Silent where there is no bundle stage, where it is
-/// idle, and under BAM, which supersedes it.
+/// The bundle stage's loop, on builds that have one. Silent without a bundle
+/// stage and under BAM.
 const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 
 /// The bundle stage's count for each leader slot: bundles it sanitised and
@@ -207,12 +195,9 @@ pub struct ProgramCacheCounters {
     pub water_level: AtomicU64,
 }
 
-/// One QUIC port: who was let in, what they sent, and what got through.
-///
-/// Most fields are reported with `swap(0)` and accumulate here.
-/// `total_incoming_connection_attempts` is reported with `load`, already
-/// cumulative, and is stored instead; the last two are levels. Accumulating the
-/// cumulative one would square it within a minute.
+/// One QUIC port: who was let in, what they sent, and what got through. Most
+/// fields are deltas and accumulate; `offered` arrives cumulative and is
+/// stored; the last two are levels.
 #[derive(Debug, Default)]
 pub struct QuicCounters {
     /// Connections offered, cumulative on the wire. The denominator for
@@ -382,10 +367,8 @@ pub struct MetricsTap {
     /// waterfalls.
     slot_costs: Mutex<VecDeque<SlotCost>>,
 
-    /// The last few hundred replayed slots, kept one by one rather than as
-    /// totals because the panel wants the worst slot as well as the mean. Keyed
-    /// by slot: the collector asks for one slot at a time, on the thread the
-    /// replay stage also takes this lock from.
+    /// The last few hundred replayed slots, keyed by slot. Kept one by one
+    /// because the panel wants the worst slot as well as the mean.
     replay_slots: Mutex<BTreeMap<Slot, ReplaySlotTimes>>,
 
     /// How each recent slot's shreds arrived, keyed by slot for the same reason.
@@ -478,14 +461,9 @@ pub struct BundleLanding {
     pub executed: u64,
 }
 
-/// One replayed slot's timings, in microseconds, of three kinds:
-///
-/// - `fetch`, `confirming` and `completing` are disjoint spans on replay's own
-///   thread and add up to a real duration;
-/// - `poh_verify`, `tx_verify` and `dispatch` are sums of overlapping
-///   asynchronous jobs, worth only relative to one another;
-/// - everything from `execute` down is thread time across the workers, which
-///   partitions cleanly into the CPU one slot costs.
+/// One replayed slot's timings, in microseconds. `fetch`, `confirming` and
+/// `completing` are disjoint spans on replay's thread; the verify fields are
+/// overlapping jobs; everything from `execute` down is worker thread time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReplaySlotTimes {
     /// The slot the point described, so a row can be asked for its own figure.
@@ -563,19 +541,15 @@ fn scheduler_source(point: &DataPoint) -> SchedulerSource {
     }
 }
 
-/// Whether a newly arrived report describes more of a slot's work than the one
-/// held. `scheduled` decides it, since only the enabled scheduler placed work;
-/// `finished` and `buffered` break ties on an empty slot. `received` is not
-/// consulted because the two schedulers count it in different units.
+/// Whether a new report describes more of a slot's work than the one held.
+/// `received` is left out: the two schedulers count it in different units.
 fn describes_more_work(new: &SchedulerTotals, held: &SchedulerTotals) -> bool {
     (new.scheduled, new.finished, new.buffered) > (held.scheduled, held.finished, held.buffered)
 }
 
-/// The scheduler's counters, in the order a transaction meets them: received,
-/// buffered, scheduled, finished, with the reasons the count falls between
-/// each. The first stretch is an identity the validator's own tests assert; the
-/// later ones are not, since the container holds a standing population across
-/// seconds.
+/// The scheduler's counters in the order a transaction meets them, with the
+/// reasons the count falls between each. Only the first stretch is an
+/// identity.
 #[derive(Debug, Default)]
 pub struct SchedulerCounters {
     /// Everything sigverify handed the scheduler.
@@ -655,17 +629,9 @@ pub struct ProgramCacheTotals {
     pub empty_entries: u64,
 }
 
-/// One window of a QUIC port's counters.
-///
-/// These do not partition the offer. The listener drops a connection without
-/// counting it in two places, either side of the handshake, and `handshook` is
-/// what tells the two silences apart:
-///
-/// ```text
-/// before = offered - (shed_all + shed_address + refused_full
-///                     + handshake_timeout + handshake_error + handshook)
-/// after  = handshook - (refused a table place + admitted)
-/// ```
+/// One window of a QUIC port's counters. They do not partition the offer:
+/// the listener drops uncounted on either side of the handshake, and
+/// `handshook` separates the two gaps.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicTotals {
     pub offered: u64,
@@ -933,10 +899,8 @@ impl MetricsTap {
             // losing a panel is not worth taking the validator down over.
             return;
         };
-        // One row per slot, keeping whichever report describes the block. A build
-        // running two schedulers reports every leader slot twice, and only the enabled
-        // one did the work; keeping the last to arrive emptied the panel on half of
-        // all slots.
+        // A build running two schedulers reports every leader slot twice; keep
+        // the report that did the work.
         if let Some(held) = slots.iter_mut().find(|held| held.slot == slot) {
             if describes_more_work(&waterfall.counts, &held.counts) {
                 *held = waterfall;
@@ -2636,11 +2600,8 @@ mod tests {
 
     #[test]
     fn test_the_shed_connections_account_for_the_offer() {
-        // The listener sheds in order, so every attempt is shed at one gate, fails the
-        // handshake, or is admitted, and the section is drawn against its own total.
-        // Not quite a partition: a second rate-limit after the handshake and a failed
-        // `accept()` are counted nowhere. This sample is built so neither happens;
-        // `handshook` measures them when they do.
+        // Every attempt is shed at one gate, fails the handshake, or is admitted.
+        // This sample avoids the two uncounted drops.
         let tap = MetricsTap::default();
         tap.observe(&named(QUIC_TPU, QUIC_POINT));
 

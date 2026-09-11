@@ -15,23 +15,8 @@ import { Card, chartY, Explain } from "./primitives";
 const WIDTH = 300;
 const HEIGHT = 38;
 
-/**
- * Whole-host interface throughput, summed over every non-loopback interface.
- *
- * Titled and labelled as the host's, not the validator's, because that is what
- * it measures: Linux attributes bytes to an interface and not to a process, so
- * anything else running on the box is counted too. On a dedicated validator the
- * two are near enough the same, which is exactly why the distinction has to be
- * on the card rather than left to the reader to guess.
- *
- * A row each, but one scale across both. Given a band of its own, a direction
- * moving ten kilobytes a second fills it exactly as a direction moving ten
- * megabytes does, and the picture would say the two are equals. Sharing the
- * scale is the reason both are worth putting on one card.
- *
- * The card renders nothing at all when the validator could not read the
- * counters, rather than showing zeros that would look like an idle network.
- */
+/** Whole-host interface throughput, one scale across both directions.
+ *  Renders nothing where the counters could not be read. */
 export function NetworkCard() {
   const store = useStore();
   const rates = store.get<{ received_per_second: number; sent_per_second: number }>(
@@ -103,16 +88,8 @@ export function NetworkCard() {
   );
 }
 
-/**
- * Anything the validator could actually name about the card, in the order it is
- * worth reading.
- *
- * Both of these come back as "unknown" where the lookup failed: the driver from
- * a device that would not answer, the model from a host with no PCI database to
- * resolve the id against. Left out rather than printed, because "unknown" in a
- * line naming hardware reads as a fault in the hardware rather than in the
- * lookup, and the tooltip still says what was and was not read.
- */
+/** What the validator could name about the card. "unknown" is left out
+ *  rather than printed. */
 export function xdpDetail(xdp: XdpConfig): string[] {
   return [xdp.driver, xdp.model].filter((part) => named(part));
 }
@@ -122,23 +99,9 @@ function named(part: string): boolean {
   return part !== "" && part !== "unknown";
 }
 
-/**
- * The whole tooltip: a sentence saying what the line is, then the two things
- * the line itself has no room for.
- *
- * The line names the mode, the driver and the model. The vendor and the kernel
- * are the rest of what was reported, and either can be missing on a host that
- * could not look it up, so this says whichever it has and stops at the sentence
- * where it has neither.
- *
- * The kernel is checked by prefix rather than for an exact "unknown", because a
- * failed `uname` is reported as "unknown" followed by the error it got, and
- * printed after the word kernel that reads as a version number.
- *
- * The sentence is built here rather than in the component so that the casing is
- * covered by the same tests as the content. With no vendor to lead it, the
- * kernel starts the second sentence and has to be capitalised to do so.
- */
+/** The tooltip: what the line is, then the vendor and kernel where known.
+ *  The kernel is matched by prefix: a failed `uname` reports "unknown" plus
+ *  the error. */
 export function xdpTooltip(xdp: XdpConfig): string {
   const sentence = "How this validator's XDP transmit path is set up.";
   const parts = [];
@@ -151,19 +114,8 @@ export function xdpTooltip(xdp: XdpConfig): string {
   return `${sentence} ${aside.charAt(0).toUpperCase()}${aside.slice(1)}.`;
 }
 
-/**
- * How the transmit path is set up, where it is set up at all.
- *
- * One line, no figures, and nothing on it moves. It belongs on this card
- * because it is about the interface the card is already measuring, and it
- * belongs at the foot because it is the answer to a question asked once when
- * the flags went on rather than something to watch.
- *
- * Untoned throughout. Copy is the slower path, but the card cannot know whether
- * that was the intent or an omission, and an amber row would be calling a
- * working configuration a fault. The mode is the only word set in the body
- * colour, because it is the one thing an operator turned a flag on to get.
- */
+/** How the transmit path is set up, where it is at all. Untoned: copy mode
+ *  may be intended. */
 function Xdp({ xdp }: { xdp: XdpConfig }) {
   const detail = xdpDetail(xdp);
 
@@ -185,12 +137,8 @@ function Xdp({ xdp }: { xdp: XdpConfig }) {
   );
 }
 
-/**
- * How much of egress two senders account for, drawn to the width of the line
- * above it. The rest is hatched and named as unattributed rather than left to
- * read as a third measurement: it is the shred path over XDP, which counts no
- * bytes.
- */
+/** How much of egress two senders account for. The rest is hatched as
+ *  unattributed: the shred path over XDP counts no bytes. */
 function Split({ total, split }: { total: number; split: EgressSplit }) {
   const shares = egressShares(total, split);
   const whole = Math.max(total, shares.measured, 1);
@@ -231,15 +179,8 @@ function Split({ total, split }: { total: number; split: EgressSplit }) {
   );
 }
 
-/**
- * One direction: what it is doing now, the shape of the last minute, and what
- * it has averaged.
- *
- * Every figure on the row is printed in the unit the current reading calls for,
- * rather than each choosing its own. Sized separately, an average of 1.02 MB/s
- * prints beside a current 980 KB/s as "980" and "avg 1.02", and the larger
- * number looks like the smaller one.
- */
+/** One direction: now, the last minute's shape, and the average, all in the
+ *  unit the current reading calls for. */
 function Row({
   label,
   kind,
@@ -324,10 +265,8 @@ function Spark({
     .map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`)
     .join(" ");
 
-  // Closed under the samples themselves rather than across the full width. Shut
-  // at the edges instead, a feed that stopped arriving would draw a long wedge
-  // sloping to nothing at the right, which reads as throughput ramping down to
-  // zero rather than as a chart with no news.
+  // Closed under the samples, so a stalled feed does not draw a wedge to
+  // nothing at the right.
   const first = points[0][0];
   const last = points[points.length - 1][0];
   const area = `${line} L${last.toFixed(1)},${HEIGHT} L${first.toFixed(1)},${HEIGHT} Z`;

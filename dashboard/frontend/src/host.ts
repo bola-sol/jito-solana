@@ -1,44 +1,21 @@
-/**
- * Reading the machine's figures, and deciding when each starts to matter.
- *
- * Kept out of the component so the thresholds are in one place and can be
- * tested, in the same way as the cache tones and the replay rows.
- */
+/** The machine's figures and the thresholds at which each starts to matter. */
 
 import type { DeviceLoad, FilesystemUsage, Host } from "./types";
 
 /** How a figure is coloured, matching the tones the rest of the page uses. */
 export type HostTone = "good" | "warn" | "bad" | "muted";
 
-/**
- * A filesystem's share used, past which it wants noticing.
- *
- * Amber leaves room to act and red means act now. A validator that fills its
- * ledger partition stops, so this is one of the few places on the dashboard
- * where the panel is trying to reach someone before the thing happens rather
- * than describe it afterwards.
- */
+/** A filesystem's share used, past which it wants noticing. A full ledger
+ *  partition stops the validator. */
 export const FULL_WARN = 0.8;
 export const FULL_BAD = 0.9;
 
-/**
- * A device's duty cycle, past which it is running out of throughput.
- *
- * Not a fill, despite also being a percentage. At 0.85 a device is close to
- * having no idle time left to absorb a burst, which is when queueing starts and
- * `wait` climbs.
- */
+/** A device's duty cycle, past which queueing starts and `wait` climbs. */
 export const BUSY_WARN = 0.7;
 export const BUSY_BAD = 0.85;
 
-/**
- * Milliseconds a request may average before it is worth looking at.
- *
- * Set for NVMe, where a healthy device answers in tenths of a millisecond. A
- * whole millisecond is an order of magnitude out and shows up as replay falling
- * behind before anything else on the page moves. On spinning disks these
- * numbers would be nonsense, but a validator is not run on those.
- */
+/** Milliseconds a request may average before it is worth looking at. Set for
+ *  NVMe, which answers in tenths of one. */
 export const WAIT_WARN_MS = 1;
 export const WAIT_BAD_MS = 5;
 
@@ -46,28 +23,13 @@ export const WAIT_BAD_MS = 5;
 export const AVAILABLE_WARN = 0.1;
 export const AVAILABLE_BAD = 0.05;
 
-/**
- * Share of the last second the cores together were busy, past which a burst
- * has nowhere to go.
- *
- * A duty cycle over every core, like a device's, and read the same way: what
- * matters is the idle time left to absorb a leader slot or a repair storm,
- * not the figure itself. A pinned PoH core runs near full by design and is
- * one core of many, so it barely moves this.
- */
+/** Share of the second the cores were busy, past which a burst has nowhere
+ *  to go. */
 export const CPU_WARN = 0.8;
 export const CPU_BAD = 0.9;
 
-/**
- * What is genuinely spoken for, and what is only being borrowed.
- *
- * There are two conventions for "used" and they disagree by tens of gigabytes.
- * The one most tools print is `total - free`, which counts the page cache and
- * makes a healthy validator look nearly out of memory. The one used here is
- * `total - free - reclaimable`, so the large figure is memory that is actually
- * committed, and the cache is drawn beside it as the part the kernel gives back
- * on demand.
- */
+/** Memory used as `total - free - reclaimable`, so the page cache is drawn
+ *  beside the committed figure rather than inside it. */
 export function memoryUse(host: Host): {
   inUse: number;
   reclaimable: number;
@@ -126,23 +88,12 @@ export function availableTone(available: number, total: number): HostTone {
   return "good";
 }
 
-/**
- * Swap in use is amber whatever the amount.
- *
- * The threshold is zero on purpose. A validator that has begun swapping is
- * already being hurt by it, and there is no healthy quantity to allow for.
- */
+/** Swap in use is amber whatever the amount: there is no healthy quantity. */
 export function swapTone(used: number): HostTone {
   return used > 0 ? "warn" : "good";
 }
 
-/**
- * Which way load is going, from the three averages.
- *
- * The one-minute figure alone says nothing about direction, and direction is
- * most of what an operator wants from it: 12 on the way down is the end of
- * something, 12 on the way up is the start.
- */
+/** Which way load is going, from the three averages. */
 export function loadTrend(host: Host): "rising" | "falling" | "steady" {
   const drift = host.load_one - host.load_fifteen;
   // A tenth of a core is noise on any machine a validator runs on.
@@ -152,13 +103,7 @@ export function loadTrend(host: Host): "rising" | "falling" | "steady" {
   return "steady";
 }
 
-/**
- * What to call a device's row.
- *
- * The device name is the thing `iostat` and the kernel use, so it leads. The
- * roles follow, and there can be several: two mounts on one disk are one row,
- * because they compete for one queue.
- */
+/** A device's row label: the kernel's name, then the roles mounted on it. */
 export function deviceLabel(device: DeviceLoad): string {
   return device.roles.join(" and ");
 }

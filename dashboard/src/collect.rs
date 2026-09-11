@@ -1,10 +1,6 @@
-//! Samples validator state five times a second and publishes what changed.
-//!
-//! Everything reads through handles the validator already holds, and no lock
-//! is held longer than it takes to clone an `Arc` out. This is the slot half
-//! of the sampling, the half that reads the blockstore and the accounts
-//! database; the once-a-second readings are in [`crate::meters`], on their own
-//! thread, so a slow read here does not stall every panel.
+//! Samples slot state five times a second and publishes what changed. Locks
+//! are held only long enough to clone an `Arc` out. The once-a-second readings
+//! run on their own thread in [`crate::meters`].
 
 use {
     crate::{
@@ -62,10 +58,8 @@ const UPCOMING_SLOTS: u64 = 32;
 /// slots in eight hundred.
 const PRODUCED_BLOCKS: usize = 500;
 
-/// Slots of arrival times kept, about five minutes. Counted in slots rather
-/// than time so the window does not thin out during a stall, which is when it
-/// gets read. Both the strip's readout and the epoch countdown read spans of
-/// it.
+/// Slots of arrival times kept, about five minutes. In slots rather than time
+/// so the window does not thin out during a stall.
 const SLOT_TIME_WINDOW_SLOTS: usize = 750;
 
 /// Span the slot strip's readout averages over. Short enough to follow the
@@ -140,9 +134,7 @@ pub struct VersionShare {
 }
 
 /// Stake, version and address for the leaders on screen only, so the table is
-/// bounded by the page rather than the validator set. Name and icon are on the
-/// slot rows already. The gossip address is public within the cluster, but
-/// this publishes it to anyone who can reach the page.
+/// bounded by the page rather than the validator set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Peer {
     pub identity: String,
@@ -184,10 +176,9 @@ pub struct EpochInfo {
     /// Every leader of this epoch, in the order they first take a turn. Sent once
     /// rather than on every slot.
     pub leaders: Vec<String>,
-    /// One index into `leaders` per run of consecutive slots, so a slot's leader is
-    /// `leaders[turns[(slot - start_slot) / NUM_CONSECUTIVE_LEADER_SLOTS]]`. Empty
-    /// until the schedule is derived, and empty rather than partial where it could
-    /// not be read as whole turns.
+    /// One index into `leaders` per run of consecutive slots:
+    /// `leaders[turns[(slot - start_slot) / NUM_CONSECUTIVE_LEADER_SLOTS]]`.
+    /// Empty, never partial, until the schedule is derived.
     pub turns: Vec<u16>,
 
     /// Consensus limits every block of this epoch is measured against. Here rather
@@ -276,11 +267,8 @@ pub struct Collector {
     /// one is published; the previous is kept for pages reading back across the
     /// boundary.
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    /// The epoch, identity and whether the schedule was known when the epoch
-    /// message was last built. It is a hundred thousand turns on mainnet, so it is
-    /// built once per epoch rather than per poll. The schedule flag lets a late
-    /// schedule still be published; the identity lets a validator that boots on a
-    /// dummy identity and swaps get its real leader slots.
+    /// The epoch, identity and schedule-known flag the epoch message was last
+    /// built for; any of them changing rebuilds it.
     epoch_published: Option<(Epoch, Pubkey, bool)>,
     /// This validator's leader slots for the epoch the root is in, walked by the
     /// skip rate as the root passes each. Rebuilt with `skip_next_index` when the
@@ -308,9 +296,8 @@ pub struct Collector {
     /// decides whether there is anything to discard.
     replayed_behind: bool,
     /// Whether a tip ahead of replay has been seen since startup, and whether
-    /// replay has since drawn level with it. The blockstore keeps optimistic slots
-    /// from before a restart, so the first tip read is stale and below the
-    /// snapshot; level with that is not caught up.
+    /// replay has since drawn level with it. The first tip read after a restart
+    /// is stale, so level with that is not caught up.
     trailed_cluster: bool,
     caught_cluster: bool,
     /// The epoch end being counted down to, held so the readout does not chase its
@@ -490,10 +477,8 @@ impl Collector {
         self.collect_epoch(&working_bank);
         self.collect_startup_progress();
 
-        // The five-second tier is where the cost is, walking every vote account and
-        // each newly frozen slot's write set, and is skipped while nobody is
-        // connected. Only this tier: the tiers above feed the slot ring, and a gap
-        // there would have the collector walking over slots it never watched.
+        // The slow tier walks every vote account, so it waits for a viewer. The
+        // tiers above feed the slot ring and must not skip.
         let subscribers = self.publisher.subscriber_count();
         if subscribers != self.subscribers {
             log::debug!(
@@ -673,12 +658,8 @@ impl Collector {
         }
     }
 
-    /// Records, once, the point from which slot timings describe the cluster. A
-    /// validator replaying towards the tip runs through slots faster than they were
-    /// produced, and those intervals would drag the epoch countdown down. The
-    /// marker is set when the highest slot held comes within a few slots of what
-    /// has been replayed, and never cleared: a validator that later falls behind
-    /// has genuinely slow slots.
+    /// Records, once, the slot from which timings describe the cluster rather
+    /// than a replay burst. Never cleared: falling behind later is real.
     fn mark_caught_up(&mut self, highest_slot: Slot, completed: Slot) {
         if self.caught_up_at.is_some() {
             return;
@@ -764,10 +745,8 @@ impl Collector {
         );
     }
 
-    /// Publishes who leads the slots that have not happened yet, as far as the
-    /// schedule is known. Anchored on the highest slot bank forks holds so the list
-    /// starts past the slot being worked on. Returns the leaders published, for the
-    /// peer table.
+    /// Publishes who leads the slots past the highest held. Returns the leaders
+    /// published, for the peer table.
     fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<String> {
         let me = self.ctx.identity();
         let first = highest_slot.saturating_add(1);
@@ -893,11 +872,8 @@ impl Collector {
         let mut captured = false;
         for (slot, bank) in frozen {
             let slot = *slot;
-            // Transaction counts are cumulative along a fork, so a block's own work is its
-            // difference from its parent. Not `Bank::executed_transaction_count`, which
-            // treats a missing parent as zero and yields the running total again. A pruned
-            // parent leaves the figure alone; by then the bank was frozen many ticks ago
-            // and carries a correct count.
+            // Counts are cumulative along a fork; a block's own is the difference
+            // from its parent. A pruned parent leaves the figure alone.
             let parent = bank.parent();
             let counts = parent.as_ref().map(|parent| {
                 (
@@ -1094,10 +1070,8 @@ impl Collector {
         let mine = vote_accounts.get(&self.ctx.vote_account);
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
 
-        // Whether this process is the one allowed to vote with that account. The
-        // identity changes under `set-identity`; the vote account is fixed at startup.
-        // After a failover the account is voted from elsewhere, and reading its last
-        // vote would report another machine's health.
+        // After a failover the vote account is voted from another machine, whose
+        // last vote must not be read as this one's health.
         let identity = self.ctx.identity();
         let voting = mine.is_some_and(|(_, account)| *account.node_pubkey() == identity);
         self.voting = voting;
@@ -1142,11 +1116,8 @@ impl Collector {
             .vote_slot
             .publish(&self.publisher, TOPIC_SUMMARY, "vote_slot", last_vote);
 
-        // How far this node's replay trails the cluster. The one figure not taken from
-        // this validator's own view of the chain, which lags when replay lags: a node
-        // hundreds of slots back votes promptly on a stale tip and passes every other
-        // check. `collect_slot_positions` ran earlier this tick, so the completed slot
-        // is current.
+        // Measured against the cluster's tip, not this node's own view, which
+        // lags when replay lags.
         let behind_cluster = cluster_tip.map(|tip| tip.saturating_sub(self.last_completed_slot));
         self.debounces.behind_cluster.publish(
             &self.publisher,
@@ -1237,10 +1208,8 @@ impl Collector {
         start_slot: Slot,
         end_slot: Slot,
     ) {
-        // The slot the panel's progress bar is drawn from, so the two halves of the
-        // card agree. The working bank's slot, because nothing has frozen yet just
-        // after startup, and a completed slot of zero would put the epoch end years
-        // out.
+        // The same slot the progress bar uses. Nothing has frozen just after
+        // startup, and a completed slot of zero would put the end years out.
         let completed = self.last_completed_slot.max(bank.slot());
         let remaining_slots = end_slot.saturating_sub(completed);
         let ahead = Duration::from_nanos(
@@ -1274,11 +1243,9 @@ impl Collector {
         );
     }
 
-    /// How long a slot is taking, on the best evidence available: the epoch's own
-    /// rate, measured over every slot since it began and from the cluster's clock,
-    /// once enough of it has run; the sliding window before that; and the
-    /// configured duration before this validator has caught up, when replayed slots
-    /// record the download rather than the cluster.
+    /// Slot duration on the best evidence: the epoch's own rate once enough of
+    /// it has run, the sliding window before that, the configured duration
+    /// before catch-up.
     fn cluster_slot_nanos(&self, bank: &Bank, start_slot: Slot, completed: Slot) -> u64 {
         epoch_anchored_nanos(&bank.clock(), start_slot, completed)
             .or_else(|| {
@@ -1317,10 +1284,8 @@ impl Collector {
         })
     }
 
-    /// The epoch's leader schedule as a table of leaders and one index per turn,
-    /// recovered by stepping over `get_slot_leaders` at the schedule's own stride.
-    /// Empty, never partial, if the length does not come out as whole turns: a
-    /// schedule off by a factor would name the wrong leader for every slot.
+    /// The epoch's leader schedule as a leader table and one index per turn.
+    /// Empty, never partial, if the length is not whole turns.
     fn epoch_turns(&self, epoch: Epoch, slots_in_epoch: u64) -> (Vec<String>, Vec<u16>) {
         let Some(schedule) = self
             .ctx
@@ -1363,10 +1328,8 @@ impl Collector {
         (leaders, turns)
     }
 
-    /// This validator's leader slots in `epoch`, ascending. The epoch is passed
-    /// in because the panel wants the cluster's epoch and the skip rate wants the
-    /// root's, and they differ after a rollover. `None` means the schedule is not
-    /// known yet, which is not the same as an empty list.
+    /// This validator's leader slots in `epoch`, ascending. `None` means the
+    /// schedule is not known yet, which is not an empty list.
     fn leader_slots_in_epoch(&self, bank: &Bank, epoch: Epoch) -> Option<Vec<Slot>> {
         let epoch_schedule = bank.epoch_schedule();
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
@@ -1458,10 +1421,8 @@ impl Collector {
         }
     }
 
-    /// Picks up validator names published since the last sweep. Each bank is asked
-    /// only for the config accounts written in its own slot, and every bank frozen
-    /// since the last tick is swept, since bank forks drops banks once rooted. The
-    /// cache lock is taken only to merge, and only when a scan found something.
+    /// Picks up validator names written since the last sweep, from each newly
+    /// frozen bank's own slot.
     fn collect_validator_info(&mut self, frozen: &[(Slot, Arc<Bank>)]) {
         let mut found = Vec::new();
         for (slot, bank) in frozen {
@@ -1697,10 +1658,8 @@ fn health_of(
     Health { replay, vote }
 }
 
-/// How the cluster's stake divides across client versions, counted over staked
-/// identities so the two cards add up to each other. A staked identity gossip
-/// is not hearing from has no version and is not the folded tail. Releases are
-/// borrowed from the gossip strings; only the surviving rows allocate.
+/// Stake by client version, counted over staked identities so the two cards
+/// add up. A staked identity gossip cannot see has no version.
 fn version_shares(
     staked: &HashMap<Pubkey, u64>,
     versions: &HashMap<Pubkey, String>,
@@ -1744,10 +1703,8 @@ fn version_shares(
     shares
 }
 
-/// Mean milliseconds per slot across a window of arrival times, in
-/// nanoseconds. A true mean between the ends of the span, so it does not drift
-/// and needs no seeding. `span_ms` bounds how far back from the newest sample
-/// to reach; `u64::MAX` reads the whole window.
+/// Mean slot time over the newest `span_ms` of arrival times, in nanoseconds;
+/// `u64::MAX` reads the whole window.
 fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u64> {
     let (last_slot, last_arrival) = window.back().copied()?;
     // The oldest sample inside the span. A span holding only the newest is
@@ -1828,10 +1785,8 @@ fn arrival(fill: ShredFill) -> ShredArrival {
     }
 }
 
-/// The rate this epoch has actually run at, from the cluster's own clock: both
-/// timestamps are stake-weighted medians agreed on chain, and the base grows
-/// all epoch, which is what makes it settle. `None` until the clock's
-/// whole-second granularity matters less than the answer.
+/// The epoch's own slot rate from the cluster clock. `None` until enough slots
+/// have run for the clock's whole seconds not to matter.
 fn epoch_anchored_nanos(clock: &Clock, start_slot: Slot, completed: Slot) -> Option<u64> {
     let slots = completed.saturating_sub(start_slot);
     if slots < EPOCH_RATE_MIN_ELAPSED_SLOTS {
@@ -1846,11 +1801,8 @@ fn epoch_anchored_nanos(clock: &Clock, start_slot: Slot, completed: Slot) -> Opt
     elapsed.checked_mul(1_000_000_000)?.checked_div(slots)
 }
 
-/// The epoch end to count down to, holding the previous answer unless the new
-/// one has moved further than `allowance`. The estimate underneath is a slot
-/// duration multiplied by hundreds of thousands of slots, so it swings by
-/// minutes on nothing. The allowance scales with the time left; see
-/// [`EPOCH_END_DRIFT_DIVISOR`].
+/// The epoch end to count down to: the held answer unless the estimate has
+/// moved more than `allowance`. See [`EPOCH_END_DRIFT_DIVISOR`].
 fn steady_epoch_end(
     held: Option<SystemTime>,
     estimate: SystemTime,

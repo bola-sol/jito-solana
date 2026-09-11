@@ -1,28 +1,13 @@
-/**
- * The validator's threads over the last minute, as the host card draws them.
- *
- * The validator sends one sample a second: the busiest groups of threads by
- * their minute's mean, each as the share of the second it was on a core and
- * the share it spent waiting for one, plus one row for everything else. This
- * turns those into rows with a minute of bars each, and holds the tone rules,
- * so both can be tested without a DOM.
- */
+/** The validator's threads over the last minute, as the host card draws
+ *  them: one sample a second into rows with a minute of bars each. */
 
 import type { ThreadsSample } from "./types";
 
 /** Samples the card draws, one a second. */
 export const THREADS_WINDOW = 60;
 
-/**
- * The one thread whose healthy state is a whole core.
- *
- * PoH hashes continuously between ticks and is meant to hold its core, so for
- * it a low reading is the bad one: below this share it is losing the core.
- * The only tone on the card. Waiting is left untoned throughout: the
- * scheduler charges wakeup latency to it, so a thread that wakes thousands of
- * times a second reads a percent or two with no contention at all, and what a
- * bad figure looks like is not yet known.
- */
+/** The one thread whose healthy state is a whole core: PoH, toned when it
+ *  loses it. The only tone on the card. */
 export const POH_THREAD = "solPohTickProd";
 export const POH_LOW = 0.9;
 
@@ -79,10 +64,7 @@ export function onCpuTone(row: ThreadRow): "warn" | null {
   return row.poh && row.now < POH_LOW ? "warn" : null;
 }
 
-/**
- * What the pinned column says. The word travels with the value, because a
- * bare "2" under a heading reads as a count of cores rather than which one.
- */
+/** What the pinned column says; "core 2" rather than a bare number. */
 export function pinnedLabel(cores: string | null): string {
   if (cores === null) return "any";
   return /[-,]/.test(cores) ? `cores ${cores}` : `core ${cores}`;

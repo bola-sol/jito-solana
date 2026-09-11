@@ -79,9 +79,7 @@ impl ProducedRing {
     }
 
     /// Records a block, keeping the newest `capacity`. Returns false for a slot
-    /// already held, since a bank stays frozen for many ticks and only the first
-    /// sighting has the block's figures. Sorted on insert because bank forks is
-    /// walked as a map.
+    /// already held: only the first sighting has the block's figures.
     pub fn insert(&mut self, block: ProducedBlock) -> bool {
         if self.contains(block.slot) {
             return false;

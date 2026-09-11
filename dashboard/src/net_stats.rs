@@ -1,8 +1,5 @@
-//! Host network counters from `/proc/net/dev`. `SystemMonitorService` reads
-//! the same file and refuses to start without it, unless the operator passed
-//! `--no-os-network-stats-reporting`, in which case this reports nothing
-//! rather than zeros. These are host-wide interface totals, not the
-//! validator's own traffic.
+//! Host-wide interface totals from `/proc/net/dev`, not the validator's own
+//! traffic. Reports nothing rather than zeros where the file is unreadable.
 
 use std::io;
 

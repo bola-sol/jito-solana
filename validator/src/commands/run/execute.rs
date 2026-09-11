@@ -72,6 +72,7 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
+    solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationSender,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
     solana_streamer::{
@@ -818,6 +819,13 @@ pub fn execute(
     let mut extra_bank_notification_senders = Vec::new();
     let tip_router_service_setup =
         tip_router::setup(matches, &mut extra_bank_notification_senders)?;
+    // Frozen banks reach the collector from replay rather than by polling bank
+    // forks, which under alpenglow prunes a bank within a slot of freezing.
+    let dashboard_banks = dashboard_config.is_some().then(|| {
+        let (sender, receiver) = BankNotificationSender::channel("dashboard");
+        extra_bank_notification_senders.push(sender);
+        receiver
+    });
 
     let block_engine_config = Arc::new(ArcSwap::from_pointee(BlockEngineConfig {
         block_engine_url: value_of(matches, "block_engine_url").unwrap_or_default(),
@@ -1288,16 +1296,19 @@ pub fn execute(
         }
     };
     if let Some(dashboard_service) = &mut dashboard_service
-        && let Err(err) = dashboard_service.attach(DashboardContext {
-            cluster_info: validator.cluster_info.clone(),
-            bank_forks: validator.bank_forks.clone(),
-            block_commitment_cache: validator.block_commitment_cache.clone(),
-            blockstore: validator.blockstore.clone(),
-            leader_schedule_cache: validator.leader_schedule_cache.clone(),
-            vote_account,
-            highest_finalized: validator.highest_finalized.clone(),
-            account_paths: validator_config.account_paths.clone(),
-        })
+        && let Err(err) = dashboard_service.attach(
+            DashboardContext {
+                cluster_info: validator.cluster_info.clone(),
+                bank_forks: validator.bank_forks.clone(),
+                block_commitment_cache: validator.block_commitment_cache.clone(),
+                blockstore: validator.blockstore.clone(),
+                leader_schedule_cache: validator.leader_schedule_cache.clone(),
+                vote_account,
+                highest_finalized: validator.highest_finalized.clone(),
+                account_paths: validator_config.account_paths.clone(),
+            },
+            dashboard_banks,
+        )
     {
         validator.close();
         tip_router::join(tip_router_service);

@@ -1,10 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
-import { certsTitle, matchesQuery, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
+import { matchesQuery, rewardTitle, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
-import type { EpochInfo, Peer, SlotEntry, StakeSummary, TipRates, VoteCerts } from "../types";
+import type { EpochInfo, Peer, Reward, SlotEntry, StakeSummary, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import { Copyable } from "./Copyable";
@@ -399,7 +399,7 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
         <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />
       </span>
       {alpenglow ? (
-        <VoteMarks certs={entry?.certs} />
+        <VoteMark reward={entry?.reward ?? null} />
       ) : (
         <span>{votes === null ? "—" : count(votes)}</span>
       )}
@@ -430,18 +430,19 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
   );
 }
 
-/** Under alpenglow, whether this node's vote was in the slot's finalization
- *  certificate and then its reward certificate. */
-function VoteMarks({ certs }: { certs: VoteCerts | undefined }) {
+/** Under alpenglow, whether this node's vote was paid for the slot. */
+function VoteMark({ reward }: { reward: Reward | null }) {
+  const [glyph, tone] =
+    reward === "paid"
+      ? ["✓", "is-yes"]
+      : reward === "unpaid"
+        ? ["✗", "is-no"]
+        : reward === "no_certificate"
+          ? ["○", "is-none"]
+          : ["–", "is-unknown"];
   return (
-    <span className="vote-marks" title={certsTitle(certs)}>
-      <VoteMark verdict={certs?.finalized ?? null} />
-      <VoteMark verdict={certs?.rewarded ?? null} />
+    <span className="vote-marks" title={rewardTitle(reward)}>
+      <i className={`vote-mark ${tone}`}>{glyph}</i>
     </span>
   );
-}
-
-function VoteMark({ verdict }: { verdict: boolean | null }) {
-  if (verdict === null) return <i className="vote-mark is-unknown">–</i>;
-  return verdict ? <i className="vote-mark is-yes">✓</i> : <i className="vote-mark is-no">✗</i>;
 }

@@ -24,15 +24,14 @@ export interface SlotEntry {
   /** Milliseconds from the slot's first shred to replay finishing it. Null for
    *  a bank this validator built. */
   replayed_millis: number | null;
-  /** Whether this node's vote was in the slot's certificates. Only written under alpenglow. */
-  certs: VoteCerts;
+  /** Whether this node's vote was paid for the slot. Null until the reward
+   *  certificate has been seen, and always under TowerBFT. */
+  reward: Reward | null;
 }
 
-/** Each null until that certificate has been seen. */
-export interface VoteCerts {
-  finalized: boolean | null;
-  rewarded: boolean | null;
-}
+/** The reward certificate's verdict; no_certificate means the leader eight
+ *  slots on produced no block, so nobody was paid. */
+export type Reward = "paid" | "unpaid" | "no_certificate";
 
 /** How a block's shreds arrived. Outside `BlockDetail` because a slot fills
  *  before it freezes. */

@@ -12,7 +12,7 @@ function held(slot: number): SlotEntry {
     time_millis: null,
     shreds: null,
     replayed_millis: null,
-    certs: { finalized: null, rewarded: null },
+    reward: null,
   };
 }
 

@@ -101,12 +101,10 @@ impl TipMeter {
         self.residual
     }
 
-    /// What `bank` paid in tips, differenced against its parent. The caller
-    /// supplies the parent because a slot number is not a chain position, and
-    /// records nothing where the parent has been pruned.
-    pub fn measure(&mut self, bank: &Bank, parent: &Bank) -> u64 {
+    /// What `bank` paid in tips, differenced against `before`, its parent's
+    /// total. The caller keeps that, since the parent may be pruned by now.
+    pub fn measure(&mut self, bank: &Bank, before: u64) -> u64 {
         let now = self.total(bank);
-        let before = self.total(parent);
         self.floor = self.floor.min(now);
 
         if now >= before {
@@ -125,7 +123,8 @@ impl TipMeter {
         paid
     }
 
-    fn total(&self, bank: &Bank) -> u64 {
+    /// What the tip accounts hold in `bank`.
+    pub fn total(&self, bank: &Bank) -> u64 {
         self.accounts
             .iter()
             .map(|account| bank.get_balance(account))

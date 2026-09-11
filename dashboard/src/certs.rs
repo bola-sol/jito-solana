@@ -1,8 +1,11 @@
-//! Whether this node's vote made each slot's certificates, read from the
-//! footers alpenglow leaders write into their blocks.
+//! Whether this node's vote was paid for each slot, read from the reward
+//! certificates alpenglow leaders write into their block footers.
 
 use {
-    agave_votor_messages::reward_certificate::NUM_SLOTS_FOR_REWARD,
+    agave_votor_messages::reward_certificate::{
+        NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate,
+    },
+    serde::Serialize,
     solana_clock::Slot,
     solana_entry::block_component::{
         BlockComponent, BlockFooterV1, VersionedBlockFooter, VersionedBlockMarker,
@@ -17,26 +20,26 @@ use {
 /// block. Reading from there costs two sets of shreds whatever the block holds.
 const FOOTER_SPAN: u64 = 2 * DATA_SHREDS_PER_FEC_BLOCK as u64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cert {
-    /// Embedded by a later leader, for the slot it finalizes.
-    Finalization,
-    /// Embedded by the leader eight slots on, for the slot it pays.
-    Reward,
+/// What the reward certificate for a slot said about this node's vote. The
+/// certificate for slot N can only be written by the leader of slot N+8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reward {
+    Paid,
+    Unpaid,
+    /// The leader of slot N+8 produced no block, so nobody was paid for N.
+    NoCertificate,
 }
 
-/// One certificate's verdict on this node's vote for a slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mark {
     pub slot: Slot,
-    pub cert: Cert,
-    pub with_vote: bool,
+    pub reward: Reward,
 }
 
 enum Block {
     Footer(Box<BlockFooterV1>),
-    /// At or below the root with no block, so its reward certificate was
-    /// never written and nobody was paid for the slot it would have covered.
+    /// At or below the root with no block.
     Missing,
     /// Above the root and not full yet.
     Pending,
@@ -44,13 +47,9 @@ enum Block {
     Opaque,
 }
 
-/// This node's rank in the epoch stakes that cover `slot`, and how many ranks
-/// there are. `None` where it holds no stake there.
-type RankOf<'a> = dyn Fn(Slot) -> Option<(usize, usize)> + 'a;
-
-/// Reads the footers of `from..=to` and returns what they say about this
-/// node's vote, with the last slot read. Stops at the first slot still
-/// filling.
+/// Reads the footers of `from..=to` for the reward certificates they carry,
+/// returning a mark per certificate and the last slot read. Stops at the
+/// first slot still filling.
 pub fn walk(
     blockstore: &Blockstore,
     bank: &Bank,
@@ -63,19 +62,31 @@ pub fn walk(
     let mut marks = Vec::new();
     let mut read_to = None;
     for slot in from..=to {
+        let Some(reward_slot) = slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
+            read_to = Some(slot);
+            continue;
+        };
+        let Some((rank, len)) = my_rank(reward_slot) else {
+            read_to = Some(slot);
+            continue;
+        };
         match read_block(blockstore, slot, root) {
-            Block::Footer(footer) => marks.extend(footer_marks(*footer, slot, &my_rank)),
-            Block::Missing => {
-                if let Some(reward_slot) = slot.checked_sub(NUM_SLOTS_FOR_REWARD)
-                    && my_rank(reward_slot).is_some()
-                {
+            Block::Footer(footer) => {
+                let (notar, skip) = (
+                    footer.notar_reward_cert.as_ref(),
+                    footer.skip_reward_cert.as_ref(),
+                );
+                if let Some(reward) = reward_of(notar, skip, rank, len) {
                     marks.push(Mark {
                         slot: reward_slot,
-                        cert: Cert::Reward,
-                        with_vote: false,
+                        reward,
                     });
                 }
             }
+            Block::Missing => marks.push(Mark {
+                slot: reward_slot,
+                reward: Reward::NoCertificate,
+            }),
             Block::Pending => break,
             Block::Opaque => {}
         }
@@ -84,6 +95,8 @@ pub fn walk(
     (read_to, marks)
 }
 
+/// This node's rank in the epoch stakes that cover `slot`, and how many ranks
+/// there are. `None` where it holds no stake there.
 fn rank_of(bank: &Bank, vote_account: &Pubkey, slot: Slot) -> Option<(usize, usize)> {
     let map = bank.get_rank_map(slot)?;
     let rank = map.get_rank_for_vote_pubkey(vote_account)?;
@@ -117,51 +130,24 @@ fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
         .map_or(Block::Opaque, |footer| Block::Footer(Box::new(footer)))
 }
 
-/// What the footer of `slot` says. The finalization certificate names its own
-/// slot; the reward certificates name theirs, or cover the slot eight back
-/// when the leader had no votes to write.
-fn footer_marks(footer: BlockFooterV1, slot: Slot, rank_of: &RankOf) -> Vec<Mark> {
-    let mut marks = Vec::with_capacity(2);
-    if let Some(cert) = footer.block_final_cert
-        && let Some((rank, len)) = rank_of(cert.slot)
-    {
-        let in_final = includes(&cert.final_aggregate.into_bitmap(), rank, len);
-        let in_notar = cert.notar_aggregate.map_or(Some(false), |aggregate| {
-            includes(&aggregate.into_bitmap(), rank, len)
-        });
-        if let Some(with_vote) = either(in_final, in_notar) {
-            marks.push(Mark {
-                slot: cert.slot,
-                cert: Cert::Finalization,
-                with_vote,
-            });
+/// What a footer's reward certificates say about `rank`. Neither certificate
+/// means nobody was paid. `None` where a bitmap could not be read.
+fn reward_of(
+    notar: Option<&NotarRewardCertificate>,
+    skip: Option<&SkipRewardCertificate>,
+    rank: usize,
+    len: usize,
+) -> Option<Reward> {
+    let in_notar = notar.map_or(Some(false), |cert| includes(cert.bitmap(), rank, len));
+    let in_skip = skip.map_or(Some(false), |cert| includes(cert.to_bitmap(), rank, len));
+    match (in_notar, in_skip) {
+        (Some(true), _) | (_, Some(true)) => Some(Reward::Paid),
+        (Some(false), Some(false)) if notar.is_none() && skip.is_none() => {
+            Some(Reward::NoCertificate)
         }
+        (Some(false), Some(false)) => Some(Reward::Unpaid),
+        _ => None,
     }
-
-    let reward_slot = footer
-        .notar_reward_cert
-        .as_ref()
-        .map(|cert| cert.slot)
-        .or_else(|| footer.skip_reward_cert.as_ref().map(|cert| cert.slot))
-        .or_else(|| slot.checked_sub(NUM_SLOTS_FOR_REWARD));
-    if let Some(reward_slot) = reward_slot
-        && let Some((rank, len)) = rank_of(reward_slot)
-    {
-        let in_notar = footer
-            .notar_reward_cert
-            .map_or(Some(false), |cert| includes(cert.bitmap(), rank, len));
-        let in_skip = footer
-            .skip_reward_cert
-            .map_or(Some(false), |cert| includes(cert.to_bitmap(), rank, len));
-        if let Some(with_vote) = either(in_notar, in_skip) {
-            marks.push(Mark {
-                slot: reward_slot,
-                cert: Cert::Reward,
-                with_vote,
-            });
-        }
-    }
-    marks
 }
 
 /// Whether `rank` is set in a certificate's signer bitmap. `None` where the
@@ -171,16 +157,6 @@ fn includes(bitmap: &[u8], rank: usize, len: usize) -> Option<bool> {
     match decode(bitmap, len) {
         Ok(Decoded::Base2(bits)) => Some(bits.get(rank).is_some_and(|bit| *bit)),
         Ok(Decoded::Base3(..)) | Err(_) => None,
-    }
-}
-
-/// Set in either bitmap, where both could be read. One unreadable bitmap
-/// still answers if the other has the vote.
-fn either(a: Option<bool>, b: Option<bool>) -> Option<bool> {
-    match (a, b) {
-        (Some(true), _) | (_, Some(true)) => Some(true),
-        (Some(false), Some(false)) => Some(false),
-        _ => None,
     }
 }
 
@@ -221,10 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn test_either_answers_from_one_readable_bitmap() {
-        assert_eq!(either(Some(true), None), Some(true));
-        assert_eq!(either(None, Some(true)), Some(true));
-        assert_eq!(either(Some(false), None), None);
-        assert_eq!(either(Some(false), Some(false)), Some(false));
+    fn test_a_footer_with_no_reward_certificate_paid_nobody() {
+        assert_eq!(reward_of(None, None, 0, 10), Some(Reward::NoCertificate));
     }
 }

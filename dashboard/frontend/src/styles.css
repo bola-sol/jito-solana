@@ -4382,7 +4382,8 @@ body {
   color: var(--bad);
 }
 
-.vote-mark.is-unknown {
+.vote-mark.is-unknown,
+.vote-mark.is-none {
   color: var(--text-faint);
 }
 

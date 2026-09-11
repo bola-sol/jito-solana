@@ -186,7 +186,7 @@ impl Fixture {
         };
         // No tip program in the fixture; a meter over it would read nought for every
         // slot.
-        Collector::new(self.ctx.clone(), shared, None, None)
+        Collector::new(self.ctx.clone(), shared, None, None, None)
     }
 
     /// The once-a-second readings over this fixture, ready to tick.

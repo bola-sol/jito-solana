@@ -139,6 +139,7 @@ dependencies = [
  "solana-metrics",
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
+ "solana-rpc",
  "solana-runtime",
  "solana-sdk-ids",
  "solana-signer-store",

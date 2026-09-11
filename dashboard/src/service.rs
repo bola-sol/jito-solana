@@ -17,6 +17,7 @@ use {
         validator_info::ValidatorInfoCache,
     },
     solana_pubkey::Pubkey,
+    solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationReceiver,
     std::{
         io,
         sync::{
@@ -184,7 +185,11 @@ impl DashboardService {
     /// Starts the collector against a fully assembled validator. Both threads
     /// publish startup progress through the same [`StartupPublisher`], so the
     /// handover is invisible to a client.
-    pub fn attach(&mut self, context: DashboardContext) -> io::Result<()> {
+    pub fn attach(
+        &mut self,
+        context: DashboardContext,
+        frozen_banks: Option<BankNotificationReceiver>,
+    ) -> io::Result<()> {
         let info_cache = self.info_cache.clone();
 
         // Validator names are read once here, off the collector's thread, and the
@@ -251,7 +256,8 @@ impl DashboardService {
                         startup,
                         metrics_tap,
                     };
-                    let mut collector = Collector::new(context, shared, tips, commission_bps);
+                    let mut collector =
+                        Collector::new(context, shared, tips, commission_bps, frozen_banks);
                     collector.publish_static();
                     while !exit.load(Ordering::Relaxed) {
                         collector.tick();
@@ -312,7 +318,7 @@ mod tests {
             exit.clone(),
         )
         .unwrap();
-        service.attach(harness.ctx.clone()).unwrap();
+        service.attach(harness.ctx.clone(), None).unwrap();
 
         exit.store(true, Ordering::Relaxed);
         // Joined on a helper thread so a regression fails instead of hanging.

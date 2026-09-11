@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        certs::{self, Cert},
+        certs,
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
         metrics_tap::{BundleLanding, MetricsTap, ShredFill},
@@ -20,9 +20,12 @@ use {
     solana_gossip::contact_info::ContactInfo,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
+    solana_rpc::optimistically_confirmed_bank_tracker::{
+        BankNotification, BankNotificationReceiver,
+    },
     solana_runtime::bank::Bank,
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{BTreeMap, HashMap, HashSet, VecDeque},
         sync::{Arc, Mutex, RwLock},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
@@ -43,6 +46,19 @@ const OVERVIEW_INTERVAL: Duration = Duration::from_secs(1);
 /// Block footers read for certificates on one tick, so a restart catches up
 /// over a few ticks rather than stalling one.
 const CERT_SLOTS_PER_TICK: u64 = 64;
+
+/// Slots behind the root the running totals are kept for. A parent is a few
+/// slots back at most.
+const TOTALS_KEPT: u64 = 64;
+
+/// A bank's running totals, kept so its children can be differenced against
+/// it after it is pruned.
+#[derive(Debug, Clone, Copy)]
+struct Totals {
+    transactions: u64,
+    non_vote: u64,
+    tips: u64,
+}
 
 /// Slots to include in the strip and sidebar snapshot sent on connect.
 const SLOT_OVERVIEW_LEN: usize = 512;
@@ -356,6 +372,10 @@ pub struct Collector {
     /// Reads what each slot paid in jito tips. `None` where no tip payment
     /// program is configured, which is every plain agave validator.
     tips: Option<TipMeter>,
+    /// Frozen banks as replay reports them. `None` reads bank forks instead,
+    /// which misses banks pruned between ticks.
+    frozen_banks: Option<BankNotificationReceiver>,
+    totals: BTreeMap<Slot, Totals>,
     /// Our own commission on tips, sent to the page so it can work out what our
     /// blocks earned. Never applied to another validator's turn.
     commission_bps: Option<u16>,
@@ -386,6 +406,7 @@ impl Collector {
         shared: CollectorShared,
         tips: Option<TipMeter>,
         commission_bps: Option<u16>,
+        frozen_banks: Option<BankNotificationReceiver>,
     ) -> Self {
         let CollectorShared {
             publisher,
@@ -438,6 +459,8 @@ impl Collector {
             tips,
             commission_bps,
             tips_residual: None,
+            frozen_banks,
+            totals: BTreeMap::new(),
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
         }
@@ -931,21 +954,49 @@ impl Collector {
         drop(commitment);
         let root = root_bank.slot();
 
+        let banks: Vec<Arc<Bank>> = match &self.frozen_banks {
+            Some(receiver) => receiver
+                .try_iter()
+                .filter_map(|(notification, _)| match notification {
+                    BankNotification::Frozen(bank) => Some(bank),
+                    _ => None,
+                })
+                .collect(),
+            None => frozen.iter().map(|(_, bank)| bank.clone()).collect(),
+        };
+
         let mut changed = Vec::new();
         let mut captured = false;
-        for (slot, bank) in frozen {
-            let slot = *slot;
+        for bank in &banks {
+            let slot = bank.slot();
             // Counts are cumulative along a fork; a block's own is the difference
-            // from its parent. A pruned parent leaves the figure alone.
-            let parent = bank.parent();
-            let counts = parent.as_ref().map(|parent| {
-                (
-                    bank.transaction_count()
-                        .saturating_sub(parent.transaction_count()),
-                    bank.non_vote_transaction_count_since_restart()
-                        .saturating_sub(parent.non_vote_transaction_count_since_restart()),
-                )
-            });
+            // from its parent, off the parent's totals or the parent itself.
+            let before = self.totals.get(&bank.parent_slot()).copied();
+            let parent = before.is_none().then(|| bank.parent()).flatten();
+            let counts = before
+                .map(|before| (before.transactions, before.non_vote))
+                .or_else(|| {
+                    let parent = parent.as_ref()?;
+                    Some((
+                        parent.transaction_count(),
+                        parent.non_vote_transaction_count_since_restart(),
+                    ))
+                })
+                .map(|(transactions, non_vote)| {
+                    (
+                        bank.transaction_count().saturating_sub(transactions),
+                        bank.non_vote_transaction_count_since_restart()
+                            .saturating_sub(non_vote),
+                    )
+                });
+            self.totals.insert(
+                slot,
+                Totals {
+                    transactions: bank.transaction_count(),
+                    non_vote: bank.non_vote_transaction_count_since_restart(),
+                    tips: self.tips.as_ref().map_or(0, |meter| meter.total(bank)),
+                },
+            );
             // Read once, at a frozen bank's first sighting, for every block: the cost
             // tracker and fees go with the bank when it is dropped after rooting.
             let fresh = self
@@ -954,10 +1005,12 @@ impl Collector {
                 .is_none_or(|entry| entry.block.is_none());
             // Once per slot, and only with a parent to difference against.
             let tips = if fresh {
-                parent
-                    .as_ref()
-                    .zip(self.tips.as_mut())
-                    .map(|(parent, meter)| meter.measure(bank, parent))
+                self.tips.as_mut().and_then(|meter| {
+                    let before_tips = before
+                        .map(|before| before.tips)
+                        .or_else(|| parent.as_ref().map(|parent| meter.total(parent)))?;
+                    Some(meter.measure(bank, before_tips))
+                })
             } else {
                 None
             };
@@ -1026,6 +1079,7 @@ impl Collector {
 
         // Anything still unstarted below the root will never be produced.
         changed.extend(self.slots.mark_skipped_below(root));
+        self.totals = self.totals.split_off(&root.saturating_sub(TOTALS_KEPT));
 
         for entry in &changed {
             self.publish_slot(entry);
@@ -1096,10 +1150,9 @@ impl Collector {
             if mark.slot < floor {
                 continue;
             }
-            let updated = self.slots.update(mark.slot, |entry| match mark.cert {
-                Cert::Finalization => entry.certs.finalized = Some(mark.with_vote),
-                Cert::Reward => entry.certs.rewarded = Some(mark.with_vote),
-            });
+            let updated = self
+                .slots
+                .update(mark.slot, |entry| entry.reward = Some(mark.reward));
             if let Some(entry) = updated {
                 self.publish_slot(&entry);
             }
@@ -2918,6 +2971,32 @@ mod tests {
         assert_eq!(release_of(""), "");
         assert_eq!(release_of("unknown"), "unknown");
         assert_eq!(release_of("-leading"), "");
+    }
+
+    #[test]
+    fn test_a_frozen_bank_arrives_by_notification() {
+        let harness = fixture();
+        let bank = harness.advance_to(8);
+        let mut collector = harness.collector();
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        collector.frozen_banks = Some(receiver);
+
+        // Nothing reported, so nothing read: bank forks is not consulted.
+        collector.tick();
+        assert!(
+            !harness
+                .published()
+                .iter()
+                .any(|message| message.contains(r#""slot":8,"level":"completed""#))
+        );
+
+        sender.send((BankNotification::Frozen(bank), None)).unwrap();
+        collector.overview_retained_at = Instant::now().checked_sub(OVERVIEW_INTERVAL).unwrap();
+        collector.tick();
+        let overview = harness.published_key("slot", "overview").unwrap();
+        assert!(overview.contains(r#""slot":8"#), "{overview}");
+        assert!(overview.contains(r#""transactions":"#), "{overview}");
+        assert!(collector.totals.contains_key(&8));
     }
 
     #[test]

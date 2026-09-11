@@ -10,6 +10,7 @@ use {
         ledger_lockfile, lock_ledger,
         shred_receiver_addresses::parse_shred_receiver_addresses,
     },
+    agave_dashboard::{DashboardConfig, DashboardContext, DashboardService},
     agave_snapshots::{
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
         paths::BANK_SNAPSHOTS_DIR,
@@ -71,6 +72,7 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
+    solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationSender,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
     solana_streamer::{
@@ -551,6 +553,30 @@ pub fn execute(
         bind_addresses.active()
     };
 
+    // The dashboard is unauthenticated and exposes validator internals, so it
+    // stays on loopback unless the operator names an address explicitly.
+    let dashboard_config = value_t!(matches, "dashboard_port", u16).ok().map(|port| {
+        let bind_address = matches
+            .value_of("dashboard_bind_address")
+            .map(|address| {
+                solana_net_utils::parse_host(address).expect("invalid dashboard_bind_address")
+            })
+            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let mut config = DashboardConfig::new(SocketAddr::new(bind_address, port));
+        // Read from the flags directly rather than from the tip manager's
+        // config, which substitutes freshly generated keys when voting is
+        // disabled. Tip accounts derived from a placeholder would read nothing
+        // for the life of the process; absent here draws no column at all.
+        config.tip_payment_program_id = pubkey_of(matches, "tip_payment_program_pubkey");
+        config.commission_bps = value_t!(matches, "commission_bps", u16).ok();
+        // Added to the loopback defaults rather than replacing them, so a
+        // proxied dashboard stays reachable on the box it runs on.
+        config
+            .allowed_hosts
+            .extend(values_t!(matches, "dashboard_allowed_host", String).unwrap_or_default());
+        config
+    });
+
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
     let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
@@ -793,6 +819,13 @@ pub fn execute(
     let mut extra_bank_notification_senders = Vec::new();
     let tip_router_service_setup =
         tip_router::setup(matches, &mut extra_bank_notification_senders)?;
+    // Frozen banks reach the collector from replay rather than by polling bank
+    // forks, which under alpenglow prunes a bank within a slot of freezing.
+    let dashboard_banks = dashboard_config.is_some().then(|| {
+        let (sender, receiver) = BankNotificationSender::channel("dashboard");
+        extra_bank_notification_senders.push(sender);
+        receiver
+    });
 
     let block_engine_config = Arc::new(ArcSwap::from_pointee(BlockEngineConfig {
         block_engine_url: value_of(matches, "block_engine_url").unwrap_or_default(),
@@ -1126,6 +1159,22 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
+    // Started before the bootstrap below, which is where the RPC search and the
+    // snapshot download happen, so the page is up through the slowest part of
+    // a cold start. The collector attaches once the validator exists.
+    let mut dashboard_service = match dashboard_config {
+        None => None,
+        Some(dashboard_config) => {
+            let listen_addr = dashboard_config.listen_addr;
+            Some(
+                DashboardService::start(dashboard_config, start_progress.clone(), exit.clone())
+                    .map_err(|err| {
+                        format!("failed to start the dashboard on {listen_addr}: {err}")
+                    })?,
+            )
+        }
+    };
+
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1246,6 +1295,25 @@ pub fn execute(
             return Err(err);
         }
     };
+    if let Some(dashboard_service) = &mut dashboard_service
+        && let Err(err) = dashboard_service.attach(
+            DashboardContext {
+                cluster_info: validator.cluster_info.clone(),
+                bank_forks: validator.bank_forks.clone(),
+                block_commitment_cache: validator.block_commitment_cache.clone(),
+                blockstore: validator.blockstore.clone(),
+                leader_schedule_cache: validator.leader_schedule_cache.clone(),
+                vote_account,
+                highest_finalized: validator.highest_finalized.clone(),
+                account_paths: validator_config.account_paths.clone(),
+            },
+            dashboard_banks,
+        )
+    {
+        validator.close();
+        tip_router::join(tip_router_service);
+        return Err(format!("failed to start the dashboard collector: {err}").into());
+    }
     if let Some(filename) = init_complete_file
         && let Err(err) = File::create(filename)
     {
@@ -1257,6 +1325,9 @@ pub fn execute(
     let listen_result = validator.listen_for_signals();
     validator.close();
     tip_router::join(tip_router_service);
+    if let Some(dashboard_service) = dashboard_service {
+        dashboard_service.join().expect("dashboard_service");
+    }
     info!("Validator exiting...");
     listen_result?;
 

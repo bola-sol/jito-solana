@@ -38,6 +38,7 @@ solana-ledger = { workspace = true }
 solana-metrics = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer-store = { workspace = true }
@@ -47,6 +48,7 @@ tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["compat"] }
 
 [dev-dependencies]
+crossbeam-channel = { workspace = true }
 agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
 # Feature unification means `cargo test` compiles this crate with
 # `dev-context-only-utils` on, which the validator build does not. Run

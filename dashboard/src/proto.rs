@@ -78,7 +78,7 @@ pub fn encode_with_id<T: Serialize>(topic: &str, key: &str, id: Option<u64>, val
 /// Fans messages out to connected clients and remembers the latest value of
 /// every retained key so new connections can be caught up in one shot.
 pub struct Publisher {
-    retained: Mutex<BTreeMap<(&'static str, String), Message>>,
+    retained: Mutex<BTreeMap<(&'static str, &'static str), Message>>,
     sender: broadcast::Sender<Message>,
 }
 
@@ -98,12 +98,12 @@ impl Publisher {
     }
 
     /// Publish a value that should be replayed to clients connecting later.
-    pub fn publish<T: Serialize>(&self, topic: &'static str, key: &str, value: &T) {
+    pub fn publish<T: Serialize>(&self, topic: &'static str, key: &'static str, value: &T) {
         let message = encode(topic, key, value);
         self.retained
             .lock()
             .unwrap()
-            .insert((topic, key.to_string()), message.clone());
+            .insert((topic, key), message.clone());
         // An error here only means nobody is listening yet.
         let _ = self.sender.send(message);
     }
@@ -115,12 +115,9 @@ impl Publisher {
 
     /// Updates what a future connection receives without sending anything now,
     /// for bulk snapshots whose incremental changes go out separately.
-    pub fn retain_only<T: Serialize>(&self, topic: &'static str, key: &str, value: &T) {
+    pub fn retain_only<T: Serialize>(&self, topic: &'static str, key: &'static str, value: &T) {
         let message = encode(topic, key, value);
-        self.retained
-            .lock()
-            .unwrap()
-            .insert((topic, key.to_string()), message);
+        self.retained.lock().unwrap().insert((topic, key), message);
     }
 
     /// Everything a freshly connected client needs to render a full view.
@@ -158,7 +155,13 @@ impl<T> Debounced<T> {
 }
 
 impl<T: Serialize + PartialEq> Debounced<T> {
-    pub fn publish(&mut self, publisher: &Publisher, topic: &'static str, key: &str, value: T) {
+    pub fn publish(
+        &mut self,
+        publisher: &Publisher,
+        topic: &'static str,
+        key: &'static str,
+        value: T,
+    ) {
         if self.last.as_ref() == Some(&value) {
             return;
         }

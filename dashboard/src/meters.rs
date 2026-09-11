@@ -1803,7 +1803,7 @@ fn push_history<T: Serialize>(
     sample: T,
     keep: usize,
     publisher: &Publisher,
-    key: &str,
+    key: &'static str,
 ) {
     history.push(sample);
     if history.len() > keep {

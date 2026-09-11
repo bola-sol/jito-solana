@@ -35,6 +35,10 @@ const MAX_DELINQUENT_SLOT_DISTANCE: u64 = 128;
 /// are taken, regardless of the poll interval.
 const SLOW_TICK: Duration = Duration::from_secs(5);
 
+/// How often the retained slot overview is re-encoded while slots change. Only
+/// a connecting client reads it, and it is a few hundred kilobytes.
+const OVERVIEW_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Slots to include in the strip and sidebar snapshot sent on connect.
 const SLOT_OVERVIEW_LEN: usize = 512;
 
@@ -189,8 +193,26 @@ pub struct EpochInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Health {
-    pub replay: &'static str,
-    pub vote: &'static str,
+    pub replay: ReplayHealth,
+    pub vote: VoteHealth,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayHealth {
+    NotStarted,
+    Running,
+    Stalled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoteHealth {
+    /// This node is not the voting identity, so it has no votes of its own.
+    NotVoting,
+    NotStarted,
+    Voting,
+    Delinquent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -321,6 +343,10 @@ pub struct Collector {
     /// The meter's last reported residual, so a change is logged once rather
     /// than every slow tick.
     tips_residual: Option<u64>,
+    /// Whether a slot has changed since the overview was last encoded, and when
+    /// that was.
+    overview_dirty: bool,
+    overview_retained_at: Instant,
 }
 
 /// The handles the service holds and the collector reads or writes through.
@@ -392,6 +418,8 @@ impl Collector {
             tips,
             commission_bps,
             tips_residual: None,
+            overview_dirty: false,
+            overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
         }
     }
 
@@ -508,6 +536,15 @@ impl Collector {
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
+        }
+
+        // Encoded on a timer rather than per change: live clients follow the
+        // updates above, and only a connecting one reads this.
+        if self.overview_dirty && now.duration_since(self.overview_retained_at) >= OVERVIEW_INTERVAL
+        {
+            self.retain_slot_overview();
+            self.overview_dirty = false;
+            self.overview_retained_at = now;
         }
     }
 
@@ -747,12 +784,13 @@ impl Collector {
 
     /// Publishes who leads the slots past the highest held. Returns the leaders
     /// published, for the peer table.
-    fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<String> {
+    fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<Pubkey> {
         let me = self.ctx.identity();
         let first = highest_slot.saturating_add(1);
         let last = highest_slot.saturating_add(UPCOMING_SLOTS);
 
         let mut upcoming = Vec::new();
+        let mut leaders = HashSet::new();
         for slot in first..=last {
             let Some(leader) = self
                 .ctx
@@ -762,6 +800,7 @@ impl Collector {
                 break;
             };
             let (leader_name, leader_icon) = self.peer_display(&leader.id);
+            leaders.insert(leader.id);
             upcoming.push(UpcomingSlot {
                 slot,
                 leader: leader.id.to_string(),
@@ -771,10 +810,6 @@ impl Collector {
             });
         }
 
-        let leaders = upcoming
-            .iter()
-            .map(|slot| slot.leader.clone())
-            .collect::<HashSet<_>>();
         self.debounces
             .upcoming
             .publish(&self.publisher, TOPIC_SLOT, "upcoming", upcoming);
@@ -787,7 +822,7 @@ impl Collector {
     fn collect_peer_table(
         &mut self,
         bank: &Bank,
-        mut leaders: HashSet<String>,
+        mut leaders: HashSet<Pubkey>,
         peers: &[(ContactInfo, u64)],
     ) {
         // The leaders of the window a client holds, from the schedule: a leader takes
@@ -802,31 +837,31 @@ impl Collector {
                 .leader_schedule_cache
                 .slot_leader_at(slot, Some(bank))
             {
-                leaders.insert(leader.id.to_string());
+                leaders.insert(leader.id);
             }
             slot = slot.saturating_add(stride);
         }
 
-        let mut stakes: HashMap<String, u64> = HashMap::new();
+        let mut stakes: HashMap<Pubkey, u64> = HashMap::new();
         for (stake, account) in bank.vote_accounts().values() {
             if *stake == 0 {
                 continue;
             }
-            let identity = account.node_pubkey().to_string();
-            if leaders.contains(&identity) {
-                let total = stakes.entry(identity).or_insert(0);
+            let identity = account.node_pubkey();
+            if leaders.contains(identity) {
+                let total = stakes.entry(*identity).or_insert(0);
                 *total = total.saturating_add(*stake);
             }
         }
 
-        let mut gossip: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        let mut gossip: HashMap<Pubkey, (Option<String>, Option<String>)> = HashMap::new();
         for (contact_info, _) in peers {
-            let identity = contact_info.pubkey().to_string();
-            if !leaders.contains(&identity) {
+            let identity = contact_info.pubkey();
+            if !leaders.contains(identity) {
                 continue;
             }
             gossip.insert(
-                identity,
+                *identity,
                 (
                     Some(contact_info.version().to_string()),
                     contact_info.gossip().map(|addr| addr.ip().to_string()),
@@ -838,17 +873,14 @@ impl Collector {
             .into_iter()
             .map(|identity| {
                 let (version, ip) = gossip.get(&identity).cloned().unwrap_or_default();
-                let (name, icon) = identity
-                    .parse()
-                    .map(|key| self.peer_display(&key))
-                    .unwrap_or_default();
+                let (name, icon) = self.peer_display(&identity);
                 Peer {
                     stake: stakes.get(&identity).copied().unwrap_or(0),
                     version,
                     ip,
                     name,
                     icon,
-                    identity,
+                    identity: identity.to_string(),
                 }
             })
             .collect();
@@ -967,9 +999,6 @@ impl Collector {
         for entry in &changed {
             self.publish_slot(entry);
         }
-        if !changed.is_empty() {
-            self.retain_slot_overview();
-        }
         // The bundle stage reports a slot a moment after its bank freezes, so a
         // block captured without its bundles is filled in on a later tick.
         let tap = &self.metrics_tap;
@@ -1012,6 +1041,7 @@ impl Collector {
         self.history.write().unwrap().record(entry);
         self.publisher
             .publish_ephemeral(TOPIC_SLOT, "update", entry);
+        self.overview_dirty = true;
     }
 
     /// Refreshes the snapshot a newly connected client receives, without
@@ -1633,25 +1663,25 @@ fn health_of(
     since_vote_advance: Duration,
 ) -> Health {
     let replay = if since_completed > REPLAY_STALL_AFTER {
-        "stalled"
+        ReplayHealth::Stalled
     } else if completed_slot == 0 {
-        "not_started"
+        ReplayHealth::NotStarted
     } else {
-        "running"
+        ReplayHealth::Running
     };
 
     // Checked first: a node that is not the voter has no votes of its own, and
     // every rule below would read the other machine's health. Not a fault; an
     // operator who has just failed over wants to see that it took.
     let vote = if !voting {
-        "not_voting"
+        VoteHealth::NotVoting
     } else {
         // A vote can be delinquent two ways: far behind, or not moving at all.
         match (vote_slot, behind) {
-            (None, _) => "not_started",
-            (Some(_), Some(behind)) if behind > VOTE_BEHIND_LIMIT => "delinquent",
-            _ if since_vote_advance > VOTE_STALL_AFTER => "delinquent",
-            _ => "voting",
+            (None, _) => VoteHealth::NotStarted,
+            (Some(_), Some(behind)) if behind > VOTE_BEHIND_LIMIT => VoteHealth::Delinquent,
+            _ if since_vote_advance > VOTE_STALL_AFTER => VoteHealth::Delinquent,
+            _ => VoteHealth::Voting,
         }
     };
 
@@ -2278,11 +2308,11 @@ mod tests {
     fn test_replay_is_stalled_when_no_slot_completes() {
         assert_eq!(
             health_of(Duration::from_secs(13), 100, true, Some(99), Some(1), FRESH).replay,
-            "stalled"
+            ReplayHealth::Stalled
         );
         assert_eq!(
             health_of(FRESH, 100, true, Some(99), Some(1), FRESH).replay,
-            "running"
+            ReplayHealth::Running
         );
     }
 
@@ -2291,7 +2321,7 @@ mod tests {
         // Slot zero means nothing has completed yet, which is not a stall.
         assert_eq!(
             health_of(FRESH, 0, true, None, None, FRESH).replay,
-            "not_started"
+            ReplayHealth::NotStarted
         );
     }
 
@@ -2350,7 +2380,7 @@ mod tests {
         // last vote looks healthy.
         assert_eq!(
             health_of(FRESH, 100, false, Some(99), Some(1), FRESH).vote,
-            "not_voting"
+            VoteHealth::NotVoting
         );
     }
 
@@ -2368,11 +2398,11 @@ mod tests {
                 FRESH
             )
             .vote,
-            "not_voting"
+            VoteHealth::NotVoting
         );
         assert_eq!(
             health_of(FRESH, 100, false, None, None, Duration::from_secs(3_600)).vote,
-            "not_voting"
+            VoteHealth::NotVoting
         );
     }
 
@@ -2382,7 +2412,7 @@ mod tests {
         // know it is keeping up before handing the identity back.
         assert_eq!(
             health_of(FRESH, 100, false, None, None, FRESH).replay,
-            "running"
+            ReplayHealth::Running
         );
     }
 
@@ -2398,11 +2428,11 @@ mod tests {
                 FRESH
             )
             .vote,
-            "delinquent"
+            VoteHealth::Delinquent
         );
         assert_eq!(
             health_of(FRESH, 100, true, Some(50), Some(VOTE_BEHIND_LIMIT), FRESH).vote,
-            "voting"
+            VoteHealth::Voting
         );
     }
 
@@ -2411,7 +2441,7 @@ mod tests {
         // The case the distance alone misses: near the tip and not moving.
         assert_eq!(
             health_of(FRESH, 100, true, Some(99), Some(1), Duration::from_secs(61)).vote,
-            "delinquent"
+            VoteHealth::Delinquent
         );
     }
 
@@ -2420,7 +2450,7 @@ mod tests {
         // An unstaked node is not a failing one, however long it sits there.
         assert_eq!(
             health_of(FRESH, 100, true, None, None, Duration::from_secs(3_600)).vote,
-            "not_started"
+            VoteHealth::NotStarted
         );
     }
 
@@ -2816,5 +2846,28 @@ mod tests {
         assert_eq!(release_of(""), "");
         assert_eq!(release_of("unknown"), "unknown");
         assert_eq!(release_of("-leading"), "");
+    }
+
+    #[test]
+    fn test_the_overview_is_encoded_once_a_second() {
+        // The first tick encodes at once; a change inside the interval waits.
+        let harness = fixture();
+        let mut collector = harness.collector();
+        harness.advance_to(8);
+        collector.tick();
+        let first = harness.published_key("slot", "overview").unwrap();
+        assert!(first.contains(r#""slot":8"#), "{first}");
+
+        harness.advance_to(9);
+        collector.tick();
+        let held = harness.published_key("slot", "overview").unwrap();
+        assert!(!held.contains(r#""slot":9"#), "encoded inside the interval");
+        assert!(collector.overview_dirty);
+
+        collector.overview_retained_at = Instant::now().checked_sub(OVERVIEW_INTERVAL).unwrap();
+        collector.tick();
+        let refreshed = harness.published_key("slot", "overview").unwrap();
+        assert!(refreshed.contains(r#""slot":9"#), "{refreshed}");
+        assert!(!collector.overview_dirty);
     }
 }

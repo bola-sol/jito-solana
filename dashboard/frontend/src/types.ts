@@ -605,8 +605,8 @@ export interface StakeInGossip {
 }
 
 export interface Health {
-  replay: string;
-  vote: string;
+  replay: "not_started" | "running" | "stalled";
+  vote: "not_voting" | "not_started" | "voting" | "delinquent";
 }
 
 export interface SkipRate {

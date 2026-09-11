@@ -1,7 +1,7 @@
 /** Lighting the transaction matrix: how many rows each series takes in a
  *  column. */
 
-import type { TpsSample } from "./types";
+import type { Tps, TpsSample } from "./types";
 
 /** How much history the matrix shows. Matches the network card's window. */
 export const MATRIX_WINDOW_SECONDS = 60;
@@ -16,6 +16,10 @@ export const CEILING_HEADROOM = 1.1;
 
 /** The narrowest a column may be before samples start being dropped. */
 export const MIN_PITCH = 13;
+
+/** Seconds the readout averages: at least six leader turns on a cluster with
+ *  200 ms slots, where one second can fall wholly on an empty turn. */
+export const READOUT_SECONDS = 5;
 
 /**
  * How many rows each series lights, bottom to top, stacked. Any series with
@@ -64,9 +68,10 @@ export function slotsFor(width: number): number {
 }
 
 /**
- * The sample each column draws, newest last, null where nothing has arrived.
- * A narrow card merges several seconds per column, bucketed by the clock so a
- * column keeps the same seconds from one tick to the next.
+ * The sample each column draws, newest last, null where nothing arrived for
+ * that column's seconds. A narrow card merges several seconds per column,
+ * bucketed by the clock so a column keeps the same seconds from one tick to
+ * the next, and a second the validator skipped stays a hole where it was.
  */
 export function columnsFor<T, C>(
   samples: T[],
@@ -74,22 +79,37 @@ export function columnsFor<T, C>(
   second: (sample: T) => number,
   merge: (bucket: T[]) => C,
 ): Array<C | null> {
+  if (samples.length === 0) return Array(slots).fill(null) as null[];
   // Rounded down: a full minute arrives as sixty-one samples for sixty
   // columns.
-  const stride = Math.max(1, Math.floor(samples.length / slots));
-  const buckets: T[][] = [];
-  let last: number | null = null;
+  const span = second(samples[samples.length - 1]) - second(samples[0]) + 1;
+  const stride = Math.max(1, Math.floor(span / slots));
+  const buckets = new Map<number, T[]>();
   for (const sample of samples) {
     const bucket = Math.floor(second(sample) / stride);
-    if (bucket !== last) {
-      buckets.push([]);
-      last = bucket;
-    }
-    buckets[buckets.length - 1].push(sample);
+    const held = buckets.get(bucket);
+    if (held) held.push(sample);
+    else buckets.set(bucket, [sample]);
   }
-  const kept = buckets.slice(-slots).map(merge);
-  const missing = Math.max(0, slots - kept.length);
-  return [...(Array(missing).fill(null) as null[]), ...kept];
+  const last = Math.floor(second(samples[samples.length - 1]) / stride);
+  return Array.from({ length: slots }, (_unused, index) => {
+    const bucket = buckets.get(last - slots + 1 + index);
+    return bucket ? merge(bucket) : null;
+  });
+}
+
+/** The readout: the mean of the newest samples rather than the last one. */
+export function readoutMean(samples: TpsSample[], seconds = READOUT_SECONDS): Tps | undefined {
+  const recent = samples.slice(-seconds);
+  if (recent.length === 0) return undefined;
+  const mean = (of: (sample: TpsSample) => number): number =>
+    recent.reduce((sum, sample) => sum + of(sample), 0) / recent.length;
+  return {
+    total: mean((sample) => sample.total),
+    vote: mean((sample) => sample.vote),
+    non_vote_success: mean((sample) => sample.non_vote_success),
+    non_vote_failed: mean((sample) => sample.non_vote_failed),
+  };
 }
 
 /** The second a sample belongs to, on the clock. */

@@ -1528,6 +1528,14 @@ body {
   margin-bottom: 3px;
 }
 
+.tps-total-unit {
+  margin-left: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
 .tps-total-value {
   font-family: ui-monospace, monospace;
   font-size: 30px;

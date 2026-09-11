@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import { leaderAt } from "./schedule";
 import {
   entriesOf,
+  FINAL_SEEN,
+  FINAL_WITH_VOTE,
   HAS_BLOCK,
   HAS_CLOCK,
   HAS_REPLAY,
   HAS_REPLAYED,
   HAS_SHREDS,
   HAS_TIPS,
+  REWARD_SEEN,
   type SlotRange,
   type WireRow,
 } from "./slotHistory";
@@ -203,5 +206,15 @@ describe("entriesOf", () => {
     expect(entry.mine).toBe(true);
     expect("leader" in entry).toBe(false);
     expect("leader_name" in entry).toBe(false);
+  });
+});
+
+describe("certificate flags", () => {
+  it("reads unseen as null and seen as the vote bit", () => {
+    const seen = FINAL_SEEN | FINAL_WITH_VOTE | REWARD_SEEN;
+    const [entry] = entriesOf({ first_slot: 1000, rows: [row({ 1: seen })] }, epochOf(), undefined);
+    expect(entry.certs).toEqual({ finalized: true, rewarded: false });
+    const [unseen] = entriesOf({ first_slot: 1000, rows: [row()] }, epochOf(), undefined);
+    expect(unseen.certs).toEqual({ finalized: null, rewarded: null });
   });
 });

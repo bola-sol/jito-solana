@@ -12,6 +12,7 @@ function held(over: Partial<SlotEntry> = {}): SlotEntry {
     time_millis: null,
     shreds: { count: 928, repaired: 63, full_millis: 921 },
     replayed_millis: 932,
+    certs: { finalized: null, rewarded: null },
     ...over,
   };
 }

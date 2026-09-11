@@ -141,6 +141,7 @@ name = "agave-dashboard"
 version = "4.3.0-beta.6"
 dependencies = [
  "agave-dashboard",
+ "agave-votor-messages",
  "bincode",
  "libc",
  "log",
@@ -153,6 +154,7 @@ dependencies = [
  "solana-cluster-type",
  "solana-config-interface",
  "solana-core",
+ "solana-entry",
  "solana-gossip",
  "solana-keypair",
  "solana-leader-schedule",
@@ -164,6 +166,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk-ids",
  "solana-signer",
+ "solana-signer-store",
  "solana-system-transaction",
  "solana-version",
  "tempfile",

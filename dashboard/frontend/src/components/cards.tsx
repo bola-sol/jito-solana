@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
 import { STAKE_TICKS, stakeTicks } from "../stake";
+import { useAlpenglow } from "../consensus";
 import type {
   EpochInfo,
   Health,
@@ -209,6 +210,7 @@ export function ValidatorsCard() {
  *  chart's key, each in its series' colour. */
 export function TransactionsCard() {
   const store = useStore();
+  const alpenglow = useAlpenglow();
   const tps = store.get<Tps>("summary", "estimated_tps");
   const samples = store.getTps();
   const narrow = useNarrow();
@@ -216,9 +218,17 @@ export function TransactionsCard() {
 
   const figures = (
     <div className="tps-rows">
-      <SeriesRow label="Vote" series="vote" value={decimal(tps?.vote)} />
-      <SeriesRow label="Non-vote failed" series="failed" value={decimal(tps?.non_vote_failed)} />
-      <SeriesRow label="Non-vote ok" series="success" value={decimal(tps?.non_vote_success)} />
+      {!alpenglow && <SeriesRow label="Vote" series="vote" value={decimal(tps?.vote)} />}
+      <SeriesRow
+        label={alpenglow ? "Failed" : "Non-vote failed"}
+        series="failed"
+        value={decimal(tps?.non_vote_failed)}
+      />
+      <SeriesRow
+        label={alpenglow ? "Succeeded" : "Non-vote ok"}
+        series="success"
+        value={decimal(tps?.non_vote_success)}
+      />
       <div className="tps-row is-peak">
         <span className="tps-name">
           <Explain text="The busiest second in the window, which sets the top of the grid.">
@@ -235,7 +245,13 @@ export function TransactionsCard() {
       <div className="tps-readout">
         <div className="tps-total">
           <div className="tps-total-label">
-            <Explain text="Transactions confirmed per second, with votes as the base of each column.">
+            <Explain
+              text={
+                alpenglow
+                  ? "Transactions confirmed per second."
+                  : "Transactions confirmed per second, with votes as the base of each column."
+              }
+            >
               Total TPS
             </Explain>
           </div>

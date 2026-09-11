@@ -6,6 +6,7 @@ import { epochOf } from "../schedule";
 import { jitoShare, ourShare } from "../tips";
 import type { EpochInfo, ProducedBlock, SlotCost, SlotWaterfall, TipRates } from "../types";
 import { useStore } from "../useStore";
+import { useAlpenglow } from "../consensus";
 import {
   bundlesValue,
   capacity,
@@ -303,6 +304,7 @@ function BlockCompute({
   cost: SlotCost | undefined;
   rates: TipRates | undefined;
 }) {
+  const alpenglow = useAlpenglow();
   const cap = capacity(block, cost);
   const votes = Math.max(0, block.transactions - block.non_vote_transactions);
   const unused = Math.max(0, block.block_cost_limit - block.block_cost);
@@ -322,8 +324,11 @@ function BlockCompute({
           </div>
         </div>
         <div className="sx-stats">
-          <Stat label="Non-vote" value={count(block.non_vote_transactions)} />
-          <Stat label="Votes" value={count(votes)} />
+          <Stat
+            label={alpenglow ? "Transactions" : "Non-vote"}
+            value={count(block.non_vote_transactions)}
+          />
+          {!alpenglow && <Stat label="Votes" value={count(votes)} />}
           {/* Toned only when it happened. A failed transaction is still in the
               block and still paid its fee, so this is worth noticing and is not
               in itself a fault. */}

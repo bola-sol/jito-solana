@@ -24,6 +24,14 @@ export interface SlotEntry {
   /** Milliseconds from the slot's first shred to replay finishing it. Null for
    *  a bank this validator built. */
   replayed_millis: number | null;
+  /** Whether this node's vote was in the slot's certificates. Only written under alpenglow. */
+  certs: VoteCerts;
+}
+
+/** Each null until that certificate has been seen. */
+export interface VoteCerts {
+  finalized: boolean | null;
+  rewarded: boolean | null;
 }
 
 /** How a block's shreds arrived. Outside `BlockDetail` because a slot fills
@@ -608,6 +616,9 @@ export interface Health {
   replay: "not_started" | "running" | "stalled";
   vote: "not_voting" | "not_started" | "voting" | "delinquent";
 }
+
+/** Which consensus the cluster runs. Under alpenglow votes are not transactions. */
+export type Consensus = "tower" | "alpenglow";
 
 export interface SkipRate {
   epoch: number;

@@ -15,7 +15,7 @@ const STRIP_LENGTH = 64;
 const LEVELS: Array<[SlotLevel, string, string]> = [
   ["incomplete", "Pending", "Received but not yet replayed, or still arriving"],
   ["completed", "Processed", "Replayed and frozen by this validator"],
-  ["optimistically_confirmed", "Confirmed", "Two thirds of stake has voted for it"],
+  ["optimistically_confirmed", "Confirmed", "The cluster has voted to confirm it"],
   ["rooted", "Rooted", "This validator has rooted it"],
   ["finalized", "Finalized", "Rooted by a supermajority of stake"],
   ["skipped", "Skipped", "The leader produced no block, or it did not arrive in time"],
@@ -63,17 +63,17 @@ export function SlotStrip() {
     [
       "Finalized",
       store.get<number>("summary", "finalized_slot"),
-      "Highest root a supermajority of stake has also rooted",
+      "Highest slot a supermajority of stake has rooted",
     ],
     [
       "Root",
       store.get<number>("summary", "root_slot"),
-      "Highest slot this validator has rooted. Rooting needs 32 slots built on top, so this sits about 32 behind",
+      "Highest slot this validator has rooted",
     ],
     [
       "Confirmed",
       store.get<number>("summary", "optimistically_confirmed_slot"),
-      "Highest slot two thirds of stake has voted for",
+      "Highest slot the cluster has voted to confirm",
     ],
     [
       "Voted",
@@ -146,7 +146,7 @@ export function SlotStrip() {
             to be their level and would not be. */}
         <div className="slot-position slot-head-stat">
           <div className="slot-position-label">
-            <Explain text="Mean time between slots arriving at this validator over the last minute. Slots come from every leader in turn, so this measures the cluster's rate as seen from here, not this validator's own block production. The minute covers more slots than the strip shows.">
+            <Explain text="Mean time between slots arriving here over the last minute: the cluster's rate as seen from this node.">
               Slot time (1 min avg)
             </Explain>
           </div>

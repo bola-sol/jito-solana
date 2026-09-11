@@ -38,7 +38,7 @@ export function CachesCard() {
             gloss={programGloss(programs)}
             open={open.includes("programs")}
             onFold={() => fold("programs")}
-            explain="How often replay found a program already compiled rather than having to build it, over the last minute. A low rate means replay spends its time compiling, which slows a block down and leaves less room to pack the next one. Evictions are the usual cause."
+            explain="Share of program lookups in the last minute answered from the cache."
           >
             <ProgramBody cache={programs} />
           </Group>
@@ -50,7 +50,7 @@ export function CachesCard() {
             gloss={accountsGloss(accounts)}
             open={open.includes("accounts")}
             onFold={() => fold("accounts")}
-            explain="Of every account replay read in the last minute, the share answered without touching a storage file. Counted across both caches, so it matches the split below it. A read that misses both goes to disk, which is orders of magnitude slower, and a falling figure here is what slow replay looks like before anything else shows it."
+            explain="Share of account reads in the last minute answered from memory, across both caches."
           >
             <AccountsBody accounts={accounts} />
           </Group>
@@ -140,25 +140,25 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
       <div className="cache-figures">
         <Stat
           label="Lookups"
-          explain="Every time replay asked the cache for a program in the window, hits and misses together. Not the same as loads: a hit is the cache answering without building anything, and only a miss turns into a compile. Small numbers are ordinary, since a block touches few distinct programs, which is why this is summed over a minute rather than read off a single slot."
+          explain="Program cache lookups in the window, hits and misses together."
           value={count(cache.looked_up)}
           sub={`${count(cache.hits)} hits · ${count(cache.misses)} misses`}
         />
         <Stat
           label="Compiled"
-          explain="Every program the cache had to build in the window, which is the work a hit avoids. New ones are keys the cache had not seen. Reloaded ones are keys it already had and had thrown the compiled code away for, so they are the cost of an eviction coming back. Compare this against evictions beside it: a cache in steady state compiles about as many as it drops."
+          explain="Programs compiled in the window: new keys, and keys reloaded after an eviction."
           value={count(compiled)}
           sub={compiledBreakdown}
         />
         <Stat
           label="Evictions"
-          explain="Compiled programs dropped to keep the cache within its entry limit. Set this against what was compiled beside it. Roughly equal figures mean a cache holding its size, and evictions running well ahead mean it is shedding programs faster than they are wanted. Used once counts the ones that were compiled, called a single time and then dropped: compilation spent for one transaction, and ordinary in a network with a long tail of programs almost nobody calls."
+          explain="Compiled programs dropped to stay within the entry limit. Used once is those called a single time before being dropped."
           value={count(cache.evictions)}
           sub={`${count(cache.one_hit_wonders)} used once`}
         />
         <Stat
           label="Pruned"
-          explain="Entries dropped because the fork they belonged to was abandoned, or because they had not been recompiled for the incoming epoch. Neither is a fault; both are the cache keeping up with the chain. The epoch figure rises sharply around an epoch boundary and is expected to."
+          explain="Entries dropped with an abandoned fork, or not recompiled for the incoming epoch."
           value={count(cache.prunes_orphan + cache.prunes_environment)}
           sub={`${count(cache.prunes_orphan)} orphaned · ${count(cache.prunes_environment)} epoch`}
         />
@@ -169,7 +169,7 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
           reported where the cache stood. */}
       <div className="cache-storage">
         <div className="cache-storage-head">
-          <Explain text="The most entries seen loaded at any eviction in the last minute, against the limit eviction keeps them under. Only measured when an eviction runs, so it is a high-water mark rather than a live reading, and it is empty on a validator that has not had to evict anything. Approaching the limit is what precedes a falling hit rate.">
+          <Explain text="Most entries loaded at any eviction in the last minute, against the limit. Empty until an eviction runs.">
             <span className="cache-storage-label">Peak entries</span>
           </Explain>
           <span className="cache-storage-value">
@@ -182,7 +182,7 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
 
       {cache.replacements > 0 && (
         <p className="cache-footnote">
-          <Explain text="An entry already in the cache compiled a second time. Not harmful, but it is work that need not have happened, and a persistent figure here is worth reporting upstream.">
+          <Explain text="Entries compiled a second time while already in the cache.">
             {count(cache.replacements)} recompiled needlessly.
           </Explain>
         </p>
@@ -205,24 +205,24 @@ function AccountsBody({ accounts }: { accounts: AccountsCache }) {
       <div className="cache-figures">
         <Stat
           label="Write cache"
-          explain="Accounts this validator has written recently and not yet flushed to a storage file. The first place a read looks, and the cheapest to answer from."
+          explain="Accounts written recently and not yet flushed to a storage file."
           value={count(accounts.from_write_cache)}
         />
         <Stat
           label="Read cache"
-          explain="Accounts fetched earlier and kept in memory, with what the cache is holding right now beneath. That size is a level rather than a rate, read as it stands rather than summed over the window. Evictions are how it makes room; none at all means it is not under pressure and raising --accounts-db-read-cache-limit would buy nothing."
+          explain="Accounts kept in memory after being read, with the cache's current size beneath."
           value={count(accounts.from_read_cache)}
           sub={`${bytes(accounts.cache_bytes)} · ${count(accounts.cache_entries)} accounts · ${count(accounts.evictions)} evicted`}
         />
         <Stat
           label="Storage"
-          explain="Reads that missed both caches and went to a file. The nearest thing here to a disk read rate, counted in accounts because nothing on that path counts bytes."
+          explain="Reads that missed both caches and went to a storage file."
           value={count(accounts.from_storage)}
           sub={`${count(Math.round(perSecond(accounts.from_storage)))}/s`}
         />
         <Stat
           label="Written to storage"
-          explain="Accounts written out of the cache into storage files over the window. This is the one path the accounts database measures in bytes as well as in accounts, which is why the write side has a throughput figure and the read side does not."
+          explain="Accounts flushed from the cache to storage files over the window."
           value={`${bytes(Math.round(perSecond(accounts.stored_bytes)))}/s`}
           sub={`${bytes(accounts.stored_bytes)} · ${count(accounts.stored_accounts)} accounts · ${count(Math.round(perSecond(accounts.stored_accounts)))}/s`}
         />
@@ -232,7 +232,7 @@ function AccountsBody({ accounts }: { accounts: AccountsCache }) {
         <>
           <div className="cache-storage">
             <div className="cache-storage-head">
-              <Explain text="How much space the storage files take up, and how much of that is still referenced by a live account. The gap between them is dead account data that shrink has not reclaimed yet. Shrink runs continuously as candidates appear rather than on a schedule, so there is no next compaction to count down to.">
+              <Explain text="Space the storage files take, and how much of it live accounts still reference.">
                 <span className="cache-storage-label">On disk · live of allocated</span>
               </Explain>
               <span className="cache-storage-value">
@@ -245,13 +245,13 @@ function AccountsBody({ accounts }: { accounts: AccountsCache }) {
           <div className="cache-figures">
             <Stat
               label="Fragmented"
-              explain="Allocated bytes no longer referenced by any live account. Shrink rewrites storage files to reclaim this, continuously rather than on a schedule, so a steady figure here is normal and only a growing one is worth watching."
+              explain="Allocated bytes no longer referenced by a live account, which shrink reclaims."
               value={bytes(disk.fragmented)}
               sub={disk.allocated > 0 ? percent(disk.fragmented / disk.allocated, 1) : undefined}
             />
             <Stat
               label="Storage files"
-              explain="How many append-only files the accounts data is spread across. Rises with the number of slots held and falls as shrink combines them."
+              explain="Storage files the accounts data is spread across."
               value={count(disk.storages)}
             />
           </div>

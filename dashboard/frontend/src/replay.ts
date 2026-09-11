@@ -34,19 +34,19 @@ export function serialRows(r: ReplayWindow): ReplayRow[] {
       "confirming",
       "Verifying and dispatching",
       r.confirming,
-      "Wall clock replay spent checking the block's entries and handing its transactions to the scheduler. The largest call on replay's own thread, and the first thing to look at if this node ever stops keeping up.",
+      "Checking the block's entries and handing its transactions to the scheduler.",
     ],
     [
       "fetch",
       "Reading from disk",
       r.fetch,
-      "Loading the slot's entries out of the blockstore. Reads the disk rather than the network, so a large figure here points at storage.",
+      "Loading the slot's entries from the blockstore.",
     ],
     [
       "completing",
       "Completing the bank",
       r.completing,
-      "Waiting for the unified scheduler to finish executing, then freezing the bank. Near nothing while execution keeps up, because by the time replay asks, the scheduler has long since finished. It is the row that grows first if the scheduler starts falling behind.",
+      "Waiting for the scheduler to finish executing, then freezing the bank.",
     ],
   ]);
 }
@@ -60,19 +60,19 @@ export function verifyRows(r: ReplayWindow): ReplayRow[] {
       "poh",
       "Checking the hash chain",
       r.poh_verify,
-      "Replaying the proof of history hashes to confirm the block's entries are in the order the leader published. Usually the larger half, and the half that answers to single-thread speed rather than to core count.",
+      "Replaying the proof of history hashes to confirm the entries' order.",
     ],
     [
       "signatures",
       "Checking signatures",
       r.tx_verify,
-      "Verifying the signature on every transaction in the block, and any precompiles alongside.",
+      "Verifying every transaction signature and precompile in the block.",
     ],
     [
       "dispatch",
       "Dispatching to the scheduler",
       r.dispatch,
-      "Turning verified entries into tasks and handing them to the unified scheduler. This is not execution. That happens afterwards on the worker threads, and is counted below.",
+      "Turning verified entries into scheduler tasks. Execution is counted below.",
     ],
   ]);
 }
@@ -86,13 +86,13 @@ export function cpuRows(r: ReplayWindow): ReplayRow[] {
       "execute",
       "Running programs",
       r.execute,
-      "Everything inside the virtual machine: setting it up, moving accounts in and out of it, and running the bytecode. Almost always the largest figure on this panel.",
+      "Everything inside the virtual machine, including moving accounts in and out of it.",
     ],
     [
       "load",
       "Loading accounts",
       r.load,
-      "Reading the accounts a transaction touches before it can run. What the accounts panel below is measuring from the other end.",
+      "Reading the accounts a transaction touches before it runs.",
     ],
     [
       "store",
@@ -104,19 +104,19 @@ export function cpuRows(r: ReplayWindow): ReplayRow[] {
       "program_cache",
       "Loading programs",
       r.program_cache,
-      "Finding the compiled form of each program a block calls. Nearly free on a hit; a miss is what the note under this panel is counting.",
+      "Finding the compiled form of each program the block calls.",
     ],
     [
       "checking",
       "Checking transactions",
       r.checking,
-      "Age, fee payer and executable-account checks, before a transaction is given to a worker at all.",
+      "Age, fee payer and executable-account checks before execution.",
     ],
     [
       "other",
       "Everything else",
       r.other,
-      "Stake cache updates, block limit accounting, and the balance and log collection that feeds transaction history. Small here, and smaller still on a validator with history switched off, where the collectors have nothing to gather.",
+      "Stake cache updates, block limit accounting, and transaction history collection.",
     ],
   ]);
 }
@@ -146,13 +146,13 @@ export function parts(r: ReplayWindow): ReplayParts {
       label: "bytecode",
       micros: r.bytecode,
       explain:
-        "Programs actually executing. Time a called program spends inside another is charged to the inner call alone, so a transaction that calls three deep is counted once rather than three times.",
+        "Programs executing, with a nested call charged to the inner call alone.",
     },
     serialising: {
       label: "serialising",
       micros: r.serialising,
       explain:
-        "Copying accounts into the virtual machine's memory before a program runs. Pure overhead, and on a busy validator it costs as much as the whole program cache.",
+        "Copying accounts into the virtual machine's memory before a program runs.",
     },
     deserialising: {
       label: "deserialising",
@@ -165,7 +165,7 @@ export function parts(r: ReplayWindow): ReplayParts {
       micros: r.compiling,
       peak: r.program_cache_peak,
       explain:
-        "Reading a program's ELF, verifying its bytecode and compiling it, because it was not in the cache. The hit rate on the program cache panel cannot show you this. It arrives in bursts, so the peak beside it says more than the average.",
+        "Compiling a program that was not in the cache. Arrives in bursts, so the peak says more than the average.",
     },
   };
 }

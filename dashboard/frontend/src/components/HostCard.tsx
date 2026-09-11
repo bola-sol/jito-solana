@@ -46,7 +46,7 @@ export function HostCard() {
       <div className="host-top">
         <div className="host-figure">
           <div className="host-label">
-            <Explain text="Threads wanting a processor, averaged over the last minute, against the cores this machine has. Not a percentage and not bounded: load can and does exceed the core count, and a validator sitting above it is queueing rather than running. The three averages together say which way it is going, which is most of what the figure is worth.">
+            <Explain text="Threads wanting a processor, averaged over one, five and fifteen minutes, against the core count.">
               Load average
             </Explain>
           </div>
@@ -68,7 +68,7 @@ export function HostCard() {
         {host.cpu && (
           <div className="host-figure">
             <div className="host-label">
-              <Explain text="Share of the last second the cores together spent working, so a hundred percent is every core busy the whole second. Load average counts the threads that wanted to run; this counts the time they got. User is the validator and whatever else runs here, system is the kernel on their behalf, interrupts included, and iowait is cores idle with a disk request outstanding, the lighter part of the bar. Steal appears only when a hypervisor is taking time from this machine.">
+              <Explain text="Share of the last second all cores spent working. Iowait is the lighter part of the bar.">
                 CPU busy
               </Explain>
             </div>
@@ -94,7 +94,7 @@ export function HostCard() {
 
         <div className="host-figure">
           <div className="host-label">
-            <Explain text="Memory genuinely committed, which is the total less what is free and less the page cache. Most tools print total minus free instead, which counts the cache and makes a healthy validator look nearly out of memory. The lighter part of the bar is that cache, and the lighter part plus the empty part is what the available figure underneath counts: cache is in use, but handed straight back the moment something wants it.">
+            <Explain text="Memory in use less the page cache, which is the lighter part of the bar.">
               Memory in use
             </Explain>
           </div>
@@ -119,7 +119,7 @@ export function HostCard() {
         {host.swap && (
           <div className="host-figure">
             <div className="host-label">
-              <Explain text="Swap in use. There is no healthy amount: a validator that has begun swapping is already being hurt by it, because the pages going to disk are the accounts index and the program cache. Any figure above nought here wants investigating rather than tolerating.">
+              <Explain text="Swap in use. There is no healthy amount.">
                 Swap used
               </Explain>
             </div>
@@ -136,7 +136,7 @@ export function HostCard() {
       {host.filesystems.length > 0 && (
         <>
           <div className="host-group">
-            <Explain text="How much of each filesystem is gone, and how much is left. This is the figure that says the validator will stop: a full ledger partition halts it. Nothing to do with how hard the disk is working, which is the group below.">
+            <Explain text="How much of each filesystem is used. A full ledger partition halts the validator.">
               <span>How full</span>
             </Explain>
             <em>statvfs</em>
@@ -150,7 +150,7 @@ export function HostCard() {
       {host.devices.length > 0 && (
         <>
           <div className="host-group">
-            <Explain text="How hard each device is being worked. Time busy is the share of the second it had at least one request in flight, and it says nothing at all about space: a device can sit at ninety percent busy with terabytes free. Wait is the mean time a request spent queued and serviced, and on NVMe it is the first figure to move when replay starts falling behind.">
+            <Explain text="Time busy is the share of the second with a request in flight. Wait is the mean time a request spent queued and serviced.">
               <span>How hard worked</span>
             </Explain>
             <em>diskstats</em>
@@ -241,7 +241,7 @@ function Threads({ samples }: { samples: ThreadsSample[] }) {
       <div className="cache-head" onClick={toggle}>
         <span className="cache-name">Validator threads</span>
         <span className="cache-rate">
-          <Explain text="The busiest thread's share of the last second on a core. Each row below is a thread's minute of the same; a pool row is the mean of its threads. Waiting is the minute's worst second spent runnable with no core to run on, and sleeping is whatever the bars leave over.">
+          <Explain text="The busiest thread's share of the last second on a core. Each row is a thread's minute of the same, a pool row the mean of its threads.">
             {top ? percent(top.now, 0) : "—"}
           </Explain>
         </span>
@@ -277,7 +277,7 @@ function Threads({ samples }: { samples: ThreadsSample[] }) {
               <span className="host-n is-count">count</span>
               <span
                 className="host-n is-cores"
-                title="The cores the kernel may schedule the thread on, where that is fewer than the machine has."
+                title="Cores the kernel may schedule the thread on, where fewer than the machine has."
               >
                 pinned
               </span>
@@ -308,7 +308,7 @@ function ThreadLine({ row }: { row: ThreadRow }) {
       className="host-thread"
       title={
         row.poh
-          ? "Hashes continuously between ticks and is meant to hold a core. Toned when it drops below 90% on cpu."
+          ? "Meant to hold a core. Toned below 90% on cpu."
           : undefined
       }
     >

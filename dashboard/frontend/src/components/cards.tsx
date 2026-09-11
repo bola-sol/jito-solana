@@ -98,7 +98,7 @@ export function StatusCard() {
                   ? "warn"
                   : "muted"
           }
-          explain="Whether this process is voting. A validator running its backup identity reports 'not voting': the vote account carries on being voted from wherever the voting identity now runs, and its progress belongs to that machine rather than this one."
+          explain="Whether this process is voting. A node running its backup identity reads not voting."
         />
         <Stat
           label="Next leader slot"
@@ -112,7 +112,7 @@ export function StatusCard() {
         <Stat label="Skip rate" value={percent(skip?.rate)} />
         <Stat
           label="Repaired shreds"
-          explain="The share of shreds this validator had to ask another node for because turbine never delivered them, over the last five minutes. Turbine should carry nearly all of them; a rising share means the cluster is not reaching this node, which shows here before it shows in the skip rate."
+          explain="Share of shreds repaired rather than received over turbine, last five minutes."
           value={percent(shreds?.repair_rate ?? null, 2)}
           sub={shreds ? `${count(shreds.repaired)} of ${count(shreds.received)}` : undefined}
           tone={shreds && shreds.repair_rate > 0.05 ? "bad" : undefined}
@@ -166,7 +166,7 @@ export function ValidatorsCard() {
           value={solCompact(counts.delinquent_stake)}
           sub="SOL"
           tone={counts.delinquent_stake > 0 ? "bad" : undefined}
-          explain="Stake behind validators that have not voted recently, which is the figure consensus weighs. Measured against this validator's own bank, so if this node falls behind, the cluster is what appears delinquent: the giveaway is the count and the stake climbing together."
+          explain="Stake of validators whose last vote is more than 128 slots behind this node's own bank."
         />
         <Stat
           label="Validators"
@@ -182,7 +182,7 @@ export function ValidatorsCard() {
           label="RPC Nodes"
           value={count(counts.rpc_nodes)}
           sub="advertising RPC"
-          explain="Peers advertising an RPC address in gossip on this shred version. Nodes started with --private-rpc never publish one, so they are indistinguishable here from nodes running no RPC at all, and an advertised address is not a promise that it answers."
+          explain="Peers advertising an RPC address in gossip on this shred version."
         />
       </div>
       <div className="stake-share">
@@ -221,7 +221,7 @@ export function TransactionsCard() {
       <SeriesRow label="Non-vote ok" series="success" value={decimal(tps?.non_vote_success)} />
       <div className="tps-row is-peak">
         <span className="tps-name">
-          <Explain text="The busiest second in the window, and the top of the grid: the scale is set a tenth above it. Fixed rather than fitted to each frame, so the shape of the last minute does not rescale every time a spike arrives and leaves.">
+          <Explain text="The busiest second in the window, which sets the top of the grid.">
             60s peak
           </Explain>
         </span>
@@ -235,7 +235,7 @@ export function TransactionsCard() {
       <div className="tps-readout">
         <div className="tps-total">
           <div className="tps-total-label">
-            <Explain text="Every transaction the cluster is confirming per second, votes included. Votes are consensus traffic rather than user traffic, so they are drawn as the base of each column rather than mixed in with it: how much of the total each accounts for depends on the cluster and on what is being asked of it, and separating them lets either be read without the other moving it.">
+            <Explain text="Transactions confirmed per second, with votes as the base of each column.">
               Total TPS
             </Explain>
           </div>

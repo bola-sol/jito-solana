@@ -48,8 +48,7 @@ export function NetworkCard() {
   };
 
   const scope =
-    "Every non-loopback interface on this host, not the validator's own traffic: " +
-    "Linux counts bytes per interface, not per process.";
+    "Every non-loopback interface on this host, not the validator alone.";
 
   return (
     <Card
@@ -149,7 +148,7 @@ function Split({ total, split }: { total: number; split: EgressSplit }) {
   return (
     <div className="net-split">
       <span className="net-split-label">
-        <Explain text="What the gossip and repair senders report putting on the wire, over the window each reports. The remainder is everything else the interface sent, mostly shreds over XDP, which reports no bytes.">
+        <Explain text="What the gossip and repair senders report sending. The rest is mostly shreds over XDP, which reports no bytes.">
           of which
         </Explain>
       </span>

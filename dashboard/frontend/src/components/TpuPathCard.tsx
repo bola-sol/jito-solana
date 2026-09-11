@@ -102,7 +102,7 @@ export function TpuPathCard() {
             {admitted === null ? "—" : percent(admitted, 1)}
           </span>
           <span className="path-figure-label">
-            <Explain text="Of every connection offered to the TPU port, the share this validator let in. The offer says more about the cluster than about this node, since an open port is offered far more than it could ever carry. What the node decides is how much of it to take, and this is that decision as one figure.">
+            <Explain text="Share of connections offered to the TPU port that this validator admitted.">
               Admitted of offered
             </Explain>
           </span>
@@ -112,7 +112,7 @@ export function TpuPathCard() {
             {staked === null ? "—" : percent(staked, 0)}
           </span>
           <span className="path-figure-label">
-            <Explain text="Of the connections that were admitted, the share from peers holding stake. This is the figure that says whether stake weighting is doing anything for you: under pressure the limits are meant to keep letting staked peers in while the rest are shed, and a leader watching this fall during a busy slot is watching that fail.">
+            <Explain text="Share of admitted connections from staked peers.">
               Staked
             </Explain>
           </span>
@@ -152,7 +152,7 @@ function EpochStages({
   return (
     <div className="path-epoch">
       <div className="path-span">
-        <Explain text="What the sections in this box are counted over, which is not what the sections outside it are counted over. Both of these stages only run while this validator is leader, and a five-minute window measures neither: on all but the largest validators it reports whether a leader slot happened to fall inside the last five minutes, and almost always one did not. An epoch is the span the leader schedule is drawn over and the stake behind it is fixed for, so it is the span these are kept over. Where the heading says counted from part way in, this validator was restarted during the epoch and the totals begin there rather than at its first slot.">
+        <Explain text="Counted over the epoch rather than the window, since these stages run only while this validator is leader. Counted from part way in means a restart during the epoch.">
           {/* Published alongside the two stages, so it is only missing if one
               of them arrived without it. Named rather than left blank in that
               case: an epoch total under no heading reads as a windowed one. */}
@@ -331,7 +331,7 @@ function Section({ section }: { section: PathSection }) {
             </button>
           )}
           {section.zeros > 0 && (
-            <Explain text="Counters this section watches that stayed at nought over the window. Kept as a figure rather than as rows: a counter at nought is worth knowing, since it is the difference between nothing having gone wrong and nothing being measured, but a column of noughts is most of what made this card too tall to read.">
+            <Explain text="Counters this section watches that stayed at nought over the window.">
               <span>
                 {count(section.zeros)} counter{section.zeros === 1 ? "" : "s"} at zero
               </span>
@@ -379,7 +379,7 @@ function OtherPort({
         <span className="path-port-name">{port.name}</span>
         <span className="path-port-note">
           <Explain
-            text={`Connections offered to the ${port.name} port over the last five minutes, and the share of them admitted. Every port has its own listener with its own limits, so each is counted on its own rather than added to the others.`}
+            text={`Connections offered to the ${port.name} port over the last five minutes, and the share admitted.`}
           >
             {count(port.offered)} offered
             {admitted === null ? "" : ` · ${percent(admitted, 1)} admitted`}

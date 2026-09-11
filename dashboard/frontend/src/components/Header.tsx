@@ -52,7 +52,7 @@ export function Header() {
   const buildLabel_ = build && (
     <Explain
       className="version"
-      text="Which client this validator runs, and its version. A fork carries the version number of the release it follows, so the number alone does not say which client it is."
+      text="Client and version. A fork carries the version of the release it follows."
     >
       {build}
     </Explain>

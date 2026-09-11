@@ -270,10 +270,10 @@ const TurnCard = memo(
               Tips
             </span>
             <span>Duration</span>
-            <span title="Data shreds in the block, and how many this validator had to ask for.">
+            <span title="Data shreds in the block, and how many were repaired.">
               Shreds
             </span>
-            <span title="From the first shred to the block being full, then to replay finishing. Drawn against one second.">
+            <span title="First shred to block full, then to replay finishing, drawn against one second.">
               Received → replayed
             </span>
             <span>Compute</span>

@@ -140,56 +140,56 @@ export function doorSection(
       "over one address's rate",
       q.shed_address,
       false,
-      "Turned away without a handshake because that address was opening connections too quickly. A large figure here against a small one for the port as a whole says the pressure is coming from a few places rather than from the cluster at large.",
+      "Turned away before a handshake because that address was opening connections too quickly.",
     ],
     [
       "door_shed_all",
       "over the port's rate",
       q.shed_all,
       false,
-      "Turned away without a handshake because the port as a whole was over its connection rate. The crudest of the limits and the cheapest: nothing is read and nothing is remembered about the peer.",
+      "Turned away before a handshake because the port as a whole was over its connection rate.",
     ],
     [
       "door_handshake_timeout",
       "handshake timed out",
       q.handshake_timeout,
       false,
-      "Accepted for a handshake that never finished in time. Ordinary in small numbers, since a peer that goes away part-way through lands here.",
+      "Accepted for a handshake that did not finish in time.",
     ],
     [
       "door_refused_full",
       "no room in the table",
       q.refused_full,
       true,
-      "Refused because the endpoint already held every connection it is configured to hold. Unlike the rate limits this says the port is saturated rather than that a peer is being impatient, and a peer refused here may have had nothing wrong with it.",
+      "Refused because the endpoint already held every connection it is configured to hold.",
     ],
     [
       "door_handshake_error",
       "handshake failed",
       q.handshake_error,
       false,
-      "Accepted for a handshake that ended in an error rather than a timeout: a transport fault, a certificate the listener would not take, or the peer closing it.",
+      "Accepted for a handshake that ended in an error: a transport fault, a rejected certificate, or the peer closing it.",
     ],
     [
       "door_add_failed",
       "refused after handshake",
       refused,
       false,
-      "Handshook successfully and then refused a place in the connection table, because the table it belonged in was full or the peer was banned. The listener counts this under four names that overlap, so this is the larger of the two readings rather than their sum; the breakdown is below.",
+      "Handshook and then refused a place in the connection table. Counted under four overlapping names, so this is the largest of them rather than their sum.",
     ],
     [
       "door_unaccounted_pre",
       "unaccounted, before handshake",
       beforeHandshake,
       false,
-      "Offered, and then neither shed at a gate nor carried as far as a handshake. There is one branch of the listener that does this — an accept that returns an error — and it increments no counter at all, so this figure is what is left when everything the listener does count is taken off the offer. It is a measurement of the listener's silence, not of a peer's behaviour.",
+      "Offered and neither shed at a gate nor handshook. Derived: one branch of the listener counts nothing, so this is what remains after everything it does count.",
     ],
     [
       "door_unaccounted_post",
       "unaccounted, after handshake",
       afterHandshake,
       false,
-      "Completed a handshake and then vanished: not refused a table place, not admitted. The admission control returns nothing in three places without recording anything, and one of them is an unstaked peer arriving at the vote port, which is the design working rather than a fault. Worked out by subtraction for the same reason as the row above, and it cannot say which of the three.",
+      "Handshook and then neither refused nor admitted. Derived by subtraction; one such path is an unstaked peer at the vote port, which is by design.",
     ],
   ]);
 
@@ -207,7 +207,7 @@ export function doorSection(
       share: shareOf(refused, count),
       warn: false,
       explain:
-        "One of the names the listener refuses a connection under, as a share of the refusals above. These overlap rather than partition: the unstaked path runs through the same insert that raises the last of them, so a single refusal there appears twice in this list. They are listed as they are counted instead of being added up, because adding them would say a port refused twice what it did.",
+        "One of the names the listener refuses under, as a share of the refusals above. They overlap, so they are not added up.",
     }))
     .filter((reason) => reason.count > 0);
 
@@ -216,7 +216,7 @@ export function doorSection(
     title: "Connections offered",
     note: "to this port",
     explain:
-      "Connections, not transactions. Most of what the TPU port turns away it turns away here, before a byte has been read, and a transaction lost at this stage was never seen by anything downstream. The gates are checked in order and the listener moves on at the first one that closes, so a connection is usually counted at one of them and not several. Two things break that, and this section shows them rather than smoothing them over: the refusal at the connection table is counted under four overlapping names, and two branches of the listener drop a connection without counting it at all, which is what the unaccounted rows are.",
+      "Connections, not transactions, each counted at the first gate that closed. The table refusal carries four overlapping names and two branches count nothing, which the unaccounted rows show.",
     total: q.offered,
     through: { label: "admitted", count: admitted },
     losses,
@@ -233,7 +233,7 @@ export function doorSection(
             unit: "datagrams",
             warn: false,
             explain:
-              "Datagrams discarded by the kernel before the listener could read them, from the same port over the same window. Nothing inside the validator sees these, and they are counted in datagrams while the bar counts connections, so this sits beside the bar rather than in it: a datagram the kernel threw away never became a connection attempt, so it is not a share of anything here.",
+              "Datagrams the kernel discarded on this port before the listener read them. Counted in datagrams, not connections, so it sits beside the bar rather than in it.",
           },
   };
 }
@@ -246,21 +246,21 @@ export function streamSection(q: QuicPort): PathSection {
       "throttled, unstaked",
       q.throttled_unstaked,
       false,
-      "Streams from peers without stake, held back at the much lower limit they share between them. This is the row that ordinarily carries a spam wave, and it doing so is the limiter working rather than failing.",
+      "Streams from unstaked peers held back at the lower limit they share.",
     ],
     [
       "stream_throttled_staked",
       "throttled, staked",
       q.throttled_staked,
       true,
-      "Streams from staked peers held back because that peer was over the share of capacity its stake earns it. Marked because it is the limiter biting on the traffic it is meant to favour, which during a leader slot is worth knowing about.",
+      "Streams from staked peers held back because the peer was over the capacity its stake earns.",
     ],
     [
       "stream_read_timeout",
       "stopped arriving",
       q.read_timeouts,
       false,
-      "Opened and then left unfinished long enough to be abandoned. A sender that disappears part-way through a transaction lands here.",
+      "Opened and left unfinished long enough to be abandoned.",
     ],
     [
       "stream_read_error",
@@ -274,7 +274,7 @@ export function streamSection(q: QuicPort): PathSection {
       "impossible size",
       q.invalid_size,
       false,
-      "Refused for declaring a length that could not be a transaction. Cheap to reject and never legitimate, so this counts malformed or hostile traffic rather than anything going wrong here.",
+      "Refused for declaring a length that could not be a transaction.",
     ],
   ]);
   const lost = losses.reduce((sum, loss) => sum + loss.count, 0);
@@ -284,7 +284,7 @@ export function streamSection(q: QuicPort): PathSection {
     title: "Streams opened",
     note: "on admitted connections",
     explain:
-      "What the admitted connections sent, and what the stream limits did with it. A transaction is sent as a stream of its own, so this is the first section counting things rather than the peers sending them.",
+      "What the admitted connections sent, and what the stream limits did with it. One stream carries one transaction.",
     total: q.streams,
     through: { label: "carried", count: Math.max(0, q.streams - lost) },
     losses,
@@ -304,14 +304,14 @@ export function listenerSection(q: QuicPort): PathSection {
       "fetch queue full",
       q.queue_full,
       true,
-      "Read successfully and then dropped, because the queue towards signature verification had no room. This is the row that means the validator could not keep up with what it had already let in.",
+      "Read and then dropped because the queue towards signature verification was full.",
     ],
     [
       "handed_disconnected",
       "queue closed",
       q.disconnected,
       true,
-      "Dropped because the queue onward had been closed rather than merely full. In practice this is a validator shutting down, and a figure here at any other time is worth asking about.",
+      "Dropped because the queue onward had been closed, which is a validator shutting down.",
     ],
   ]);
 
@@ -320,7 +320,7 @@ export function listenerSection(q: QuicPort): PathSection {
     title: "Transactions read",
     note: "out of those streams",
     explain:
-      "Transactions the listener finished assembling out of its streams, and what became of them. Not a count of packets, and not comparable with the datagram figures on the socket card: one transaction arrives across however many datagrams it needs. The total is the outcomes added together, because the listener keeps no count of what it finished reading.",
+      "Transactions assembled from streams, and what became of them. Not packets, so not comparable with the socket card.",
     total: read,
     through: { label: "passed to verify", count: q.handed_on },
     losses,
@@ -345,21 +345,21 @@ export function verifySection(v: VerifyStage): PathSection {
       "duplicate",
       pick(rows, "verify_duplicate"),
       false,
-      "Seen before. The network sends the same transaction more than once as a matter of course, so a large figure here is ordinary rather than a fault.",
+      "Seen before. The network resends transactions as a matter of course.",
     ],
     [
       "verify_bad",
       "bad signature",
       pick(rows, "verify_bad"),
       false,
-      "Failed verification. Not reported directly: sigverify discards at one step and returns, so a packet is deduplicated, or dropped below the floor, or verified, or bad, and what is left once the other three are taken off is exactly the bad.",
+      "Failed verification. Derived: received less duplicates, underpaying and verified.",
     ],
     [
       "verify_below_floor",
       "below priority floor",
       pick(rows, "verify_below_floor"),
       false,
-      "Dropped for paying too little, where a priority floor is configured. Nought on a validator that has not set one.",
+      "Dropped for paying under the priority floor, where one is configured.",
     ],
   ]);
 
@@ -368,7 +368,7 @@ export function verifySection(v: VerifyStage): PathSection {
     title: "Verify",
     note: "signatures and duplicates",
     explain:
-      "Signature verification and deduplication, for everything that is not a vote. Votes are verified by a separate stage and leave by a different door, so they are left out here rather than inflating a total the section below could never account for. Counted over the epoch, like the section under it and unlike the three above it: this stage only has work while the validator is at or near a leader slot, so a window of it measures the schedule rather than the stage.",
+      "Signature verification and deduplication for everything but votes, counted over the epoch.",
     total: v.received,
     through: { label: "verified", count: v.verified },
     losses,
@@ -382,7 +382,7 @@ export function verifySection(v: VerifyStage): PathSection {
             unit: "batches, not transactions",
             warn: true,
             explain:
-              "Batches thrown away because the queue onward to the banking stage was full. Beside the bar rather than in it, because a batch carries however many transactions were grouped into it and nothing reports that number, so this can be neither added to nor subtracted from the counts here. It is the same kind of loss as the fetch queue filling above: something already accepted, thrown away for want of room. Counted by the sigverify stage itself, so it does not depend on which scheduler is running.",
+              "Batches dropped because the queue to the banking stage was full. A batch's transaction count is not reported, so this cannot be added to the counts here.",
           }
         : null,
   };
@@ -418,28 +418,28 @@ export function executedSection(
       "failed, but still in the block",
       pick(rows, "exec_failed"),
       false,
-      "Executed, failed, and committed anyway. A failing transaction still pays its fee and still takes room in the block, so this is ordinary traffic rather than a fault of this validator.",
+      "Executed, failed, and committed anyway. A failed transaction still pays its fee and takes room in the block.",
     ],
     [
       "exec_dropped",
       "failed to load",
       pick(rows, "exec_dropped"),
       false,
-      "Never executed, because the accounts or the blockhash it named could not be loaded. The reasons are counted separately and sit behind the control below.",
+      "Never executed because its accounts or blockhash could not be loaded. The reasons are behind the control below.",
     ],
     [
       "exec_cost_throttled",
       "no room in the block",
       pick(rows, "exec_cost_throttled"),
       true,
-      "Held back by the cost model rather than executed: the block had no room left. Marked because it says the block filled, which is a limit being reached rather than a transaction being wrong.",
+      "Held back by the cost model because the block had no room left.",
     ],
     [
       "exec_retryable",
       "sent back to retry",
       pick(rows, "exec_retryable"),
       false,
-      "Handed back to be tried again, usually because the accounts it wanted were locked by something else in flight.",
+      "Handed back to be tried again, usually because its accounts were locked by another transaction in flight.",
     ],
     [
       "exec_expired_bank",
@@ -458,7 +458,7 @@ export function executedSection(
     share: shareOf(failedToLoad, pick(rows, key)),
     warn: false,
     explain:
-      "One of the reasons a transaction could not be loaded, as a share of the transactions that failed to load rather than of everything the workers attempted.",
+      "One reason a transaction could not be loaded, as a share of those that failed to load.",
   })).filter((reason) => reason.count > 0);
 
   return {
@@ -466,7 +466,7 @@ export function executedSection(
     title: "Executed",
     note: "taken up by workers",
     explain:
-      "The worker threads, added together rather than shown one by one. Counted over the epoch: the workers only run while this validator is leader, so five minutes of them would report whether a leader slot happened to fall inside the last five minutes rather than anything about how the slots went. Absent until the first leader slot of an epoch, which is a stage with nothing yet to say rather than one throwing everything away.",
+      "The worker threads added together, counted over the epoch. Absent until the first leader slot of the epoch.",
     total: attempted,
     through: { label: "succeeded", count: pick(rows, "exec_succeeded") },
     losses,
@@ -483,7 +483,7 @@ export function executedSection(
             unit: "transactions",
             warn: false,
             explain:
-              "Bundles the block engine sent over this epoch, and the transactions inside them. They arrive over their own connection into their own stage, so they pass none of the sections above: not the port, not the streams, not signature verification. Their transactions are already counted in the figures beside this line, which is why it carries no percentage — it says what part of the bar arrived this way, not what was lost. Counted where the bundles arrive rather than where they execute, so it is an upper bound: some are dropped before a worker sees them, and the executed share of them is not reported apart.",
+              "Bundles the block engine sent this epoch, with their transactions. They skip the sections above and are already counted in the figures beside this line, so this carries no percentage.",
           },
   };
 }

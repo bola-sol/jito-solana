@@ -37,7 +37,7 @@ export function ReplayCard() {
           label="Replay thread"
           value={micros(serial)}
           sub="per slot"
-          explain="Time replay's own thread spent on the average slot: reading the block, verifying it, dispatching it, and completing the bank. These run one after another, so this is a real duration. It is also the serial limit. If it approaches the slot time, the node falls behind however many cores it has."
+          explain="Time replay's own thread spent on the average slot, which is the serial limit."
         />
         <Figure
           label="Of slot time"
@@ -45,19 +45,19 @@ export function ReplayCard() {
           // Not "of 400 ms". The figure divides by what the cluster is keeping,
           // and the two part company under load, which is when it gets read.
           sub="of observed slot"
-          explain="That time as a share of how long a slot is actually lasting on this cluster, rather than of the nominal four hundred milliseconds. Replay works several slots at once, so this reads true at steady state and understates the pressure while the node is catching up."
+          explain="That time as a share of the observed slot time on this cluster."
         />
         <Figure
           label="CPU per slot"
           value={micros(cpu)}
           sub={cores === null ? "across threads" : `${decimal(cores, 2)} cores`}
-          explain="Thread time one slot costs across every worker, and what that comes to in cores held busy. Exceeding the slot time is ordinary, and is what running on many cores looks like. Watch which way it moves over days rather than reading much into any one figure."
+          explain="Thread time one slot costs across every worker, and the cores that holds busy."
         />
         <Figure
           label="Worst slot"
           value={micros(replay.serial_peak)}
           sub={`last ${count(replay.slots)} slots`}
-          explain="The worst single slot in the window, taken from each slot's own total. Adding up each figure's separate worst would describe a slot that never happened, because those maxima land on different slots."
+          explain="The worst single slot in the window, by its own total."
         />
       </div>
 
@@ -65,7 +65,7 @@ export function ReplayCard() {
         title="Time spent on this slot"
         total={`${micros(serial)} wall clock`}
         rows={serialRows(replay)}
-        explain="Replay's own thread, split into the three spans it spends there. Measured one after another, so these add up. Wall clock from first sight of the slot is far longer, but replay works several slots at once and votes and chooses forks in between, so nothing in that gap can be charged to this slot in particular."
+        explain="Replay's own thread, split into three spans that run one after another."
       />
 
       <Section
@@ -74,14 +74,14 @@ export function ReplayCard() {
         // Segments held apart: the three overlap and are not parts of a whole.
         broken
         rows={verifyRows(replay)}
-        explain="Which part of verification costs more. These are sums of asynchronous jobs that overlap one another and each run across many threads, so together they come to several times the window they happened in and cannot be split out of it. Each is measured the same way as the others, so comparing them to each other is sound. Comparing them to the figures above is not."
+        explain="Sums of overlapping jobs across many threads. Comparable with each other, not with the figures above."
       />
 
       <Section
         title="Execution"
         total={`${micros(cpu)} CPU across threads`}
         rows={cpuRows(replay)}
-        explain="Thread time accumulated across the worker threads, so this is CPU rather than wall clock and normally exceeds the slot. The phases are sequential within a thread, so unlike the verification figures these partition cleanly and their total is the CPU one slot costs."
+        explain="CPU time across the worker threads. The phases partition, so they add up to what one slot costs."
       />
 
       {/* The four figures that sit inside a phase rather than beside it. A

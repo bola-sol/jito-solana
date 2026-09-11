@@ -23,13 +23,13 @@ export function IngestCard() {
       <div className="ingest">
         <div className="ingest-row is-head">
           <span>Socket</span>
-          <Explain text="Bytes waiting unread at the moment of the sample. Usually empty, because a healthy validator drains a socket in microseconds. A reading here means the reader is falling behind.">
+          <Explain text="Bytes waiting unread at the moment of the sample.">
             Queued
           </Explain>
-          <Explain text="Drops inside the window, and beside them the share of everything that arrived on the port in the same window. This is the figure that says whether packets are being lost now. The heading names the period actually watched, so it reads shorter than a minute until the window fills.">
+          <Explain text="Drops in the window, and their share of what arrived on the port.">
             {windowLabel(summary.window_seconds)}
           </Explain>
-          <Explain text="Drops since the validator finished starting, and their share of what arrived over the same stretch. Counted from there rather than from when the sockets opened, because most of a validator's drops happen during startup, when gossip's first view of the cluster arrives faster than it can be read. That burst says nothing about how the validator is running now.">
+          <Explain text="Drops since the validator finished starting, and their share of what arrived since.">
             Total
           </Explain>
         </div>
@@ -43,7 +43,7 @@ export function IngestCard() {
         {elsewhere
           ? "Serve repair is the one row without that share, and the QUIC ports are on the TPU path card instead."
           : "Serve repair and the QUIC ports have no such count, and their rows are drop figures alone."}{" "}
-        <Explain text="Drops come from /proc/net/udp, which has a counter for what each socket discarded but none for what it handed over. The delivered half comes from the validator's own receivers, which report a packet count for turbine, gossip and the UDP vote port. Serve repair keeps the same counter and never reports it, so its row is a drop figure alone, and reaching it would take a change to the validator itself. The QUIC ports have no datagram count at all, since their counters count transactions pulled out of streams, which is why they are drawn beside what their listeners admitted rather than beside a share they cannot have.">
+        <Explain text="The kernel counts what a socket discarded but not what it delivered, so the delivered count comes from the validator's own receivers. Serve repair never reports one, and the QUIC ports count transactions rather than datagrams.">
           Why?
         </Explain>
       </div>

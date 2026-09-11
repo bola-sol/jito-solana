@@ -152,7 +152,7 @@ function AveragesRow({
       <span className="produced-id">
         <Explain
           className="produced-avg-label"
-          text={`The mean of each column over the ${count(avg.blocks)} blocks held on this page. Blocks missing a figure are left out of its average rather than counted as nought, so a column can be averaged over fewer blocks than the one beside it.`}
+          text={`Mean of each column over the ${count(avg.blocks)} blocks held. A block missing a figure is left out of that column's mean.`}
         >
           avg
         </Explain>
@@ -312,7 +312,7 @@ function BlockCompute({
       <div className="sx-head">
         <div className="sx-cu">
           <div className="sx-eyebrow">
-            <Explain text="What this block's transactions cost to execute, against the ceiling consensus puts on a block. A block well under its limit was not necessarily short of work: every account has its own ceiling too, far below this one, so a single busy account can stop a half-empty block taking anything more that touches it.">
+            <Explain text="Compute this block's transactions cost, against the block ceiling. Each account has a far lower ceiling of its own.">
               Compute units used
             </Explain>
           </div>
@@ -418,7 +418,7 @@ function BlockAccount({
   return (
     <div className="sx-acct">
       <div className="sx-eyebrow">
-        <Explain text="The account this block charged the most compute to. Every account has its own ceiling within a block, well below the block's own, so this is the figure that says whether one account was what stopped the block taking more.">
+        <Explain text="The account charged the most compute in this block, against the per-account ceiling.">
           Costliest account
         </Explain>
       </div>
@@ -474,13 +474,13 @@ function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
     <div className="sx-sched">
       <div className="sx-strip">
         <span className="sx-strip-label">
-          <Explain text="Every transaction the banking stage was handed during this slot, and what became of it. The counters behind the breakdown say what got no further and why. Received is exactly buffered plus the intake reasons; the later stages do not add up the same way, because the queue holds transactions across slots and some of what was scheduled here arrived before this slot began.">
+          <Explain text="Every transaction the banking stage was handed in this slot, and what became of it. Received equals buffered plus the intake reasons; the later stages hold work across slots and do not.">
             Scheduler
           </Explain>
           {bam && (
             <>
               {" · "}
-              <Explain text="BAM built this block. It is sent atomic transaction batches rather than packets off the wire, so the first figure below is counted in batches and the three after it in transactions.">
+              <Explain text="BAM built this block, so the first figure is counted in batches and the rest in transactions.">
                 BAM
               </Explain>
             </>

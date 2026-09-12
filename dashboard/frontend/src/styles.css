@@ -575,9 +575,19 @@ body {
   font-size: 11px;
 }
 
+/* Four across where four fit, else two, else one: never three, which leaves
+   one card alone on the row below. */
 .grid {
+  --card-min: 300px;
+  --four-across: calc(4 * var(--card-min) + 3 * var(--gap));
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(
+      max(var(--card-min), min((100% - var(--gap)) / 2, (var(--four-across) - 100%) * 999)),
+      1fr
+    )
+  );
   gap: var(--gap);
 }
 

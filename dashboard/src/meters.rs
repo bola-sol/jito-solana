@@ -1559,6 +1559,11 @@ struct TpuMeter {
     quic_forwards_window: VecDeque<QuicTotals>,
     quic_vote_window: VecDeque<QuicTotals>,
     quic_paths: Debounced<Option<QuicPaths>>,
+    /// The vote port is listed from its first connection until an epoch
+    /// passes without another: under alpenglow votes leave it for good.
+    vote_quiet: bool,
+    /// The port's cumulative offer as of the last epoch boundary seen.
+    vote_offered_at_epoch: Option<(Epoch, u64)>,
     /// How the XDP transmit path is configured, or nothing where the
     /// validator is not running one.
     xdp: Debounced<Option<XdpConfig>>,
@@ -1587,6 +1592,8 @@ impl TpuMeter {
             quic_forwards_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_vote_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_paths: Debounced::default(),
+            vote_quiet: true,
+            vote_offered_at_epoch: None,
             xdp: Debounced::default(),
             epoch_now: None,
             leader_totals: LeaderTotals::default(),
@@ -1656,6 +1663,22 @@ impl TpuMeter {
             }),
         );
 
+        if current.quic_vote.offered > previous.quic_vote.offered {
+            self.vote_quiet = false;
+        }
+        if let Some(at) = self.epoch_now {
+            let offered = current.quic_vote.offered;
+            match self.vote_offered_at_epoch {
+                Some((epoch, before)) if epoch != at.epoch => {
+                    self.vote_quiet = offered == before;
+                    self.vote_offered_at_epoch = Some((at.epoch, offered));
+                }
+                Some(_) => {}
+                None => self.vote_offered_at_epoch = Some((at.epoch, offered)),
+            }
+        }
+        let vote_quiet = self.vote_quiet;
+
         // Present once any port has ever taken a connection, not within the
         // window: behind a proxy the only inbound QUIC is vote traffic during
         // leader slots.
@@ -1688,6 +1711,7 @@ impl TpuMeter {
             // dropped nothing.
             kernel_drops: kernel_drops.get(name).copied(),
         })
+        .filter(|port| port.name != "tpu vote quic" || !vote_quiet)
         .collect();
         // The cumulative figures: `offered` is stored as the listener reports it, so
         // this is the count since the port opened.
@@ -2348,6 +2372,43 @@ mod tests {
         let published = harness.published_key("summary", "quic_paths").unwrap();
         assert!(!published.contains(r#""value":null"#), "{published}");
         assert!(published.contains(r#""offered":0"#), "{published}");
+    }
+
+    #[test]
+    fn test_the_vote_port_is_listed_from_its_first_connection_to_a_quiet_epoch() {
+        let harness = fixture();
+        let mut meters = harness.meters();
+        let vote = |offered| TapCounters {
+            quic_vote: QuicTotals {
+                offered,
+                ..QuicTotals::default()
+            },
+            ..quic_tap(1)
+        };
+        let listed = || {
+            harness
+                .published_key("summary", "quic_paths")
+                .unwrap()
+                .contains(r#""name":"tpu vote quic""#)
+        };
+
+        meters.tpu.epoch_now = Some(at(1, 100));
+        meters.collect_waterfall(&vote(0), &vote(0));
+        assert!(!listed(), "nothing has arrived");
+        meters.collect_waterfall(&vote(0), &vote(3));
+        assert!(listed(), "the first connection lists it");
+
+        // Three arrived during epoch one, so its boundary keeps the port.
+        meters.tpu.epoch_now = Some(at(2, 100));
+        meters.collect_waterfall(&vote(3), &vote(3));
+        assert!(listed(), "the epoch had connections");
+
+        // None during epoch two.
+        meters.tpu.epoch_now = Some(at(3, 100));
+        meters.collect_waterfall(&vote(3), &vote(3));
+        assert!(!listed(), "an epoch passed with none");
+        meters.collect_waterfall(&vote(3), &vote(4));
+        assert!(listed(), "back at once when one arrives");
     }
 
     #[test]

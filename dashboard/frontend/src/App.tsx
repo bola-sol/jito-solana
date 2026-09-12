@@ -17,6 +17,7 @@ import { SlotDetailsPage } from "./components/SlotDetailsPage";
 import { Sidebar } from "./components/Sidebar";
 import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
+import { GossipStakeCard } from "./components/GossipStakeCard";
 import { SlotStrip } from "./components/SlotStrip";
 import { usePage, type Page } from "./route";
 import type { StartupProgress } from "./types";
@@ -93,6 +94,7 @@ function Overview() {
         <ValidatorsCard />
         <VersionsCard />
       </div>
+      <GossipStakeCard />
       <TransactionsCard />
       {/* Both read the same traffic from opposite ends: bytes on the wire, and
           what the sockets failed to take off it. */}

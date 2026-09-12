@@ -5,6 +5,7 @@ import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import type {
   EpochInfo,
+  GossipStake,
   Health,
   Shreds,
   SkipRate,
@@ -53,15 +54,17 @@ export function StatusCard() {
   const behindCluster = store.get<number | null>("summary", "behind_cluster");
   const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
   const startup = store.get<StartupProgress>("summary", "startup_progress");
+  const gossipStake = store.get<GossipStake | null>("summary", "gossip_stake");
   const skip = store.get<SkipRate>("summary", "skip_rate");
   const shreds = store.get<Shreds | null>("summary", "shreds");
 
   // The leader countdown means nothing until the validator is running, so show
-  // where it has got to in its boot sequence instead.
+  // where it has got to in its boot sequence instead. The wait's own card
+  // carries the stake figure where the validator hands over its handles.
   if (startup && !startup.running) {
     return (
       <Card title="Status" lit>
-        <StartupPhases startup={startup} />
+        <StartupPhases startup={startup} withStake={!gossipStake} />
       </Card>
     );
   }

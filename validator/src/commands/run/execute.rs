@@ -826,6 +826,9 @@ pub fn execute(
         extra_bank_notification_senders.push(sender);
         receiver
     });
+    // The handles the supermajority wait reads, sent before it starts, so the
+    // page can show the wait per validator.
+    let dashboard_gossip = dashboard_config.is_some().then(unbounded);
 
     let block_engine_config = Arc::new(ArcSwap::from_pointee(BlockEngineConfig {
         block_engine_url: value_of(matches, "block_engine_url").unwrap_or_default(),
@@ -885,6 +888,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
+        gossip_ready_sender: dashboard_gossip.as_ref().map(|(sender, _)| sender.clone()),
         require_tower: matches.is_present("require_tower"),
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
@@ -1167,10 +1171,13 @@ pub fn execute(
         Some(dashboard_config) => {
             let listen_addr = dashboard_config.listen_addr;
             Some(
-                DashboardService::start(dashboard_config, start_progress.clone(), exit.clone())
-                    .map_err(|err| {
-                        format!("failed to start the dashboard on {listen_addr}: {err}")
-                    })?,
+                DashboardService::start(
+                    dashboard_config,
+                    start_progress.clone(),
+                    exit.clone(),
+                    dashboard_gossip.map(|(_, receiver)| receiver),
+                )
+                .map_err(|err| format!("failed to start the dashboard on {listen_addr}: {err}"))?,
             )
         }
     };

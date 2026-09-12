@@ -12,10 +12,11 @@ use {
         metrics_tap::MetricsTap,
         proto::{Publisher, TOPIC_SUMMARY},
         server,
-        startup::StartupPublisher,
+        startup::{GossipReadyReceiver, StartupPublisher, gossip_stake},
         tips::TipMeter,
         validator_info::ValidatorInfoCache,
     },
+    solana_core::validator::ValidatorStartProgress,
     solana_pubkey::Pubkey,
     solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationReceiver,
     std::{
@@ -82,10 +83,14 @@ impl DashboardService {
     /// Binds the listener and begins serving startup progress. The only error is a
     /// failure to bind, so a misconfigured dashboard fails loudly at boot. Call
     /// [`DashboardService::attach`] once the validator is assembled.
+    /// `gossip_ready` carries gossip and bank forks once the validator has
+    /// them, before its supermajority wait; the wait is drawn per validator
+    /// from then on.
     pub fn start(
         config: DashboardConfig,
         startup_progress: StartProgress,
         exit: Arc<AtomicBool>,
+        gossip_ready: Option<GossipReadyReceiver>,
     ) -> io::Result<Self> {
         let publisher = Arc::new(Publisher::new());
         let started = SystemTime::now();
@@ -146,9 +151,11 @@ impl DashboardService {
             let startup_progress = startup_progress.clone();
             let startup = startup.clone();
             let metrics_tap = metrics_tap.clone();
+            let info_cache = info_cache.clone();
             thread::Builder::new()
                 .name("solDashBoot".to_string())
                 .spawn(move || {
+                    let mut handles = None;
                     while !attached.load(Ordering::Relaxed) && !exit.load(Ordering::Relaxed) {
                         let progress = *startup_progress.read().unwrap();
                         startup.lock().unwrap().publish(
@@ -156,8 +163,33 @@ impl DashboardService {
                             progress,
                             metrics_tap.stake_in_gossip(),
                         );
+
+                        // Names are read once the snapshot bank exists, which is
+                        // before the wait and long before the collector's own pass.
+                        if handles.is_none() {
+                            handles = gossip_ready
+                                .as_ref()
+                                .and_then(|receiver| receiver.try_recv().ok());
+                            if let Some((_, bank_forks)) = &handles {
+                                let bank = bank_forks.read().unwrap().root_bank();
+                                let entries = crate::validator_info::scan_all(&bank);
+                                info_cache.write().unwrap().merge(entries);
+                            }
+                        }
+                        let waiting = matches!(
+                            progress,
+                            ValidatorStartProgress::WaitingForSupermajority { .. }
+                        );
+                        let stake = handles.as_ref().filter(|_| waiting).map(
+                            |(cluster_info, bank_forks)| {
+                                let bank = bank_forks.read().unwrap().root_bank();
+                                gossip_stake(cluster_info, &bank, &info_cache.read().unwrap())
+                            },
+                        );
+                        startup.lock().unwrap().publish_gossip(&publisher, stake);
                         thread::sleep(BOOT_POLL);
                     }
+                    startup.lock().unwrap().publish_gossip(&publisher, None);
                 })?
         };
 
@@ -316,6 +348,7 @@ mod tests {
             config,
             Arc::new(RwLock::new(ValidatorStartProgress::Running)),
             exit.clone(),
+            None,
         )
         .unwrap();
         service.attach(harness.ctx.clone(), None).unwrap();

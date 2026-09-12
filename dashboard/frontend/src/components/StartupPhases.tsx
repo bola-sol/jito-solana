@@ -19,7 +19,14 @@ const PHASES: Array<[string, string]> = [
   ["running", "Running"],
 ];
 
-export function StartupPhases({ startup }: { startup: StartupProgress }) {
+export function StartupPhases({
+  startup,
+  withStake,
+}: {
+  startup: StartupProgress;
+  /** Whether the supermajority wait's meter is drawn here rather than on its own card. */
+  withStake: boolean;
+}) {
   const current = PHASES.findIndex(([phase]) => phase === startup.phase);
   const taken = new Map(startup.phases_taken.map((t) => [t.phase, t.elapsed_nanos]));
 
@@ -40,7 +47,7 @@ export function StartupPhases({ startup }: { startup: StartupProgress }) {
   // Replay measures itself in slots; the supermajority wait measures itself in
   // stake. They are different things and the bar means something different
   // under each, so which one is showing is said rather than left to be assumed.
-  const stake = stakeSeen(startup);
+  const stake = withStake ? stakeSeen(startup) : null;
   const measured = stake
     ? { fraction: stake.fraction, label: "of stake visible in gossip", decimals: stake.decimals }
     : startup.fraction !== null && startup.fraction !== undefined

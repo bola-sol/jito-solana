@@ -611,6 +611,27 @@ export interface StakeInGossip {
   total: number;
 }
 
+/** The supermajority wait per validator, from the snapshot's stake and gossip.
+ *  Null outside the wait. */
+export interface GossipStake {
+  slot: number;
+  shred_version: number;
+  total: number;
+  seen: number;
+  /** Stake descending. */
+  validators: GossipValidator[];
+}
+
+export interface GossipValidator {
+  identity: string;
+  name: string | null;
+  icon: string | null;
+  /** As gossip reports it; null for a node gossip does not hold. */
+  version: string | null;
+  stake: number;
+  seen: boolean;
+}
+
 export interface Health {
   replay: "not_started" | "running" | "stalled";
   vote: "not_voting" | "not_started" | "voting" | "delinquent";

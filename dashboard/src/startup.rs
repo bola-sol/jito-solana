@@ -5,14 +5,114 @@ use {
     crate::{
         metrics_tap::StakeInGossip,
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
+        validator_info::ValidatorInfoCache,
     },
+    crossbeam_channel::Receiver,
     serde::Serialize,
     solana_clock::Slot,
-    solana_core::validator::ValidatorStartProgress,
-    std::time::{Duration, Instant},
+    solana_core::validator::{GossipReady, ValidatorStartProgress},
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
+    std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    },
 };
 
 pub const KEY_STARTUP_PROGRESS: &str = "startup_progress";
+pub const KEY_GOSSIP_STAKE: &str = "gossip_stake";
+
+/// The handles the validator sends before its supermajority wait.
+pub type GossipReadyReceiver = Receiver<GossipReady>;
+
+/// The wait as this node sees it: every staked validator, and whether gossip
+/// holds it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipStake {
+    pub slot: Slot,
+    pub shred_version: u16,
+    pub total: u64,
+    pub seen: u64,
+    /// Stake descending.
+    pub validators: Vec<GossipValidator>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipValidator {
+    pub identity: String,
+    pub name: Option<String>,
+    pub icon: Option<String>,
+    /// As gossip reports it. `None` for a node gossip does not hold.
+    pub version: Option<String>,
+    pub stake: u64,
+    pub seen: bool,
+}
+
+/// Walks the bank's staked identities against gossip the way the validator's
+/// own wait does: seen is a contact on this shred version, and this node
+/// counts as seen.
+pub fn gossip_stake(
+    cluster_info: &ClusterInfo,
+    bank: &Bank,
+    names: &ValidatorInfoCache,
+) -> GossipStake {
+    let shred_version = cluster_info.my_shred_version();
+    let mut contacts: HashMap<Pubkey, String> = cluster_info
+        .all_peers()
+        .into_iter()
+        .map(|(contact, _)| contact)
+        .filter(|contact| contact.shred_version() == shred_version)
+        .map(|contact| (*contact.pubkey(), contact.version().to_string()))
+        .collect();
+    contacts.insert(
+        cluster_info.id(),
+        cluster_info.my_contact_info().version().to_string(),
+    );
+
+    let mut staked: HashMap<Pubkey, u64> = HashMap::new();
+    for (stake, account) in bank.vote_accounts().values() {
+        if *stake > 0 {
+            let held = staked.entry(*account.node_pubkey()).or_insert(0);
+            *held = held.saturating_add(*stake);
+        }
+    }
+
+    let mut validators: Vec<GossipValidator> = staked
+        .into_iter()
+        .map(|(identity, stake)| {
+            let info = names.get(&identity);
+            let version = contacts.get(&identity).cloned();
+            GossipValidator {
+                identity: identity.to_string(),
+                name: info.and_then(|info| info.name.clone()),
+                icon: info.and_then(|info| info.icon_url.clone()),
+                seen: version.is_some(),
+                version,
+                stake,
+            }
+        })
+        .collect();
+    validators.sort_by(|a, b| {
+        b.stake
+            .cmp(&a.stake)
+            .then_with(|| a.identity.cmp(&b.identity))
+    });
+    let total = validators
+        .iter()
+        .fold(0, |sum, v| u64::saturating_add(sum, v.stake));
+    let seen = validators
+        .iter()
+        .filter(|v| v.seen)
+        .fold(0, |sum, v| u64::saturating_add(sum, v.stake));
+    GossipStake {
+        slot: bank.slot(),
+        shred_version,
+        total,
+        seen,
+        validators,
+    }
+}
 
 /// What the client is sent about the boot sequence.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -46,6 +146,7 @@ pub struct PhaseTiming {
 #[derive(Default)]
 pub struct StartupPublisher {
     debounce: Debounced<StartupProgress>,
+    gossip: Debounced<Option<GossipStake>>,
     /// The first replay slot seen. Replay starts from a snapshot rather than
     /// from zero, so `slot / max_slot` would sit near 100% throughout.
     replay_origin: Option<Slot>,
@@ -58,6 +159,12 @@ pub struct StartupPublisher {
 }
 
 impl StartupPublisher {
+    /// The wait's validator list, or `None` once the wait is over.
+    pub fn publish_gossip(&mut self, publisher: &Publisher, stake: Option<GossipStake>) {
+        self.gossip
+            .publish(publisher, TOPIC_SUMMARY, KEY_GOSSIP_STAKE, stake);
+    }
+
     /// `stake_in_gossip` is the tap's latest count, and rides along only while
     /// the phase is the wait it describes.
     pub fn publish(

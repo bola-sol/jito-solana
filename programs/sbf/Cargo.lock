@@ -121,6 +121,7 @@ version = "4.3.0-rc.1"
 dependencies = [
  "agave-votor-messages",
  "bincode",
+ "crossbeam-channel",
  "libc",
  "log",
  "serde",

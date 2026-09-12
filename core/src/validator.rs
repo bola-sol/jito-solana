@@ -49,7 +49,7 @@ use {
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
@@ -329,6 +329,9 @@ pub struct ValidatorLogConfig {
     pub logrotate_flag: Arc<AtomicBool>,
 }
 
+/// Gossip and bank forks, as sent before the supermajority wait.
+pub type GossipReady = (Arc<ClusterInfo>, Arc<RwLock<BankForks>>);
+
 pub struct ValidatorConfig {
     /// Log messages go to `stderr` if `None`
     pub log_config: Option<ValidatorLogConfig>,
@@ -416,6 +419,9 @@ pub struct ValidatorConfig {
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
+    /// Handed gossip and bank forks before the supermajority wait, for a
+    /// reader that wants the wait's view of the cluster.
+    pub gossip_ready_sender: Option<Sender<GossipReady>>,
     // jito configuration
     pub relayer_config: Arc<ArcSwap<RelayerConfig>>,
     pub block_engine_config: Arc<ArcSwap<BlockEngineConfig>>,
@@ -517,6 +523,7 @@ impl ValidatorConfig {
             delay_leader_block_for_pending_fork: true,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
+            gossip_ready_sender: None,
             relayer_config: Arc::new(ArcSwap::from_pointee(RelayerConfig::default())),
             block_engine_config: Arc::new(ArcSwap::from_pointee(BlockEngineConfig::default())),
             shred_receiver_addresses: Arc::new(
@@ -1599,6 +1606,10 @@ impl Validator {
                 bank_forks_r.migration_status(),
             )
         };
+
+        if let Some(sender) = &config.gossip_ready_sender {
+            let _ = sender.send((cluster_info.clone(), bank_forks.clone()));
+        }
 
         let waited_for_supermajority = wait_for_supermajority(
             config,

@@ -4490,3 +4490,288 @@ body {
     gap: 8px;
   }
 }
+
+/* The supermajority wait per validator: columns against the line, and the
+   two lists. */
+.gs-body {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.gs-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.gs-plot {
+  position: relative;
+  height: 200px;
+  margin: 12px 8px 0 28px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+}
+
+.gs-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--text-dim);
+}
+
+.gs-line span,
+.gs-zero {
+  position: absolute;
+  right: 100%;
+  margin-right: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.gs-line span {
+  top: -7px;
+}
+
+.gs-zero {
+  bottom: -6px;
+}
+
+.gs-col {
+  width: 34%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.gs-col-value {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.gs-col-value.is-seen {
+  color: var(--warn);
+}
+
+.gs-bar {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+}
+
+.gs-bar.is-seen,
+.gs-fill.is-seen {
+  background: var(--warn);
+}
+
+.gs-bar.is-unseen,
+.gs-fill.is-unseen {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--level-incomplete) 0 4px,
+    var(--panel-raised) 4px 8px
+  );
+}
+
+.gs-axis {
+  display: flex;
+  justify-content: space-around;
+  margin-left: 28px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.gs-note {
+  margin-top: 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.gs-table {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gs-head,
+.gs-row,
+.gs-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 62px 64px 64px;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 6px;
+}
+
+.gs-card.is-narrow .gs-head,
+.gs-card.is-narrow .gs-row,
+.gs-card.is-narrow .gs-group,
+.gs-head:has(> :nth-child(3):last-child),
+.gs-row:has(> :nth-child(3):last-child) {
+  grid-template-columns: minmax(0, 1fr) 64px 64px;
+}
+
+.gs-head > :not(:first-child),
+.gs-row > :not(:first-child) {
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+.gs-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+}
+
+.gs-group {
+  display: flex;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.gs-group span {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.gs-group.is-seen {
+  color: var(--good);
+}
+
+.gs-group.is-unseen {
+  color: var(--bad);
+}
+
+.gs-rows {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.gs-row {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  font-size: 12px;
+}
+
+.gs-row > :first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-key {
+  font-family: ui-monospace, monospace;
+  color: var(--text-faint);
+}
+
+.gs-ver {
+  color: var(--text-dim);
+}
+
+.gs-ver.is-odd {
+  color: var(--warn);
+}
+
+.gs-share {
+  color: var(--text-dim);
+}
+
+/* The phone's arrangement. */
+.gs-bars {
+  background: var(--panel-raised);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gs-bar-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.gs-bar-row b {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.gs-bar-row b.is-seen {
+  color: var(--warn);
+}
+
+.gs-track {
+  position: relative;
+  height: 8px;
+  background: var(--panel);
+  border-radius: 4px;
+}
+
+.gs-fill {
+  height: 100%;
+  border-radius: 4px;
+}
+
+.gs-tick {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  background: var(--text);
+}
+
+.gs-bars .gs-note {
+  margin-top: 4px;
+}
+
+.gs-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.gs-toggle button {
+  padding: 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.gs-toggle button.is-on {
+  color: var(--text);
+  background: var(--panel-raised);
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .gs-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

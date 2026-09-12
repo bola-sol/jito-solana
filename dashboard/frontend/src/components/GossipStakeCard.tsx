@@ -5,6 +5,7 @@ import { useNarrow } from "../narrow";
 import { SUPERMAJORITY_PERCENT } from "../startup";
 import type { GossipStake, GossipValidator, StartupProgress } from "../types";
 import { useStore } from "../useStore";
+import { Copyable } from "./Copyable";
 import { Card } from "./primitives";
 
 /** The supermajority wait per validator: who the snapshot stakes, and who
@@ -127,36 +128,40 @@ function Table({
   const majority = majorityVersion(stake);
   return (
     <div className="gs-table">
-      <div className="gs-head">
-        <span>{seen ? "Seen" : "Not seen"}</span>
-        {versions && <span>Version</span>}
-        <span>Stake</span>
-        <span>Share</span>
+      {/* Heading and group line stay put; the rows scroll under them. */}
+      <div className="gs-fixed">
+        <div className="gs-head">
+          <span>{seen ? "Seen" : "Not seen"}</span>
+          {versions && <span>Version</span>}
+          <span>Stake</span>
+          <span>Share</span>
+        </div>
+        <div className={`gs-group ${seen ? "is-seen" : "is-unseen"}`}>
+          <span>
+            {seen ? "Online" : "Offline"}
+            <span className="gs-n">{count(rows.length)} nodes</span>
+          </span>
+          {versions && <span />}
+          <span>{solCompact(share)}</span>
+          <span>{percent(stake.total > 0 ? share / stake.total : 0)}</span>
+        </div>
       </div>
-      <div className={`gs-group ${seen ? "is-seen" : "is-unseen"}`}>
-        {seen ? "Online" : "Offline"}
-        <span>
-          {count(rows.length)} nodes · {percent(stake.total > 0 ? share / stake.total : 0)}
-        </span>
-      </div>
-      <div className="gs-rows">
-        {rows.map((row) => (
-          <div className="gs-row" key={row.identity}>
-            <span className={row.name ? "" : "gs-key"} title={row.identity}>
-              {row.name ?? shortKey(row.identity)}
+      {rows.map((row) => (
+        <div className="gs-row" key={row.identity}>
+          <Copyable
+            text={row.identity}
+            label={row.name ?? shortKey(row.identity)}
+            className={row.name ? "gs-name" : "gs-name gs-key"}
+          />
+          {versions && (
+            <span className={`gs-ver${row.version && row.version !== majority ? " is-odd" : ""}`}>
+              {row.version ?? "–"}
             </span>
-            {versions && (
-              <span className={`gs-ver${row.version && row.version !== majority ? " is-odd" : ""}`}>
-                {row.version ?? "–"}
-              </span>
-            )}
-            <span>{solCompact(row.stake)}</span>
-            <span className="gs-share">
-              {percent(stake.total > 0 ? row.stake / stake.total : 0)}
-            </span>
-          </div>
-        ))}
-      </div>
+          )}
+          <span>{solCompact(row.stake)}</span>
+          <span className="gs-share">{percent(stake.total > 0 ? row.stake / stake.total : 0)}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -165,7 +170,8 @@ function Foot() {
   return (
     <div className="card-footnote">
       Staked validators from the snapshot's vote accounts, marked seen where gossip holds a
-      contact on this shred version. Versions as gossip reports them.
+      fresh contact for them, as the validator's own check counts. Versions as gossip reports
+      them.
     </div>
   );
 }

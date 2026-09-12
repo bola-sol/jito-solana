@@ -11,12 +11,15 @@ use {
     serde::Serialize,
     solana_clock::Slot,
     solana_core::validator::{GossipReady, ValidatorStartProgress},
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{
+        cluster_info::ClusterInfo, contact_info::ContactInfo,
+        crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{
         collections::HashMap,
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
 
@@ -50,19 +53,22 @@ pub struct GossipValidator {
 }
 
 /// Walks the bank's staked identities against gossip the way the validator's
-/// own wait does: seen is a contact on this shred version, and this node
-/// counts as seen.
+/// own wait does: seen is a TVU peer whose contact is fresh, since contacts
+/// restored from disk outlive the nodes that wrote them, and this node counts
+/// as seen.
 pub fn gossip_stake(
     cluster_info: &ClusterInfo,
     bank: &Bank,
     names: &ValidatorInfoCache,
 ) -> GossipStake {
     let shred_version = cluster_info.my_shred_version();
+    let now = unix_millis();
     let mut contacts: HashMap<Pubkey, String> = cluster_info
-        .all_peers()
+        .tvu_peers(ContactInfo::clone)
         .into_iter()
-        .map(|(contact, _)| contact)
-        .filter(|contact| contact.shred_version() == shred_version)
+        .filter(|contact| {
+            now.saturating_sub(contact.wallclock()) < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS
+        })
         .map(|contact| (*contact.pubkey(), contact.version().to_string()))
         .collect();
     contacts.insert(
@@ -141,6 +147,15 @@ pub struct StartupProgress {
 pub struct PhaseTiming {
     pub phase: String,
     pub elapsed_nanos: u64,
+}
+
+/// Gossip's clock: milliseconds since the epoch.
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|since| u64::try_from(since.as_millis()).ok())
+        .unwrap_or(u64::MAX)
 }
 
 #[derive(Default)]

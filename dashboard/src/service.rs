@@ -170,10 +170,31 @@ impl DashboardService {
                             handles = gossip_ready
                                 .as_ref()
                                 .and_then(|receiver| receiver.try_recv().ok());
-                            if let Some((_, bank_forks)) = &handles {
+                            if let Some((cluster_info, bank_forks)) = &handles {
                                 let bank = bank_forks.read().unwrap().root_bank();
                                 let entries = crate::validator_info::scan_all(&bank);
-                                info_cache.write().unwrap().merge(entries);
+                                let found = entries.len();
+                                let loaded = info_cache.write().unwrap().merge(entries);
+                                log::info!(
+                                    "dashboard: read validator info before the wait, {found} accounts, {loaded} cached"
+                                );
+                                // The header's own name, which otherwise waits for
+                                // the collector.
+                                let identity = cluster_info.id();
+                                let (name, icon) = info_cache
+                                    .read()
+                                    .unwrap()
+                                    .get(&identity)
+                                    .map_or((None, None), |info| {
+                                        (info.name.clone(), info.icon_url.clone())
+                                    });
+                                publisher.publish(
+                                    TOPIC_SUMMARY,
+                                    "identity_key",
+                                    &identity.to_string(),
+                                );
+                                publisher.publish(TOPIC_SUMMARY, "identity_name", &name);
+                                publisher.publish(TOPIC_SUMMARY, "identity_icon", &icon);
                             }
                         }
                         let waiting = matches!(

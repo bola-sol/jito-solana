@@ -835,8 +835,11 @@ body {
   border-radius: 2px;
 }
 
+/* Our leader slots: the track is tinted and capped, a lane that reads at any
+   bar width where a one pixel outline did not. */
 .slot-bar.mine {
-  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 3px 0 var(--accent);
 }
 
 /* The strip is one tab stop; the arrows move within it. */
@@ -846,10 +849,14 @@ body {
   border-radius: 2px;
 }
 
-/* The bar the pointer or the arrow keys are on. Deliberately not an outline:
-   `.mine` is already one, and a leader slot can be the pointed-at slot. */
+/* The bar the pointer or the arrow keys are on. A leader slot keeps its lane
+   when pointed at. */
 .slot-bar.is-active {
   background: color-mix(in srgb, var(--text-faint) 35%, transparent);
+}
+
+.slot-bar.mine.is-active {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .slot-bar.is-active .slot-bar-fill {
@@ -1297,9 +1304,8 @@ body {
 }
 
 .slot-key-mine {
-  background: transparent;
-  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
-  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 /* ---- sidebar ---- */

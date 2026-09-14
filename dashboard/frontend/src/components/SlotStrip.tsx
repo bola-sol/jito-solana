@@ -103,6 +103,7 @@ export function SlotStrip() {
   const levels = alpenglow
     ? LEVELS.filter(([level]) => level !== "optimistically_confirmed")
     : LEVELS;
+  const ours = slots.filter((entry) => entry.mine).length;
 
   const release = () => {
     setPinned(null);
@@ -228,7 +229,7 @@ export function SlotStrip() {
         ))}
         <Explain className="slot-key-item" text="A slot this validator was scheduled to lead">
           <i className="slot-key-swatch slot-key-mine" />
-          Ours
+          Ours{ours > 0 && ` · ${ours} in window`}
         </Explain>
         {pinned !== null && (
           <SlotDetail

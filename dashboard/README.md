@@ -117,6 +117,9 @@ or hands the untouched socket to soketto.
 The SPA lives in `frontend/`. Its `dist` directory is checked in so that a plain
 `cargo build` needs no Node toolchain.
 
+[INPUTS.md](INPUTS.md) lists every validator input the dashboard reads and what
+each one feeds.
+
 ## Wire protocol
 
 Every message is a JSON envelope:

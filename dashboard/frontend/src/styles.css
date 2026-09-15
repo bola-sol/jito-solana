@@ -2034,9 +2034,19 @@ body {
    with the column's edge. */
 .produced-averages {
   padding: 5px 6px;
-  margin-bottom: 2px;
   border-bottom: 1px solid var(--border);
   color: var(--text-faint);
+  cursor: default;
+}
+
+/* Three summary rows read as one head: ruled faintly between, and set off
+   from the first block below. */
+.produced-averages:has(+ .produced-averages) {
+  border-bottom-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.produced-averages + :not(.produced-averages) {
+  margin-top: 2px;
 }
 
 .produced-avg-label {

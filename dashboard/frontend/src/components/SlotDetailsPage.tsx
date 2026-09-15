@@ -1,7 +1,13 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { blockStamp, blockTime, bytes, count, percent, sol, units } from "../format";
 import { recurrence } from "../cost";
-import { blockAverages, sortBlocks, type SortDir, type SortKey } from "../produced";
+import {
+  blockSummary,
+  sortBlocks,
+  type BlockFigures,
+  type SortDir,
+  type SortKey,
+} from "../produced";
 import { epochOf } from "../schedule";
 import { jitoShare, ourShare } from "../tips";
 import type { EpochInfo, ProducedBlock, SlotCost, SlotWaterfall, TipRates } from "../types";
@@ -68,7 +74,7 @@ export function SlotDetailsPage() {
   return (
     <section className="slot-details">
       <div className="produced">
-        <AveragesRow blocks={blocks} sort={sort} onSort={toggle} onClear={() => setSort(null)} />
+        <SummaryRows blocks={blocks} sort={sort} onSort={toggle} onClear={() => setSort(null)} />
         {numbered.map(({ block, epoch: at }, index) => (
           <Fragment key={block.slot}>
             {divided && at !== null && at !== numbered[index - 1]?.epoch && (
@@ -134,9 +140,9 @@ const SORT_WORD: Record<SortKey, string> = {
   duration: "duration",
 };
 
-/** The mean of each column over the blocks held, at the head of the column
- *  it averages. */
-function AveragesRow({
+/** The mean, median and poor tail of each column over the blocks held, at the
+ *  head of the columns. The mean row's figures sort their column. */
+function SummaryRows({
   blocks,
   sort,
   onSort,
@@ -147,44 +153,88 @@ function AveragesRow({
   onSort: (key: SortKey) => void;
   onClear: () => void;
 }) {
-  const avg = blockAverages(blocks);
+  const summary = blockSummary(blocks);
+  const held = count(summary.blocks);
+  const { mean } = summary;
+  return (
+    <>
+      <div className="produced-averages">
+        <span className="produced-id">
+          <Explain
+            className="produced-avg-label"
+            text={`Mean of each column over the ${held} blocks held. A block missing a figure is left out of that column.`}
+          >
+            mean
+          </Explain>
+          {sort && (
+            <button type="button" className="produced-clear" onClick={onClear} aria-label="Clear sort">
+              ×<span className="produced-clear-word"> clear</span>
+            </button>
+          )}
+        </span>
+        <SortButton column="transactions" sort={sort} onSort={onSort} className="produced-txns">
+          {txns(mean.transactions)}
+        </SortButton>
+        <SortButton column="filled" sort={sort} onSort={onSort} className="produced-fill">
+          {full(mean.filled)}
+        </SortButton>
+        <SortButton column="fees" sort={sort} onSort={onSort} className="produced-fees">
+          {fees(mean.fees)}
+        </SortButton>
+        <SortButton column="duration" sort={sort} onSort={onSort} className="produced-ms">
+          {millis(mean.durationMillis)}
+        </SortButton>
+      </div>
+      <FiguresRow
+        label="median"
+        explain={`The middle block of each column over the ${held} held.`}
+        figures={summary.median}
+      />
+      <FiguresRow
+        label="worst 5%"
+        explain={`The fifth percentile of transactions, fill and fees, and the ninety fifth of duration, over the ${held} blocks held.`}
+        figures={summary.worst}
+      />
+    </>
+  );
+}
+
+function FiguresRow({
+  label,
+  explain,
+  figures,
+}: {
+  label: string;
+  explain: string;
+  figures: BlockFigures;
+}) {
   return (
     <div className="produced-averages">
       <span className="produced-id">
-        <Explain
-          className="produced-avg-label"
-          text={`Mean of each column over the ${count(avg.blocks)} blocks held. A block missing a figure is left out of that column's mean.`}
-        >
-          avg
+        <Explain className="produced-avg-label" text={explain}>
+          {label}
         </Explain>
-        {sort && (
-          <button type="button" className="produced-clear" onClick={onClear} aria-label="Clear sort">
-            ×<span className="produced-clear-word"> clear</span>
-          </button>
-        )}
       </span>
-      <SortButton column="transactions" sort={sort} onSort={onSort} className="produced-txns">
-        {avg.transactions === null ? "—" : `${count(Math.round(avg.transactions))} txns`}
-      </SortButton>
-      <SortButton column="filled" sort={sort} onSort={onSort} className="produced-fill">
-        {avg.filled === null ? "—" : `${percent(avg.filled, 1)} full`}
-      </SortButton>
-      <SortButton column="fees" sort={sort} onSort={onSort} className="produced-fees">
-        {avg.fees === null ? (
-          "—"
-        ) : (
-          <>
-            {sol(avg.fees, 5)}
-            <span className="produced-fees-unit"> SOL</span>
-          </>
-        )}
-      </SortButton>
-      <SortButton column="duration" sort={sort} onSort={onSort} className="produced-ms">
-        {avg.durationMillis === null ? "—" : `${Math.round(avg.durationMillis)} ms`}
-      </SortButton>
+      <span className="produced-txns">{txns(figures.transactions)}</span>
+      <span className="produced-fill">{full(figures.filled)}</span>
+      <span className="produced-fees">{fees(figures.fees)}</span>
+      <span className="produced-ms">{millis(figures.durationMillis)}</span>
     </div>
   );
 }
+
+const txns = (value: number | null) => (value === null ? "—" : `${count(Math.round(value))} txns`);
+const full = (value: number | null) => (value === null ? "—" : `${percent(value, 1)} full`);
+const millis = (value: number | null) => (value === null ? "—" : `${Math.round(value)} ms`);
+const fees = (value: number | null) =>
+  value === null ? (
+    "—"
+  ) : (
+    <>
+      {sol(value, 5)}
+      <span className="produced-fees-unit"> SOL</span>
+    </>
+  );
 
 /** One produced block: the row that names it, and what it held once opened,
  *  led by its compute. */

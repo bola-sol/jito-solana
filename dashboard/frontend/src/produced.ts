@@ -1,11 +1,9 @@
-/** Averages over the blocks this validator produced. */
+/** Summary figures over the blocks this validator produced. */
 
 import type { ProducedBlock } from "./types";
 
-/** The mean of each figure over the blocks held. Null, not nought, where
- *  nothing could be averaged. */
-export interface BlockAverages {
-  blocks: number;
+/** One figure per column. Null, not nought, where no block had one. */
+export interface BlockFigures {
   transactions: number | null;
   /** Share of the block cost limit used, in `[0, 1]`. */
   filled: number | null;
@@ -13,17 +11,43 @@ export interface BlockAverages {
   durationMillis: number | null;
 }
 
-/** The mean of what the callback yields, over the entries that have one. */
-function meanOf(blocks: ProducedBlock[], of: (block: ProducedBlock) => number | null): number | null {
-  let total = 0;
-  let counted = 0;
+/** The head of the block list: the mean, the median, and the poor tail of
+ *  each column over the blocks held. */
+export interface BlockSummary {
+  blocks: number;
+  mean: BlockFigures;
+  median: BlockFigures;
+  /** The fifth percentile of transactions, fill and fees, and the ninety
+   *  fifth of duration: the end of each column a leader does not want. */
+  worst: BlockFigures;
+}
+
+type Figure = (block: ProducedBlock) => number | null;
+
+/** What the callback yields, over the blocks that have one. */
+function valuesOf(blocks: ProducedBlock[], of: Figure): number[] {
+  const values: number[] = [];
   for (const block of blocks) {
     const value = of(block);
-    if (value === null || !Number.isFinite(value)) continue;
-    total += value;
-    counted += 1;
+    if (value !== null && Number.isFinite(value)) values.push(value);
   }
-  return counted === 0 ? null : total / counted;
+  return values;
+}
+
+function meanOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+/** The value `q` of the way through the sorted values, interpolated between
+ *  neighbours, so a median of an even count is the middle pair's mean. */
+function quantileOf(values: number[], q: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = q * (sorted.length - 1);
+  const low = Math.floor(at);
+  const high = Math.ceil(at);
+  return sorted[low] + (sorted[high] - sorted[low]) * (at - low);
 }
 
 /** The columns a produced block can be sorted by. */
@@ -49,21 +73,39 @@ export function sortBlocks(blocks: ProducedBlock[], key: SortKey, dir: SortDir):
   });
 }
 
-export function blockAverages(blocks: ProducedBlock[] | undefined): BlockAverages {
+export function blockSummary(blocks: ProducedBlock[] | undefined): BlockSummary {
   const held = blocks ?? [];
+  const transactions = valuesOf(held, (block) => block.transactions);
+  // The blocks' own shares, since the figure heads that column.
+  const filled = valuesOf(held, (block) =>
+    block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null,
+  );
+  const fees = valuesOf(held, (block) => block.total_fees);
+  // Only the blocks whose duration was measured. A slot the validator never
+  // saw timed shows a dash in its own row and is left out rather than counted
+  // as nought milliseconds.
+  const duration = valuesOf(held, (block) =>
+    block.duration_nanos === null ? null : block.duration_nanos / 1e6,
+  );
   return {
     blocks: held.length,
-    transactions: meanOf(held, (block) => block.transactions),
-    // The mean of the blocks' own shares, since it heads that column.
-    filled: meanOf(held, (block) =>
-      block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null,
-    ),
-    fees: meanOf(held, (block) => block.total_fees),
-    // Only the blocks whose duration was measured. A slot the validator never
-    // saw timed shows a dash in its own row and is left out of the mean rather
-    // than counted as nought milliseconds.
-    durationMillis: meanOf(held, (block) =>
-      block.duration_nanos === null ? null : block.duration_nanos / 1e6,
-    ),
+    mean: {
+      transactions: meanOf(transactions),
+      filled: meanOf(filled),
+      fees: meanOf(fees),
+      durationMillis: meanOf(duration),
+    },
+    median: {
+      transactions: quantileOf(transactions, 0.5),
+      filled: quantileOf(filled, 0.5),
+      fees: quantileOf(fees, 0.5),
+      durationMillis: quantileOf(duration, 0.5),
+    },
+    worst: {
+      transactions: quantileOf(transactions, 0.05),
+      filled: quantileOf(filled, 0.05),
+      fees: quantileOf(fees, 0.05),
+      durationMillis: quantileOf(duration, 0.95),
+    },
   };
 }

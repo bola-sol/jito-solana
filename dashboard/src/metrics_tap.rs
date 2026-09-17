@@ -82,8 +82,7 @@ const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 const BUNDLE_SLOT_STATS: &str = "bundle_stage-stats";
 
 /// A consume worker's time by stage, every twenty milliseconds while it has
-/// work, which is only during our leader slots. No slot on it: attributed by
-/// arrival time.
+/// work. No slot on it.
 const WORKER_TIMING: &str = "banking_stage_worker_timing";
 
 /// The vote worker's time by stage, once per leader slot.
@@ -471,8 +470,8 @@ pub struct ShredFill {
     pub full_millis: u64,
 }
 
-/// The banking stage's time by stage, in microseconds, as one worker report or
-/// one slot's vote worker report carries it.
+/// Time by stage in microseconds, as a worker report or the vote worker's
+/// slot report carries it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct StageTimes {
     pub cost_model: u64,
@@ -508,10 +507,11 @@ impl StageTimes {
 }
 
 /// One consume worker's report, stamped when it arrived.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct WorkerTiming {
     at_millis: u64,
-    worker: String,
+    /// The `id` tag. `u64::MAX` where it is not a number.
+    worker: u64,
     times: StageTimes,
     /// The longest single batch in the report, in microseconds.
     longest_batch: u64,
@@ -1149,8 +1149,8 @@ impl MetricsTap {
             .tags
             .iter()
             .find(|(name, _)| *name == WORKER_ID)
-            .map(|(_, id)| id.clone())
-            .unwrap_or_default();
+            .and_then(|(_, id)| id.parse().ok())
+            .unwrap_or(u64::MAX);
         let Ok(mut timings) = self.worker_timings.lock() else {
             return;
         };
@@ -1340,19 +1340,20 @@ impl MetricsTap {
     }
 
     /// What the bundle stage landed in `slot`, while the record is still held.
-    /// The consume workers' reports that arrived in `from..=to`, summed. `None`
-    /// where none did.
+    /// The workers' reports that arrived in `from..=to`, summed. `None` where
+    /// none did.
     pub fn worker_time(&self, from: u64, to: u64) -> Option<WorkerSum> {
         let timings = self.worker_timings.lock().ok()?;
         let mut sum = WorkerSum::default();
         let mut workers = BTreeSet::new();
         for timing in timings
             .iter()
-            .filter(|timing| (from..=to).contains(&timing.at_millis))
+            .skip_while(|timing| timing.at_millis < from)
+            .take_while(|timing| timing.at_millis <= to)
         {
             sum.times.add(&timing.times);
             sum.longest_batch = sum.longest_batch.max(timing.longest_batch);
-            workers.insert(timing.worker.as_str());
+            workers.insert(timing.worker);
         }
         if workers.is_empty() {
             return None;

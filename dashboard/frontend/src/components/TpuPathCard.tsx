@@ -255,7 +255,7 @@ function PortList({
 }
 
 /** One stage: a bar, what came out of it, and the losses beside it. */
-function Section({ section }: { section: PathSection }) {
+export function Section({ section }: { section: PathSection }) {
   const narrow = useNarrow();
   const [expanded, setExpanded] = useState(false);
   const cap = narrow ? LOSSES_SHOWN_NARROW : LOSSES_SHOWN;

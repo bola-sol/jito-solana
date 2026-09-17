@@ -24,6 +24,7 @@ pub mod slots;
 pub mod startup;
 pub mod thread_stats;
 pub mod tips;
+pub mod turns;
 pub mod udp_drops;
 pub mod validator_info;
 pub mod versions;

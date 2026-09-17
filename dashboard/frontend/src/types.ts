@@ -304,6 +304,21 @@ export interface Execution {
   window_millis: number;
 }
 
+/** One leader turn, consecutive leader slots, with the TPU path's totals
+ *  differenced at its end: everything since the previous turn drained. */
+export interface LeaderTurn {
+  first: number;
+  last: number;
+  /** Blocks this validator froze for the turn's slots. */
+  produced: number;
+  drained_millis: number;
+  /** When the previous turn drained. `null` for the first turn seen. */
+  since_millis: number | null;
+  quic: QuicPort;
+  verify: VerifyStage;
+  executed: ExecutedStage;
+}
+
 /** Which of the process's schedulers built a slot. BAM counts what arrived
  *  in batches. */
 export type SchedulerSource = "scheduler" | "bam";

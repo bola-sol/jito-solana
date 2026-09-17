@@ -13,6 +13,7 @@ import { jitoShare, ourShare } from "../tips";
 import type {
   EpochInfo,
   Execution,
+  LeaderTurn,
   ProducedBlock,
   SlotCost,
   SlotWaterfall,
@@ -34,6 +35,8 @@ import {
 import type { WaterfallRow } from "../waterfall";
 import { Copyable } from "./Copyable";
 import { Explain } from "./primitives";
+import { Section } from "./TpuPathCard";
+import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
 
 /** Every block this validator produced, captured as each froze; the list
  *  ends where the dashboard started. */
@@ -45,7 +48,9 @@ export function SlotDetailsPage() {
   // Absent on a validator with no tip payment program, and then no tip figure
   // is drawn at all.
   const rates = store.get<TipRates>("summary", "tip_rates");
+  const turns = store.get<LeaderTurn[]>("summary", "produced_turns");
   const [open, setOpen] = useState<number | null>(null);
+  const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
 
   // Joined by slot rather than nested on the block, because the two are built
@@ -59,6 +64,7 @@ export function SlotDetailsPage() {
     () => new Map((costs ?? []).map((cost) => [cost.slot, cost])),
     [costs],
   );
+  const turnBySlot = useMemo(() => turnOf(turns ?? []), [turns]);
 
   if (!blocks || blocks.length === 0) {
     return (
@@ -72,14 +78,21 @@ export function SlotDetailsPage() {
 
   // Newest first: a validator wants its last block, not its oldest.
   const listed = sort ? sortBlocks(blocks, sort.key, sort.dir) : [...blocks].reverse();
-  const toggle = (key: SortKey) =>
+  const toggle = (key: SortKey) => {
+    // A sort scatters a turn's blocks, so its divider and drawer go with it.
+    setOpenTurn(null);
     setSort(sort?.key === key ? { key, dir: sort.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
+  };
 
   // Dividers only in the newest-first order, where an epoch boundary is one
   // place, and only when the blocks held span more than one epoch.
   const epoch = store.get<EpochInfo>("epoch", "new");
   const numbered = listed.map((block) => ({ block, epoch: epochOf(epoch, block.slot) }));
   const divided = !sort && new Set(numbered.map((entry) => entry.epoch)).size > 1;
+  // The turn a listed block belongs to, in the natural order only: the
+  // divider sits above the turn's newest block.
+  const turnAt = (index: number): LeaderTurn | undefined =>
+    sort ? undefined : turnBySlot.get(numbered[index]?.block.slot ?? -1);
 
   return (
     <section className="slot-details">
@@ -89,6 +102,17 @@ export function SlotDetailsPage() {
           <Fragment key={block.slot}>
             {divided && at !== null && at !== numbered[index - 1]?.epoch && (
               <div className="produced-epoch">epoch {count(at)}</div>
+            )}
+            {turnAt(index) && turnAt(index) !== turnAt(index - 1) && (
+              <TurnDivider
+                turn={turnAt(index) as LeaderTurn}
+                waterfalls={waterfalls ?? []}
+                open={openTurn === (turnAt(index) as LeaderTurn).first}
+                onToggle={() => {
+                  const first = (turnAt(index) as LeaderTurn).first;
+                  setOpenTurn(openTurn === first ? null : first);
+                }}
+              />
             )}
             <BlockRow
               block={block}
@@ -109,6 +133,46 @@ export function SlotDetailsPage() {
           : `Captured as each block froze. ${count(blocks.length)} kept, oldest first to fall off.`}
       </div>
     </section>
+  );
+}
+
+/** A turn's divider above its newest block, with the TPU path over the turn
+ *  behind a control. Only in the natural order, as the epoch dividers are. */
+function TurnDivider({
+  turn,
+  waterfalls,
+  open,
+  onToggle,
+}: {
+  turn: LeaderTurn;
+  waterfalls: SlotWaterfall[];
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const slots = turn.last - turn.first + 1;
+  const own = waterfalls.filter((w) => w.slot >= turn.first && w.slot <= turn.last);
+  return (
+    <div className="turn">
+      <div className="turn-head">
+        <span className="turn-name">turn</span>
+        <span className="turn-span">
+          {turnRangeLabel(turn)}
+          {turn.produced < slots && ` · ${count(turn.produced)} of ${count(slots)} produced`}
+          {" · "}
+          {turnSpanLabel(turn)}
+        </span>
+        <button type="button" className="turn-more" onClick={onToggle} aria-expanded={open}>
+          {open ? "hide tpu path" : "tpu path"}
+        </button>
+      </div>
+      {open && (
+        <div className="turn-drawer">
+          {turnSections(turn, own).map((section) => (
+            <Section key={section.key} section={section} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

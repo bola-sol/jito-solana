@@ -1,5 +1,5 @@
-//! Which message version this validator's own blocks carried, tallied over
-//! the non-vote transactions read back from the blockstore.
+//! Message versions in our own blocks, tallied over the non-vote
+//! transactions.
 
 use {
     serde::Serialize,
@@ -15,8 +15,7 @@ pub struct TxVersions {
     pub v1: u64,
 }
 
-/// Tallies `transactions` by version. Simple votes are left out: they are
-/// legacy by definition and the block counts them apart.
+/// Tallies `transactions` by version, simple votes left out.
 pub fn tally<'a>(transactions: impl IntoIterator<Item = &'a VersionedTransaction>) -> TxVersions {
     let mut versions = TxVersions::default();
     for transaction in transactions {
@@ -32,8 +31,8 @@ pub fn tally<'a>(transactions: impl IntoIterator<Item = &'a VersionedTransaction
     versions
 }
 
-/// The runtime's rule: one or two signatures, a legacy message, and a single
-/// instruction to the vote program.
+/// The runtime's rule: one or two signatures, one instruction, to the vote
+/// program.
 fn is_simple_vote(transaction: &VersionedTransaction) -> bool {
     let message = &transaction.message;
     let [instruction] = message.instructions() else {

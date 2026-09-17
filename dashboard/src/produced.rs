@@ -18,15 +18,13 @@ pub struct Bundles {
 /// The banking stage's time in one of our slots, by stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Execution {
-    /// The consume workers' reports that arrived inside the slot, summed
-    /// across them: thread time, not wall time. A report covers the twenty
-    /// milliseconds before it, so the edges are approximate.
+    /// The workers' reports inside the slot, summed: thread time, not wall
+    /// time.
     pub non_vote: StageTimes,
     pub workers: u64,
     /// The longest single batch any worker executed, in microseconds.
     pub longest_batch: u64,
-    /// The vote worker's own report for the slot. Absent under alpenglow,
-    /// which carries no votes in blocks.
+    /// The vote worker's report. Absent under alpenglow.
     pub votes: Option<StageTimes>,
     /// The window the reports were summed over, first shred to last.
     pub window_millis: u64,
@@ -74,11 +72,10 @@ pub struct ProducedBlock {
     /// Absent where no bundle stage reported the slot: a stock validator, or
     /// one under BAM.
     pub bundles: Option<Bundles>,
-    /// The block's non-vote transactions by message version, read back from
-    /// the blockstore once the slot is full. Absent until then.
+    /// Non-vote transactions by message version, read back from the
+    /// blockstore. Absent until the slot is full.
     pub versions: Option<TxVersions>,
-    /// Where the banking stage's time went, from its own reports. Absent
-    /// until the last report for the slot can have arrived.
+    /// Where the banking stage's time went. Absent until its reports are in.
     pub execution: Option<Execution>,
 }
 
@@ -136,30 +133,32 @@ impl ProducedRing {
         changed
     }
 
+    fn block_mut(&mut self, slot: Slot) -> Option<&mut ProducedBlock> {
+        self.blocks.iter_mut().find(|block| block.slot == slot)
+    }
+
     /// Records the version tally of a block still without one. True if a
     /// block changed.
     pub fn set_versions(&mut self, slot: Slot, versions: TxVersions) -> bool {
-        let Some(block) = self.blocks.iter_mut().find(|block| block.slot == slot) else {
-            return false;
-        };
-        if block.versions.is_some() {
-            return false;
+        match self.block_mut(slot) {
+            Some(block) if block.versions.is_none() => {
+                block.versions = Some(versions);
+                true
+            }
+            _ => false,
         }
-        block.versions = Some(versions);
-        true
     }
 
     /// Records the execution time of a block still without it. True if a
     /// block changed.
     pub fn set_execution(&mut self, slot: Slot, execution: Execution) -> bool {
-        let Some(block) = self.blocks.iter_mut().find(|block| block.slot == slot) else {
-            return false;
-        };
-        if block.execution.is_some() {
-            return false;
+        match self.block_mut(slot) {
+            Some(block) if block.execution.is_none() => {
+                block.execution = Some(execution);
+                true
+            }
+            _ => false,
         }
-        block.execution = Some(execution);
-        true
     }
 }
 

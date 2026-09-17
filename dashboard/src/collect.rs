@@ -7,12 +7,17 @@ use {
         certs,
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
-        metrics_tap::{BundleLanding, MetricsTap, ShredFill, StageTimes, WorkerSum},
+        meters::QuicPort,
+        metrics_tap::{
+            BundleLanding, MetricsTap, ShredFill, StageTimes, TapCounters, WindowedCounters,
+            WorkerSum,
+        },
         produced::{Bundles, Execution, ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
         tips::{TipMeter, TipRates},
+        turns::{LeaderTurn, TurnTracker},
         validator_info::{self, ValidatorInfoCache},
         versions,
     },
@@ -84,12 +89,14 @@ const UPCOMING_SLOTS: u64 = 32;
 /// slots in eight hundred.
 const PRODUCED_BLOCKS: usize = 500;
 
-/// How often a consume worker reports its timing, so how long after a slot's
-/// last shred its last report can arrive. Waited for twice over.
+/// How often a consume worker reports its timing.
 const WORKER_REPORT_MILLIS: u64 = 20;
 
 /// Slots after which a block still without its timing window is given up.
 const EXECUTION_WAIT_SLOTS: u64 = 64;
+
+/// Leader turns kept, with the TPU path's totals over each.
+const LEADER_TURNS: usize = 128;
 
 /// Slots of arrival times kept, about five minutes. In slots rather than time
 /// so the window does not thin out during a stall.
@@ -322,11 +329,9 @@ pub struct Collector {
     first_observed_slot: Option<Slot>,
     /// Detail for blocks this validator produced, captured as they froze.
     produced: ProducedRing,
-    /// Our blocks whose entries have not been read back yet for their
-    /// transaction versions. Our own shreds land a moment after the freeze.
+    /// Our blocks whose entries have not been read back yet.
     versions_pending: BTreeSet<Slot>,
-    /// Our blocks whose banking stage reports have not been summed yet. The
-    /// workers report on a clock, so a block waits until its window has closed.
+    /// Our blocks whose banking stage reports have not been summed yet.
     execution_pending: BTreeSet<Slot>,
     /// The same slots packed to a schedule row's columns and kept far deeper.
     /// Shared with the server, which answers range queries out of it.
@@ -397,6 +402,13 @@ pub struct Collector {
     /// The meter's last reported residual, so a change is logged once rather
     /// than every slow tick.
     tips_residual: Option<u64>,
+    /// Leader turns as the schedule resolves them, and the reading the next
+    /// difference is taken from.
+    turns: TurnTracker,
+    turns_scanned_to: Slot,
+    turn_reference: TapCounters,
+    turn_drained: Option<u64>,
+    leader_turns: VecDeque<LeaderTurn>,
     /// Whether a slot has changed since the overview was last encoded, and when
     /// that was.
     overview_dirty: bool,
@@ -476,6 +488,11 @@ impl Collector {
             tips,
             commission_bps,
             tips_residual: None,
+            turns: TurnTracker::default(),
+            turns_scanned_to: 0,
+            turn_reference: TapCounters::default(),
+            turn_drained: None,
+            leader_turns: VecDeque::new(),
             frozen_banks,
             totals: BTreeMap::new(),
             overview_dirty: false,
@@ -560,6 +577,7 @@ impl Collector {
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank, &frozen);
         self.collect_vote_certs(&root_bank);
+        self.collect_turns(completed);
         // From the working bank: the root trails the tip by the thirty-two slots it
         // takes to root.
         self.collect_identity_and_vote(&working_bank, cluster_tip);
@@ -853,6 +871,58 @@ impl Collector {
         );
     }
 
+    /// Groups our slots into turns as their leaders resolve, and reads the
+    /// tap's totals once the cluster has passed a turn: its share of the TPU
+    /// path is the difference from the previous reading.
+    fn collect_turns(&mut self, completed: Slot) {
+        let from = self
+            .turns_scanned_to
+            .max(self.first_observed_slot.unwrap_or(0));
+        for slot in from..self.leaders_resolved_to {
+            let mine = self.slots.get(slot).is_some_and(|entry| entry.mine);
+            self.turns.observe(slot, mine);
+        }
+        self.turns_scanned_to = self.leaders_resolved_to.max(from);
+
+        let ended = self.turns.ended(completed);
+        if ended.is_empty() {
+            return;
+        }
+        // Two turns ending on one tick share the reading; the second spans nothing.
+        let reading = self.metrics_tap.counters();
+        let drained_millis = unix_millis();
+        for (first, last) in ended {
+            let produced = self
+                .produced
+                .blocks()
+                .iter()
+                .filter(|block| (first..=last).contains(&block.slot))
+                .count() as u64;
+            self.leader_turns.push_back(LeaderTurn {
+                first,
+                last,
+                produced,
+                drained_millis,
+                since_millis: self.turn_drained,
+                quic: QuicPort {
+                    name: "tpu",
+                    counts: reading.quic.since(&self.turn_reference.quic),
+                    levels: reading.quic_levels,
+                    kernel_drops: None,
+                },
+                verify: reading.verify.since(&self.turn_reference.verify),
+                executed: reading.executed.since(&self.turn_reference.executed),
+            });
+            self.turn_reference = reading;
+            self.turn_drained = Some(drained_millis);
+        }
+        while self.leader_turns.len() > LEADER_TURNS {
+            self.leader_turns.pop_front();
+        }
+        self.publisher
+            .publish(TOPIC_SUMMARY, "produced_turns", &self.leader_turns);
+    }
+
     /// Publishes who leads the slots past the highest held. Returns the leaders
     /// published, for the peer table.
     fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<Pubkey> {
@@ -1117,9 +1187,8 @@ impl Collector {
         }
     }
 
-    /// Reads back the entries of each own block still waiting for its version
-    /// tally, once the blockstore has the whole slot. A slot the blockstore
-    /// has dropped or cannot read is given up. True if a block changed.
+    /// Tallies the versions in each waiting block once the blockstore holds
+    /// the whole slot. True if a block changed.
     fn fill_versions(&mut self) -> bool {
         let blockstore = &self.ctx.blockstore;
         let floor = blockstore.lowest_slot();
@@ -1143,15 +1212,10 @@ impl Collector {
         changed
     }
 
-    /// Sums the banking stage's reports for each own block still waiting, once
-    /// the last report for its window can have arrived. The window is the
-    /// block's first shred to its last, which starts a little after its bank
-    /// did. A block whose window never closes is given up after a while.
+    /// Sums the banking stage's reports over each waiting block's window, first
+    /// shred to last, once the last report can have arrived.
     fn fill_execution(&mut self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let now = unix_millis();
         let mut changed = false;
         for slot in std::mem::take(&mut self.execution_pending) {
             if !self.produced.contains(slot) {
@@ -2024,8 +2088,7 @@ fn landed(bundles: BundleLanding) -> Bundles {
 }
 
 /// What goes on the wire from the banking stage's reports. Nothing where
-/// neither the workers nor the vote worker reported: the tap may be below
-/// their log level.
+/// neither worker kind reported.
 fn execution(
     workers: Option<WorkerSum>,
     votes: Option<StageTimes>,
@@ -2094,6 +2157,13 @@ fn release_of(version: &str) -> &str {
         Some(at) => &version[..at],
         None => version,
     }
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 pub(crate) fn system_time_nanos(time: SystemTime) -> u64 {

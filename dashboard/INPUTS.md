@@ -128,6 +128,11 @@ Some panels were planned and not built. The validator has no input for them.
 - Bytes per path on the network card. The host counters give bytes in and out for the whole machine. Of the validator's senders, only gossip and repair report bytes. Turbine goes out over XDP and reports shred counts only. The receivers count packets, not bytes. So the card splits egress into gossip, repair and the rest. It does not split ingress.
 - Replay time per program. The point exists but is sent only at trace level.
 - Why a slot was skipped. The validator records that a slot has no block, not why.
+- Execution time per transaction. Nothing records it. The transaction status service keeps a transaction's fee, compute and status, not how long it took, so a duration histogram or a min, mean and max has no source even on an RPC node.
+- Banking stage time by outcome. The workers' timing points sum their stages across every transaction they touched. Nothing splits the time between transactions that landed, failed, or never made the block.
+- Fee income by origin address. The address a transaction came from is dropped at signature verification and never reaches the banking stage, the bank or the ledger.
+- Compute units by vote, bundle and other. The cost tracker keeps no vote cost on this release, and a bundle's transactions are not marked in the block, so neither share can be cut from the block's compute.
+- The busiest accounts of a block. The cost tracker keeps its per-account costs privately and its stats point reports only the costliest, so the block page shows one account where a table was wanted.
 
 ## What an events system would need to carry
 

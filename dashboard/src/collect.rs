@@ -1554,16 +1554,17 @@ impl Collector {
         );
     }
 
-    /// Slot duration on the best evidence: the epoch's own rate once enough of
-    /// it has run, the sliding window before that, the configured duration
-    /// before catch-up.
+    /// Slot duration on the best evidence: the arrival window once caught up,
+    /// the epoch's own clock before that, the configured duration before either.
     fn cluster_slot_nanos(&self, bank: &Bank, start_slot: Slot, completed: Slot) -> u64 {
-        epoch_anchored_nanos(&bank.clock(), start_slot, completed)
-            .or_else(|| {
-                self.caught_up_at
-                    .and_then(|_| windowed_mean_nanos(&self.slot_time_window, u64::MAX))
-            })
-            .unwrap_or_else(|| bank.ns_per_slot_at_slot(completed) as u64)
+        let window = self
+            .caught_up_at
+            .and_then(|_| windowed_mean_nanos(&self.slot_time_window, u64::MAX));
+        best_slot_nanos(
+            window,
+            epoch_anchored_nanos(&bank.clock(), start_slot, completed),
+            bank.ns_per_slot_at_slot(completed) as u64,
+        )
     }
 
     /// Everything the page needs to name the leaders of an epoch that is not the
@@ -2114,6 +2115,13 @@ fn arrival(fill: ShredFill) -> ShredArrival {
         repaired: fill.repaired,
         full_millis: fill.full_millis,
     }
+}
+
+/// The window is measured on this node's own clock. The cluster clock is a
+/// consensus estimate clamped near the nominal slot, so on a cluster running
+/// far from nominal it reads the clamp rather than the rate.
+fn best_slot_nanos(window: Option<u64>, clock: Option<u64>, configured: u64) -> u64 {
+    window.or(clock).unwrap_or(configured)
 }
 
 /// The epoch's own slot rate from the cluster clock. `None` until enough slots
@@ -2890,6 +2898,21 @@ mod tests {
         // Six hours across sixty thousand slots is 360ms a slot.
         let nanos = epoch_anchored_nanos(&clock_at(21_600), 100, 60_100);
         assert_eq!(nanos, Some(360_000_000));
+    }
+
+    #[test]
+    fn test_the_measured_rate_outranks_a_clamped_clock() {
+        // Testnet at 190ms slots: the clock sits on its clamp and advances 500ms
+        // a slot whatever the cluster does.
+        assert_eq!(
+            best_slot_nanos(Some(190_000_000), Some(500_000_000), 400_000_000),
+            190_000_000
+        );
+        assert_eq!(
+            best_slot_nanos(None, Some(500_000_000), 400_000_000),
+            500_000_000
+        );
+        assert_eq!(best_slot_nanos(None, None, 400_000_000), 400_000_000);
     }
 
     #[test]

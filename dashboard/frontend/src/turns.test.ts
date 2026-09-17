@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { schedulerSection, sumWaterfalls, turnOf, turnRangeLabel, turnSpanLabel } from "./turns";
-import type { LeaderTurn, SlotWaterfall } from "./types";
+import {
+  schedulerSection,
+  sumWaterfalls,
+  turnOf,
+  turnRangeLabel,
+  turnSections,
+  turnSpanLabel,
+} from "./turns";
+import type { ExecutedStage, LeaderTurn, QuicPort, SlotWaterfall, VerifyStage } from "./types";
 
 function waterfall(over: Partial<SlotWaterfall> = {}): SlotWaterfall {
   return {
@@ -31,13 +38,74 @@ function waterfall(over: Partial<SlotWaterfall> = {}): SlotWaterfall {
   };
 }
 
-const turn = {
+const quic: QuicPort = {
+  name: "tpu",
+  offered: 0,
+  shed_all: 0,
+  shed_address: 0,
+  refused_full: 0,
+  handshake_timeout: 0,
+  handshake_error: 0,
+  handshook: 0,
+  add_failed: 0,
+  add_failed_staked: 0,
+  add_failed_unstaked: 0,
+  add_failed_banned: 0,
+  admitted_staked: 0,
+  admitted_unstaked: 0,
+  streams: 0,
+  throttled_staked: 0,
+  throttled_unstaked: 0,
+  read_timeouts: 0,
+  read_errors: 0,
+  invalid_size: 0,
+  handed_on: 8_168,
+  bytes_handed_on: 0,
+  queue_full: 0,
+  disconnected: 0,
+  open: 0,
+  active_streams: 0,
+  kernel_drops: null,
+};
+
+const verify: VerifyStage = {
+  received: 15_753,
+  duplicate: 5,
+  below_floor: 0,
+  verified: 15_748,
+  evicted_batches: 0,
+};
+
+const executed: ExecutedStage = {
+  attempted: 6_459,
+  cost_throttled: 0,
+  retryable: 737,
+  expired_bank: 725,
+  processed: 6_459,
+  succeeded: 6_459,
+  too_many_locks: 0,
+  account_missing: 0,
+  fee_payer_broke: 0,
+  fee_payer_invalid: 0,
+  blockhash_missing: 0,
+  blockhash_old: 0,
+  already_processed: 0,
+  bad_compute_budget: 0,
+  account_data_too_large: 0,
+  program_not_executable: 0,
+  program_restricted: 0,
+};
+
+const turn: LeaderTurn = {
   first: 88,
   last: 91,
   produced: 4,
   drained_millis: 1_000_000,
   since_millis: 748_000,
-} as LeaderTurn;
+  quic,
+  verify,
+  executed,
+};
 
 describe("turnOf", () => {
   it("keys every slot of a turn to it", () => {
@@ -68,6 +136,23 @@ describe("sumWaterfalls", () => {
     expect(sum?.scheduled).toBe(15);
     expect(sum?.source).toBe("bam");
     expect(sumWaterfalls([])).toBeNull();
+  });
+});
+
+describe("turnSections", () => {
+  it("sets what landed beside the executions, which count runs", () => {
+    const sections = turnSections(turn, [], 6_447);
+    expect(sections.map((section) => section.key)).toEqual(["listener", "verify", "executed"]);
+    const last = sections[2];
+    expect(last.through).toEqual({ label: "executed · 6,447 landed", count: 6_459 });
+    expect(last.note).toBe("workers · 4m 12s since the previous turn drained");
+  });
+
+  it("keeps the bank-gone retries behind the retry row rather than beside it", () => {
+    const last = turnSections(turn, [], 6_447)[2];
+    expect(last.losses.map((loss) => loss.key)).toEqual(["exec_retryable"]);
+    expect(last.detail[0]).toMatchObject({ key: "exec_expired_bank", count: 725 });
+    expect(last.detail[0].share).toBeCloseTo(725 / 737, 6);
   });
 });
 

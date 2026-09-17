@@ -439,19 +439,13 @@ export function executedSection(
       "sent back to retry",
       pick(rows, "exec_retryable"),
       false,
-      "Handed back to be tried again, usually because its accounts were locked by another transaction in flight.",
-    ],
-    [
-      "exec_expired_bank",
-      "bank had gone",
-      pick(rows, "exec_expired_bank"),
-      false,
-      "Handed back because the slot they were meant for had already been frozen.",
+      "Handed back to be tried again: its accounts were locked by another transaction " +
+        "in flight, or its slot had ended. The second is behind the control below.",
     ],
   ]);
 
   const failedToLoad = pick(rows, "exec_dropped");
-  const detail = LOAD_REASONS.map(([key, label]) => ({
+  const loadReasons = LOAD_REASONS.map(([key, label]) => ({
     key,
     label,
     count: pick(rows, key),
@@ -460,6 +454,26 @@ export function executedSection(
     explain:
       "One reason a transaction could not be loaded, as a share of those that failed to load.",
   })).filter((reason) => reason.count > 0);
+  // Counted inside the retries, so a reason behind that row and not a
+  // segment beside it.
+  const retried = pick(rows, "exec_retryable");
+  const expired = pick(rows, "exec_expired_bank");
+  const detail =
+    expired > 0
+      ? [
+          {
+            key: "exec_expired_bank",
+            label: "retried because the bank had gone",
+            count: expired,
+            share: shareOf(retried, expired),
+            warn: false,
+            explain:
+              "Of those sent back to retry, the ones handed back before running because " +
+              "their slot had ended.",
+          },
+          ...loadReasons,
+        ]
+      : loadReasons;
 
   return {
     key: "executed",
@@ -471,7 +485,7 @@ export function executedSection(
     through: { label: "succeeded", count: pick(rows, "exec_succeeded") },
     losses,
     detail,
-    zeros: zeros + (LOAD_REASONS.length - detail.length),
+    zeros: zeros + (LOAD_REASONS.length - loadReasons.length) + (expired > 0 ? 0 : 1),
     // A note on the section's composition, not a stage of it: bundle
     // transactions are already inside the figures above.
     aside:

@@ -353,10 +353,10 @@ export function executedRows(e: ExecutedStage): WaterfallRow[] {
     ],
     [
       "exec_expired_bank",
-      "bank had gone",
+      "of which the bank had gone",
       "note",
       e.expired_bank,
-      "Returned because the slot they were meant for had ended.",
+      "Of the retries, the ones returned before running because their slot had ended.",
     ],
     [
       "exec_dropped",

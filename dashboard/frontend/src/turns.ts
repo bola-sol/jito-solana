@@ -88,8 +88,14 @@ export function schedulerSection(w: Waterfall): PathSection {
 }
 
 /** The four sections of a turn's drawer. Three are differences of the running
- *  totals over the turn's span; the scheduler's is the slots' own counts. */
-export function turnSections(turn: LeaderTurn, slots: SlotWaterfall[]): PathSection[] {
+ *  totals over the turn's span; the scheduler's is the slots' own counts.
+ *  `landed` is the turn's blocks' transactions, set beside the executions,
+ *  which count runs rather than landings. */
+export function turnSections(
+  turn: LeaderTurn,
+  slots: SlotWaterfall[],
+  landed: number,
+): PathSection[] {
   const span = turnSpanLabel(turn);
   const sections: PathSection[] = [
     { ...listenerSection(turn.quic), note: `the validator's own TPU · ${span}` },
@@ -97,6 +103,11 @@ export function turnSections(turn: LeaderTurn, slots: SlotWaterfall[]): PathSect
   ];
   const summed = sumWaterfalls(slots);
   if (summed) sections.push(schedulerSection(summed));
-  sections.push({ ...executedSection(turn.executed, null), note: `workers · ${span}` });
+  const executed = executedSection(turn.executed, null);
+  sections.push({
+    ...executed,
+    note: `workers · ${span}`,
+    through: { ...executed.through, label: `executed · ${count(landed)} landed` },
+  });
   return sections;
 }

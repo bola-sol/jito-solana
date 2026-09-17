@@ -2927,6 +2927,50 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Where the banking stage's time went, in the compute headline's shape. The
+   workers' stages step down the slate ramp, largest first; the vote worker
+   takes the vote colour, and is simply absent under alpenglow. */
+.sx-exec {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sx-exec-seg {
+  display: block;
+  height: 100%;
+  border-left: 1px solid var(--panel);
+}
+
+.sx-exec-seg:first-child {
+  border-left: 0;
+}
+
+.sx-exec-seg.is-load,
+.sx-sw.is-load {
+  background: var(--accent);
+}
+.sx-exec-seg.is-commit,
+.sx-sw.is-commit {
+  background: var(--path-2);
+}
+.sx-exec-seg.is-record,
+.sx-sw.is-record {
+  background: var(--path-4);
+}
+.sx-exec-seg.is-send,
+.sx-sw.is-send {
+  background: var(--path-5);
+}
+.sx-exec-seg.is-fixed,
+.sx-sw.is-fixed {
+  background: var(--path-6);
+}
+.sx-exec-seg.is-votes,
+.sx-sw.is-votes {
+  background: var(--vote);
+}
+
 .sx-acct {
   display: flex;
   flex-direction: column;

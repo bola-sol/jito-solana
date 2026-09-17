@@ -2,13 +2,34 @@
 //! bank is still in bank forks: the cost tracker and collected fees go with
 //! the bank when it is dropped after rooting.
 
-use {crate::versions::TxVersions, serde::Serialize, solana_clock::Slot};
+use {
+    crate::{metrics_tap::StageTimes, versions::TxVersions},
+    serde::Serialize,
+    solana_clock::Slot,
+};
 
 /// What the bundle stage landed in a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Bundles {
     pub sanitized: u64,
     pub executed: u64,
+}
+
+/// The banking stage's time in one of our slots, by stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Execution {
+    /// The consume workers' reports that arrived inside the slot, summed
+    /// across them: thread time, not wall time. A report covers the twenty
+    /// milliseconds before it, so the edges are approximate.
+    pub non_vote: StageTimes,
+    pub workers: u64,
+    /// The longest single batch any worker executed, in microseconds.
+    pub longest_batch: u64,
+    /// The vote worker's own report for the slot. Absent under alpenglow,
+    /// which carries no votes in blocks.
+    pub votes: Option<StageTimes>,
+    /// The window the reports were summed over, first shred to last.
+    pub window_millis: u64,
 }
 
 /// What one produced block looked like. `transactions` and
@@ -56,6 +77,9 @@ pub struct ProducedBlock {
     /// The block's non-vote transactions by message version, read back from
     /// the blockstore once the slot is full. Absent until then.
     pub versions: Option<TxVersions>,
+    /// Where the banking stage's time went, from its own reports. Absent
+    /// until the last report for the slot can have arrived.
+    pub execution: Option<Execution>,
 }
 
 /// The most recent produced blocks, oldest first.
@@ -124,6 +148,19 @@ impl ProducedRing {
         block.versions = Some(versions);
         true
     }
+
+    /// Records the execution time of a block still without it. True if a
+    /// block changed.
+    pub fn set_execution(&mut self, slot: Slot, execution: Execution) -> bool {
+        let Some(block) = self.blocks.iter_mut().find(|block| block.slot == slot) else {
+            return false;
+        };
+        if block.execution.is_some() {
+            return false;
+        }
+        block.execution = Some(execution);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -148,6 +185,7 @@ mod tests {
             tips: None,
             bundles: None,
             versions: None,
+            execution: None,
         }
     }
 
@@ -191,6 +229,26 @@ mod tests {
             "already read"
         );
         assert_eq!(ring.blocks()[0].versions, Some(tally));
+    }
+
+    #[test]
+    fn test_execution_is_set_once_and_only_on_a_held_block() {
+        let mut ring = ProducedRing::new(4);
+        ring.insert(block(10));
+        let execution = Execution {
+            non_vote: StageTimes {
+                load_execute: 512_000,
+                ..StageTimes::default()
+            },
+            workers: 4,
+            longest_batch: 14_800,
+            votes: None,
+            window_millis: 402,
+        };
+        assert!(!ring.set_execution(11, execution), "not a block we hold");
+        assert!(ring.set_execution(10, execution));
+        assert_eq!(ring.blocks()[0].execution, Some(execution));
+        assert!(!ring.set_execution(10, execution), "already set");
     }
 
     #[test]

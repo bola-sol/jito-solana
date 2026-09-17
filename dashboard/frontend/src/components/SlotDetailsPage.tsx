@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { blockStamp, blockTime, bytes, count, percent, sol, units } from "../format";
+import { blockStamp, blockTime, bytes, count, micros, percent, sol, units } from "../format";
 import { recurrence } from "../cost";
 import {
   blockSummary,
@@ -10,12 +10,20 @@ import {
 } from "../produced";
 import { epochOf } from "../schedule";
 import { jitoShare, ourShare } from "../tips";
-import type { EpochInfo, ProducedBlock, SlotCost, SlotWaterfall, TipRates } from "../types";
+import type {
+  EpochInfo,
+  Execution,
+  ProducedBlock,
+  SlotCost,
+  SlotWaterfall,
+  TipRates,
+} from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import {
   bundlesValue,
   capacity,
+  executionView,
   schedulerView,
   shareOfGroup,
   versionsTitle,
@@ -434,6 +442,7 @@ function BlockCompute({
         </div>
       </div>
       {cap && <CapacityBar cap={cap} />}
+      {block.execution && <ExecutionTime execution={block.execution} />}
     </div>
   );
 }
@@ -678,6 +687,63 @@ function CounterRow({
           />
         </span>
       )}
+    </div>
+  );
+}
+
+/** Where the banking stage's time went, in the shape of the compute headline
+ *  above it: one figure, one bar, a legend and a row of three. Thread time,
+ *  so it can read longer than the slot. */
+function ExecutionTime({ execution }: { execution: Execution }) {
+  const view = executionView(execution);
+  return (
+    <div className="sx-exec">
+      <div className="sx-strip">
+        <span className="sx-strip-label">
+          <Explain text="The banking stage's time in this slot by stage, summed across its workers, so thread time rather than the slot's length.">
+            Execution time
+          </Explain>
+        </span>
+        <span className="sx-strip-right">
+          <span>
+            {count(execution.workers)} workers · {count(execution.window_millis)} ms slot
+          </span>
+        </span>
+      </div>
+      <div className="sx-cu">
+        <div className="sx-cu-value">{micros(view.total)}</div>
+        <div className="sx-cu-of">
+          thread time · {micros(view.nonVote)} non-vote
+          {view.votes !== null && ` + ${micros(view.votes)} votes`}
+        </div>
+      </div>
+      <div className="sx-cap">
+        <div className="sx-cap-bar" aria-hidden="true">
+          {view.segments.map((segment) => (
+            <i
+              key={segment.key}
+              className={`sx-exec-seg is-${segment.key}`}
+              style={{ width: `${segment.share * 100}%` }}
+            />
+          ))}
+        </div>
+        <div className="sx-legend">
+          {view.segments.map((segment) => (
+            <span className="sx-key" key={segment.key}>
+              <i className={`sx-sw is-${segment.key}`} />
+              {segment.label} {micros(segment.micros)}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="sx-keep">
+        <Stat
+          label="Thread time / slot"
+          value={view.perSlot === null ? "—" : `${view.perSlot.toFixed(2)}×`}
+        />
+        <Stat label="Per worker" value={micros(view.perWorker)} />
+        <Stat label="Longest batch" value={micros(execution.longest_batch)} />
+      </div>
     </div>
   );
 }

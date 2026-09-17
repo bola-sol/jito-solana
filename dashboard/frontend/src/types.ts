@@ -270,12 +270,38 @@ export interface ProducedBlock {
   /** Non-vote transactions by message version, read back from the
    *  blockstore once the slot is full. `null` until then. */
   versions: TxVersions | null;
+  /** Where the banking stage's time went, from its own reports. `null`
+   *  until the last report for the slot can have arrived. */
+  execution: Execution | null;
 }
 
 export interface TxVersions {
   legacy: number;
   v0: number;
   v1: number;
+}
+
+/** The banking stage's time by stage, in microseconds. */
+export interface StageTimes {
+  cost_model: number;
+  load_execute: number;
+  freeze_lock: number;
+  record: number;
+  commit: number;
+  send_votes: number;
+}
+
+export interface Execution {
+  /** The consume workers' reports inside the slot, summed across them:
+   *  thread time, not wall time. */
+  non_vote: StageTimes;
+  workers: number;
+  /** The longest single batch any worker executed, in microseconds. */
+  longest_batch: number;
+  /** The vote worker's report. `null` under alpenglow. */
+  votes: StageTimes | null;
+  /** First shred to last, in milliseconds. */
+  window_millis: number;
 }
 
 /** Which of the process's schedulers built a slot. BAM counts what arrived

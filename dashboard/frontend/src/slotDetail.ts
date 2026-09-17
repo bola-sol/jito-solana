@@ -2,7 +2,14 @@
  *  filled the block first, the scheduler's counters grouped and folded. */
 
 import { count, percent } from "./format";
-import type { ProducedBlock, SlotCost, SlotWaterfall, TxVersions } from "./types";
+import type {
+  Execution,
+  ProducedBlock,
+  SlotCost,
+  SlotWaterfall,
+  StageTimes,
+  TxVersions,
+} from "./types";
 import { waterfallRows, type WaterfallRow } from "./waterfall";
 
 /** How the block's compute limit was spent: three shares of the limit that
@@ -164,6 +171,69 @@ export function schedulerView(w: SlotWaterfall): SchedulerView {
 /** A counter's share of its own group, for the bar beside it. */
 export function shareOfGroup(group: CounterGroup, row: WaterfallRow): number {
   return group.total > 0 ? row.count / group.total : 0;
+}
+
+export interface ExecutionSegment {
+  key: string;
+  label: string;
+  /** Microseconds. */
+  micros: number;
+  /** Of the thread time. */
+  share: number;
+}
+
+export interface ExecutionView {
+  /** Thread time across the workers and the vote worker, in microseconds. */
+  total: number;
+  nonVote: number;
+  votes: number | null;
+  segments: ExecutionSegment[];
+  /** Thread time over the slot's window; `null` without a window. */
+  perSlot: number | null;
+  /** Non-vote thread time over the workers; `null` without workers. */
+  perWorker: number | null;
+}
+
+function stageTotal(times: StageTimes): number {
+  return (
+    times.cost_model +
+    times.load_execute +
+    times.freeze_lock +
+    times.record +
+    times.commit +
+    times.send_votes
+  );
+}
+
+/** The stacked bar: the workers' stages largest first, the two fixed costs
+ *  folded together, and the vote worker as one segment where it reported. */
+export function executionView(execution: Execution): ExecutionView {
+  const w = execution.non_vote;
+  const nonVote = stageTotal(w);
+  const votes = execution.votes ? stageTotal(execution.votes) : null;
+  const total = nonVote + (votes ?? 0);
+  const parts: Array<[string, string, number]> = [
+    ["load", "load & execute", w.load_execute],
+    ["commit", "commit", w.commit],
+    ["record", "record", w.record],
+    ["send", "votes to send", w.send_votes],
+    ["fixed", "cost model + freeze lock", w.cost_model + w.freeze_lock],
+  ];
+  if (votes !== null) parts.push(["votes", "vote worker", votes]);
+  const segments = parts.map(([key, label, micros]) => ({
+    key,
+    label,
+    micros,
+    share: total > 0 ? micros / total : 0,
+  }));
+  return {
+    total,
+    nonVote,
+    votes,
+    segments,
+    perSlot: execution.window_millis > 0 ? total / (execution.window_millis * 1000) : null,
+    perWorker: execution.workers > 0 ? nonVote / execution.workers : null,
+  };
 }
 
 /** Each version's share of the non-vote transactions, legacy first. A

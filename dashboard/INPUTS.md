@@ -28,6 +28,8 @@ Each of these points carries a slot and describes one block.
 | `cost_tracker_stats` | tag `is_leader`; `bank_slot`, `block_cost`, `costliest_account`, `costliest_account_cost`, `number_of_accounts`, `number_of_contended_accounts`, `allocated_accounts_data_size`, `inflight_transaction_count` | Slot details for our own blocks: compute used, and the costliest account against its own limit. Points without the leader tag are dropped. |
 | `banking_stage_scheduler_slot_counts` | `slot` and the scheduler counters listed under per second | Slot details: the waterfall for one of our own leader slots |
 | `bundle_stage-stats` (jito only) | `slot`, `num_sanitized_ok`, `execution_results_ok` | Bundles sanitised and landed per produced block |
+| `banking_stage_worker_timing` | tag `id`; `cost_model_us`, `load_execute_us`, `load_execute_us_max`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | Execution time on a produced block: the reports that arrived between the block's first shred and its last, summed across the workers |
+| `banking_stage-leader_slot_vote_execute_and_commit_timings` | `slot`, `load_execute_us`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | The vote worker's part of the same figure |
 
 ### Per second
 

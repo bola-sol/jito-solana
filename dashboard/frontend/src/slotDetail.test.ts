@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bundlesValue,
   capacity,
+  executionView,
   schedulerView,
   shareOfGroup,
   versionsTitle,
@@ -28,6 +29,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     tips: null,
     bundles: null,
     versions: null,
+    execution: null,
     ...over,
   };
 }
@@ -229,6 +231,77 @@ describe("a counter's share of its group", () => {
     const view = schedulerView(slot());
     const buffer = view.groups.find((g) => g.key === "buffer")!;
     expect(shareOfGroup(buffer, buffer.rows[0])).toBe(0);
+  });
+});
+
+describe("executionView", () => {
+  const workers = {
+    cost_model: 2_100,
+    load_execute: 512_000,
+    freeze_lock: 300,
+    record: 38_000,
+    commit: 71_000,
+    send_votes: 7_400,
+  };
+  const votes = { ...workers, cost_model: 0, load_execute: 9_100, record: 3_900, commit: 5_200 };
+
+  it("stacks the workers' stages and the vote worker as one segment", () => {
+    const view = executionView({
+      non_vote: workers,
+      workers: 4,
+      longest_batch: 14_800,
+      votes,
+      window_millis: 402,
+    });
+    expect(view.nonVote).toBe(630_800);
+    expect(view.votes).toBe(25_900);
+    expect(view.total).toBe(656_700);
+    expect(view.segments.map((s) => s.key)).toEqual([
+      "load",
+      "commit",
+      "record",
+      "send",
+      "fixed",
+      "votes",
+    ]);
+    expect(view.segments[4].micros).toBe(2_400);
+    expect(view.segments[0].share).toBeCloseTo(512_000 / 656_700, 6);
+    expect(view.perSlot).toBeCloseTo(656_700 / 402_000, 6);
+    expect(view.perWorker).toBe(157_700);
+  });
+
+  it("has no vote segment and no ratios where nothing reported them", () => {
+    const view = executionView({
+      non_vote: workers,
+      workers: 0,
+      longest_batch: 0,
+      votes: null,
+      window_millis: 0,
+    });
+    expect(view.votes).toBeNull();
+    expect(view.segments.some((s) => s.key === "votes")).toBe(false);
+    expect(view.perSlot).toBeNull();
+    expect(view.perWorker).toBeNull();
+  });
+
+  it("gives every segment a nought share of an empty slot", () => {
+    const empty = {
+      cost_model: 0,
+      load_execute: 0,
+      freeze_lock: 0,
+      record: 0,
+      commit: 0,
+      send_votes: 0,
+    };
+    const view = executionView({
+      non_vote: empty,
+      workers: 1,
+      longest_batch: 0,
+      votes: null,
+      window_millis: 400,
+    });
+    expect(view.total).toBe(0);
+    expect(view.segments.every((s) => s.share === 0)).toBe(true);
   });
 });
 

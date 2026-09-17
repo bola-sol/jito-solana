@@ -7,8 +7,8 @@ use {
         certs,
         context::{DashboardContext, StartProgress},
         history::SlotHistory,
-        metrics_tap::{BundleLanding, MetricsTap, ShredFill},
-        produced::{Bundles, ProducedBlock, ProducedRing},
+        metrics_tap::{BundleLanding, MetricsTap, ShredFill, StageTimes, WorkerSum},
+        produced::{Bundles, Execution, ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         startup::StartupPublisher,
@@ -83,6 +83,13 @@ const UPCOMING_SLOTS: u64 = 32;
 /// retention in the slot ring: about eleven hours for a validator leading four
 /// slots in eight hundred.
 const PRODUCED_BLOCKS: usize = 500;
+
+/// How often a consume worker reports its timing, so how long after a slot's
+/// last shred its last report can arrive. Waited for twice over.
+const WORKER_REPORT_MILLIS: u64 = 20;
+
+/// Slots after which a block still without its timing window is given up.
+const EXECUTION_WAIT_SLOTS: u64 = 64;
 
 /// Slots of arrival times kept, about five minutes. In slots rather than time
 /// so the window does not thin out during a stall.
@@ -318,6 +325,9 @@ pub struct Collector {
     /// Our blocks whose entries have not been read back yet for their
     /// transaction versions. Our own shreds land a moment after the freeze.
     versions_pending: BTreeSet<Slot>,
+    /// Our blocks whose banking stage reports have not been summed yet. The
+    /// workers report on a clock, so a block waits until its window has closed.
+    execution_pending: BTreeSet<Slot>,
     /// The same slots packed to a schedule row's columns and kept far deeper.
     /// Shared with the server, which answers range queries out of it.
     history: Arc<RwLock<SlotHistory>>,
@@ -437,6 +447,7 @@ impl Collector {
             first_observed_slot: None,
             produced: ProducedRing::new(PRODUCED_BLOCKS),
             versions_pending: BTreeSet::new(),
+            execution_pending: BTreeSet::new(),
             history,
             epochs,
             skip_leader_slots: Vec::new(),
@@ -1054,6 +1065,7 @@ impl Collector {
                 let block = self.capture_block(slot, bank, detail);
                 if self.produced.insert(block) {
                     self.versions_pending.insert(slot);
+                    self.execution_pending.insert(slot);
                     captured = true;
                 }
             }
@@ -1098,7 +1110,8 @@ impl Collector {
             .produced
             .fill_bundles(|slot| tap.bundles_landed(slot).map(landed));
         let read = self.fill_versions();
-        if captured || filled || read {
+        let timed = self.fill_execution();
+        if captured || filled || read || timed {
             self.publisher
                 .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
         }
@@ -1130,6 +1143,49 @@ impl Collector {
         changed
     }
 
+    /// Sums the banking stage's reports for each own block still waiting, once
+    /// the last report for its window can have arrived. The window is the
+    /// block's first shred to its last, which starts a little after its bank
+    /// did. A block whose window never closes is given up after a while.
+    fn fill_execution(&mut self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut changed = false;
+        for slot in std::mem::take(&mut self.execution_pending) {
+            if !self.produced.contains(slot) {
+                continue;
+            }
+            let window = self
+                .first_shred_time(slot)
+                .zip(self.metrics_tap.shred_fill(slot))
+                .map(|(start, fill)| (start, fill.full_millis));
+            let Some((start, full_millis)) = window else {
+                if slot.saturating_add(EXECUTION_WAIT_SLOTS) > self.last_completed_slot {
+                    self.execution_pending.insert(slot);
+                }
+                continue;
+            };
+            let settled = start
+                .saturating_add(full_millis)
+                .saturating_add(WORKER_REPORT_MILLIS.saturating_mul(2));
+            if now < settled {
+                self.execution_pending.insert(slot);
+                continue;
+            }
+            let workers = self.metrics_tap.worker_time(start, settled);
+            let votes = self.metrics_tap.vote_time(slot);
+            let Some(execution) = execution(workers, votes, full_millis) else {
+                continue;
+            };
+            if self.produced.set_execution(slot, execution) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Adds what only our own blocks report: the blockhash and start time, which
     /// only the block panel reads and would be forty-four characters on every slot
     /// otherwise.
@@ -1151,6 +1207,7 @@ impl Collector {
             tips: detail.tips,
             bundles: self.metrics_tap.bundles_landed(slot).map(landed),
             versions: None,
+            execution: None,
         }
     }
 
@@ -1964,6 +2021,27 @@ fn landed(bundles: BundleLanding) -> Bundles {
         sanitized: bundles.sanitized,
         executed: bundles.executed,
     }
+}
+
+/// What goes on the wire from the banking stage's reports. Nothing where
+/// neither the workers nor the vote worker reported: the tap may be below
+/// their log level.
+fn execution(
+    workers: Option<WorkerSum>,
+    votes: Option<StageTimes>,
+    window_millis: u64,
+) -> Option<Execution> {
+    if workers.is_none() && votes.is_none() {
+        return None;
+    }
+    let workers = workers.unwrap_or_default();
+    Some(Execution {
+        non_vote: workers.times,
+        workers: workers.workers,
+        longest_batch: workers.longest_batch,
+        votes,
+        window_millis,
+    })
 }
 
 /// What goes on the wire from a fill record: the slot is the entry's own.

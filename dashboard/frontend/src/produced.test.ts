@@ -21,6 +21,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     tips: null,
     bundles: null,
     versions: null,
+    execution: null,
     ...over,
   };
 }

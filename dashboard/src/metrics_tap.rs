@@ -9,7 +9,7 @@ use {
     solana_clock::Slot,
     solana_metrics::datapoint::DataPoint,
     std::{
-        collections::{BTreeMap, VecDeque},
+        collections::{BTreeMap, BTreeSet, VecDeque},
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -81,6 +81,17 @@ const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 /// Silent under BAM, which drains the stage.
 const BUNDLE_SLOT_STATS: &str = "bundle_stage-stats";
 
+/// A consume worker's time by stage, every twenty milliseconds while it has
+/// work, which is only during our leader slots. No slot on it: attributed by
+/// arrival time.
+const WORKER_TIMING: &str = "banking_stage_worker_timing";
+
+/// The vote worker's time by stage, once per leader slot.
+const VOTE_SLOT_TIMING: &str = "banking_stage-leader_slot_vote_execute_and_commit_timings";
+
+/// The worker's tag naming it.
+const WORKER_ID: &str = "id";
+
 /// The worker threads, one point each under an `id` tag that is not read:
 /// summing them gives the stage's total. Submitted at trace level, which does
 /// not matter here because the observer runs before the level is consulted.
@@ -129,6 +140,9 @@ const SHRED_FILLS: usize = 4096;
 /// Leader slots kept, matched to the produced block panel's retention so every
 /// block it shows still has its waterfall and costs.
 const SLOT_WATERFALLS: usize = 500;
+
+/// Worker timing reports kept. A four-slot turn is under four hundred.
+const WORKER_TIMINGS: usize = 2048;
 
 /// The tag naming which scheduler reported a point. Absent on a stock
 /// validator; jito tags both of its schedulers.
@@ -377,6 +391,12 @@ pub struct MetricsTap {
     /// What the bundle stage landed in each of our recent leader slots.
     bundle_slots: Mutex<BTreeMap<Slot, BundleLanding>>,
 
+    /// The consume workers' recent reports, oldest first.
+    worker_timings: Mutex<VecDeque<WorkerTiming>>,
+
+    /// The vote worker's report for each of our recent leader slots.
+    vote_timings: Mutex<BTreeMap<Slot, StageTimes>>,
+
     /// How the XDP transmit path is configured. Latched: it cannot change while the
     /// process runs, and a config that stops being reported has not been turned
     /// off.
@@ -449,6 +469,60 @@ pub struct ShredFill {
     pub repaired: u64,
     /// Milliseconds from the first shred to the last.
     pub full_millis: u64,
+}
+
+/// The banking stage's time by stage, in microseconds, as one worker report or
+/// one slot's vote worker report carries it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub struct StageTimes {
+    pub cost_model: u64,
+    pub load_execute: u64,
+    pub freeze_lock: u64,
+    pub record: u64,
+    pub commit: u64,
+    pub send_votes: u64,
+}
+
+impl StageTimes {
+    fn add(&mut self, other: &StageTimes) {
+        self.cost_model = self.cost_model.saturating_add(other.cost_model);
+        self.load_execute = self.load_execute.saturating_add(other.load_execute);
+        self.freeze_lock = self.freeze_lock.saturating_add(other.freeze_lock);
+        self.record = self.record.saturating_add(other.record);
+        self.commit = self.commit.saturating_add(other.commit);
+        self.send_votes = self.send_votes.saturating_add(other.send_votes);
+    }
+
+    /// Which field a point's name fills, if any.
+    fn field(&mut self, name: &str) -> Option<&mut u64> {
+        Some(match name {
+            "cost_model_us" => &mut self.cost_model,
+            "load_execute_us" => &mut self.load_execute,
+            "freeze_lock_us" => &mut self.freeze_lock,
+            "record_us" => &mut self.record,
+            "commit_us" => &mut self.commit,
+            "find_and_send_votes_us" => &mut self.send_votes,
+            _ => return None,
+        })
+    }
+}
+
+/// One consume worker's report, stamped when it arrived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkerTiming {
+    at_millis: u64,
+    worker: String,
+    times: StageTimes,
+    /// The longest single batch in the report, in microseconds.
+    longest_batch: u64,
+}
+
+/// The consume workers' reports inside one window, summed across them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WorkerSum {
+    pub workers: u64,
+    pub times: StageTimes,
+    pub longest_batch: u64,
 }
 
 /// What the bundle stage did in one of our leader slots.
@@ -837,6 +911,8 @@ impl MetricsTap {
             REPLAY_SLOT_STATS => self.remember_replay(point),
             SHRED_FULL => self.remember_fill(point),
             BUNDLE_SLOT_STATS => self.remember_bundles(point),
+            WORKER_TIMING => self.remember_worker_timing(point, now_millis()),
+            VOTE_SLOT_TIMING => self.remember_vote_timing(point),
             XDP_NETWORK_CONFIG => self.remember_xdp(point),
             WFSM_GOSSIP => self.remember_stake_in_gossip(point),
             COST_TRACKER => self.remember_cost(point),
@@ -1056,6 +1132,64 @@ impl MetricsTap {
 
     /// Records what the bundle stage landed in a leader slot, summed across the
     /// stage's threads.
+    fn remember_worker_timing(&self, point: &DataPoint, at_millis: u64) {
+        let mut times = StageTimes::default();
+        let mut longest_batch = 0;
+        for (name, value) in &point.fields {
+            let Some(micros) = field_u64(value) else {
+                continue;
+            };
+            if *name == "load_execute_us_max" {
+                longest_batch = micros;
+            } else if let Some(field) = times.field(name) {
+                *field = micros;
+            }
+        }
+        let worker = point
+            .tags
+            .iter()
+            .find(|(name, _)| *name == WORKER_ID)
+            .map(|(_, id)| id.clone())
+            .unwrap_or_default();
+        let Ok(mut timings) = self.worker_timings.lock() else {
+            return;
+        };
+        timings.push_back(WorkerTiming {
+            at_millis,
+            worker,
+            times,
+            longest_batch,
+        });
+        while timings.len() > WORKER_TIMINGS {
+            timings.pop_front();
+        }
+    }
+
+    fn remember_vote_timing(&self, point: &DataPoint) {
+        let mut times = StageTimes::default();
+        let mut slot = None;
+        for (name, value) in &point.fields {
+            let Some(micros) = field_u64(value) else {
+                continue;
+            };
+            if *name == SLOT {
+                slot = Some(micros);
+            } else if let Some(field) = times.field(name) {
+                *field = micros;
+            }
+        }
+        let Some(slot) = slot else {
+            return;
+        };
+        let Ok(mut slots) = self.vote_timings.lock() else {
+            return;
+        };
+        slots.insert(slot, times);
+        while slots.len() > SLOT_WATERFALLS {
+            slots.pop_first();
+        }
+    }
+
     fn remember_bundles(&self, point: &DataPoint) {
         let mut slot = None;
         let mut sanitized = 0;
@@ -1206,6 +1340,31 @@ impl MetricsTap {
     }
 
     /// What the bundle stage landed in `slot`, while the record is still held.
+    /// The consume workers' reports that arrived in `from..=to`, summed. `None`
+    /// where none did.
+    pub fn worker_time(&self, from: u64, to: u64) -> Option<WorkerSum> {
+        let timings = self.worker_timings.lock().ok()?;
+        let mut sum = WorkerSum::default();
+        let mut workers = BTreeSet::new();
+        for timing in timings
+            .iter()
+            .filter(|timing| (from..=to).contains(&timing.at_millis))
+        {
+            sum.times.add(&timing.times);
+            sum.longest_batch = sum.longest_batch.max(timing.longest_batch);
+            workers.insert(timing.worker.as_str());
+        }
+        if workers.is_empty() {
+            return None;
+        }
+        sum.workers = workers.len() as u64;
+        Some(sum)
+    }
+
+    pub fn vote_time(&self, slot: Slot) -> Option<StageTimes> {
+        self.vote_timings.lock().ok()?.get(&slot).copied()
+    }
+
     pub fn bundles_landed(&self, slot: Slot) -> Option<BundleLanding> {
         self.bundle_slots.lock().ok()?.get(&slot).copied()
     }
@@ -2185,6 +2344,59 @@ mod tests {
         let mut all = vec![("slot", slot.as_str())];
         all.extend_from_slice(fields);
         named(SCHEDULER_SLOT_COUNTS, &all)
+    }
+
+    // ---- what the banking stage spent ------------------------------------
+
+    fn worker_point(id: &str, fields: &[(&'static str, &str)]) -> DataPoint {
+        let mut point = named(WORKER_TIMING, fields);
+        point.tags.push((WORKER_ID, id.to_string()));
+        point
+    }
+
+    #[test]
+    fn test_worker_reports_are_summed_inside_the_window_only() {
+        let tap = MetricsTap::default();
+        let fields = [
+            ("load_execute_us", "100i"),
+            ("load_execute_us_max", "40i"),
+            ("record_us", "10i"),
+            ("commit_us", "5i"),
+        ];
+        tap.remember_worker_timing(&worker_point("0", &fields), 999);
+        tap.remember_worker_timing(&worker_point("0", &fields), 1_000);
+        tap.remember_worker_timing(&worker_point("1", &[("load_execute_us_max", "70i")]), 1_300);
+        tap.remember_worker_timing(&worker_point("0", &fields), 1_401);
+        let sum = tap.worker_time(1_000, 1_400).unwrap();
+        assert_eq!(sum.workers, 2);
+        assert_eq!(sum.times.load_execute, 100);
+        assert_eq!(sum.times.record, 10);
+        assert_eq!(sum.times.commit, 5);
+        assert_eq!(sum.longest_batch, 70);
+        assert_eq!(
+            tap.worker_time(2_000, 3_000),
+            None,
+            "no report in the window"
+        );
+    }
+
+    #[test]
+    fn test_the_vote_worker_report_is_kept_by_slot() {
+        let tap = MetricsTap::default();
+        let mut point = named(
+            VOTE_SLOT_TIMING,
+            &[("load_execute_us", "9100i"), ("record_us", "3900i")],
+        );
+        point.fields.push(("slot", "77i".to_string()));
+        tap.observe_point(&point);
+        let times = tap.vote_time(77).unwrap();
+        assert_eq!(times.load_execute, 9_100);
+        assert_eq!(times.record, 3_900);
+        assert_eq!(
+            times.cost_model, 0,
+            "the vote worker has no cost model field"
+        );
+        assert_eq!(tap.vote_time(78), None);
     }
 
     // ---- what a block cost ----------------------------------------------

@@ -3275,7 +3275,8 @@ body {
   /* A fee value is 106px at this size and a third of the row is 103, so the
      fees take half each: base and priority side by side, tips beneath. By class
      rather than position, since tips is only there on a jito validator. */
-  .sx-stats .sx-fee {
+  .sx-stats .sx-fee,
+  .sx-stats .sx-wide {
     grid-column: span 2;
   }
 

@@ -1,8 +1,8 @@
 /** One produced block's figures arranged for the expanded slot row: what
  *  filled the block first, the scheduler's counters grouped and folded. */
 
-import { count } from "./format";
-import type { ProducedBlock, SlotCost, SlotWaterfall } from "./types";
+import { count, percent } from "./format";
+import type { ProducedBlock, SlotCost, SlotWaterfall, TxVersions } from "./types";
 import { waterfallRows, type WaterfallRow } from "./waterfall";
 
 /** How the block's compute limit was spent: three shares of the limit that
@@ -164,6 +164,24 @@ export function schedulerView(w: SlotWaterfall): SchedulerView {
 /** A counter's share of its own group, for the bar beside it. */
 export function shareOfGroup(group: CounterGroup, row: WaterfallRow): number {
   return group.total > 0 ? row.count / group.total : 0;
+}
+
+/** Each version's share of the non-vote transactions, legacy first. A
+ *  block of votes alone has no share to give. */
+export function versionsValue(versions: TxVersions): string {
+  const total = versions.legacy + versions.v0 + versions.v1;
+  if (total === 0) return "—";
+  return [versions.legacy, versions.v0, versions.v1]
+    .map((n) => percent(n / total, 0))
+    .join(" · ");
+}
+
+/** The counts behind the shares, for the hover. */
+export function versionsTitle(versions: TxVersions): string {
+  const total = versions.legacy + versions.v0 + versions.v1;
+  const { legacy, v0, v1 } = versions;
+  const counts = `${count(legacy)} legacy, ${count(v0)} v0, ${count(v1)} v1`;
+  return `${counts} of ${count(total)} non-vote transactions.`;
 }
 
 /** Executed, and out of how many sanitised where the two differ. */

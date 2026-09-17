@@ -267,6 +267,15 @@ export interface ProducedBlock {
   /** Bundles the stage sanitised and executed into the block. `null` where no
    *  bundle stage reported the slot. */
   bundles: { sanitized: number; executed: number } | null;
+  /** Non-vote transactions by message version, read back from the
+   *  blockstore once the slot is full. `null` until then. */
+  versions: TxVersions | null;
+}
+
+export interface TxVersions {
+  legacy: number;
+  v0: number;
+  v1: number;
 }
 
 /** Which of the process's schedulers built a slot. BAM counts what arrived

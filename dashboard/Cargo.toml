@@ -43,6 +43,7 @@ solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer-store = { workspace = true }
+solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
@@ -56,8 +57,10 @@ agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
 solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-message = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 tempfile = { workspace = true }

@@ -18,6 +18,8 @@ import {
   capacity,
   schedulerView,
   shareOfGroup,
+  versionsTitle,
+  versionsValue,
   type Capacity,
   type SchedulerView,
 } from "../slotDetail";
@@ -417,6 +419,16 @@ function BlockCompute({
               label="Bundles"
               value={bundlesValue(block.bundles)}
               title={`${count(block.bundles.sanitized)} bundles sanitised, ${count(block.bundles.executed)} executed and in the block.`}
+            />
+          )}
+          {/* Read back from the blockstore after the freeze, so absent for a
+              moment on a fresh block. */}
+          {block.versions && (
+            <Stat
+              label="Legacy · v0 · v1"
+              className="sx-wide"
+              value={versionsValue(block.versions)}
+              title={versionsTitle(block.versions)}
             />
           )}
         </div>

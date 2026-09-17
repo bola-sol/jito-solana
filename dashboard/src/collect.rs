@@ -14,6 +14,7 @@ use {
         startup::StartupPublisher,
         tips::{TipMeter, TipRates},
         validator_info::{self, ValidatorInfoCache},
+        versions,
     },
     serde::Serialize,
     solana_clock::{Clock, Epoch, Slot},
@@ -25,7 +26,7 @@ use {
     },
     solana_runtime::bank::Bank,
     std::{
-        collections::{BTreeMap, HashMap, HashSet, VecDeque},
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
         sync::{Arc, Mutex, RwLock},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
@@ -314,6 +315,9 @@ pub struct Collector {
     first_observed_slot: Option<Slot>,
     /// Detail for blocks this validator produced, captured as they froze.
     produced: ProducedRing,
+    /// Our blocks whose entries have not been read back yet for their
+    /// transaction versions. Our own shreds land a moment after the freeze.
+    versions_pending: BTreeSet<Slot>,
     /// The same slots packed to a schedule row's columns and kept far deeper.
     /// Shared with the server, which answers range queries out of it.
     history: Arc<RwLock<SlotHistory>>,
@@ -432,6 +436,7 @@ impl Collector {
             info_scanned_to: 0,
             first_observed_slot: None,
             produced: ProducedRing::new(PRODUCED_BLOCKS),
+            versions_pending: BTreeSet::new(),
             history,
             epochs,
             skip_leader_slots: Vec::new(),
@@ -1048,6 +1053,7 @@ impl Collector {
             {
                 let block = self.capture_block(slot, bank, detail);
                 if self.produced.insert(block) {
+                    self.versions_pending.insert(slot);
                     captured = true;
                 }
             }
@@ -1091,10 +1097,37 @@ impl Collector {
         let filled = self
             .produced
             .fill_bundles(|slot| tap.bundles_landed(slot).map(landed));
-        if captured || filled {
+        let read = self.fill_versions();
+        if captured || filled || read {
             self.publisher
                 .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
         }
+    }
+
+    /// Reads back the entries of each own block still waiting for its version
+    /// tally, once the blockstore has the whole slot. A slot the blockstore
+    /// has dropped or cannot read is given up. True if a block changed.
+    fn fill_versions(&mut self) -> bool {
+        let blockstore = &self.ctx.blockstore;
+        let floor = blockstore.lowest_slot();
+        let mut changed = false;
+        for slot in std::mem::take(&mut self.versions_pending) {
+            if slot < floor || !self.produced.contains(slot) {
+                continue;
+            }
+            if !blockstore.is_full(slot) {
+                self.versions_pending.insert(slot);
+                continue;
+            }
+            let Ok(entries) = blockstore.get_slot_entries(slot, 0) else {
+                continue;
+            };
+            let tally = versions::tally(entries.iter().flat_map(|entry| &entry.transactions));
+            if self.produced.set_versions(slot, tally) {
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Adds what only our own blocks report: the blockhash and start time, which
@@ -1117,6 +1150,7 @@ impl Collector {
             priority_fees: detail.priority_fees,
             tips: detail.tips,
             bundles: self.metrics_tap.bundles_landed(slot).map(landed),
+            versions: None,
         }
     }
 

@@ -2,7 +2,7 @@
 //! bank is still in bank forks: the cost tracker and collected fees go with
 //! the bank when it is dropped after rooting.
 
-use {serde::Serialize, solana_clock::Slot};
+use {crate::versions::TxVersions, serde::Serialize, solana_clock::Slot};
 
 /// What the bundle stage landed in a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -53,6 +53,9 @@ pub struct ProducedBlock {
     /// Absent where no bundle stage reported the slot: a stock validator, or
     /// one under BAM.
     pub bundles: Option<Bundles>,
+    /// The block's non-vote transactions by message version, read back from
+    /// the blockstore once the slot is full. Absent until then.
+    pub versions: Option<TxVersions>,
 }
 
 /// The most recent produced blocks, oldest first.
@@ -108,6 +111,19 @@ impl ProducedRing {
         }
         changed
     }
+
+    /// Records the version tally of a block still without one. True if a
+    /// block changed.
+    pub fn set_versions(&mut self, slot: Slot, versions: TxVersions) -> bool {
+        let Some(block) = self.blocks.iter_mut().find(|block| block.slot == slot) else {
+            return false;
+        };
+        if block.versions.is_some() {
+            return false;
+        }
+        block.versions = Some(versions);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +147,7 @@ mod tests {
             priority_fees: 0,
             tips: None,
             bundles: None,
+            versions: None,
         }
     }
 
@@ -155,6 +172,25 @@ mod tests {
             })
         );
         assert!(!ring.fill_bundles(landed), "nothing left to fill");
+    }
+
+    #[test]
+    fn test_versions_are_set_once_and_only_on_a_held_block() {
+        let mut ring = ProducedRing::new(4);
+        ring.insert(block(10));
+        let tally = TxVersions {
+            legacy: 312,
+            v0: 41,
+            v1: 0,
+        };
+        assert!(!ring.set_versions(11, tally), "not a block we hold");
+        assert!(ring.set_versions(10, tally));
+        assert_eq!(ring.blocks()[0].versions, Some(tally));
+        assert!(
+            !ring.set_versions(10, TxVersions::default()),
+            "already read"
+        );
+        assert_eq!(ring.blocks()[0].versions, Some(tally));
     }
 
     #[test]

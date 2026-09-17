@@ -26,5 +26,6 @@ pub mod thread_stats;
 pub mod tips;
 pub mod udp_drops;
 pub mod validator_info;
+pub mod versions;
 
 pub use {config::DashboardConfig, context::DashboardContext, service::DashboardService};

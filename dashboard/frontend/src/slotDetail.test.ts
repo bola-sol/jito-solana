@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { bundlesValue, capacity, schedulerView, shareOfGroup } from "./slotDetail";
+import {
+  bundlesValue,
+  capacity,
+  schedulerView,
+  shareOfGroup,
+  versionsTitle,
+  versionsValue,
+} from "./slotDetail";
 import type { ProducedBlock, SlotCost, SlotWaterfall } from "./types";
 import { waterfallRows } from "./waterfall";
 
@@ -20,6 +27,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     priority_fees: 12_480,
     tips: null,
     bundles: null,
+    versions: null,
     ...over,
   };
 }
@@ -221,6 +229,23 @@ describe("a counter's share of its group", () => {
     const view = schedulerView(slot());
     const buffer = view.groups.find((g) => g.key === "buffer")!;
     expect(shareOfGroup(buffer, buffer.rows[0])).toBe(0);
+  });
+});
+
+describe("versionsValue", () => {
+  it("gives each version its share, legacy first", () => {
+    expect(versionsValue({ legacy: 312, v0: 41, v1: 0 })).toBe("88% · 12% · 0%");
+    expect(versionsValue({ legacy: 0, v0: 0, v1: 5 })).toBe("0% · 0% · 100%");
+  });
+
+  it("has no share to give for a block of votes alone", () => {
+    expect(versionsValue({ legacy: 0, v0: 0, v1: 0 })).toBe("—");
+  });
+
+  it("puts the counts on the hover", () => {
+    expect(versionsTitle({ legacy: 1312, v0: 41, v1: 0 })).toBe(
+      "1,312 legacy, 41 v0, 0 v1 of 1,353 non-vote transactions.",
+    );
   });
 });
 

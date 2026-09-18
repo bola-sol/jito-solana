@@ -2144,6 +2144,24 @@ body {
   padding: 10px 6px 12px;
 }
 
+/* An open block is boxed the way an open turn's drawer is, with its raised
+   head as the cap, so the detail ends where the box does. */
+.produced-block.is-open {
+  margin: 2px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.produced-block.is-open .produced-head {
+  border-radius: 5px 5px 0 0;
+}
+
+.produced-block.is-open .produced-foot {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 .produced-foot {
   display: flex;
   align-items: baseline;

@@ -1313,6 +1313,7 @@ pub fn execute(
                 vote_account,
                 highest_finalized: validator.highest_finalized.clone(),
                 account_paths: validator_config.account_paths.clone(),
+                snapshot_config: Some(validator_config.snapshot_config.clone()),
             },
             dashboard_banks,
         )

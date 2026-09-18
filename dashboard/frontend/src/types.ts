@@ -695,6 +695,22 @@ export interface SkipRate {
   rate: number | null;
 }
 
+/** One snapshot archive on disk: the slot it holds and when it was written,
+ *  null where the file could not be read. */
+export interface SnapshotArchive {
+  slot: number;
+  written_millis: number | null;
+}
+
+/** The newest full archive, the newest incremental on top of it, and the
+ *  block-height intervals new ones arrive at. A null interval is disabled. */
+export interface Snapshots {
+  full: SnapshotArchive | null;
+  incremental: SnapshotArchive | null;
+  full_interval: number | null;
+  incremental_interval: number | null;
+}
+
 /** The envelope every message arrives in. */
 export interface Envelope {
   topic: string;
@@ -760,6 +776,7 @@ export interface Published {
     network_egress: EgressSplit;
     xdp: XdpConfig | null;
     ingest_paths: IngestSummary;
+    snapshots: Snapshots | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

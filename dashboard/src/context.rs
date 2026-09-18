@@ -1,6 +1,7 @@
 //! The handles the dashboard reads validator state through.
 
 use {
+    agave_snapshots::snapshot_config::SnapshotConfig,
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_core::validator::ValidatorStartProgress,
@@ -33,6 +34,8 @@ pub struct DashboardContext {
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     /// Where the accounts database keeps its storage files, for the host panel.
     pub account_paths: Vec<PathBuf>,
+    /// Where snapshot archives are written and how often. `None` in tests.
+    pub snapshot_config: Option<SnapshotConfig>,
 }
 
 impl DashboardContext {

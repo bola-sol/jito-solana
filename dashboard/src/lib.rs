@@ -21,6 +21,7 @@ pub mod proto;
 pub mod server;
 pub mod service;
 pub mod slots;
+pub mod snapshot;
 pub mod startup;
 pub mod thread_stats;
 pub mod tips;

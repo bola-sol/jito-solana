@@ -107,6 +107,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `Validator::highest_finalized` | The cluster's tip under alpenglow, from votor's last certificate |
 | `LeaderScheduleCache::slot_leader_at`, `next_leader_slot` | The epoch's leader turns, who is in the peer table, and the countdown to our slot |
 | `ValidatorStartProgress` | The boot phase list and its timings |
+| The snapshot archive directories, listed through `agave_snapshots::paths`, and the intervals in `SnapshotConfig` | The newest full and incremental archive with the time each was written, and when the next of each is due |
 | `solana_version::Version::this_build` | The client name, version and commit in the header |
 
 The certificate walk is the one place where the dashboard parses ledger bytes. A per slot event that names the validators each reward certificate paid would replace it. The leader already knows this when it writes the footer.

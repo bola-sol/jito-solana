@@ -15,6 +15,7 @@ use {
         produced::{Bundles, Execution, ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
+        snapshot::{self, Snapshots},
         startup::StartupPublisher,
         tips::{TipMeter, TipRates},
         turns::{LeaderTurn, TurnTracker},
@@ -300,6 +301,7 @@ struct Debounces {
     epoch_remaining_nanos: Debounced<u64>,
     upcoming: Debounced<Vec<UpcomingSlot>>,
     peers: Debounced<Vec<Peer>>,
+    snapshots: Debounced<Option<Snapshots>>,
 }
 
 pub struct Collector {
@@ -625,6 +627,7 @@ impl Collector {
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
+            self.collect_snapshots();
         }
 
         // Encoded on a timer rather than per change: live clients follow the
@@ -652,6 +655,14 @@ impl Collector {
                  are counted against no turn"
             );
         }
+    }
+
+    /// The newest archives on disk: two directory listings, so on the slow tier.
+    fn collect_snapshots(&mut self) {
+        let snapshots = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
+        self.debounces
+            .snapshots
+            .publish(&self.publisher, TOPIC_SUMMARY, "snapshots", snapshots);
     }
 
     // ---- slot positions -------------------------------------------------

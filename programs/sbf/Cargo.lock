@@ -119,6 +119,7 @@ dependencies = [
 name = "agave-dashboard"
 version = "4.3.0-rc.1"
 dependencies = [
+ "agave-snapshots",
  "agave-votor-messages",
  "bincode",
  "crossbeam-channel",

@@ -38,6 +38,11 @@ export function epochOf(epoch: EpochInfo | undefined, slot: number): number | nu
   return at < 0 ? null : at;
 }
 
+/** Leader slots past `completed`, which is the rule the progress bar uses. */
+export function leaderSlotsLeft(slots: number[], completed: number): number {
+  return slots.filter((slot) => slot > completed).length;
+}
+
 /** One slot of a turn: what replay found, or nothing yet. */
 export interface TurnSlot {
   slot: number;

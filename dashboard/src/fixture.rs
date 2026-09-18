@@ -269,6 +269,7 @@ pub fn fixture() -> Fixture {
             highest_finalized: Arc::new(RwLock::new(None)),
             // Nothing in the tests reads the host panel.
             account_paths: Vec::new(),
+            snapshot_config: None,
         },
         publisher: Arc::new(Publisher::new()),
         bank_forks,

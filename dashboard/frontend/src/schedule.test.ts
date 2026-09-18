@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { epochOf, matchesQuery, turnKey, turnsOf, type LeaderRef } from "./schedule";
+import {
+  epochOf,
+  leaderSlotsLeft,
+  matchesQuery,
+  turnKey,
+  turnsOf,
+  type LeaderRef,
+} from "./schedule";
 import type { SlotEntry } from "./types";
 
 function held(slot: number): SlotEntry {
@@ -177,5 +184,20 @@ describe("epochOf", () => {
   it("has no answer without an epoch, or before the chain", () => {
     expect(epochOf(undefined, 5)).toBeNull();
     expect(epochOf({ ...current, epoch: 0, start_slot: 0 }, -1)).toBeNull();
+  });
+});
+
+describe("leaderSlotsLeft", () => {
+  const slots = [100, 101, 102, 103, 900, 901, 902, 903];
+
+  it("counts the slots the completed one has not passed", () => {
+    expect(leaderSlotsLeft(slots, 50)).toBe(8);
+    expect(leaderSlotsLeft(slots, 500)).toBe(4);
+    expect(leaderSlotsLeft(slots, 903)).toBe(0);
+  });
+
+  it("counts the slot being led until it is completed", () => {
+    expect(leaderSlotsLeft(slots, 99)).toBe(8);
+    expect(leaderSlotsLeft(slots, 100)).toBe(7);
   });
 });

@@ -1,6 +1,8 @@
 import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
+import { leaderSlotsLeft } from "../schedule";
+import { snapshotLine } from "../snapshot";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import type { Health } from "../types";
@@ -28,9 +30,11 @@ export function EpochCard(): ReactElement {
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
 
-  const elapsed = Math.max(0, (slot ?? epoch.start_slot) - epoch.start_slot);
+  const completed = slot ?? epoch.start_slot;
+  const elapsed = Math.max(0, completed - epoch.start_slot);
   const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
   const remainingMs = remainingNanos === undefined ? undefined : remainingNanos / 1e6;
+  const left = leaderSlotsLeft(epoch.my_leader_slots, completed);
 
   return (
     <Card title="Epoch" className="epoch-body">
@@ -39,7 +43,7 @@ export function EpochCard(): ReactElement {
       <Meter fraction={progress} />
       <div className="card-footnote">
         slot {count(elapsed)} of {count(epoch.slots_in_epoch)} · {count(epoch.my_leader_slots.length)}{" "}
-        leader slots this epoch
+        leader slots · {count(left)} left
       </div>
     </Card>
   );
@@ -57,6 +61,8 @@ export function StatusCard(): ReactElement {
   const gossipStake = store.get("summary", "gossip_stake");
   const skip = store.get("summary", "skip_rate");
   const shreds = store.get("summary", "shreds");
+  const snapshots = store.get("summary", "snapshots");
+  const serverTimeNanos = store.get("summary", "server_time_nanos");
 
   // The leader countdown means nothing until the validator is running, so show
   // where it has got to in its boot sequence instead. The wait's own card
@@ -73,6 +79,14 @@ export function StatusCard(): ReactElement {
     nextLeader !== null && nextLeader !== undefined && slot !== undefined && slotDurationNanos
       ? Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6))
       : undefined;
+  const snapshot = snapshots
+    ? snapshotLine(
+        snapshots,
+        serverTimeNanos === undefined ? undefined : serverTimeNanos / 1e6,
+        blockHeight,
+        slotDurationNanos === undefined ? undefined : slotDurationNanos / 1e6,
+      )
+    : null;
 
   return (
     <Card title="Status">
@@ -111,6 +125,11 @@ export function StatusCard(): ReactElement {
           tone={shreds && shreds.repair_rate > 0.05 ? "bad" : undefined}
         />
       </div>
+      {snapshot && (
+        <div className="card-footnote" title={snapshot.title}>
+          {snapshot.text}
+        </div>
+      )}
     </Card>
   );
 }

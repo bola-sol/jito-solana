@@ -1,16 +1,16 @@
+import type { ReactElement } from "react";
 import { count, decimal, micros, percent } from "../format";
 import { cpuRows, parts, serialRows, verifyRows, type ReplayPart, type ReplayRow } from "../replay";
-import type { ReplayWindow } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
 /** What replay spends its time on over the last few hundred slots: its own
  *  serial thread, and worker time in cores. Absent where the point never
  *  arrives, which is a validator logging below info. */
-export function ReplayCard() {
+export function ReplayCard(): ReactElement | null {
   const store = useStore();
-  const replay = store.get<ReplayWindow | null>("summary", "replay");
-  const slotNanos = store.get<number>("summary", "observed_slot_duration_nanos");
+  const replay = store.get("summary", "replay");
+  const slotNanos = store.get("summary", "observed_slot_duration_nanos");
   if (!replay) return null;
 
   const serial = replay.fetch + replay.confirming + replay.completing;

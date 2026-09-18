@@ -3,11 +3,11 @@
 import type { StartupProgress } from "./types";
 
 /** The phases worth a line of their own; the rest are folded together. */
-const NAMED: Record<string, string> = {
-  downloading_snapshot: "snapshot download",
-  loading_ledger: "loading ledger",
-  processing_ledger: "ledger replay",
-};
+const NAMED = new Map<string, string>([
+  ["downloading_snapshot", "snapshot download"],
+  ["loading_ledger", "loading ledger"],
+  ["processing_ledger", "ledger replay"],
+]);
 
 const REST = "everything else";
 
@@ -73,11 +73,11 @@ export function bootTimes(
   for (const { phase, elapsed_nanos } of startup.phases_taken) {
     const millis = elapsed_nanos / 1e6;
     startupMillis += millis;
-    const label = NAMED[phase];
+    const label = NAMED.get(phase);
     if (label !== undefined && millis >= 1000) named.set(label, (named.get(label) ?? 0) + millis);
     else rest += millis;
   }
-  const phases = Object.values(NAMED)
+  const phases = [...NAMED.values()]
     .filter((label) => named.has(label))
     .map((label) => ({ label, millis: named.get(label) ?? 0 }));
   if (rest >= 1000) phases.push({ label: REST, millis: rest });

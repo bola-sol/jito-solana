@@ -1,10 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
 import { matchesQuery, rewardTitle, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
+import type { Store } from "../store";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
-import type { EpochInfo, Peer, Reward, SlotEntry, StakeSummary, TipRates } from "../types";
+import type { EpochInfo, Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import { Copyable } from "./Copyable";
@@ -28,19 +29,51 @@ const DEPTH_SLOTS = 100_000;
 /** Slots per request, the most the validator will answer at once. */
 const DEPTH_SPAN = 4096;
 
-export function SchedulePage() {
+/** One span of the packed history, as entries. */
+async function fetchSpan(
+  store: Store,
+  first: number,
+  count: number,
+  epoch: EpochInfo | undefined,
+  identity: string | undefined,
+): Promise<SlotEntry[]> {
+  const range = await store.request<SlotRange>("slot", "range", { first_slot: first, count });
+  return entriesOf(range, epoch, identity);
+}
+
+/** Everything retained below `newest`, oldest first. An empty span is older
+ *  than the validator has kept, and so is everything below it. */
+async function fetchDepth(
+  store: Store,
+  newest: number,
+  epoch: EpochInfo | undefined,
+  identity: string | undefined,
+): Promise<SlotEntry[]> {
+  const spans: SlotEntry[][] = [];
+  const floor = Math.max(0, newest - DEPTH_SLOTS);
+  for (let end = newest; end > floor; ) {
+    const first = Math.max(floor, end - DEPTH_SPAN);
+    const got = await fetchSpan(store, first, end - first, epoch, identity);
+    if (got.length === 0) break;
+    spans.unshift(got);
+    end = first;
+  }
+  return spans.flat();
+}
+
+export function SchedulePage(): ReactElement {
   const store = useStore();
   const [query, setQuery] = useState("");
   const [oursOnly, setOursOnly] = useState(false);
   const list = useRef<HTMLDivElement>(null);
 
-  const stake = store.get<StakeSummary>("summary", "stake");
-  const peers = store.get<Peer[]>("peers", "all");
-  const epoch = store.get<EpochInfo>("epoch", "new");
-  const identity = store.get<string>("summary", "identity_key");
+  const stake = store.get("summary", "stake");
+  const peers = store.get("peers", "all");
+  const epoch = store.get("epoch", "new");
+  const identity = store.get("summary", "identity_key");
   // Absent on a validator with no tip payment program, and then the tips column
   // shows nothing for anybody rather than a column of noughts.
-  const rates = store.get<TipRates>("summary", "tip_rates");
+  const rates = store.get("summary", "tip_rates");
   const live = store.getSlots();
 
   // Filtering to ours counts as searching: only sixty-four of our own slots
@@ -65,23 +98,7 @@ export function SchedulePage() {
     if (newest === undefined) return;
     setDeepLoading(true);
     try {
-      const spans: SlotEntry[][] = [];
-      const floor = Math.max(0, newest - DEPTH_SLOTS);
-      let end = newest;
-      while (end > floor) {
-        const first = Math.max(floor, end - DEPTH_SPAN);
-        const range = await store.request<SlotRange>("slot", "range", {
-          first_slot: first,
-          count: end - first,
-        });
-        const got = entriesOf(range, epoch, identity);
-        // An empty span is older than the validator has kept, and so is
-        // everything below it.
-        if (got.length === 0) break;
-        spans.unshift(got);
-        end = first;
-      }
-      const all = spans.flat();
+      const all = await fetchDepth(store, newest, epoch, identity);
       setDeep(all);
 
       // The history crosses an epoch boundary about a quarter of the time,
@@ -116,11 +133,7 @@ export function SchedulePage() {
       // Aligned down to a turn boundary so a span never begins mid-turn, and
       // clamped at nought for a cluster young enough that it could go below.
       const first = Math.max(0, Math.floor((earliest - OLDER_SPAN) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
-      const range = await store.request<SlotRange>("slot", "range", {
-        first_slot: first,
-        count: earliest - first,
-      });
-      const fetched = entriesOf(range, epoch, identity);
+      const fetched = await fetchSpan(store, first, earliest - first, epoch, identity);
       // Nothing came back for any of it, so there is nothing older to ask for
       // and the control stops offering.
       if (fetched.length === 0) setExhausted(true);
@@ -430,16 +443,15 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
   );
 }
 
+const MARKS: Record<Reward, [glyph: string, tone: string]> = {
+  paid: ["✓", "is-yes"],
+  unpaid: ["✗", "is-no"],
+  no_certificate: ["○", "is-none"],
+};
+
 /** Under alpenglow, whether this node's vote was paid for the slot. */
 function VoteMark({ reward }: { reward: Reward | null }) {
-  const [glyph, tone] =
-    reward === "paid"
-      ? ["✓", "is-yes"]
-      : reward === "unpaid"
-        ? ["✗", "is-no"]
-        : reward === "no_certificate"
-          ? ["○", "is-none"]
-          : ["–", "is-unknown"];
+  const [glyph, tone] = reward === null ? ["–", "is-unknown"] : MARKS[reward];
   return (
     <span className="vote-marks" title={rewardTitle(reward)}>
       <i className={`vote-mark ${tone}`}>{glyph}</i>

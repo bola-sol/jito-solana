@@ -8,6 +8,7 @@ import type {
   Envelope,
   NetworkSample,
   Peer,
+  Published,
   SlotEntry,
   ThreadsSample,
   TpsSample,
@@ -35,6 +36,13 @@ export type ConnectionState = "connecting" | "open" | "closed";
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+}
+
+/** `held` with `sample` appended where it is newer than the last, capped at
+ *  `cap`. The retained history and the live samples overlap by design. */
+function appendNewer<T>(held: T[], sample: T, stamp: (sample: T) => number, cap: number): T[] {
+  const last = held[held.length - 1];
+  return !last || stamp(sample) > stamp(last) ? [...held, sample].slice(-cap) : held;
 }
 
 export class Store {
@@ -82,8 +90,12 @@ export class Store {
 
   getRevision = (): number => this.revision;
 
-  get<T>(topic: string, key: string): T | undefined {
-    return this.values.get(`${topic}.${key}`) as T | undefined;
+  /** The latest value under a key, typed by `Published`. */
+  get<T extends keyof Published, K extends keyof Published[T] & string>(
+    topic: T,
+    key: K,
+  ): Published[T][K] | undefined {
+    return this.values.get(`${topic}.${key}`) as Published[T][K] | undefined;
   }
 
   getConnection(): ConnectionState {
@@ -95,9 +107,7 @@ export class Store {
     // A validator that is still booting has no slots and no identity to report,
     // but the boot sequence is exactly what should be on screen then, so the
     // splash has nothing left to wait for.
-    const startup = this.values.get("summary.startup_progress") as
-      | { running: boolean }
-      | undefined;
+    const startup = this.get("summary", "startup_progress");
     if (startup && !startup.running) return true;
 
     return this.values.has("summary.identity_key") && this.slots.size > 0;
@@ -184,7 +194,7 @@ export class Store {
 
   /** Who leads a slot, from whichever epoch's arrays cover it. */
   private leaderAtAny(slot: number): string | null {
-    const here = leaderAt(this.values.get("epoch.new") as EpochInfo | undefined, slot);
+    const here = leaderAt(this.get("epoch", "new"), slot);
     if (here !== null) return here;
     for (const past of this.epochs.values()) {
       if (past === null) continue;
@@ -208,9 +218,9 @@ export class Store {
 
   /** This validator, from the same three values the header is drawn from. */
   private ourLeader(): LeaderRef {
-    const key = (this.values.get("summary.identity_key") as string | undefined) ?? null;
-    const name = (this.values.get("summary.identity_name") as string | undefined) ?? null;
-    const icon = (this.values.get("summary.identity_icon") as string | undefined) ?? null;
+    const key = this.get("summary", "identity_key") ?? null;
+    const name = this.get("summary", "identity_name") ?? null;
+    const icon = this.get("summary", "identity_icon") ?? null;
     // Rebuilt on change rather than per call: the rows that draw a leader are
     // memoised on their props, and a fresh object each render would defeat it.
     const stamp = `${key} ${name} ${icon}`;
@@ -223,7 +233,7 @@ export class Store {
 
   /** The peer table by identity, rebuilt when the array is replaced. */
   private peersByIdentity(): Map<string, Peer> {
-    const peers = (this.values.get("peers.all") as Peer[] | undefined) ?? [];
+    const peers = this.get("peers", "all") ?? [];
     if (this.peers !== peers) {
       this.peers = peers;
       this.peerIndex = new Map(peers.map((peer) => [peer.identity, peer]));
@@ -273,7 +283,11 @@ export class Store {
       return;
     }
 
+    // The histories are lists; a frame that is not one is a server bug and is
+    // dropped whole rather than applied part way.
+    const stamp = (sample: { timestamp_nanos: number }) => sample.timestamp_nanos;
     if (topic === "slot" && key === "overview") {
+      if (!Array.isArray(value)) return;
       this.slots.clear();
       for (const entry of value as SlotEntry[]) this.slots.set(entry.slot, entry);
       this.trimSlots();
@@ -282,30 +296,20 @@ export class Store {
       this.slots.set(entry.slot, entry);
       this.trimSlots();
     } else if (topic === "summary" && key === "network_history") {
+      if (!Array.isArray(value)) return;
       this.network = (value as NetworkSample[]).slice(-MAX_TPS_SAMPLES);
     } else if (topic === "summary" && key === "network_sample") {
-      const sample = value as NetworkSample;
-      const last = this.network[this.network.length - 1];
-      if (!last || sample.timestamp_nanos > last.timestamp_nanos) {
-        this.network = [...this.network, sample].slice(-MAX_TPS_SAMPLES);
-      }
+      this.network = appendNewer(this.network, value as NetworkSample, stamp, MAX_TPS_SAMPLES);
     } else if (topic === "summary" && key === "threads_history") {
+      if (!Array.isArray(value)) return;
       this.threads = (value as ThreadsSample[]).slice(-MAX_THREAD_SAMPLES);
     } else if (topic === "summary" && key === "threads_sample") {
-      const sample = value as ThreadsSample;
-      const last = this.threads[this.threads.length - 1];
-      if (!last || sample.timestamp_nanos > last.timestamp_nanos) {
-        this.threads = [...this.threads, sample].slice(-MAX_THREAD_SAMPLES);
-      }
+      this.threads = appendNewer(this.threads, value as ThreadsSample, stamp, MAX_THREAD_SAMPLES);
     } else if (topic === "summary" && key === "tps_history") {
+      if (!Array.isArray(value)) return;
       this.tps = (value as TpsSample[]).slice(-MAX_TPS_SAMPLES);
     } else if (topic === "summary" && key === "tps_sample") {
-      const sample = value as TpsSample;
-      // The retained history and the live samples overlap by design, so keep
-      // the series strictly increasing instead of trusting arrival order.
-      if (this.tps.length === 0 || sample.slot > this.tps[this.tps.length - 1].slot) {
-        this.tps = [...this.tps, sample].slice(-MAX_TPS_SAMPLES);
-      }
+      this.tps = appendNewer(this.tps, value as TpsSample, (sample) => sample.slot, MAX_TPS_SAMPLES);
     } else {
       const serverTime = topic === "summary" && key === "server_time_nanos";
       if (serverTime && typeof value === "number") {

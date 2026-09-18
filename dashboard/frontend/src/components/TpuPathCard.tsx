@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import {
   useEffect,
   useState,
@@ -25,14 +26,7 @@ import {
   type PathLoss,
   type PathSection,
 } from "../tpuPath";
-import type {
-  BundleStage,
-  EpochSpan,
-  ExecutedStage,
-  QuicPaths,
-  QuicPort,
-  VerifyStage,
-} from "../types";
+import type { EpochSpan, QuicPaths, QuicPort } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
@@ -43,13 +37,13 @@ import { Card, Explain } from "./primitives";
  * sections, each against its own total; the last two are summed over the
  * epoch, since they run only while leader.
  */
-export function TpuPathCard() {
+export function TpuPathCard(): ReactElement | null {
   const store = useStore();
-  const paths = store.get<QuicPaths | null>("summary", "quic_paths");
-  const verify = store.get<VerifyStage | null>("summary", "verify");
-  const executed = store.get<ExecutedStage | null>("summary", "executed");
-  const bundles = store.get<BundleStage | null>("summary", "bundles") ?? null;
-  const span = store.get<EpochSpan | null>("summary", "epoch_span");
+  const paths = store.get("summary", "quic_paths");
+  const verify = store.get("summary", "verify");
+  const executed = store.get("summary", "executed");
+  const bundles = store.get("summary", "bundles") ?? null;
+  const span = store.get("summary", "epoch_span");
   const [open, setOpen] = useState(readOpenPorts);
   useEffect(() => writeOpenPorts(open), [open]);
 
@@ -255,7 +249,7 @@ function PortList({
 }
 
 /** One stage: a bar, what came out of it, and the losses beside it. */
-export function Section({ section }: { section: PathSection }) {
+export function Section({ section }: { section: PathSection }): ReactElement {
   const narrow = useNarrow();
   const [expanded, setExpanded] = useState(false);
   const cap = narrow ? LOSSES_SHOWN_NARROW : LOSSES_SHOWN;

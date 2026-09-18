@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
 
 /** Gap kept between an open explanation and the edge of the window. */
 const EDGE_MARGIN = 12;
@@ -14,7 +14,7 @@ export function chartY(value: number, peak: number, height: number): number {
 }
 
 /** The dotted line marking the highest value on screen. */
-export function PeakLine({ fraction, label }: { fraction: number; label: string }) {
+export function PeakLine({ fraction, label }: { fraction: number; label: string }): ReactElement {
   const height = Math.max(0, Math.min(100, fraction * 100));
   return (
     <div
@@ -67,7 +67,7 @@ export function Explain({
   /** Whether the bubble takes the pointer and keyboard, for the few that
    *  hold something to copy. Then not an ARIA tooltip. */
   interactive?: boolean;
-}) {
+}): ReactElement {
   const id = useId();
   const bubble = useRef<HTMLSpanElement>(null);
   const anchor = useRef<HTMLSpanElement>(null);
@@ -155,7 +155,7 @@ export function Card({
   className?: string;
   /** Kept sharp while the validator boots and every other card is blurred. */
   lit?: boolean;
-}) {
+}): ReactElement {
   // The body is a separate element so that a card can lay its content out as a
   // grid without the heading becoming one of the cells.
   return (
@@ -184,7 +184,7 @@ export function Stat({
   tone?: "good" | "bad" | "warn" | "muted";
   /** Explanation for a figure whose label cannot say enough on its own. */
   explain?: string;
-}) {
+}): ReactElement {
   return (
     <div className="stat">
       <div className={`stat-label${explain ? " has-explain" : ""}`}>
@@ -197,7 +197,7 @@ export function Stat({
 }
 
 /** A labelled horizontal progress bar, as used by the epoch countdown. */
-export function Meter({ fraction }: { fraction: number }) {
+export function Meter({ fraction }: { fraction: number }): ReactElement {
   const clamped = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
   return (
     <div className="meter" role="progressbar" aria-valuenow={Math.round(clamped * 100)}>

@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useRef, useState, type ReactElement } from "react";
 import { ScrollTop } from "./ScrollTop";
 import { count, shortKey } from "../format";
 import type { LeaderRef } from "../schedule";
@@ -17,7 +17,7 @@ export function Sidebar({
 }: {
   collapsed: boolean;
   onToggle: () => void;
-}) {
+}): ReactElement {
   const store = useStore();
   const [ownOnly, setOwnOnly] = useState(false);
   // Newest first, so the live edge of the list is the top of it.

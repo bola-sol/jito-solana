@@ -1,4 +1,4 @@
-import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useState, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
 import { count, shortKey, slotDelta } from "../format";
 import type { LeaderRef } from "../schedule";
 import { barHeight } from "../slotScale";
@@ -26,11 +26,11 @@ const LEVEL_NAMES = new Map<SlotLevel, string>(
   LEVELS.map(([level, label]) => [level, label]),
 );
 
-export function SlotStrip() {
+export function SlotStrip(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
-  const processed = store.get<number>("summary", "completed_slot");
-  const observedSlotNanos = store.get<number | null>(
+  const processed = store.get("summary", "completed_slot");
+  const observedSlotNanos = store.get(
     "summary",
     "observed_slot_duration_nanos",
   );
@@ -49,7 +49,7 @@ export function SlotStrip() {
   // Bars are drawn against what the cluster is configured for, so a nominal
   // slot lands at half height and anything at twice nominal fills the bar.
   const nominalMs =
-    (store.get<number>("summary", "estimated_slot_duration_nanos") ?? 400_000_000) / 1e6;
+    (store.get("summary", "estimated_slot_duration_nanos") ?? 400_000_000) / 1e6;
 
   // Marked across the strip so the bars read as durations rather than as some
   // unlabelled quantity. Taken from the slots on screen, so it follows them.
@@ -66,14 +66,14 @@ export function SlotStrip() {
   const positions: Array<[string, number | undefined, string]> = [
     [
       "Finalized",
-      store.get<number>("summary", "finalized_slot"),
+      store.get("summary", "finalized_slot"),
       alpenglow
         ? "Highest slot with a finalization certificate"
         : "Highest slot a supermajority of stake has rooted",
     ],
     [
       "Root",
-      store.get<number>("summary", "root_slot"),
+      store.get("summary", "root_slot"),
       "Highest slot this validator has rooted",
     ],
     ...(alpenglow
@@ -81,13 +81,13 @@ export function SlotStrip() {
       : [
           [
             "Confirmed",
-            store.get<number>("summary", "optimistically_confirmed_slot"),
+            store.get("summary", "optimistically_confirmed_slot"),
             "Highest slot the cluster has voted to confirm",
           ] as [string, number | undefined, string],
         ]),
     [
       "Voted",
-      store.get<number | null>("summary", "vote_slot") ?? undefined,
+      store.get("summary", "vote_slot") ?? undefined,
       alpenglow
         ? "Last slot a certificate carrying this node's vote landed"
         : "The slot this validator last voted on",
@@ -95,7 +95,7 @@ export function SlotStrip() {
     ["Processed", processed, "Highest slot this validator has replayed and frozen"],
     [
       "Highest",
-      store.get<number>("summary", "estimated_slot"),
+      store.get("summary", "estimated_slot"),
       "Highest slot this validator holds a bank for, whether or not it has been replayed",
     ],
   ];

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { bytes, count, decimal, percent } from "../format";
 import {
   availableTone,
@@ -23,15 +23,15 @@ import {
   THREADS_WINDOW,
   type ThreadRow,
 } from "../threads";
-import type { DeviceLoad, FilesystemUsage, Host, ThreadsSample } from "../types";
+import type { DeviceLoad, FilesystemUsage, ThreadsSample } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
 /** The machine underneath the validator, from /proc and statvfs. A bar means
  *  a container that can fill; load and device saturation get none. */
-export function HostCard() {
+export function HostCard(): ReactElement | null {
   const store = useStore();
-  const host = store.get<Host | null>("summary", "host");
+  const host = store.get("summary", "host");
   if (!host) return null;
 
   const memory = memoryUse(host);

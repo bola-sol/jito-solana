@@ -30,19 +30,47 @@ export function turnSpanLabel(turn: LeaderTurn): string {
   return `${duration(turn.drained_millis - turn.since_millis)} since the previous turn drained`;
 }
 
+/** The keys of a waterfall that hold a count. */
+type CounterKey = {
+  [K in keyof Waterfall]-?: Waterfall[K] extends number ? K : never;
+}[keyof Waterfall];
+
+/** Every counter a waterfall carries. A test checks it against the type. */
+export const COUNTERS = [
+  "received",
+  "not_held",
+  "check_queue_full",
+  "unparsable",
+  "bad_locks",
+  "compute_budget",
+  "too_old",
+  "already_processed",
+  "fee_payer",
+  "filtered",
+  "nonce_conflict",
+  "buffered",
+  "queue_full",
+  "nonce_evicted",
+  "cleared",
+  "cleaned",
+  "scheduled",
+  "blocked_conflicts",
+  "blocked_threads",
+  "finished",
+  "retried",
+] as const satisfies readonly CounterKey[];
+
 /** The turn's per-slot scheduler counts as one, the newest slot's source
  *  standing for all. `null` where no slot of the turn has reported. */
 export function sumWaterfalls(slots: SlotWaterfall[]): Waterfall | null {
   if (slots.length === 0) return null;
   const newest = slots.reduce((a, b) => (b.slot > a.slot ? b : a));
-  const sum: Record<string, number | string | undefined> = { source: newest.source };
+  const sum: Waterfall = { ...newest };
   for (const slot of slots) {
-    for (const [key, value] of Object.entries(slot)) {
-      if (key === "slot" || key === "source" || typeof value !== "number") continue;
-      sum[key] = ((sum[key] as number | undefined) ?? 0) + value;
-    }
+    if (slot === newest) continue;
+    for (const key of COUNTERS) sum[key] += slot[key];
   }
-  return sum as unknown as Waterfall;
+  return sum;
 }
 
 /** The scheduler's own counts in the TPU path card's shape: the intake losses

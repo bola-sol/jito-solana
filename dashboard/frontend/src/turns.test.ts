@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  COUNTERS,
   schedulerSection,
   sumWaterfalls,
   turnOf,
@@ -67,6 +68,13 @@ const quic: QuicPort = {
   active_streams: 0,
   kernel_drops: null,
 };
+
+describe("COUNTERS", () => {
+  it("names every counter a waterfall carries, so a new one cannot be left out of the sum", () => {
+    const { slot: _slot, source: _source, ...counters } = waterfall();
+    expect([...COUNTERS].sort()).toEqual(Object.keys(counters).sort());
+  });
+});
 
 const verify: VerifyStage = {
   received: 15_753,

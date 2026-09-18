@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type ReactElement } from "react";
 import {
   accountsGloss,
   programGloss,
@@ -14,10 +14,10 @@ import { Card, Explain, Meter, Stat } from "./primitives";
 
 /** The two caches replay waits on. Each section folds to a heading that
  *  states its health; both start folded, and the choice is remembered. */
-export function CachesCard() {
+export function CachesCard(): ReactElement | null {
   const store = useStore();
-  const programs = store.get<ProgramCache | null>("summary", "program_cache");
-  const accounts = store.get<AccountsCache | null>("summary", "accounts_cache");
+  const programs = store.get("summary", "program_cache");
+  const accounts = store.get("summary", "accounts_cache");
   // Read once at the first render. Unlike the theme there is nothing to stamp
   // before the bundle runs: a section that starts closed is what an unstyled
   // page shows anyway, so there is no flash to head off.

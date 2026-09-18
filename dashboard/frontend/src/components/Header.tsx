@@ -1,44 +1,54 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
 import { useNarrow } from "../narrow";
 import { bootTimes, type BootTimes } from "../startup";
-import type { StakeSummary, StartupProgress } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
+/** The figures both layouts draw, already formatted. */
+interface HeaderFigures {
+  stakeAmount: string;
+  share: string;
+  commission: string;
+  identityBalance: string;
+  voteBalance: string;
+  uptime: string;
+  shred: string;
+}
+
 /** Who this validator is, what it runs, and what it is worth. Two layouts:
  *  everything on a screen, five figures and a panel behind the name on a
  *  phone. See `useNarrow`. */
-export function Header() {
+export function Header(): ReactElement {
   const store = useStore();
-  const identity = store.get<string>("summary", "identity_key");
-  const voteKey = store.get<string>("summary", "vote_key");
-  const stake = store.get<StakeSummary>("summary", "stake");
-  const commission = store.get<number | null>("summary", "vote_commission");
-  const identityBalance = store.get<number>("summary", "identity_balance");
-  const voteBalance = store.get<number>("summary", "vote_balance");
-  const uptimeNanos = store.get<number>("summary", "uptime_nanos");
+  const identity = store.get("summary", "identity_key");
+  const voteKey = store.get("summary", "vote_key");
+  const stake = store.get("summary", "stake");
+  const commission = store.get("summary", "vote_commission");
+  const identityBalance = store.get("summary", "identity_balance");
+  const voteBalance = store.get("summary", "vote_balance");
+  const uptimeNanos = store.get("summary", "uptime_nanos");
   const boot = bootTimes(
-    store.get<StartupProgress>("summary", "startup_progress"),
+    store.get("summary", "startup_progress"),
     uptimeNanos,
-    store.get<number>("summary", "server_time_nanos"),
-    store.get<number>("summary", "caught_up_time_nanos"),
+    store.get("summary", "server_time_nanos"),
+    store.get("summary", "caught_up_time_nanos"),
   );
-  const cluster = store.get<string>("summary", "cluster");
-  const version = store.get<string>("summary", "version");
-  const client = store.get<string>("summary", "client");
-  const shredVersion = store.get<number>("summary", "shred_version");
+  const cluster = store.get("summary", "cluster");
+  const version = store.get("summary", "version");
+  const client = store.get("summary", "client");
+  const shredVersion = store.get("summary", "shred_version");
   const connection = store.getConnection();
   const narrow = useNarrow();
 
-  const name = store.get<string | null>("summary", "identity_name") ?? "Private";
-  const icon = store.get<string | null>("summary", "identity_icon") ?? null;
+  const name = store.get("summary", "identity_name") ?? "Private";
+  const icon = store.get("summary", "identity_icon") ?? null;
   const build = buildLabel(client, version);
 
-  const figures = {
+  const figures: HeaderFigures = {
     stakeAmount: `${solCompact(stake?.activated_stake)} SOL`,
     share: percent(stake?.share, 4),
     commission: commission === null || commission === undefined ? "—" : `${commission} %`,
@@ -149,7 +159,7 @@ function Identity({
   stake: string;
   identity: string | undefined;
   voteKey: string | undefined;
-  figures: Record<string, string>;
+  figures: HeaderFigures;
   boot: BootTimes | null;
 }) {
   const panelId = useId();
@@ -162,7 +172,7 @@ function Identity({
   useEffect(() => {
     if (!open) return;
     const away = (event: MouseEvent) => {
-      if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
+      if (event.target instanceof Node && !wrapper.current?.contains(event.target)) setOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);

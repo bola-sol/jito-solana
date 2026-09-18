@@ -1,19 +1,19 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { count, percent, shortKey, solCompact } from "../format";
 import { groupsOf, majorityVersion, toLine } from "../gossipStake";
 import { useNarrow } from "../narrow";
 import { SUPERMAJORITY_PERCENT } from "../startup";
-import type { GossipStake, GossipValidator, StartupProgress } from "../types";
+import type { GossipStake, GossipValidator } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Card } from "./primitives";
 
 /** The supermajority wait per validator: who the snapshot stakes, and who
  *  gossip has seen. Only while the wait lasts. */
-export function GossipStakeCard() {
+export function GossipStakeCard(): ReactElement | null {
   const store = useStore();
-  const startup = store.get<StartupProgress>("summary", "startup_progress");
-  const stake = store.get<GossipStake | null>("summary", "gossip_stake");
+  const startup = store.get("summary", "startup_progress");
+  const stake = store.get("summary", "gossip_stake");
   const narrow = useNarrow();
   const [showSeen, setShowSeen] = useState(false);
   if (!stake || startup?.phase !== "waiting_for_supermajority") return null;

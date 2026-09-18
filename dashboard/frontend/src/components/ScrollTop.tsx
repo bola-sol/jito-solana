@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type ReactElement } from "react";
 import { heldScrollTop } from "../scroll";
 
 /** How far a list must be scrolled before the way back is offered. */
@@ -6,7 +6,7 @@ const LIVE_EDGE_PX = 120;
 
 /** A pill that returns a list to the top, hanging over the rows rather
  *  than moving them. */
-export function ScrollTop({ scroller }: { scroller: RefObject<HTMLElement | null> }) {
+export function ScrollTop({ scroller }: { scroller: RefObject<HTMLElement | null> }): ReactElement {
   const [away, setAway] = useState(false);
   // Shared with the hook below: it needs to know where the list was left, to
   // tell its own correction apart from one the browser already made.

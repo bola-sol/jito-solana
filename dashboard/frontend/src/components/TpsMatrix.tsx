@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type ReactElement } from "react";
 import {
   ceilingFor,
   columnRows,
@@ -21,7 +21,7 @@ const SERIES = ["vote", "failed", "success"] as const;
 /** A minute of throughput as a grid of lit dots, one column per sample, lit
  *  from the bottom: votes, failed, succeeded. One path per colour rather
  *  than an element per dot. */
-export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }) {
+export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }): ReactElement {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
   // Drawn behind live on the validator's clock, so the newest column is

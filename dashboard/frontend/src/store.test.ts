@@ -42,9 +42,9 @@ describe("values", () => {
     // A reply carries the id it was asked with. Storing it would let a ping
     // answer overwrite the state under the same key.
     const store = new Store();
-    store.apply(envelope("summary", "ping", "state"));
-    store.apply({ ...envelope("summary", "ping", "reply"), id: 7 } as Envelope);
-    expect(store.get("summary", "ping")).toBe("state");
+    store.apply(envelope("summary", "cluster", "state"));
+    store.apply({ ...envelope("summary", "cluster", "reply"), id: 7 } as Envelope);
+    expect(store.get("summary", "cluster")).toBe("state");
   });
 });
 

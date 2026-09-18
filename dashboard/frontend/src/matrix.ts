@@ -77,14 +77,14 @@ export function columnsFor<T, C>(
   samples: T[],
   slots: number,
   second: (sample: T) => number,
-  merge: (bucket: T[]) => C,
+  merge: (bucket: [T, ...T[]]) => C,
 ): Array<C | null> {
-  if (samples.length === 0) return Array(slots).fill(null) as null[];
+  if (samples.length === 0) return Array.from({ length: slots }, () => null);
   // Rounded down: a full minute arrives as sixty-one samples for sixty
   // columns.
   const span = second(samples[samples.length - 1]) - second(samples[0]) + 1;
   const stride = Math.max(1, Math.floor(span / slots));
-  const buckets = new Map<number, T[]>();
+  const buckets = new Map<number, [T, ...T[]]>();
   for (const sample of samples) {
     const bucket = Math.floor(second(sample) / stride);
     const held = buckets.get(bucket);
@@ -119,7 +119,7 @@ export function sampleSecond(sample: TpsSample): number {
 
 /** One column for several seconds: the mean of each series, stamped as the
  *  newest. */
-export function meanSample(bucket: TpsSample[]): TpsSample {
+export function meanSample(bucket: [TpsSample, ...TpsSample[]]): TpsSample {
   const newest = bucket[bucket.length - 1];
   const mean = (of: (sample: TpsSample) => number): number =>
     bucket.reduce((sum, sample) => sum + of(sample), 0) / bucket.length;

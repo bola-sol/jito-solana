@@ -1,16 +1,16 @@
+import type { ReactElement } from "react";
 import { count, percent, release, solCompact } from "../format";
-import type { VersionShare } from "../types";
 import { useStore } from "../useStore";
 import { Card } from "./primitives";
 
 /** How the cluster's stake divides across client versions, ordered by stake.
  *  The counts are staked validators, matching the validator card. */
-export function VersionsCard() {
+export function VersionsCard(): ReactElement {
   const store = useStore();
-  const shares = store.get<VersionShare[]>("summary", "versions");
+  const shares = store.get("summary", "versions");
   // Rows are keyed by release, so a build of 4.3.0-beta.0 belongs to the 4.3.0
   // row and has to be shortened to find it.
-  const ours = release(store.get<string>("summary", "version"));
+  const ours = release(store.get("summary", "version"));
 
   if (!shares || shares.length === 0) {
     return <Card title="Cluster Versions">waiting for data…</Card>;

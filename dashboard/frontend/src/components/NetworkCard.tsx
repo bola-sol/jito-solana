@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { decimal } from "../format";
 import {
   direction,
@@ -15,21 +16,24 @@ import { Card, chartY, Explain } from "./primitives";
 const WIDTH = 300;
 const HEIGHT = 38;
 
+/** A direction with no history yet: the live rate stands for the minute, so
+ *  the figure is right from the first second. */
+function steady(rate: number): Direction {
+  return { current: rate, average: rate, delta: 0, trend: "flat" };
+}
+
 /** Whole-host interface throughput, one scale across both directions.
  *  Renders nothing where the counters could not be read. */
-export function NetworkCard() {
+export function NetworkCard(): ReactElement | null {
   const store = useStore();
-  const rates = store.get<{ received_per_second: number; sent_per_second: number }>(
-    "summary",
-    "network",
-  );
+  const rates = store.get("summary", "network");
   // Null where the validator was given no XDP config, since the point behind
   // this is only submitted where it was. Absence is the answer rather than
   // something to work out.
-  const xdp = store.get<XdpConfig | null>("summary", "xdp");
+  const xdp = store.get("summary", "xdp");
   // Absent until a sender has reported, and never on a validator whose log
   // level keeps it from submitting points at all.
-  const split = store.get<EgressSplit>("summary", "network_egress");
+  const split = store.get("summary", "network_egress");
   // Drawn behind live on the validator's clock, so the newest point sits past
   // the right edge and the line is continuous across it.
   const edge = useChartEdge();
@@ -40,12 +44,7 @@ export function NetworkCard() {
   const received = visible.map((sample) => sample.received_per_second);
   const sent = visible.map((sample) => sample.sent_per_second);
   const peak = sharedPeak(received, sent);
-  const egress = direction(sent) ?? {
-    current: rates.sent_per_second,
-    average: rates.sent_per_second,
-    delta: 0,
-    trend: "flat" as const,
-  };
+  const egress = direction(sent) ?? steady(rates.sent_per_second);
 
   const scope =
     "Every non-loopback interface on this host, not the validator alone.";
@@ -59,10 +58,7 @@ export function NetworkCard() {
       <Row
         label="Ingress"
         kind="ingress"
-        // Falls back to the live rate before a minute of samples has arrived,
-        // so the figure is right from the first second and only the line and
-        // the average wait for a window to average over.
-        read={direction(received) ?? { current: rates.received_per_second, average: rates.received_per_second, delta: 0, trend: "flat" }}
+        read={direction(received) ?? steady(rates.received_per_second)}
         samples={visible}
         value={(sample) => sample.received_per_second}
         edge={edge}

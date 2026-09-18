@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { duration, percent, solCompact } from "../format";
 import { stakeSeen, SUPERMAJORITY_PERCENT } from "../startup";
 import type { StartupProgress } from "../types";
@@ -26,7 +27,7 @@ export function StartupPhases({
   startup: StartupProgress;
   /** Whether the supermajority wait's meter is drawn here rather than on its own card. */
   withStake: boolean;
-}) {
+}): ReactElement {
   const current = PHASES.findIndex(([phase]) => phase === startup.phase);
   const taken = new Map(startup.phases_taken.map((t) => [t.phase, t.elapsed_nanos]));
 

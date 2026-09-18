@@ -1,30 +1,30 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
-import type {
-  EpochInfo,
-  GossipStake,
-  Health,
-  Shreds,
-  SkipRate,
-  StartupProgress,
-  ValidatorCounts,
-} from "../types";
+import type { Health } from "../types";
 import { useNarrow } from "../narrow";
 import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 import { TpsMatrix } from "./TpsMatrix";
 
-export function EpochCard() {
+/** Amber for a backup identity: meant to be here, worth noticing. */
+const VOTE_TONE: Record<Health["vote"], "good" | "bad" | "warn" | "muted"> = {
+  voting: "good",
+  delinquent: "bad",
+  not_voting: "warn",
+  not_started: "muted",
+};
+
+export function EpochCard(): ReactElement {
   const store = useStore();
-  const epoch = store.get<EpochInfo>("epoch", "new");
-  const slot = store.get<number>("summary", "completed_slot");
+  const epoch = store.get("epoch", "new");
+  const slot = store.get("summary", "completed_slot");
   // Sent by the server, which measures the slot rate and holds the answer
   // still unless it really moves.
-  const remainingNanos = store.get<number>("summary", "epoch_remaining_nanos");
+  const remainingNanos = store.get("summary", "epoch_remaining_nanos");
 
   if (!epoch) return <Card title="Epoch">{waiting}</Card>;
 
@@ -45,18 +45,18 @@ export function EpochCard() {
   );
 }
 
-export function StatusCard() {
+export function StatusCard(): ReactElement {
   const store = useStore();
-  const slot = store.get<number>("summary", "completed_slot");
-  const blockHeight = store.get<number>("summary", "block_height");
-  const nextLeader = store.get<number | null>("summary", "next_leader_slot");
-  const health = store.get<Health>("summary", "health");
-  const behindCluster = store.get<number | null>("summary", "behind_cluster");
-  const slotDurationNanos = store.get<number>("summary", "estimated_slot_duration_nanos");
-  const startup = store.get<StartupProgress>("summary", "startup_progress");
-  const gossipStake = store.get<GossipStake | null>("summary", "gossip_stake");
-  const skip = store.get<SkipRate>("summary", "skip_rate");
-  const shreds = store.get<Shreds | null>("summary", "shreds");
+  const slot = store.get("summary", "completed_slot");
+  const blockHeight = store.get("summary", "block_height");
+  const nextLeader = store.get("summary", "next_leader_slot");
+  const health = store.get("summary", "health");
+  const behindCluster = store.get("summary", "behind_cluster");
+  const slotDurationNanos = store.get("summary", "estimated_slot_duration_nanos");
+  const startup = store.get("summary", "startup_progress");
+  const gossipStake = store.get("summary", "gossip_stake");
+  const skip = store.get("summary", "skip_rate");
+  const shreds = store.get("summary", "shreds");
 
   // The leader countdown means nothing until the validator is running, so show
   // where it has got to in its boot sequence instead. The wait's own card
@@ -90,18 +90,7 @@ export function StatusCard() {
               ? undefined
               : `${count(behindCluster)} behind cluster`
           }
-          // Amber rather than red. A validator on its backup identity is meant
-          // to be here, so this is not a fault; it is worth noticing, which
-          // grey would not manage on an operator who thinks they are voting.
-          tone={
-            health?.vote === "voting"
-              ? "good"
-              : health?.vote === "delinquent"
-                ? "bad"
-                : health?.vote === "not_voting"
-                  ? "warn"
-                  : "muted"
-          }
+          tone={health ? VOTE_TONE[health.vote] : "muted"}
           explain="Whether this process is voting. A node running its backup identity reads not voting."
         />
         <Stat
@@ -153,9 +142,9 @@ function StakeStrip({ delinquent, total }: { delinquent: number; total: number }
   );
 }
 
-export function ValidatorsCard() {
+export function ValidatorsCard(): ReactElement {
   const store = useStore();
-  const counts = store.get<ValidatorCounts>("summary", "validator_counts");
+  const counts = store.get("summary", "validator_counts");
   if (!counts) return <Card title="Validators">{waiting}</Card>;
 
   const total = counts.non_delinquent_stake + counts.delinquent_stake;
@@ -211,7 +200,7 @@ export function ValidatorsCard() {
 
 /** Throughput now and the shape of the last minute. The figures are the
  *  chart's key, each in its series' colour. */
-export function TransactionsCard() {
+export function TransactionsCard(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
   const samples = store.getTps();

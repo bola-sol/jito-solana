@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { applyTheme, readTheme, type Theme } from "../theme";
 
-export function ThemeToggle() {
+export function ThemeToggle(): ReactElement {
   const [theme, setTheme] = useState<Theme>(readTheme);
 
   const next: Theme = theme === "dark" ? "light" : "dark";

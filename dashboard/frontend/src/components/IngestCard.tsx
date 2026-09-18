@@ -1,5 +1,6 @@
+import type { ReactElement } from "react";
 import { bytes, count, percent } from "../format";
-import type { IngestPath, IngestSummary, QuicPaths } from "../types";
+import type { IngestPath } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
@@ -9,12 +10,12 @@ import { Card, Explain } from "./primitives";
  * Where a port's deliveries are counted, drops over deliveries plus drops is
  * the share lost. Absent behind a port forward.
  */
-export function IngestCard() {
+export function IngestCard(): ReactElement | null {
   const store = useStore();
-  const summary = store.get<IngestSummary>("summary", "ingest_paths");
+  const summary = store.get("summary", "ingest_paths");
   // The QUIC ports move to the TPU path card, but only where that card is
   // going to draw them: it is absent on a validator logging below info.
-  const elsewhere = store.get<QuicPaths | null>("summary", "quic_paths") !== null;
+  const elsewhere = store.get("summary", "quic_paths") !== null;
   const paths = (summary?.paths ?? []).filter((path) => !path.quic || !elsewhere);
   if (!summary || paths.length === 0) return null;
 

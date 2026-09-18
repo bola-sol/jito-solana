@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./layout";
 import {
   EpochCard,
@@ -20,18 +20,17 @@ import { TpuPathCard } from "./components/TpuPathCard";
 import { GossipStakeCard } from "./components/GossipStakeCard";
 import { SlotStrip } from "./components/SlotStrip";
 import { usePage, type Page } from "./route";
-import type { StartupProgress } from "./types";
 import { useStore } from "./useStore";
 
 /** Base title, kept in step with index.html so the tab reads the same before
  *  the first snapshot arrives as it does after. */
 const TITLE = "Agave Dashboard";
 
-export function App() {
+export function App(): ReactElement {
   const store = useStore();
   const connection = store.getConnection();
-  const name = store.get<string | null>("summary", "identity_name");
-  const identity = store.get<string>("summary", "identity_key");
+  const name = store.get("summary", "identity_name");
+  const identity = store.get("summary", "identity_key");
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [page, setPage] = usePage();
 
@@ -52,7 +51,7 @@ export function App() {
   // While the validator boots every card but the one showing the boot sequence
   // is blurred: the rest have nothing to say yet, and the eye goes to the one
   // that does. The same test the status card makes to show the phases.
-  const startup = store.get<StartupProgress>("summary", "startup_progress");
+  const startup = store.get("summary", "startup_progress");
   if (startup && !startup.running) classes.push("is-booting");
 
   return (

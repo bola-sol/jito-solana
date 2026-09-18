@@ -702,3 +702,65 @@ export interface Envelope {
   id?: number;
   value: unknown;
 }
+
+/** Every retained key a page reads, by topic, with the value it carries.
+ *  `Store.get` is typed by it. */
+export interface Published {
+  summary: {
+    version: string;
+    client: string;
+    cluster: string;
+    shred_version: number;
+    identity_key: string;
+    identity_name: string | null;
+    identity_icon: string | null;
+    vote_key: string;
+    uptime_nanos: number;
+    server_time_nanos: number;
+    caught_up_time_nanos: number;
+    startup_progress: StartupProgress;
+    gossip_stake: GossipStake | null;
+    root_slot: number;
+    optimistically_confirmed_slot: number;
+    finalized_slot: number;
+    completed_slot: number;
+    estimated_slot: number;
+    block_height: number;
+    next_leader_slot: number | null;
+    vote_slot: number | null;
+    behind_cluster: number | null;
+    identity_balance: number;
+    vote_balance: number;
+    vote_commission: number | null;
+    stake: StakeSummary;
+    validator_counts: ValidatorCounts;
+    versions: VersionShare[];
+    estimated_slot_duration_nanos: number;
+    observed_slot_duration_nanos: number | null;
+    epoch_remaining_nanos: number;
+    skip_rate: SkipRate;
+    health: Health;
+    consensus: Consensus;
+    program_cache: ProgramCache | null;
+    accounts_cache: AccountsCache | null;
+    shreds: Shreds | null;
+    quic_paths: QuicPaths | null;
+    verify: VerifyStage | null;
+    executed: ExecutedStage | null;
+    bundles: BundleStage | null;
+    epoch_span: EpochSpan | null;
+    produced_blocks: ProducedBlock[];
+    slot_waterfalls: SlotWaterfall[];
+    slot_costs: SlotCost[];
+    produced_turns: LeaderTurn[];
+    tip_rates: TipRates;
+    replay: ReplayWindow | null;
+    host: Host | null;
+    network: Network;
+    network_egress: EgressSplit;
+    xdp: XdpConfig | null;
+    ingest_paths: IngestSummary;
+  };
+  epoch: { new: EpochInfo };
+  peers: { all: Peer[] };
+}

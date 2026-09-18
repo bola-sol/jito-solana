@@ -20,6 +20,18 @@ const SILENCE_LIMIT_MS = 8_000;
 /** How often the silence is checked. */
 const WATCHDOG_INTERVAL_MS = 2_000;
 
+/** Whether a decoded frame has the envelope's shape. */
+function isEnvelope(value: unknown): value is Envelope {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "topic" in value &&
+    typeof value.topic === "string" &&
+    "key" in value &&
+    typeof value.key === "string"
+  );
+}
+
 export function connect(store: Store): () => void {
   let socket: WebSocket | null = null;
   let retryMs = MIN_RETRY_MS;
@@ -91,15 +103,16 @@ export function connect(store: Store): () => void {
       // connection is delivering, which is all this is watching for.
       lastMessageAt = Date.now();
       if (typeof event.data !== "string") return;
-      let envelope: Envelope;
+      let parsed: unknown;
       try {
-        envelope = JSON.parse(event.data) as Envelope;
+        parsed = JSON.parse(event.data);
       } catch {
         // A malformed frame is a server bug. Dropping it beats tearing down a
         // connection that is otherwise working.
         return;
       }
-      store.apply(envelope);
+      if (!isEnvelope(parsed)) return;
+      store.apply(parsed);
     };
 
     ws.onclose = () => {

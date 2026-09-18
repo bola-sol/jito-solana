@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, blockTime, bytes, count, micros, percent, sol, units } from "../format";
 import { recurrence } from "../cost";
 import {
@@ -11,7 +11,6 @@ import {
 import { epochOf } from "../schedule";
 import { jitoShare, ourShare } from "../tips";
 import type {
-  EpochInfo,
   Execution,
   LeaderTurn,
   ProducedBlock,
@@ -40,15 +39,15 @@ import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
 
 /** Every block this validator produced, captured as each froze; the list
  *  ends where the dashboard started. */
-export function SlotDetailsPage() {
+export function SlotDetailsPage(): ReactElement {
   const store = useStore();
-  const blocks = store.get<ProducedBlock[]>("summary", "produced_blocks");
-  const waterfalls = store.get<SlotWaterfall[]>("summary", "slot_waterfalls");
-  const costs = store.get<SlotCost[]>("summary", "slot_costs");
+  const blocks = store.get("summary", "produced_blocks");
+  const waterfalls = store.get("summary", "slot_waterfalls");
+  const costs = store.get("summary", "slot_costs");
   // Absent on a validator with no tip payment program, and then no tip figure
   // is drawn at all.
-  const rates = store.get<TipRates>("summary", "tip_rates");
-  const turns = store.get<LeaderTurn[]>("summary", "produced_turns");
+  const rates = store.get("summary", "tip_rates");
+  const turns = store.get("summary", "produced_turns");
   const [open, setOpen] = useState<number | null>(null);
   const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
@@ -86,7 +85,7 @@ export function SlotDetailsPage() {
 
   // Dividers only in the newest-first order, where an epoch boundary is one
   // place, and only when the blocks held span more than one epoch.
-  const epoch = store.get<EpochInfo>("epoch", "new");
+  const epoch = store.get("epoch", "new");
   const numbered = listed.map((block) => ({ block, epoch: epochOf(epoch, block.slot) }));
   const divided = !sort && new Set(numbered.map((entry) => entry.epoch)).size > 1;
   // The turn a listed block belongs to, in the natural order only: the
@@ -98,35 +97,35 @@ export function SlotDetailsPage() {
     <section className="slot-details">
       <div className="produced">
         <SummaryRows blocks={blocks} sort={sort} onSort={toggle} onClear={() => setSort(null)} />
-        {numbered.map(({ block, epoch: at }, index) => (
-          <Fragment key={block.slot}>
-            {divided && at !== null && at !== numbered[index - 1]?.epoch && (
-              <div className="produced-epoch">epoch {count(at)}</div>
-            )}
-            {turnAt(index) && turnAt(index) !== turnAt(index - 1) && (
-              <TurnDivider
-                turn={turnAt(index) as LeaderTurn}
-                blocks={blocks}
-                waterfalls={waterfalls ?? []}
-                open={openTurn === (turnAt(index) as LeaderTurn).first}
-                onToggle={() => {
-                  const first = (turnAt(index) as LeaderTurn).first;
-                  setOpenTurn(openTurn === first ? null : first);
-                }}
+        {numbered.map(({ block, epoch: at }, index) => {
+          const turn = turnAt(index);
+          return (
+            <Fragment key={block.slot}>
+              {divided && at !== null && at !== numbered[index - 1]?.epoch && (
+                <div className="produced-epoch">epoch {count(at)}</div>
+              )}
+              {turn && turn !== turnAt(index - 1) && (
+                <TurnDivider
+                  turn={turn}
+                  blocks={blocks}
+                  waterfalls={waterfalls ?? []}
+                  open={openTurn === turn.first}
+                  onToggle={() => setOpenTurn(openTurn === turn.first ? null : turn.first)}
+                />
+              )}
+              <BlockRow
+                block={block}
+                epoch={at}
+                waterfall={bySlot.get(block.slot)}
+                cost={costBySlot.get(block.slot)}
+                costs={costs ?? []}
+                rates={rates}
+                open={open === block.slot}
+                onToggle={() => setOpen(open === block.slot ? null : block.slot)}
               />
-            )}
-            <BlockRow
-              block={block}
-              epoch={at}
-              waterfall={bySlot.get(block.slot)}
-              cost={costBySlot.get(block.slot)}
-              costs={costs ?? []}
-              rates={rates}
-              open={open === block.slot}
-              onToggle={() => setOpen(open === block.slot ? null : block.slot)}
-            />
-          </Fragment>
-        ))}
+            </Fragment>
+          );
+        })}
       </div>
       <div className="card-footnote">
         {sort

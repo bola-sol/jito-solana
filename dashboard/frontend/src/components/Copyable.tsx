@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type ReactElement } from "react";
 
 /** Text that copies itself when clicked. A button, truncated with an
  *  ellipsis; the confirmation is drawn over the value so nothing reflows. */
@@ -11,7 +11,7 @@ export function Copyable({
   /** What to show, when that differs from what to copy. */
   label?: ReactNode;
   className?: string;
-}) {
+}): ReactElement {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {

@@ -125,9 +125,12 @@ export function StatusCard(): ReactElement {
           tone={shreds && shreds.repair_rate > 0.05 ? "bad" : undefined}
         />
       </div>
+      {/* The bubble rather than a title: a title is redrawn on every change,
+          and the countdown inside changes every second. */}
       {snapshot && (
-        <div className="card-footnote" title={snapshot.title}>
-          {snapshot.text}
+        <div className="card-footnote">
+          {snapshot.title ? <Explain text={snapshot.title}>snapshot</Explain> : "snapshot"}{" "}
+          {snapshot.detail}
         </div>
       )}
     </Card>

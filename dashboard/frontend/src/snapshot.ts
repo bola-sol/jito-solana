@@ -5,7 +5,8 @@ import { count, duration } from "./format";
 import type { Snapshots } from "./types";
 
 export interface SnapshotLine {
-  text: string;
+  /** What follows the word "snapshot". */
+  detail: string;
   /** One sentence naming when the next archives are due, where the intervals
    *  and the slot rate are known. */
   title: string | undefined;
@@ -38,12 +39,12 @@ export function snapshotLine(
 ): SnapshotLine | null {
   const newest = snapshots.incremental ?? snapshots.full;
   if (!newest) return null;
-  const parts = [`snapshot ${count(newest.slot)}`];
+  const parts = [count(newest.slot)];
   if (nowMillis !== undefined && newest.written_millis !== null) {
     parts.push(agoLabel(Math.max(0, nowMillis - newest.written_millis)));
   }
   if (snapshots.incremental && snapshots.full) parts.push(`full ${count(snapshots.full.slot)}`);
-  return { text: parts.join(" · "), title: nextDue(snapshots, blockHeight, slotMillis) };
+  return { detail: parts.join(" · "), title: nextDue(snapshots, blockHeight, slotMillis) };
 }
 
 function nextDue(

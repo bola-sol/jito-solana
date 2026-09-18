@@ -39,7 +39,7 @@ describe("blocksUntil", () => {
 describe("snapshotLine", () => {
   it("leads with the incremental, then its age, then the full it sits on", () => {
     const line = snapshotLine(both, 10_000_000, 393_444_647, 400);
-    expect(line?.text).toBe("snapshot 441,685,500 · 40s ago · full 441,600,000");
+    expect(line?.detail).toBe("441,685,500 · 40s ago · full 441,600,000");
   });
 
   it("names when the next of each kind is due, on the hover", () => {
@@ -49,14 +49,14 @@ describe("snapshotLine", () => {
 
   it("falls back to the full alone where there is no incremental", () => {
     const line = snapshotLine({ ...both, incremental: null, incremental_interval: null }, 2_000_000, 393_444_647, 400);
-    expect(line?.text).toBe("snapshot 441,600,000 · 16m ago");
+    expect(line?.detail).toBe("441,600,000 · 16m ago");
     expect(line?.title).toBe("Next full in about 35m 41s.");
   });
 
   it("leaves the age out where the file could not be read", () => {
     const unread = { ...both, incremental: { slot: 441_685_500, written_millis: null } };
-    expect(snapshotLine(unread, 10_000_000, undefined, undefined)?.text).toBe(
-      "snapshot 441,685,500 · full 441,600,000",
+    expect(snapshotLine(unread, 10_000_000, undefined, undefined)?.detail).toBe(
+      "441,685,500 · full 441,600,000",
     );
   });
 

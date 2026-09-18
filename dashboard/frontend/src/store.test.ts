@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Store } from "./store";
 import type { Envelope, SlotEntry, TpsSample } from "./types";
 
@@ -45,6 +45,47 @@ describe("values", () => {
     store.apply(envelope("summary", "ping", "state"));
     store.apply({ ...envelope("summary", "ping", "reply"), id: 7 } as Envelope);
     expect(store.get("summary", "ping")).toBe("state");
+  });
+});
+
+describe("clock offset", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("is the smallest reading, since delivery delay only ever adds", () => {
+    vi.useFakeTimers();
+    const store = new Store();
+    expect(store.getClockOffset()).toBeNull();
+    // The validator's clock reads 5,000 ms; ours reads 5,300, then 5,250
+    // ahead of its next reading, then 5,400 ahead of the one after.
+    vi.setSystemTime(5_300);
+    store.apply(envelope("summary", "server_time_nanos", 5_000 * 1e6));
+    vi.setSystemTime(6_250);
+    store.apply(envelope("summary", "server_time_nanos", 6_000 * 1e6));
+    vi.setSystemTime(7_400);
+    store.apply(envelope("summary", "server_time_nanos", 7_000 * 1e6));
+    expect(store.getClockOffset()).toBe(250);
+    expect(store.get("summary", "server_time_nanos")).toBe(7_000 * 1e6);
+  });
+
+  it("lets an old low reading age out after a minute of readings", () => {
+    vi.useFakeTimers();
+    const store = new Store();
+    vi.setSystemTime(1_000);
+    store.apply(envelope("summary", "server_time_nanos", 1_000 * 1e6));
+    for (let second = 2; second <= 61; second += 1) {
+      vi.setSystemTime(second * 1_000 + 250);
+      store.apply(envelope("summary", "server_time_nanos", second * 1_000 * 1e6));
+    }
+    expect(store.getClockOffset()).toBe(250);
+  });
+
+  it("starts again on a lost connection", () => {
+    vi.useFakeTimers();
+    const store = new Store();
+    vi.setSystemTime(5_300);
+    store.apply(envelope("summary", "server_time_nanos", 5_000 * 1e6));
+    store.setConnection("closed");
+    expect(store.getClockOffset()).toBeNull();
   });
 });
 

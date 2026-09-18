@@ -22,6 +22,8 @@ const MAX_OWN_SLOTS = 64;
 
 /** TPS samples kept for the chart. */
 const MAX_TPS_SAMPLES = 300;
+/** Clock readings kept for the offset: a minute, so a clock step ages out. */
+const CLOCK_READINGS = 60;
 
 /** Thread samples kept: the minute the host card draws. */
 const MAX_THREAD_SAMPLES = 60;
@@ -43,6 +45,10 @@ export class Store {
   private network: NetworkSample[] = [];
   private threads: ThreadsSample[] = [];
   private connection: ConnectionState = "connecting";
+  /** This clock less the validator's, per reading, newest last, and the
+   *  smallest of them. */
+  private clockOffsets: number[] = [];
+  private clockOffset: number | null = null;
   private sender: ((frame: string) => void) | null = null;
   private pending = new Map<number, Pending>();
   private nextRequestId = 1;
@@ -103,6 +109,8 @@ export class Store {
       // A reply comes back only on the socket that carried the request, so
       // losing it ends every request in flight.
       this.sender = null;
+      this.clockOffsets = [];
+      this.clockOffset = null;
       const inflight = [...this.pending.values()];
       this.pending.clear();
       for (const pending of inflight) pending.reject(new Error("connection lost"));
@@ -240,6 +248,12 @@ export class Store {
     return this.network;
   }
 
+  /** How far this clock runs ahead of the validator's, in milliseconds: the
+   *  smallest recent reading, since delivery delay only adds. */
+  getClockOffset(): number | null {
+    return this.clockOffset;
+  }
+
   getThreads(): ThreadsSample[] {
     return this.threads;
   }
@@ -293,6 +307,12 @@ export class Store {
         this.tps = [...this.tps, sample].slice(-MAX_TPS_SAMPLES);
       }
     } else {
+      const serverTime = topic === "summary" && key === "server_time_nanos";
+      if (serverTime && typeof value === "number") {
+        const offset = Date.now() - value / 1e6;
+        this.clockOffsets = [...this.clockOffsets, offset].slice(-CLOCK_READINGS);
+        this.clockOffset = Math.min(...this.clockOffsets);
+      }
       this.values.set(`${topic}.${key}`, value);
       // The two things a resolved leader is made of. Either changing makes
       // every answer already given potentially wrong.

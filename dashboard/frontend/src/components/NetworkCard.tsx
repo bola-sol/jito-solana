@@ -8,7 +8,7 @@ import {
   type Direction,
 } from "../network";
 import type { EgressSplit, NetworkSample, XdpConfig } from "../types";
-import { RENDER_LAG_MS, useNow, windowed } from "../useNow";
+import { useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, chartY, Explain } from "./primitives";
 
@@ -30,9 +30,9 @@ export function NetworkCard() {
   // Absent until a sender has reported, and never on a validator whose log
   // level keeps it from submitting points at all.
   const split = store.get<EgressSplit>("summary", "network_egress");
-  // Drawn a sample behind live, so the newest point sits past the right edge
-  // and the line is continuous across it rather than ending in a notch.
-  const edge = useNow() - RENDER_LAG_MS;
+  // Drawn behind live on the validator's clock, so the newest point sits past
+  // the right edge and the line is continuous across it.
+  const edge = useChartEdge();
   if (!rates) return null;
 
   const windowMs = NETWORK_WINDOW_SECONDS * 1000;

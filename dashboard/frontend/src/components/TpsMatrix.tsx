@@ -12,7 +12,7 @@ import {
   slotsFor,
 } from "../matrix";
 import type { TpsSample } from "../types";
-import { RENDER_LAG_MS, useNow, windowed } from "../useNow";
+import { useChartEdge, windowed } from "../useNow";
 import { useWidth } from "../useWidth";
 
 /** The three series, bottom of the column upwards. */
@@ -24,9 +24,9 @@ const SERIES = ["vote", "failed", "success"] as const;
 export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
-  // Drawn a sample behind live, so the newest column is complete rather than
-  // arriving mid-second.
-  const edge = useNow() - RENDER_LAG_MS;
+  // Drawn behind live on the validator's clock, so the newest column is
+  // complete rather than arriving mid-second.
+  const edge = useChartEdge();
 
   const rows = short ? ROWS_SHORT : ROWS_TALL;
   const height = rows * (short ? 9 : 12);

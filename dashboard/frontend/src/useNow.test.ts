@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RENDER_LAG_MS, windowed } from "./useNow";
+import { chartEdge, RENDER_LAG_MS, windowed } from "./useNow";
 
 type Sample = { at: number };
 
@@ -34,6 +34,17 @@ describe("render lag", () => {
     const second = at(arrived, arrived + 600);
     // A tenth of a second across a sixty second window of six hundred units.
     expect(first - second).toBeCloseTo(1, 6);
+  });
+});
+
+describe("chartEdge", () => {
+  it("takes the clock offset off before the lag", () => {
+    expect(chartEdge(1_000_000, 300)).toBe(1_000_000 - 300 - RENDER_LAG_MS);
+    expect(chartEdge(1_000_000, -300)).toBe(1_000_000 + 300 - RENDER_LAG_MS);
+  });
+
+  it("assumes the clocks agree until the first reading", () => {
+    expect(chartEdge(1_000_000, null)).toBe(1_000_000 - RENDER_LAG_MS);
   });
 });
 

@@ -2147,7 +2147,8 @@ body {
 /* An open block is boxed the way an open turn's drawer is, with its raised
    head as the cap, so the detail ends where the box does. */
 .produced-block.is-open {
-  margin: 2px 0 8px;
+  margin-top: 2px;
+  margin-bottom: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
@@ -2188,12 +2189,15 @@ body {
   color: var(--text-faint);
 }
 
-/* Where the list steps from one epoch into the next. Drawn only while the
-   blocks held span more than one epoch. */
-/* A leader turn's divider: the epoch divider's type on a block row's button,
-   opening the TPU path over the turn beneath it. */
+/* A leader turn's head, opening the TPU path over the turn beneath it. The
+   blocks of a finished turn sit in from its edge, so the grouping is drawn;
+   a block whose turn has not drained yet stays flush. */
 .turn {
   margin-top: 8px;
+}
+
+.turn ~ .produced-block {
+  margin-left: 14px;
 }
 
 .turn-head {
@@ -2209,7 +2213,7 @@ body {
   background: none;
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--text-dim);
   text-align: left;
   cursor: pointer;
 }
@@ -2217,7 +2221,6 @@ body {
 .turn-head:hover,
 .turn.is-open .turn-head {
   background: var(--panel-raised);
-  color: var(--text-dim);
 }
 
 .turn-head:focus-visible {
@@ -2228,6 +2231,7 @@ body {
 .turn-name {
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  color: var(--text);
 }
 
 .turn-more {
@@ -2243,13 +2247,26 @@ body {
   background: var(--bg);
 }
 
+/* Where the list steps from one epoch into the next: a rule across the list
+   with the label on it, since it is a larger break than a turn. Drawn only
+   while the blocks held span more than one epoch. */
 .produced-epoch {
-  padding: 12px 4px 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 10px 4px 2px;
   font-family: ui-monospace, monospace;
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+
+.produced-epoch::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
 }
 
 /* On a phone the slot, time and epoch take the width between them, so the

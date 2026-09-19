@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BALANCES_STORAGE_KEY,
+  readBalancesHidden,
   readSidebarCollapsed,
   SIDEBAR_STORAGE_KEY,
+  writeBalancesHidden,
   writeSidebarCollapsed,
 } from "./layout";
 
@@ -19,6 +22,34 @@ function storage(): Storage {
 
 beforeEach(() => {
   vi.stubGlobal("window", { localStorage: storage() });
+});
+
+describe("hidden balances", () => {
+  it("starts shown when nothing has been chosen", () => {
+    expect(readBalancesHidden()).toBe(false);
+  });
+
+  it("remembers the choice both ways", () => {
+    writeBalancesHidden(true);
+    expect(readBalancesHidden()).toBe(true);
+    writeBalancesHidden(false);
+    expect(readBalancesHidden()).toBe(false);
+  });
+
+  it("treats an unrecognised value as shown", () => {
+    window.localStorage.setItem(BALANCES_STORAGE_KEY, "yes");
+    expect(readBalancesHidden()).toBe(false);
+  });
+
+  it("survives storage being refused", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeBalancesHidden(true)).not.toThrow();
+    expect(readBalancesHidden()).toBe(false);
+  });
 });
 
 describe("sidebar collapse", () => {

@@ -1,7 +1,9 @@
-import type { ReactNode, ReactElement } from "react";
+import { useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
+import { readBalancesHidden, writeBalancesHidden } from "../layout";
 import { bootTimes, type BootTimes } from "../startup";
 import { useStore } from "../useStore";
+import { BalancesToggle } from "./BalancesToggle";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { Explain } from "./primitives";
@@ -32,6 +34,13 @@ export function Header(): ReactElement {
   const name = store.get("summary", "identity_name") ?? "Private";
   const icon = store.get("summary", "identity_icon") ?? null;
   const build = buildLabel(client, version);
+  // The two balances can be taken off a screen others see; remembered per host.
+  const [balancesHidden, setBalancesHidden] = useState(readBalancesHidden);
+  const toggleBalances = () => {
+    const next = !balancesHidden;
+    setBalancesHidden(next);
+    writeBalancesHidden(next);
+  };
 
   const up = duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6);
   const upLabel =
@@ -64,6 +73,7 @@ export function Header(): ReactElement {
         )}
         <span className="who-right">
           <Connection state={connection} />
+          <BalancesToggle hidden={balancesHidden} onToggle={toggleBalances} />
           <ThemeToggle />
         </span>
       </div>
@@ -86,8 +96,12 @@ export function Header(): ReactElement {
           value={commission === null || commission === undefined ? "—" : `${commission}%`}
           label="commission"
         />
-        <Figure value={`${sol(identityBalance)} SOL`} label="identity" />
-        <Figure value={`${sol(voteBalance)} SOL`} label="vote" />
+        {!balancesHidden && (
+          <>
+            <Figure value={`${sol(identityBalance)} SOL`} label="identity" />
+            <Figure value={`${sol(voteBalance)} SOL`} label="vote" />
+          </>
+        )}
         <Figure value={up} label={upLabel} detail={boot && <Boot boot={boot} />} />
       </div>
     </header>

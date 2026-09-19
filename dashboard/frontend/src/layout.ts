@@ -47,6 +47,26 @@ export function writeThreadsCollapsed(collapsed: boolean): void {
   }
 }
 
+/** Whether the header's two balances are hidden, for a screen others can
+ *  see. Shown unless chosen otherwise. */
+export const BALANCES_STORAGE_KEY = "agave-dashboard-balances";
+
+export function readBalancesHidden(): boolean {
+  try {
+    return window.localStorage.getItem(BALANCES_STORAGE_KEY) === "hidden";
+  } catch {
+    return false;
+  }
+}
+
+export function writeBalancesHidden(hidden: boolean): void {
+  try {
+    window.localStorage.setItem(BALANCES_STORAGE_KEY, hidden ? "hidden" : "shown");
+  } catch {
+    // As above.
+  }
+}
+
 /** Which of the folding sections under the cards the viewer has folded.
  *  Every section starts open. */
 export const FOLDED_STORAGE_KEY = "agave-dashboard-folded";

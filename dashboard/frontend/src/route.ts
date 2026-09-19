@@ -1,7 +1,7 @@
-/** Which page is on screen, kept in the URL hash, which never reaches the
- *  server. */
+/** Where the page is, kept in the URL hash so a view can be linked to. The
+ *  hash never reaches the server. */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export type Page = "overview" | "slots" | "schedule";
 
@@ -10,32 +10,74 @@ export type Page = "overview" | "slots" | "schedule";
  *  coming. */
 const PAGES: Page[] = ["overview", "slots", "schedule"];
 
-/** The page a hash names, defaulting to the overview for anything unknown. */
-export function readPage(hash: string): Page {
-  const name = hash.replace(/^#\/?/, "");
-  return PAGES.find((page) => page === name) ?? "overview";
+/** A page and what is open on it: `#/slots/5539826` is a produced block
+ *  expanded, `#/slots?q=826` the block list filtered, `#/schedule?q=mithril&ours`
+ *  a filtered schedule. */
+export interface Route {
+  page: Page;
+  /** The open block on the slot page. */
+  slot: number | null;
+  /** The search text on the slot page or the schedule. */
+  query: string;
+  /** Whether the schedule lists our turns alone. */
+  ours: boolean;
 }
 
-/** The hash for a page. The overview clears it rather than naming itself. */
-export function pageHash(page: Page): string {
-  return page === "overview" ? "#" : `#/${page}`;
+export const HOME: Route = { page: "overview", slot: null, query: "", ours: false };
+
+/** The route a hash names, defaulting to the overview for anything unknown. */
+export function readRoute(hash: string): Route {
+  const [path = "", search = ""] = hash.replace(/^#\/?/, "").split("?");
+  const [name, rest] = path.split("/");
+  const page = PAGES.find((page) => page === name) ?? "overview";
+  const params = new URLSearchParams(search);
+  return {
+    page,
+    slot: page === "slots" && rest !== undefined && /^\d+$/.test(rest) ? Number(rest) : null,
+    query: page === "overview" ? "" : (params.get("q") ?? ""),
+    ours: page === "schedule" && params.has("ours"),
+  };
 }
 
-/** The current page, following the address bar so the back button works. */
-export function usePage(): [Page, (page: Page) => void] {
-  const [page, setPage] = useState<Page>(() => readPage(window.location.hash));
+/** The hash for a route. The overview clears it rather than naming itself. */
+export function routeHash(route: Route): string {
+  switch (route.page) {
+    case "overview":
+      return "#";
+    case "slots":
+      return withSearch(route.slot === null ? "#/slots" : `#/slots/${route.slot}`, route.query, false);
+    case "schedule":
+      return withSearch("#/schedule", route.query, route.ours);
+  }
+}
+
+/** `path` with the search on it, where there is one. */
+function withSearch(path: string, query: string, ours: boolean): string {
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  if (ours) params.set("ours", "");
+  const search = params.toString();
+  return search ? `${path}?${search}` : path;
+}
+
+/** The current route, following the address bar so the back button works.
+ *  A page change is a history entry; what is open on a page replaces the
+ *  entry, so the back button steps between pages and not between clicks. */
+export function useRoute(): [Route, (next: Route, replace?: boolean) => void] {
+  const [route, setRoute] = useState<Route>(() => readRoute(window.location.hash));
 
   useEffect(() => {
-    const follow = () => setPage(readPage(window.location.hash));
+    const follow = () => setRoute(readRoute(window.location.hash));
     window.addEventListener("hashchange", follow);
     return () => window.removeEventListener("hashchange", follow);
   }, []);
 
-  return [
-    page,
-    (next: Page) => {
-      window.location.hash = pageHash(next);
-      setPage(next);
-    },
-  ];
+  const go = useCallback((next: Route, replace = false) => {
+    const hash = routeHash(next);
+    if (replace) window.history.replaceState(null, "", hash);
+    else window.location.hash = hash;
+    setRoute(next);
+  }, []);
+
+  return [route, go];
 }

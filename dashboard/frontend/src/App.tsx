@@ -15,7 +15,7 @@ import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
 import { GossipStakeCard } from "./components/GossipStakeCard";
 import { SlotStrip } from "./components/SlotStrip";
-import { usePage, type Page } from "./route";
+import { HOME, useRoute, type Page } from "./route";
 import { useStore } from "./useStore";
 
 /** Base title, kept in step with index.html so the tab reads the same before
@@ -28,7 +28,8 @@ export function App(): ReactElement {
   const name = store.get("summary", "identity_name");
   const identity = store.get("summary", "identity_key");
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
-  const [page, setPage] = usePage();
+  const [route, go] = useRoute();
+  const page = route.page;
 
   // Named after the validator so that an operator watching several at once can
   // tell the tabs apart. `Private` matches what the header shows for a node
@@ -69,10 +70,23 @@ export function App(): ReactElement {
             Disconnected from the validator. Retrying…
           </div>
         )}
-        <Nav page={page} onSelect={setPage} />
+        <Nav page={page} onSelect={(next) => go({ ...HOME, page: next })} />
         {page === "overview" && <Overview />}
-        {page === "slots" && <SlotDetailsPage />}
-        {page === "schedule" && <SchedulePage />}
+        {page === "slots" && (
+          <SlotDetailsPage
+            slot={route.slot}
+            query={route.query}
+            onSlot={(slot) => go({ ...route, slot }, true)}
+            onQuery={(query) => go({ ...route, query }, true)}
+          />
+        )}
+        {page === "schedule" && (
+          <SchedulePage
+            query={route.query}
+            ours={route.ours}
+            onFilter={(query, ours) => go({ ...route, query, ours }, true)}
+          />
+        )}
       </main>
     </div>
   );

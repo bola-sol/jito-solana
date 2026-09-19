@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode, type ReactElement } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, blockTime, bytes, count, micros, percent, sol, units } from "../format";
 import { recurrence } from "../cost";
 import {
@@ -38,8 +38,19 @@ import { Section } from "./TpuPathCard";
 import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
 
 /** Every block this validator produced, captured as each froze; the list
- *  ends where the dashboard started. */
-export function SlotDetailsPage(): ReactElement {
+ *  ends where the dashboard started. The open block and the search live in
+ *  the route, so both can be linked to. */
+export function SlotDetailsPage({
+  slot: open,
+  query,
+  onSlot,
+  onQuery,
+}: {
+  slot: number | null;
+  query: string;
+  onSlot: (slot: number | null) => void;
+  onQuery: (query: string) => void;
+}): ReactElement {
   const store = useStore();
   const blocks = store.get("summary", "produced_blocks");
   const waterfalls = store.get("summary", "slot_waterfalls");
@@ -48,7 +59,6 @@ export function SlotDetailsPage(): ReactElement {
   // is drawn at all.
   const rates = store.get("summary", "tip_rates");
   const turns = store.get("summary", "produced_turns");
-  const [open, setOpen] = useState<number | null>(null);
   const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
 
@@ -65,6 +75,18 @@ export function SlotDetailsPage(): ReactElement {
   );
   const turnBySlot = useMemo(() => turnOf(turns ?? []), [turns]);
 
+  // A block reached by link is brought into view once, when its row exists;
+  // a row opened by a click is already on screen and stays where it is.
+  const scrolledTo = useRef<number | null>(null);
+  useEffect(() => {
+    if (open === null || scrolledTo.current === open) return;
+    const row = document.getElementById(`block-${open}`);
+    if (!row) return;
+    scrolledTo.current = open;
+    const top = row.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight * 0.7) row.scrollIntoView({ block: "start" });
+  }, [open, blocks]);
+
   if (!blocks || blocks.length === 0) {
     return (
       <section className="slot-details">
@@ -76,7 +98,10 @@ export function SlotDetailsPage(): ReactElement {
   }
 
   // Newest first: a validator wants its last block, not its oldest.
-  const listed = sort ? sortBlocks(blocks, sort.key, sort.dir) : [...blocks].reverse();
+  const ordered = sort ? sortBlocks(blocks, sort.key, sort.dir) : [...blocks].reverse();
+  // Commas dropped, since the page shows every slot with them.
+  const needle = query.replace(/,/g, "").trim();
+  const listed = needle ? ordered.filter((block) => String(block.slot).includes(needle)) : ordered;
   const toggle = (key: SortKey) => {
     // A sort scatters a turn's blocks, so its divider and drawer go with it.
     setOpenTurn(null);
@@ -95,6 +120,16 @@ export function SlotDetailsPage(): ReactElement {
 
   return (
     <section className="slot-details">
+      <div className="schedule-controls">
+        <input
+          type="search"
+          className="schedule-search"
+          value={query}
+          placeholder="Slot number"
+          aria-label="Filter the blocks by slot number"
+          onChange={(event) => onQuery(event.target.value)}
+        />
+      </div>
       <div className="produced">
         <SummaryRows blocks={blocks} sort={sort} onSort={toggle} onClear={() => setSort(null)} />
         {numbered.map(({ block, epoch: at }, index) => {
@@ -121,13 +156,18 @@ export function SlotDetailsPage(): ReactElement {
                 costs={costs ?? []}
                 rates={rates}
                 open={open === block.slot}
-                onToggle={() => setOpen(open === block.slot ? null : block.slot)}
+                onToggle={() => onSlot(open === block.slot ? null : block.slot)}
               />
             </Fragment>
           );
         })}
       </div>
       <div className="card-footnote">
+        {/* A link to a block that has fallen off the list, or was never ours. */}
+        {open !== null && !blocks.some((block) => block.slot === open) && (
+          <>Slot {count(open)} is not among the blocks held. </>
+        )}
+        {needle && `${count(listed.length)} of ${count(blocks.length)} blocks match. `}
         {sort
           ? `Sorted by ${SORT_WORD[sort.key]}, ${sort.dir === "desc" ? "highest" : "lowest"} first.`
           : `Captured as each block froze. ${count(blocks.length)} kept, oldest first to fall off.`}
@@ -341,7 +381,7 @@ function BlockRow({
   const filled = block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : 0;
 
   return (
-    <div className={`produced-block${open ? " is-open" : ""}`}>
+    <div className={`produced-block${open ? " is-open" : ""}`} id={`block-${block.slot}`}>
       <button type="button" className="produced-head" onClick={onToggle} aria-expanded={open}>
         {/* One cell, because both name the block where everything to the right
             says what was in it. Kept together rather than given a column each,

@@ -4600,6 +4600,17 @@ body {
   color: var(--ours);
 }
 
+.schedule-slot-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.schedule-slot-link:hover {
+  text-decoration-color: currentColor;
+}
+
 .vote-marks {
   display: inline-flex;
   justify-content: flex-end;

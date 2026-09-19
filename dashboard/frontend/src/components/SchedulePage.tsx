@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactElement } from "r
 import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
 import { matchesQuery, rewardTitle, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
+import { HOME, routeHash } from "../route";
 import type { Store } from "../store";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
@@ -61,10 +62,17 @@ async function fetchDepth(
   return spans.flat();
 }
 
-export function SchedulePage(): ReactElement {
+/** The filter lives in the route, so a search can be linked to. */
+export function SchedulePage({
+  query,
+  ours: oursOnly,
+  onFilter,
+}: {
+  query: string;
+  ours: boolean;
+  onFilter: (query: string, ours: boolean) => void;
+}): ReactElement {
   const store = useStore();
-  const [query, setQuery] = useState("");
-  const [oursOnly, setOursOnly] = useState(false);
   const list = useRef<HTMLDivElement>(null);
 
   const stake = store.get("summary", "stake");
@@ -196,13 +204,13 @@ export function SchedulePage(): ReactElement {
           value={query}
           placeholder="Name, pubkey or slot"
           aria-label="Filter the schedule by leader name, pubkey or slot"
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => onFilter(event.target.value, oursOnly)}
         />
         <div className="sidebar-filter" role="group" aria-label="Which leaders to list">
-          <button type="button" aria-pressed={!oursOnly} onClick={() => setOursOnly(false)}>
+          <button type="button" aria-pressed={!oursOnly} onClick={() => onFilter(query, false)}>
             All
           </button>
-          <button type="button" aria-pressed={oursOnly} onClick={() => setOursOnly(true)}>
+          <button type="button" aria-pressed={oursOnly} onClick={() => onFilter(query, true)}>
             Ours
           </button>
         </div>
@@ -408,7 +416,18 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
   return (
     <div className={`schedule-row level-${level}`}>
       <span className="schedule-slot">
-        {count(slot.slot)}
+        {/* Our own slots are on the slot page, so the number takes you there. */}
+        {entry?.mine ? (
+          <a
+            className="schedule-slot-link"
+            href={routeHash({ ...HOME, page: "slots", slot: slot.slot })}
+            title="Open on the slot page"
+          >
+            {count(slot.slot)}
+          </a>
+        ) : (
+          count(slot.slot)
+        )}
         <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />
       </span>
       {alpenglow ? (

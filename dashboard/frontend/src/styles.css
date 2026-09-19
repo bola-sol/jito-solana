@@ -4550,10 +4550,10 @@ body {
 .schedule-row {
   display: grid;
   /* Nine figure columns. The timeline takes the width of two, and compute is
-     held at what its widest figure needs, or it overflows the row and puts a
-     scrollbar under every turn. The container scrolls sideways on a narrow
-     screen either way. */
-  grid-template-columns: 150px repeat(6, minmax(58px, 1fr)) minmax(80px, 1.1fr) minmax(150px, 2fr) minmax(92px, 1.1fr);
+     held at what a full block's figure needs, `49,998,560 100%`, or it
+     overflows the track and puts a scrollbar under that turn alone. The
+     container scrolls sideways on a narrow screen either way. */
+  grid-template-columns: 150px repeat(6, minmax(58px, 1fr)) minmax(80px, 1.1fr) minmax(150px, 2fr) minmax(10em, 1.1fr);
   gap: 8px;
   padding: 3px 0;
   font-size: 12px;

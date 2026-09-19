@@ -8,21 +8,26 @@ const ticket: VoteCost = { kind: "ticket", lamports: 1.6 * SOL, minimum: 1.63 * 
 
 describe("identityWarning", () => {
   it("is quiet with three days of votes in hand", () => {
-    expect(identityWarning(4 * SOL, fees)).toBeNull();
+    expect(identityWarning(4 * SOL, fees, true)).toBeNull();
   });
 
   it("warns under three days and faults under a day", () => {
-    expect(identityWarning(2 * SOL, fees)?.tone).toBe("warn");
-    expect(identityWarning(2 * SOL, fees)?.label).toBe("identity, under three days of votes");
-    expect(identityWarning(0.5 * SOL, fees)?.tone).toBe("bad");
-    expect(identityWarning(0.5 * SOL, fees)?.label).toBe("identity, under a day of votes");
+    expect(identityWarning(2 * SOL, fees, true)?.tone).toBe("warn");
+    expect(identityWarning(2 * SOL, fees, true)?.label).toBe("identity, under three days of votes");
+    expect(identityWarning(0.5 * SOL, fees, true)?.tone).toBe("bad");
+    expect(identityWarning(0.5 * SOL, fees, true)?.label).toBe("identity, under a day of votes");
+  });
+
+  it("says nothing on a node that is not the voter, or before that is known", () => {
+    expect(identityWarning(0, fees, false)).toBeNull();
+    expect(identityWarning(0, fees, undefined)).toBeNull();
   });
 
   it("says nothing under alpenglow, where votes are free, or before the figures arrive", () => {
-    expect(identityWarning(0.5 * SOL, ticket)).toBeNull();
-    expect(identityWarning(0.5 * SOL, { kind: "fees", per_day: 0 })).toBeNull();
-    expect(identityWarning(undefined, fees)).toBeNull();
-    expect(identityWarning(0.5 * SOL, undefined)).toBeNull();
+    expect(identityWarning(0.5 * SOL, ticket, true)).toBeNull();
+    expect(identityWarning(0.5 * SOL, { kind: "fees", per_day: 0 }, true)).toBeNull();
+    expect(identityWarning(undefined, fees, true)).toBeNull();
+    expect(identityWarning(0.5 * SOL, undefined, true)).toBeNull();
   });
 });
 

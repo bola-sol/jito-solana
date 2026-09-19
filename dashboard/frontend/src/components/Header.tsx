@@ -20,6 +20,9 @@ export function Header(): ReactElement {
   const commission = store.get("summary", "vote_commission");
   const identityBalance = store.get("summary", "identity_balance");
   const voteCost = store.get("summary", "vote_cost");
+  // A backup identity pays no votes, so its balance carries no warning.
+  const health = store.get("summary", "health");
+  const voting = health === undefined ? undefined : health.vote !== "not_voting";
   const voteBalance = store.get("summary", "vote_balance");
   const uptimeNanos = store.get("summary", "uptime_nanos");
   const boot = bootTimes(
@@ -96,7 +99,11 @@ export function Header(): ReactElement {
         />
         {!balancesHidden && (
           <>
-            <Balance value={identityBalance} name="identity" warning={identityWarning(identityBalance, voteCost)} />
+            <Balance
+              value={identityBalance}
+              name="identity"
+              warning={identityWarning(identityBalance, voteCost, voting)}
+            />
             <Balance value={voteBalance} name="vote" warning={voteWarning(voteBalance, voteCost)} />
           </>
         )}

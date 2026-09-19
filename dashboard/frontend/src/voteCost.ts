@@ -11,9 +11,16 @@ export interface BalanceWarning {
 }
 
 /** Under TowerBFT, the identity pays each vote; under three days of them is
- *  a warning and under a day a fault. Nothing where votes cost nothing. */
-export function identityWarning(balance: number | undefined, cost: VoteCost | undefined): BalanceWarning | null {
-  if (balance === undefined || cost === undefined || cost.kind !== "fees" || cost.per_day <= 0) return null;
+ *  a warning and under a day a fault. Nothing where votes cost nothing, and
+ *  nothing on a node that is not the voter, whose identity pays no votes. */
+export function identityWarning(
+  balance: number | undefined,
+  cost: VoteCost | undefined,
+  voting: boolean | undefined,
+): BalanceWarning | null {
+  if (!voting || balance === undefined || cost === undefined || cost.kind !== "fees" || cost.per_day <= 0) {
+    return null;
+  }
   const days = balance / cost.per_day;
   if (days >= 3) return null;
   const title = `${days.toFixed(1)} days of votes at ${sol(cost.per_day)} SOL a day.`;

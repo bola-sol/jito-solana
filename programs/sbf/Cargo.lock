@@ -147,6 +147,7 @@ dependencies = [
  "solana-signer-store",
  "solana-transaction",
  "solana-version",
+ "solana-vote-interface",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util 0.7.19",

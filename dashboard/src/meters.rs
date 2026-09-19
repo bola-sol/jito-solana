@@ -81,6 +81,21 @@ pub struct Shreds {
     pub repair_rate: f64,
 }
 
+/// Shreds by the turbine layer they arrived from, and shreds the retransmit
+/// stage dropped when the XDP channel was full, over the last five minutes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Turbine {
+    pub window_seconds: u64,
+    pub root: u64,
+    pub layer_1: u64,
+    pub layer_2: u64,
+    pub layer_3: u64,
+    pub xdp_dropped: u64,
+    pub xdp_dropped_total: u64,
+    /// The path the stage last reported on. `None` before its first report.
+    pub xdp: Option<bool>,
+}
+
 /// How often an account replay needed was already in memory, over the last
 /// minute of the accounts database's own once-a-second points.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -225,6 +240,14 @@ pub struct Host {
     /// Absent where `SwapTotal` is nought. A machine with no swap has nothing
     /// to report and nothing to warn about.
     pub swap: Option<Swap>,
+    /// The validator process's resident memory. Absent where the status file
+    /// cannot be read.
+    pub process_resident: Option<u64>,
+    /// The same reading an hour ago. Absent until an hour has been watched.
+    pub process_resident_hour_ago: Option<u64>,
+    /// The device the snapshot archives are written to, as the device rows
+    /// name it. Absent where there is no block device under them.
+    pub snapshot_device: Option<String>,
 
     pub filesystems: Vec<FilesystemUsage>,
     pub devices: Vec<DeviceLoad>,
@@ -604,6 +627,19 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
         });
     }
 
+    if let Some(archives) = ctx
+        .snapshot_config
+        .as_ref()
+        .map(|config| &config.full_snapshot_archives_dir)
+        && let Ok(id) = host_stats::filesystem_id(archives)
+        && seen.insert(id)
+    {
+        paths.push(HostPath {
+            name: "snapshots".to_owned(),
+            path: archives.clone(),
+        });
+    }
+
     paths
 }
 
@@ -668,6 +704,7 @@ pub struct Meters {
     host: HostMeter,
     sockets: SocketMeter,
     shreds: ShredMeter,
+    turbine: TurbineMeter,
     egress: EgressMeter,
     accounts: AccountsMeter,
     program_cache: ProgramCacheMeter,
@@ -695,6 +732,7 @@ impl Meters {
             host: HostMeter::default(),
             sockets: SocketMeter::new(),
             shreds: ShredMeter::new(),
+            turbine: TurbineMeter::new(),
             egress: EgressMeter::default(),
             accounts: AccountsMeter::new(),
             program_cache: ProgramCacheMeter::new(),
@@ -766,6 +804,7 @@ impl Meters {
             return;
         };
         self.shreds.tick(&previous, &current, &self.publisher);
+        self.turbine.tick(&previous, &current, &self.publisher);
         self.egress.tick(&previous, &current, &self.publisher);
         self.collect_waterfall(&previous, &current);
         self.program_cache
@@ -947,7 +986,16 @@ struct HostMeter {
     /// Resolved once at the first sample rather than every second: a mount does
     /// not move, and `statvfs` on a hung filesystem would block the meter.
     paths: Option<Vec<HostPath>>,
+    /// Resident memory readings over the last hour, oldest first.
+    resident: VecDeque<(Instant, u64)>,
+    /// Resolved once, with the paths. The outer `None` is "not yet".
+    snapshot_device: Option<Option<String>>,
 }
+
+/// How far back the resident memory readings are kept, and how old the
+/// oldest must be before it stands for an hour ago.
+const RESIDENT_HISTORY: Duration = Duration::from_secs(3600);
+const RESIDENT_HOUR_AGO: Duration = Duration::from_secs(3300);
 
 impl HostMeter {
     /// Publishes nothing when `/proc` cannot be read, so the panel is absent
@@ -969,6 +1017,33 @@ impl HostMeter {
             .paths
             .get_or_insert_with(|| resolve_host_paths(ctx))
             .clone();
+        let snapshot_device = self
+            .snapshot_device
+            .get_or_insert_with(|| {
+                ctx.snapshot_config
+                    .as_ref()
+                    .and_then(|config| {
+                        host_stats::device_for(&config.full_snapshot_archives_dir).ok()
+                    })
+                    .flatten()
+            })
+            .clone();
+        let process_resident = host_stats::process_resident().ok();
+        if let Some(resident) = process_resident {
+            self.resident.push_back((now, resident));
+        }
+        while self
+            .resident
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) > RESIDENT_HISTORY)
+        {
+            self.resident.pop_front();
+        }
+        let process_resident_hour_ago = self
+            .resident
+            .front()
+            .filter(|(at, _)| now.duration_since(*at) >= RESIDENT_HOUR_AGO)
+            .map(|(_, resident)| *resident);
 
         let Some((previous, sampled_at)) = self.last.replace((current.clone(), now)) else {
             return;
@@ -1003,6 +1078,9 @@ impl HostMeter {
                 total: current.memory.swap_total,
                 used: swap_used,
             }),
+            process_resident,
+            process_resident_hour_ago,
+            snapshot_device,
             filesystems: paths
                 .iter()
                 .filter_map(|path| {
@@ -1410,6 +1488,71 @@ impl ShredMeter {
         });
         self.published
             .publish(publisher, TOPIC_SUMMARY, "shreds", shreds);
+    }
+}
+
+/// Windows the turbine layer counts and the XDP drops the way the shred
+/// meter windows its two.
+struct TurbineMeter {
+    /// `[root, layer 1, layer 2, layer 3, dropped]` per sample.
+    window: VecDeque<[u64; 5]>,
+    published: Debounced<Option<Turbine>>,
+}
+
+impl TurbineMeter {
+    fn new() -> Self {
+        Self {
+            window: VecDeque::with_capacity(SHREDS_WINDOW),
+            published: Debounced::default(),
+        }
+    }
+
+    fn tick(&mut self, previous: &TapCounters, current: &TapCounters, publisher: &Publisher) {
+        self.window.push_back([
+            current.turbine_root.saturating_sub(previous.turbine_root),
+            current
+                .turbine_layer_1
+                .saturating_sub(previous.turbine_layer_1),
+            current
+                .turbine_layer_2
+                .saturating_sub(previous.turbine_layer_2),
+            current
+                .turbine_layer_3
+                .saturating_sub(previous.turbine_layer_3),
+            current.xdp_dropped.saturating_sub(previous.xdp_dropped),
+        ]);
+        while self.window.len() > SHREDS_WINDOW {
+            self.window.pop_front();
+        }
+
+        let mut sum = [0u64; 5];
+        for sample in &self.window {
+            for (total, part) in sum.iter_mut().zip(sample) {
+                *total = total.saturating_add(*part);
+            }
+        }
+        let [root, layer_1, layer_2, layer_3, xdp_dropped] = sum;
+
+        // Nothing until a point has reported: a node that received no shreds,
+        // not one that received them all from the root.
+        let reported = current.retransmit_xdp.is_some()
+            || root
+                .saturating_add(layer_1)
+                .saturating_add(layer_2)
+                .saturating_add(layer_3)
+                > 0;
+        let turbine = reported.then_some(Turbine {
+            window_seconds: self.window.len() as u64,
+            root,
+            layer_1,
+            layer_2,
+            layer_3,
+            xdp_dropped,
+            xdp_dropped_total: current.xdp_dropped,
+            xdp: current.retransmit_xdp,
+        });
+        self.published
+            .publish(publisher, TOPIC_SUMMARY, "turbine", turbine);
     }
 }
 
@@ -2031,6 +2174,51 @@ mod tests {
         assert_eq!(at_baseline(None, 8001), 0);
         assert_eq!(at_baseline(Some(&HashMap::new()), 8001), 0);
         assert_eq!(at_baseline(Some(&HashMap::from([(8001, 42)])), 8001), 42);
+    }
+
+    /// A tap reading with only the turbine counters set.
+    fn turbine_tap(layers: [u64; 4], dropped: u64, xdp: Option<bool>) -> TapCounters {
+        TapCounters {
+            turbine_root: layers[0],
+            turbine_layer_1: layers[1],
+            turbine_layer_2: layers[2],
+            turbine_layer_3: layers[3],
+            xdp_dropped: dropped,
+            retransmit_xdp: xdp,
+            ..TapCounters::default()
+        }
+    }
+
+    #[test]
+    fn test_the_turbine_layers_and_drops_are_differenced_over_the_window() {
+        let publisher = Publisher::new();
+        let mut meter = TurbineMeter::new();
+        meter.tick(
+            &turbine_tap([10, 100, 200, 0], 5, Some(true)),
+            &turbine_tap([12, 140, 260, 1], 5, Some(true)),
+            &publisher,
+        );
+        meter.tick(
+            &turbine_tap([12, 140, 260, 1], 5, Some(true)),
+            &turbine_tap([12, 150, 270, 1], 9, Some(true)),
+            &publisher,
+        );
+        let sent = publisher.snapshot().pop().unwrap();
+        assert!(sent.contains(r#""root":2"#), "{sent}");
+        assert!(sent.contains(r#""layer_1":50"#), "{sent}");
+        assert!(sent.contains(r#""layer_2":70"#), "{sent}");
+        assert!(sent.contains(r#""xdp_dropped":4"#), "{sent}");
+        assert!(sent.contains(r#""xdp_dropped_total":9"#), "{sent}");
+        assert!(sent.contains(r#""xdp":true"#), "{sent}");
+    }
+
+    #[test]
+    fn test_no_turbine_figure_before_a_point_has_reported() {
+        let publisher = Publisher::new();
+        let mut meter = TurbineMeter::new();
+        meter.tick(&TapCounters::default(), &TapCounters::default(), &publisher);
+        let sent = publisher.snapshot().pop().unwrap();
+        assert!(sent.contains(r#""value":null"#), "{sent}");
     }
 
     #[test]

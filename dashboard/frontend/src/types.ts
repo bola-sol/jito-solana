@@ -517,6 +517,13 @@ export interface Host {
   memory_free: number;
   /** Absent where the machine has no swap configured at all. */
   swap: { total: number; used: number } | null;
+  /** The validator process's resident memory, and the same an hour ago.
+   *  Null where unreadable, and before an hour has been watched. */
+  process_resident: number | null;
+  process_resident_hour_ago: number | null;
+  /** The device the snapshot archives are written to, as the device rows
+   *  name it. Null where there is no block device under them. */
+  snapshot_device: string | null;
 
   filesystems: FilesystemUsage[];
   devices: DeviceLoad[];
@@ -709,6 +716,45 @@ export interface Snapshots {
   incremental: SnapshotArchive | null;
   full_interval: number | null;
   incremental_interval: number | null;
+  /** The archive being staged now, if one is. */
+  writing: SnapshotWriting | null;
+  /** The last write the validator saw end. */
+  last_written: SnapshotWritten | null;
+}
+
+export interface SnapshotWriting {
+  slot: number;
+  since_millis: number;
+}
+
+/** What the last write cost: how long, and how far replay fell behind the
+ *  cluster while it ran. */
+export interface SnapshotWritten {
+  slot: number;
+  took_millis: number;
+  fell_behind_slots: number;
+}
+
+/** Shreds by the turbine layer they arrived from, and shreds the retransmit
+ *  stage dropped when the XDP channel was full, over the last five minutes. */
+export interface Turbine {
+  window_seconds: number;
+  root: number;
+  layer_1: number;
+  layer_2: number;
+  layer_3: number;
+  xdp_dropped: number;
+  xdp_dropped_total: number;
+  /** Which path retransmit last reported on. Null before its first report. */
+  xdp: boolean | null;
+}
+
+/** This validator's vote credits in the epoch being built on. */
+export interface VoteCredits {
+  epoch: number;
+  credits: number;
+  /** The most one slot can earn under TowerBFT. */
+  max_per_slot: number;
 }
 
 /** The envelope every message arrives in. */
@@ -777,6 +823,9 @@ export interface Published {
     xdp: XdpConfig | null;
     ingest_paths: IngestSummary;
     snapshots: Snapshots | null;
+    bls_key: boolean | null;
+    vote_credits: VoteCredits | null;
+    turbine: Turbine | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

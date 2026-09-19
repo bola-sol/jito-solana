@@ -1,7 +1,9 @@
 import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
+import { creditsShare } from "../credits";
 import { leaderSlotsLeft } from "../schedule";
+import type { EpochInfo } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import { useNarrow } from "../narrow";
@@ -33,12 +35,34 @@ export function EpochCard(): ReactElement {
           label={`of our leader slots left, ${count(epoch.my_leader_slots.length)} this epoch`}
           value={count(left)}
         />
+        <VoteCreditsStat epoch={epoch} completed={completed} />
       </div>
       <Meter fraction={progress} />
       <div className="card-footnote">
         slot {count(elapsed)} of {count(epoch.slots_in_epoch)}
       </div>
     </Card>
+  );
+}
+
+/** Vote credits this epoch. Under TowerBFT as a share of the most the slots
+ *  so far could have paid; under alpenglow the count alone, whose ceiling is
+ *  not known here. Absent until the vote account has been read. */
+function VoteCreditsStat({ epoch, completed }: { epoch: EpochInfo; completed: number }) {
+  const credits = useStore().get("summary", "vote_credits");
+  const alpenglow = useAlpenglow();
+  if (!credits || credits.epoch !== epoch.epoch) return null;
+  const share = alpenglow
+    ? null
+    : creditsShare(credits.credits, completed - epoch.start_slot, credits.max_per_slot);
+  if (share === null) {
+    return <Stat label="vote credits this epoch" value={count(credits.credits)} />;
+  }
+  return (
+    <Stat
+      label={`of the most vote credits this epoch could pay so far, ${count(credits.credits)} earned`}
+      value={percent(share, 1)}
+    />
   );
 }
 

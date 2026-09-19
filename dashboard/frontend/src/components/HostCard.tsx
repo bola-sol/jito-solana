@@ -9,6 +9,7 @@ import {
   fullnessTone,
   loadTrend,
   memoryUse,
+  residentTrend,
   swapTone,
   waitTone,
 } from "../host";
@@ -23,6 +24,7 @@ import {
   THREADS_WINDOW,
   type ThreadRow,
 } from "../threads";
+import { snapshotWriting, snapshotWritten } from "../snapshot";
 import type { DeviceLoad, FilesystemUsage, ThreadsSample } from "../types";
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
@@ -37,6 +39,10 @@ export function HostCard(): ReactElement | null {
 
   const memory = memoryUse(host);
   const trend = loadTrend(host);
+  const resident = residentTrend(host);
+  const snapshots = store.get("summary", "snapshots");
+  const serverTime = store.get("summary", "server_time_nanos");
+  const writing = snapshotWriting(snapshots, serverTime === undefined ? undefined : serverTime / 1e6);
   const top = busiest(threadRows(samples));
   // The filesystem the validator cannot run without, or the fullest.
   const ledger =
@@ -62,6 +68,7 @@ export function HostCard(): ReactElement | null {
           , busiest thread {top.label} at <b>{percent(top.now, 0)}</b>
         </>
       )}
+      {writing && <>, writing a snapshot</>}
     </>
   );
 
@@ -135,6 +142,14 @@ export function HostCard(): ReactElement | null {
               {bytes(memory.available)} available
             </span>
             , {bytes(memory.reclaimable)} page cache
+            {host.process_resident !== null && (
+              <>
+                , validator {bytes(host.process_resident)}
+                {resident && (
+                  <span className={`host-trend is-${resident.direction}`}> {resident.label}</span>
+                )}
+              </>
+            )}
           </div>
         </div>
 
@@ -188,8 +203,19 @@ export function HostCard(): ReactElement | null {
             <span className="host-n is-tp">read and write</span>
           </div>
           {host.devices.map((device) => (
-            <Device key={device.device} device={device} />
+            <Device
+              key={device.device}
+              device={device}
+              writing={writing !== null && device.device === host.snapshot_device}
+            />
           ))}
+          {/* The write in progress, or what the last one cost. */}
+          {writing && <div className="host-sub host-snapshot tone-warn">{writing}</div>}
+          {!writing && snapshots?.last_written && (
+            <div className="host-sub host-snapshot host-faint">
+              {snapshotWritten(snapshots.last_written)}
+            </div>
+          )}
         </>
       )}
 
@@ -221,12 +247,13 @@ function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
   );
 }
 
-/** A device, which is not a container, so no bar. */
-function Device({ device }: { device: DeviceLoad }) {
+/** A device, which is not a container, so no bar. Its name is toned while a
+ *  snapshot is being written to it; the line under the rows says so. */
+function Device({ device, writing }: { device: DeviceLoad; writing: boolean }) {
   return (
     <div className="host-device">
       <span className="host-dev">
-        <b>{device.device}</b>
+        <b className={writing ? "tone-warn" : undefined}>{device.device}</b>
         <s>{deviceLabel(device)}</s>
       </span>
       <span className={`host-n tone-${busyTone(device.busy)}`}>{percent(device.busy, 0)}</span>

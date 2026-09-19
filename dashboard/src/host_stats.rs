@@ -255,6 +255,31 @@ pub fn filesystem(_path: &Path) -> io::Result<Filesystem> {
     ))
 }
 
+/// The validator process's resident memory, in bytes.
+#[cfg(target_os = "linux")]
+pub fn process_resident() -> io::Result<u64> {
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    parse_resident(&status).ok_or_else(|| invalid("status has no VmRSS line"))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn process_resident() -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process memory is only available on Linux",
+    ))
+}
+
+/// `VmRSS:    123456 kB`, one line of the status file.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_resident(status: &str) -> Option<u64> {
+    let line = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?;
+    let kib: u64 = line.split_whitespace().next()?.parse().ok()?;
+    Some(kib.saturating_mul(1024))
+}
+
 /// Which filesystem `path` is on, for grouping: four accounts directories
 /// under one mount are one filesystem, not four.
 #[cfg(target_os = "linux")]
@@ -601,6 +626,14 @@ ctxt 6789
    8       0 sda 10 0 20 30 40 0 50 60 0 70 80
    7       0 loop0
 ";
+
+    #[test]
+    fn test_resident_memory_is_the_rss_line_in_bytes() {
+        let status =
+            "Name:\tagave-validator\nVmPeak:\t  900000 kB\nVmRSS:\t  524288 kB\nThreads:\t48\n";
+        assert_eq!(parse_resident(status), Some(524_288 * 1024));
+        assert_eq!(parse_resident("Name:\tx\n"), None);
+    }
 
     #[test]
     fn test_reads_the_counters_a_device_line_carries() {

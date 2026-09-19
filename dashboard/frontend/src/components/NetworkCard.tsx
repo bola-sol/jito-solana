@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { decimal } from "../format";
+import { decimal, percent } from "../format";
 import {
   direction,
   egressShares,
@@ -8,7 +8,8 @@ import {
   unitFor,
   type Direction,
 } from "../network";
-import type { EgressSplit, NetworkSample, XdpConfig } from "../types";
+import { dropsLabel, layerShares } from "../turbine";
+import type { EgressSplit, NetworkSample, Turbine, XdpConfig } from "../types";
 import { useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, chartY, Explain } from "./primitives";
@@ -34,6 +35,8 @@ export function NetworkCard(): ReactElement | null {
   // Absent until a sender has reported, and never on a validator whose log
   // level keeps it from submitting points at all.
   const split = store.get("summary", "network_egress");
+  // Absent until the retransmit stage has reported.
+  const turbine = store.get("summary", "turbine");
   // Drawn behind live on the validator's clock, so the newest point sits past
   // the right edge and the line is continuous across it.
   const edge = useChartEdge();
@@ -78,7 +81,8 @@ export function NetworkCard(): ReactElement | null {
         explain={scope}
       />
       {split && <Split total={egress.current} split={split} />}
-      {xdp && <Xdp xdp={xdp} />}
+      {xdp && <Xdp xdp={xdp} dropped={turbine?.xdp_dropped ?? null} />}
+      {turbine && <Intake turbine={turbine} />}
     </Card>
   );
 }
@@ -110,8 +114,9 @@ export function xdpTooltip(xdp: XdpConfig): string {
 }
 
 /** How the transmit path is set up, where it is at all. Untoned: copy mode
- *  may be intended. */
-function Xdp({ xdp }: { xdp: XdpConfig }) {
+ *  may be intended. The drops are the one toned part: a full channel is the
+ *  path not working. */
+function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   const detail = xdpDetail(xdp);
 
   return (
@@ -127,6 +132,40 @@ function Xdp({ xdp }: { xdp: XdpConfig }) {
         {detail.map((part) => (
           <span key={part}> · {part}</span>
         ))}
+        {dropped !== null && (
+          <span className={dropped > 0 ? "tone-bad" : "tone-good"}> · {dropsLabel(dropped)}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Shreds by the turbine layer they arrived from. The layer follows stake:
+ *  a small validator hears most of its shreds two hops from the leader. */
+function Intake({ turbine }: { turbine: Turbine }) {
+  const shares = layerShares(turbine);
+  if (!shares) return null;
+  return (
+    <div className="net-xdp net-turbine">
+      <span className="net-xdp-label">
+        <Explain text="Where this validator's shreds came from in the turbine tree, over the last five minutes.">
+          Turbine intake
+        </Explain>
+      </span>
+      <span className="net-turbine-body">
+        <span className="net-turbine-bar" aria-hidden="true">
+          {shares.map((layer) => (
+            <i key={layer.key} className={`is-${layer.key}`} style={{ width: `${layer.share * 100}%` }} />
+          ))}
+        </span>
+        <span className="net-xdp-detail">
+          {shares.map((layer, index) => (
+            <span key={layer.key}>
+              {index > 0 && " · "}
+              {layer.label} <b>{percent(layer.share, 0)}</b>
+            </span>
+          ))}
+        </span>
       </span>
     </div>
   );

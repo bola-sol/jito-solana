@@ -2,6 +2,7 @@ import { useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
 import { readBalancesHidden, writeBalancesHidden } from "../layout";
 import { bootTimes, type BootTimes } from "../startup";
+import { useAlpenglow } from "../consensus";
 import { useStore } from "../useStore";
 import { BalancesToggle } from "./BalancesToggle";
 import { Copyable } from "./Copyable";
@@ -102,9 +103,27 @@ export function Header(): ReactElement {
             <Figure value={`${sol(voteBalance)} SOL`} label="vote" />
           </>
         )}
+        <Bls />
         <Figure value={up} label={upLabel} detail={boot && <Boot boot={boot} />} />
       </div>
     </header>
+  );
+}
+
+/** Whether the vote account carries a BLS key. Alpenglow counts no vote
+ *  without one, so a missing key is a warning before the switch and a fault
+ *  after it. Absent until the vote account has been read. */
+function Bls() {
+  const set = useStore().get("summary", "bls_key");
+  const alpenglow = useAlpenglow();
+  if (set === undefined || set === null) return null;
+  if (set) return <Figure value="set" label="BLS key" />;
+  return (
+    <Figure
+      value="none"
+      label={alpenglow ? "BLS key, votes are not counted without it" : "BLS key, needed before alpenglow"}
+      tone={alpenglow ? "bad" : "warn"}
+    />
   );
 }
 
@@ -113,13 +132,15 @@ function Figure({
   value,
   label,
   detail,
+  tone,
 }: {
   value: string;
   label: string;
   detail?: ReactNode;
+  tone?: "warn" | "bad";
 }) {
   return (
-    <span className="figure">
+    <span className={`figure${tone ? ` tone-${tone}` : ""}`}>
       <b>{value}</b>
       {detail ? (
         <Explain interactive className="figure-detail" text={detail}>

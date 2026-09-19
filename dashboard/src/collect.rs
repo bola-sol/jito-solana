@@ -15,7 +15,7 @@ use {
         produced::{Bundles, Execution, ProducedBlock, ProducedRing},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
-        snapshot::{self, Snapshots},
+        snapshot::{self, Snapshots, Writing, Written},
         startup::StartupPublisher,
         tips::{TipMeter, TipRates},
         turns::{LeaderTurn, TurnTracker},
@@ -31,6 +31,7 @@ use {
         BankNotification, BankNotificationReceiver,
     },
     solana_runtime::bank::Bank,
+    solana_vote_interface::state::VOTE_CREDITS_MAXIMUM_PER_SLOT,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
         sync::{Arc, Mutex, RwLock},
@@ -262,6 +263,15 @@ pub enum Consensus {
     Alpenglow,
 }
 
+/// This validator's vote credits in the epoch being built on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VoteCredits {
+    pub epoch: Epoch,
+    pub credits: u64,
+    /// The most one slot can earn under TowerBFT.
+    pub max_per_slot: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipRate {
     pub epoch: Epoch,
@@ -302,6 +312,8 @@ struct Debounces {
     upcoming: Debounced<Vec<UpcomingSlot>>,
     peers: Debounced<Vec<Peer>>,
     snapshots: Debounced<Option<Snapshots>>,
+    bls_key: Debounced<Option<bool>>,
+    vote_credits: Debounced<Option<VoteCredits>>,
 }
 
 pub struct Collector {
@@ -415,6 +427,9 @@ pub struct Collector {
     /// that was.
     overview_dirty: bool,
     overview_retained_at: Instant,
+    /// The archive being staged, and the most replay fell behind while it was.
+    snapshot_writing: Option<(Writing, u64)>,
+    snapshot_last: Option<Written>,
 }
 
 /// The handles the service holds and the collector reads or writes through.
@@ -499,6 +514,8 @@ impl Collector {
             totals: BTreeMap::new(),
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
+            snapshot_writing: None,
+            snapshot_last: None,
         }
     }
 
@@ -659,7 +676,25 @@ impl Collector {
 
     /// The newest archives on disk: two directory listings, so on the slow tier.
     fn collect_snapshots(&mut self) {
-        let snapshots = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
+        let mut snapshots = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
+        let writing = snapshots.as_ref().and_then(|snapshots| snapshots.writing);
+        match (writing, self.snapshot_writing.take()) {
+            (Some(writing), None) => self.snapshot_writing = Some((writing, 0)),
+            (Some(writing), Some((_, fell_behind))) => {
+                self.snapshot_writing = Some((writing, fell_behind));
+            }
+            (None, Some((writing, fell_behind_slots))) => {
+                self.snapshot_last = Some(Written {
+                    slot: writing.slot,
+                    took_millis: unix_millis().saturating_sub(writing.since_millis),
+                    fell_behind_slots,
+                });
+            }
+            (None, None) => {}
+        }
+        if let Some(snapshots) = snapshots.as_mut() {
+            snapshots.last_written = self.snapshot_last;
+        }
         self.debounces
             .snapshots
             .publish(&self.publisher, TOPIC_SUMMARY, "snapshots", snapshots);
@@ -1406,6 +1441,29 @@ impl Collector {
             None => (0, None, None),
         };
 
+        // Both off the vote account, so both absent where it is not found.
+        let epoch = bank.epoch();
+        let bls_key =
+            mine.map(|(_, account)| account.vote_state_view().bls_pubkey_compressed().is_some());
+        let vote_credits = mine.map(|(_, account)| VoteCredits {
+            epoch,
+            credits: account
+                .vote_state_view()
+                .epoch_credits_iter()
+                .find(|item| item.epoch() == epoch)
+                .map_or(0, |item| item.credits().saturating_sub(item.prev_credits())),
+            max_per_slot: VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        });
+        self.debounces
+            .bls_key
+            .publish(&self.publisher, TOPIC_SUMMARY, "bls_key", bls_key);
+        self.debounces.vote_credits.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "vote_credits",
+            vote_credits,
+        );
+
         // Published only while this process is the voter; otherwise it is another
         // node's progress.
         let last_vote = if voting { voter_vote } else { None };
@@ -1441,6 +1499,10 @@ impl Collector {
         // Measured against the cluster's tip, not this node's own view, which
         // lags when replay lags.
         let behind_cluster = cluster_tip.map(|tip| tip.saturating_sub(self.last_completed_slot));
+        if let (Some((_, fell_behind)), Some(behind)) = (&mut self.snapshot_writing, behind_cluster)
+        {
+            *fell_behind = (*fell_behind).max(behind);
+        }
         self.debounces.behind_cluster.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -2493,6 +2555,58 @@ mod tests {
             collector.skip_next_index, restarted,
             "the walk restarts rather than carrying an index into another schedule"
         );
+    }
+
+    // ---- the vote account -----------------------------------------------
+
+    #[test]
+    fn test_the_vote_account_reports_its_bls_key_and_credits() {
+        let harness = fixture();
+        harness.advance_to(8);
+        harness.collector().tick();
+
+        // A boolean, either way: null would mean the account was not found.
+        let bls = harness.published_key("summary", "bls_key").unwrap();
+        assert!(
+            bls.contains(r#""value":true"#) || bls.contains(r#""value":false"#),
+            "{bls}"
+        );
+        let credits = harness.published_key("summary", "vote_credits").unwrap();
+        assert!(credits.contains(r#""credits":0"#), "{credits}");
+        assert!(credits.contains(r#""max_per_slot":16"#), "{credits}");
+    }
+
+    #[test]
+    fn test_a_snapshot_write_is_timed_from_its_staging_to_its_end() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.snapshot_writing = Some((
+            Writing {
+                slot: 300,
+                since_millis: unix_millis().saturating_sub(90_000),
+            },
+            0,
+        ));
+        // Replay trails the cluster while the write is on.
+        harness.advance_to(64);
+        harness.set_cluster_tip(100);
+        collector.tick();
+        let completed = published_number(&harness, "completed_slot").unwrap();
+        assert_eq!(
+            collector
+                .snapshot_writing
+                .as_ref()
+                .map(|(_, behind)| *behind),
+            Some(100 - completed)
+        );
+
+        // No config in the fixture, so the next read sees no staging file.
+        collector.collect_snapshots();
+        let written = collector.snapshot_last.as_ref().expect("the write ended");
+        assert_eq!(written.slot, 300);
+        assert!(written.took_millis >= 90_000);
+        assert_eq!(written.fell_behind_slots, 100 - completed);
+        assert!(collector.snapshot_writing.is_none());
     }
 
     // ---- what this build is ---------------------------------------------

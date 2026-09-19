@@ -285,6 +285,12 @@ body {
   color: var(--text);
 }
 
+/* A toned figure carries the tone on its value too. */
+.figure.tone-warn b,
+.figure.tone-bad b {
+  color: inherit;
+}
+
 /* The bubble takes a column for the boot rows. */
 .figure-detail .explain-bubble {
   display: flex;
@@ -1952,6 +1958,49 @@ body {
   color: var(--text);
 }
 
+/* The turbine layers: four parts of one bar on the ramp, then the shares. */
+.net-turbine-body {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.net-turbine-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--panel-raised);
+}
+
+.net-turbine-bar i {
+  display: block;
+  height: 100%;
+}
+
+.net-turbine-bar .is-root {
+  background: var(--path-1);
+}
+
+.net-turbine-bar .is-layer-1 {
+  background: var(--path-2);
+}
+
+.net-turbine-bar .is-layer-2 {
+  background: var(--path-3);
+}
+
+.net-turbine-bar .is-layer-3 {
+  background: var(--path-4);
+}
+
+.net-turbine .net-xdp-detail b {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
 /* ---- produced blocks ---- */
 
 /* Scrolls with the page rather than inside a window of its own. On the overview
@@ -3553,6 +3602,11 @@ body {
   color: var(--text-faint);
 }
 
+/* The snapshot line under the device rows. */
+.host-snapshot {
+  margin-top: 6px;
+}
+
 .host-trend.is-rising {
   color: var(--warn);
 }
@@ -4227,6 +4281,14 @@ body {
     grid-row: 2;
     height: 30px;
     min-width: 0;
+  }
+
+  /* The XDP and turbine lines wrap instead of clipping: the drops clause is
+     the end of the first and the last layer the end of the second. */
+  .net-xdp-detail {
+    white-space: normal;
+    overflow: visible;
+    line-height: 1.5;
   }
 
   /* The split stacks the same way as the rows above it: label and the measured

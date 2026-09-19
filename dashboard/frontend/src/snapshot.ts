@@ -2,7 +2,7 @@
  *  it sits on, with the next ones due on the hover. */
 
 import { count, duration } from "./format";
-import type { Snapshots } from "./types";
+import type { Snapshots, SnapshotWritten } from "./types";
 
 export interface SnapshotLine {
   /** What follows the word "snapshot". */
@@ -62,4 +62,25 @@ function nextDue(
   if (clauses.length === 0) return undefined;
   const sentence = clauses.join(", ");
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
+}
+
+/** The write under way, as the machine section words it. Null where none is. */
+export function snapshotWriting(
+  snapshots: Snapshots | null | undefined,
+  nowMillis: number | undefined,
+): string | null {
+  const writing = snapshots?.writing;
+  if (!writing) return null;
+  const soFar =
+    nowMillis === undefined ? "" : `, ${duration(Math.max(0, nowMillis - writing.since_millis))} so far`;
+  return `writing snapshot ${count(writing.slot)}${soFar}`;
+}
+
+/** What the last write cost. */
+export function snapshotWritten(written: SnapshotWritten): string {
+  const behind =
+    written.fell_behind_slots > 0
+      ? `, replay fell ${count(written.fell_behind_slots)} slots behind the cluster`
+      : "";
+  return `last snapshot ${count(written.slot)} took ${duration(written.took_millis)}${behind}`;
 }

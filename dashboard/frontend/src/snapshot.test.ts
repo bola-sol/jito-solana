@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agoLabel, blocksUntil, snapshotLine } from "./snapshot";
+import { agoLabel, blocksUntil, snapshotLine, snapshotWriting, snapshotWritten } from "./snapshot";
 import type { Snapshots } from "./types";
 
 const both: Snapshots = {
@@ -7,7 +7,43 @@ const both: Snapshots = {
   incremental: { slot: 441_685_500, written_millis: 9_960_000 },
   full_interval: 25_000,
   incremental_interval: 100,
+  writing: null,
+  last_written: null,
 };
+
+describe("snapshotWriting", () => {
+  it("names the slot being staged and how long it has run", () => {
+    const line = snapshotWriting(
+      { ...both, writing: { slot: 441_700_000, since_millis: 9_958_000 } },
+      10_000_000,
+    );
+    expect(line).toBe("writing snapshot 441,700,000, 42s so far");
+  });
+
+  it("leaves the elapsed clause out before the validator's clock arrives", () => {
+    const line = snapshotWriting({ ...both, writing: { slot: 441_700_000, since_millis: 1 } }, undefined);
+    expect(line).toBe("writing snapshot 441,700,000");
+  });
+
+  it("is nothing where no archive is being staged", () => {
+    expect(snapshotWriting(both, 10_000_000)).toBeNull();
+    expect(snapshotWriting(undefined, 10_000_000)).toBeNull();
+  });
+});
+
+describe("snapshotWritten", () => {
+  it("says what the last write took and what replay lost to it", () => {
+    expect(snapshotWritten({ slot: 441_600_000, took_millis: 188_000, fell_behind_slots: 210 })).toBe(
+      "last snapshot 441,600,000 took 3m 8s, replay fell 210 slots behind the cluster",
+    );
+  });
+
+  it("drops the clause where replay kept up", () => {
+    expect(snapshotWritten({ slot: 441_600_000, took_millis: 188_000, fell_behind_slots: 0 })).toBe(
+      "last snapshot 441,600,000 took 3m 8s",
+    );
+  });
+});
 
 describe("agoLabel", () => {
   it("uses the largest unit that fits, rounded down", () => {

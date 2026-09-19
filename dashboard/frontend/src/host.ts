@@ -1,5 +1,6 @@
 /** The machine's figures and the thresholds at which each starts to matter. */
 
+import { bytes } from "./format";
 import type { DeviceLoad, FilesystemUsage, Host } from "./types";
 
 /** How a figure is coloured, matching the tones the rest of the page uses. */
@@ -106,4 +107,26 @@ export function loadTrend(host: Host): "rising" | "falling" | "steady" {
 /** A device's row label: the kernel's name, then the roles mounted on it. */
 export function deviceLabel(device: DeviceLoad): string {
   return device.roles.join(" and ");
+}
+
+/** A move in resident memory under this, over an hour, is noise. */
+export const RESIDENT_NOISE = 512 * 1024 ** 2;
+
+export interface ResidentTrend {
+  direction: "rising" | "falling";
+  label: string;
+}
+
+/** How the validator's own memory moved over the hour. Null without an hour
+ *  of readings, or where the move is noise. */
+export function residentTrend(host: Host): ResidentTrend | null {
+  const now = host.process_resident;
+  const before = host.process_resident_hour_ago;
+  if (now === null || before === null) return null;
+  const delta = now - before;
+  if (Math.abs(delta) < RESIDENT_NOISE) return null;
+  return {
+    direction: delta > 0 ? "rising" : "falling",
+    label: `${delta > 0 ? "up" : "down"} ${bytes(Math.abs(delta))} this hour`,
+  };
 }

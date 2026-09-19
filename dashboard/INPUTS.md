@@ -25,6 +25,7 @@ Each of these points carries a slot and describes one block.
 | --- | --- | --- |
 | `replay-slot-stats` | `slot`, `fetch_entries_time`, `confirmation_without_replay_us`, `bank_complete_time_us`, `entry_poh_verification_time`, `entry_transaction_verification_time`, `task_submission_us`, `execute_us`, `execute_details_execute_inner_us`, `execute_details_serialize_us`, `execute_details_deserialize_us`, `execute_details_create_vm_us`, `execute_details_create_executor_load_elf_us`, `execute_details_create_executor_verify_code_us`, `execute_details_create_executor_jit_compile_us`, `load_us`, `store_us`, `program_cache_us`, `validate_transactions_us`, `validate_fees_us`, `filter_executable_us`, `collect_balances_us`, `collect_logs_us`, `update_stakes_cache_us`, `update_transaction_statuses`, `check_block_limits_us`, `total_transactions` | The replay card: time per slot, its three spans, and the verify and execute breakdowns. The schedule page's replay column and its received to replayed timeline. |
 | `shred_insert_is_full` | `slot`, `last_index`, `num_repaired`, `total_time_ms` | Shreds and repaired shreds per slot. The first shred to full block span on the timeline. |
+| `retransmit-stage-slot-stats` | `num_shreds_received_root`, `num_shreds_received_1st_layer`, `num_shreds_received_2nd_layer`, `num_shreds_received_3rd_layer` | Network card: shreds by the turbine layer they arrived from, over five minutes |
 | `cost_tracker_stats` | tag `is_leader`; `bank_slot`, `block_cost`, `costliest_account`, `costliest_account_cost`, `number_of_accounts`, `number_of_contended_accounts`, `allocated_accounts_data_size`, `inflight_transaction_count` | Slot details for our own blocks: compute used, and the costliest account against its own limit. Points without the leader tag are dropped. |
 | `banking_stage_scheduler_slot_counts` | `slot` and the scheduler counters listed under per second | Slot details: the waterfall for one of our own leader slots |
 | `bundle_stage-stats` (jito only) | `slot`, `num_sanitized_ok`, `execution_results_ok` | Bundles sanitised and landed per produced block |
@@ -38,6 +39,7 @@ These points are running counters. The dashboard subtracts the previous reading 
 | Point | Fields read | Feeds |
 | --- | --- | --- |
 | `shred_fetch_receiver`, `shred_fetch_repair_receiver` | `packets_count` | Repaired shreds on the status card. The turbine row of the socket card. |
+| `retransmit-stage` | tag `is_xdp`; `num_shreds_dropped_xdp_full` | Network card: shreds dropped because the XDP channel was full, beside the XDP line |
 | `gossip_receiver`, `tpu_vote_receiver` | `packets_count` | Packets delivered on the gossip and UDP vote rows of the socket card |
 | `Gossip`, `Repair` (the streamer senders) | `streamer-send-bytes_total`, `streamer-send-sample_duration_ms` | Network card: what the gossip and repair senders put on the wire |
 | `banking_stage_scheduler_counts` | tag `id`; `num_received`, `num_dropped_on_receive`, `num_dropped_on_check_work_queue_full`, `num_dropped_on_parsing_and_sanitization`, `num_dropped_on_validate_locks`, `num_dropped_on_receive_compute_budget`, `num_dropped_on_receive_age`, `num_dropped_on_receive_already_processed`, `num_dropped_on_receive_fee_payer`, `num_dropped_on_filter_key`, `num_dropped_on_nonce_dedup`, `num_buffered`, `num_dropped_on_capacity`, `num_evicted_on_nonce_dedup`, `num_dropped_on_clear`, `num_dropped_on_clean`, `num_scheduled`, `num_unschedulable_conflicts`, `num_unschedulable_threads`, `num_finished`, `num_retryable` | The scheduler section of the TPU path card. The `id` tag separates the validator's own scheduler from BAM's. The two count `num_received` in different units. |
@@ -86,7 +88,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | --- | --- |
 | `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Failed transaction totals for TPS. |
 | `BankForks::migration_status`, `Bank::is_alpenglow` | Which consensus the cluster runs, and which of two cluster tip sources to read |
-| `Bank::vote_accounts` | Our stake and commission. The validators card's counts and delinquency. The peer table's stake. The wait's validator list. |
+| `Bank::vote_accounts` | Our stake and commission, whether our vote account has a BLS key, and our vote credits this epoch. The validators card's counts and delinquency. The peer table's stake. The wait's validator list. |
 | `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | The epoch card, block height, and the configured slot time |
 | `Bank::clock` | The epoch's measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | This node's rank in the BLS rank map, to find its bit in a certificate |
@@ -107,14 +109,14 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `Validator::highest_finalized` | The cluster's tip under alpenglow, from votor's last certificate |
 | `LeaderScheduleCache::slot_leader_at`, `next_leader_slot` | The epoch's leader turns, who is in the peer table, and the countdown to our slot |
 | `ValidatorStartProgress` | The boot phase list and its timings |
-| The snapshot archive directories, listed through `agave_snapshots::paths`, and the intervals in `SnapshotConfig` | The newest full and incremental archive with the time each was written, and when the next of each is due |
+| The snapshot archive directories, listed through `agave_snapshots::paths`, and the intervals in `SnapshotConfig` | The newest full and incremental archive with the time each was written, and when the next of each is due. An archive being staged, by its temporary file, and how long the last one took |
 | `solana_version::Version::this_build` | The client name, version and commit in the header |
 
 The certificate walk is the one place where the dashboard parses ledger bytes. A per slot event that names the validators each reward certificate paid would replace it. The leader already knows this when it writes the footer.
 
 ## The host
 
-The validator does not own these inputs. They are here for completeness: `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, `/proc/diskstats`, `/proc/net/dev`, `/proc/net/udp` and `udp6` for socket drops and queues, `statvfs` on the ledger and accounts paths, and `/proc/self/task/*` for the validator's own threads. The socket rows need one fact that only the validator has: how many packets each receiver delivered. The kernel counts drops but not deliveries. The delivered count comes from the datapoints above.
+The validator does not own these inputs. They are here for completeness: `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, `/proc/diskstats`, `/proc/net/dev`, `/proc/net/udp` and `udp6` for socket drops and queues, `statvfs` on the ledger, accounts and snapshot paths, `/proc/self/status` for the validator's resident memory, and `/proc/self/task/*` for the validator's own threads. The socket rows need one fact that only the validator has: how many packets each receiver delivered. The kernel counts drops but not deliveries. The delivered count comes from the datapoints above.
 
 ## What the dashboard could not read
 

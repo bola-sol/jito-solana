@@ -8,6 +8,7 @@ import {
   fullnessTone,
   loadTrend,
   memoryUse,
+  residentTrend,
   swapTone,
   waitTone,
 } from "./host";
@@ -29,11 +30,31 @@ function host(over: Partial<Host> = {}): Host {
     memory_reclaimable: 64 * GB,
     memory_free: 24 * GB,
     swap: { total: 8 * GB, used: 0 },
+    process_resident: null,
+    process_resident_hour_ago: null,
+    snapshot_device: null,
     filesystems: [],
     devices: [],
     ...over,
   };
 }
+
+describe("residentTrend", () => {
+  it("names the hour's move and its direction", () => {
+    const trend = residentTrend(host({ process_resident: 400 * GB, process_resident_hour_ago: 398 * GB }));
+    expect(trend).toEqual({ direction: "rising", label: "up 2.00 GB this hour" });
+  });
+
+  it("is nothing without an hour of readings", () => {
+    expect(residentTrend(host({ process_resident: 400 * GB }))).toBeNull();
+  });
+
+  it("is nothing where the move is noise", () => {
+    expect(
+      residentTrend(host({ process_resident: 400 * GB, process_resident_hour_ago: 400 * GB - 100 * 1024 ** 2 })),
+    ).toBeNull();
+  });
+});
 
 function device(over: Partial<DeviceLoad> = {}): DeviceLoad {
   return {

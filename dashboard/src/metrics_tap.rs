@@ -12,7 +12,7 @@ use {
         collections::{BTreeMap, BTreeSet, VecDeque},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         },
         time::{SystemTime, UNIX_EPOCH},
     },
@@ -106,6 +106,13 @@ const SCHEDULER_SLOT_COUNTS: &str = "banking_stage_scheduler_slot_counts";
 /// says XDP is off. One transmitter serves turbine, repair and gossip alike.
 const XDP_NETWORK_CONFIG: &str = "xdp-network-config";
 
+/// The retransmit stage's counters, every two seconds, under an `is_xdp`
+/// tag that says which path it sends on.
+const RETRANSMIT_STAGE: &str = "retransmit-stage";
+
+/// Each slot's shreds by the turbine layer they arrived from.
+const RETRANSMIT_SLOT_STATS: &str = "retransmit-stage-slot-stats";
+
 /// Every slot's replay, timed. Sent with `datapoint_info!`, so it arrives
 /// unless the validator logs below `solana=info`.
 const REPLAY_SLOT_STATS: &str = "replay-slot-stats";
@@ -125,6 +132,9 @@ const WFSM_GOSSIP: &str = "wfsm_gossip";
 
 /// The tag saying whether the reporting node produced the block.
 const IS_LEADER: &str = "is_leader";
+
+/// The tag saying whether retransmit sends over XDP.
+const IS_XDP: &str = "is_xdp";
 
 const SLOT: &str = "slot";
 
@@ -340,6 +350,16 @@ pub struct MetricsTap {
     /// `/proc/net/udp` will not give for its drop counts.
     pub packets_gossip: AtomicU64,
     pub packets_tpu_vote: AtomicU64,
+
+    /// Shreds by the turbine layer they arrived from, and shreds retransmit
+    /// dropped because the XDP channel was full.
+    pub turbine_root: AtomicU64,
+    pub turbine_layer_1: AtomicU64,
+    pub turbine_layer_2: AtomicU64,
+    pub turbine_layer_3: AtomicU64,
+    pub xdp_dropped: AtomicU64,
+    /// The `is_xdp` tag last seen: 0 none yet, 1 false, 2 true.
+    retransmit_xdp: AtomicU8,
 
     /// Bytes each named sender put on the wire, with the milliseconds each
     /// sample covered, so a rate is bytes over the window reported rather than
@@ -824,6 +844,13 @@ pub struct TapCounters {
     pub shreds_repair: u64,
     pub packets_gossip: u64,
     pub packets_tpu_vote: u64,
+    pub turbine_root: u64,
+    pub turbine_layer_1: u64,
+    pub turbine_layer_2: u64,
+    pub turbine_layer_3: u64,
+    pub xdp_dropped: u64,
+    /// Which path retransmit last reported on. `None` before its first report.
+    pub retransmit_xdp: Option<bool>,
     pub gossip_sent_bytes: u64,
     pub gossip_sent_millis: u64,
     pub repair_sent_bytes: u64,
@@ -914,6 +941,8 @@ impl MetricsTap {
             WORKER_TIMING => self.remember_worker_timing(point, now_millis()),
             VOTE_SLOT_TIMING => self.remember_vote_timing(point),
             XDP_NETWORK_CONFIG => self.remember_xdp(point),
+            RETRANSMIT_STAGE => self.add_retransmit(point),
+            RETRANSMIT_SLOT_STATS => self.add_turbine_layers(point),
             WFSM_GOSSIP => self.remember_stake_in_gossip(point),
             COST_TRACKER => self.remember_cost(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
@@ -925,6 +954,32 @@ impl MetricsTap {
             BUNDLE_STAGE => self.bundles.add_point(point),
             WORKER_COUNTS | WORKER_ERROR_METRICS => self.executed.add_point(point),
             _ => (),
+        }
+    }
+
+    /// Keeps the XDP drop count and which path the stage reports on.
+    fn add_retransmit(&self, point: &DataPoint) {
+        for (name, value) in &point.fields {
+            if *name == "num_shreds_dropped_xdp_full" {
+                add_field(&self.xdp_dropped, value);
+            }
+        }
+        if let Some((_, is_xdp)) = point.tags.iter().find(|(name, _)| *name == IS_XDP) {
+            let flag = if is_xdp == "true" { 2 } else { 1 };
+            self.retransmit_xdp.store(flag, Ordering::Relaxed);
+        }
+    }
+
+    fn add_turbine_layers(&self, point: &DataPoint) {
+        for (name, value) in &point.fields {
+            let counter = match *name {
+                "num_shreds_received_root" => &self.turbine_root,
+                "num_shreds_received_1st_layer" => &self.turbine_layer_1,
+                "num_shreds_received_2nd_layer" => &self.turbine_layer_2,
+                "num_shreds_received_3rd_layer" => &self.turbine_layer_3,
+                _ => continue,
+            };
+            add_field(counter, value);
         }
     }
 
@@ -1406,6 +1461,16 @@ impl MetricsTap {
             shreds_repair: self.shreds_repair.load(Ordering::Relaxed),
             packets_gossip: self.packets_gossip.load(Ordering::Relaxed),
             packets_tpu_vote: self.packets_tpu_vote.load(Ordering::Relaxed),
+            turbine_root: self.turbine_root.load(Ordering::Relaxed),
+            turbine_layer_1: self.turbine_layer_1.load(Ordering::Relaxed),
+            turbine_layer_2: self.turbine_layer_2.load(Ordering::Relaxed),
+            turbine_layer_3: self.turbine_layer_3.load(Ordering::Relaxed),
+            xdp_dropped: self.xdp_dropped.load(Ordering::Relaxed),
+            retransmit_xdp: match self.retransmit_xdp.load(Ordering::Relaxed) {
+                1 => Some(false),
+                2 => Some(true),
+                _ => None,
+            },
             gossip_sent_bytes: self.gossip_sent_bytes.load(Ordering::Relaxed),
             gossip_sent_millis: self.gossip_sent_millis.load(Ordering::Relaxed),
             repair_sent_bytes: self.repair_sent_bytes.load(Ordering::Relaxed),
@@ -2018,6 +2083,40 @@ mod tests {
                 ..TapCounters::default()
             }
         );
+    }
+
+    #[test]
+    fn test_the_retransmit_point_gives_the_xdp_drops_and_the_path() {
+        let tap = MetricsTap::default();
+        let mut point = named(RETRANSMIT_STAGE, &[("num_shreds_dropped_xdp_full", "12i")]);
+        point.tags.push((IS_XDP, "true".to_string()));
+        tap.observe(&point);
+        tap.observe(&point);
+
+        let counters = tap.counters();
+        assert_eq!(counters.xdp_dropped, 24);
+        assert_eq!(counters.retransmit_xdp, Some(true));
+        assert_eq!(MetricsTap::default().counters().retransmit_xdp, None);
+    }
+
+    #[test]
+    fn test_a_slot_stats_point_adds_each_layer_into_its_own_count() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            RETRANSMIT_SLOT_STATS,
+            &[
+                ("slot", "100i"),
+                ("num_shreds_received_root", "3i"),
+                ("num_shreds_received_1st_layer", "400i"),
+                ("num_shreds_received_2nd_layer", "1100i"),
+                ("num_shreds_received_3rd_layer", "0i"),
+            ],
+        ));
+        let counters = tap.counters();
+        assert_eq!(counters.turbine_root, 3);
+        assert_eq!(counters.turbine_layer_1, 400);
+        assert_eq!(counters.turbine_layer_2, 1100);
+        assert_eq!(counters.turbine_layer_3, 0);
     }
 
     #[test]

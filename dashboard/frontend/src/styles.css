@@ -470,12 +470,16 @@ body {
   gap: 12px;
 }
 
-/* While the validator boots, every card but the one carrying the boot
-   sequence is blurred and dimmed, and takes no clicks. The one that stays
-   sharp is raised so the blur of a neighbour cannot bleed over its edge. */
+/* While the validator boots, everything but the boot sequence, the live
+   dot and the theme toggle is blurred and dimmed, and takes no clicks. The
+   card that stays sharp is raised so a neighbour's blur cannot bleed over
+   its edge. */
 .app.is-booting .card:not(.is-lit),
 .app.is-booting .fold,
-.app.is-booting .slot-strip {
+.app.is-booting .slot-strip,
+.app.is-booting .who > :not(.who-right),
+.app.is-booting .figures,
+.app.is-booting .nav {
   filter: blur(3px);
   opacity: 0.55;
   pointer-events: none;
@@ -493,7 +497,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .app.is-booting .card:not(.is-lit),
   .app.is-booting .fold,
-  .app.is-booting .slot-strip {
+  .app.is-booting .slot-strip,
+  .app.is-booting .who > :not(.who-right),
+  .app.is-booting .figures,
+  .app.is-booting .nav {
     transition: none;
   }
 }

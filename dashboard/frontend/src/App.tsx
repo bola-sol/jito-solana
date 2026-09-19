@@ -17,27 +17,21 @@ import { GossipStakeCard } from "./components/GossipStakeCard";
 import { SlotStrip } from "./components/SlotStrip";
 import { HOME, useRoute, type Page } from "./route";
 import { useStore } from "./useStore";
-
-/** Base title, kept in step with index.html so the tab reads the same before
- *  the first snapshot arrives as it does after. */
-const TITLE = "Agave Dashboard";
+import { pageTitle } from "./title";
 
 export function App(): ReactElement {
   const store = useStore();
   const connection = store.getConnection();
   const name = store.get("summary", "identity_name");
   const identity = store.get("summary", "identity_key");
+  const cluster = store.get("summary", "cluster");
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [route, go] = useRoute();
   const page = route.page;
 
-  // Named after the validator so that an operator watching several at once can
-  // tell the tabs apart. `Private` matches what the header shows for a node
-  // with no on-chain name, and the plain title stands until a node answers.
   useEffect(() => {
-    const label = name ?? (identity ? "Private" : null);
-    document.title = label ? `${TITLE} | ${label}` : TITLE;
-  }, [name, identity]);
+    document.title = pageTitle(name, identity, cluster);
+  }, [name, identity, cluster]);
 
   // Only the overview keeps the slot rail; the collapsed state is remembered
   // across pages.

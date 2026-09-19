@@ -315,6 +315,7 @@ struct Debounces {
     snapshots: Debounced<Option<Snapshots>>,
     bls_key: Debounced<Option<bool>>,
     vote_credits: Debounced<Option<VoteCredits>>,
+    vote_participation: Debounced<certs::Participation>,
 }
 
 pub struct Collector {
@@ -372,6 +373,8 @@ pub struct Collector {
     /// for slots before the start are dropped: a slot the walk never covered
     /// cannot be told apart from one alpenglow was not yet running for.
     certs_walk: Option<(Slot, Slot)>,
+    /// Paid slots per rank in the epoch the walk is in.
+    certs_tally: Option<certs::Tally>,
     /// Highest slot examined for a shred timestamp, whether or not it had one.
     /// Skipped slots never do, so this advances past them independently.
     slot_timed_to: Option<Slot>,
@@ -493,6 +496,7 @@ impl Collector {
             last_completed_at: now,
             slot_timed_to: None,
             certs_walk: None,
+            certs_tally: None,
             last_shred_time: None,
             slot_time_window: VecDeque::new(),
             caught_up_at: None,
@@ -1327,8 +1331,8 @@ impl Collector {
     }
 
     /// Reads the block footers since the last tick for what they say about this
-    /// node's vote, and marks the slots they speak of. Alpenglow only: nothing
-    /// else writes footers.
+    /// node's vote, marks the slots they speak of, and tallies the epoch's paid
+    /// slots per rank. Alpenglow only: nothing else writes footers.
     fn collect_vote_certs(&mut self, root_bank: &Bank) {
         if !root_bank.is_alpenglow() || self.last_completed_slot == 0 {
             return;
@@ -1353,16 +1357,33 @@ impl Collector {
         if let Some(read_to) = read_to {
             self.certs_walk = Some((floor, read_to));
         }
+        let schedule = root_bank.epoch_schedule();
         for mark in marks {
             if mark.slot < floor {
                 continue;
             }
+            let epoch = schedule.get_epoch(mark.slot);
+            let tally = self
+                .certs_tally
+                .get_or_insert_with(|| certs::Tally::new(epoch, mark.slot));
+            if tally.epoch() != epoch {
+                *tally = certs::Tally::new(epoch, mark.slot);
+            }
+            tally.add(&mark);
             let updated = self
                 .slots
                 .update(mark.slot, |entry| entry.reward = Some(mark.reward));
             if let Some(entry) = updated {
                 self.publish_slot(&entry);
             }
+        }
+        if let Some(tally) = &self.certs_tally {
+            self.debounces.vote_participation.publish(
+                &self.publisher,
+                TOPIC_SUMMARY,
+                "vote_participation",
+                tally.participation(),
+            );
         }
     }
 

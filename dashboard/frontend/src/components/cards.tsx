@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
-import { creditsShare } from "../credits";
+import { creditsShare, participationShare } from "../credits";
 import { leaderSlotsLeft } from "../schedule";
 import type { EpochInfo } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
@@ -45,16 +45,30 @@ export function EpochCard(): ReactElement {
   );
 }
 
-/** Vote credits this epoch as a share of the best any validator has earned,
- *  or the count alone until that figure arrives. Under alpenglow the same
- *  field counts lamports of reward, so it is drawn as SOL earned and not
- *  compared: rewards follow stake. Absent until the vote account has been
- *  read. */
+/** Vote performance this epoch against the best any validator has: credits
+ *  under TowerBFT, and under alpenglow the slots the reward certificates paid
+ *  this vote for, since the vote account's own figure is lamports that leader
+ *  slots pay into. Absent until the vote account has been read. */
 function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
-  const credits = useStore().get("summary", "vote_credits");
+  const store = useStore();
+  const credits = store.get("summary", "vote_credits");
+  const participation = store.get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
   if (!credits || credits.epoch !== epoch.epoch) return null;
-  if (alpenglow) return <Stat label="earned this epoch, SOL" value={sol(credits.credits)} />;
+  if (alpenglow) {
+    const share = participationShare(participation, epoch.epoch);
+    if (share === null || !participation) {
+      return <Stat label="earned this epoch, SOL" value={sol(credits.credits)} />;
+    }
+    return (
+      <Stat
+        label={`of the best this epoch, paid for ${count(participation.paid)} of ${count(participation.rewarded)} rewarded slots`}
+        value={percent(share, 1)}
+        sub={`${sol(credits.credits)} SOL earned, leader slots included`}
+        explain={`Slots since ${count(participation.since_slot)} whose reward certificate paid this vote, against the most any validator has.`}
+      />
+    );
+  }
   const share = creditsShare(credits.credits, credits.cluster_max);
   if (share === null) {
     return <Stat label="vote credits" value={count(credits.credits)} />;

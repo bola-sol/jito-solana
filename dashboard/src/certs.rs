@@ -1,12 +1,13 @@
-//! Whether this node's vote was paid for each slot, read from the reward
-//! certificates alpenglow leaders write into their block footers.
+//! Whether this node's vote was paid for each slot, and how many slots each
+//! validator's was, read from the reward certificates alpenglow leaders write
+//! into their block footers.
 
 use {
     agave_votor_messages::reward_certificate::{
         NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate,
     },
     serde::Serialize,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_entry::block_component::{
         BlockComponent, BlockFooterV1, VersionedBlockFooter, VersionedBlockMarker,
     },
@@ -31,10 +32,80 @@ pub enum Reward {
     NoCertificate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mark {
     pub slot: Slot,
     pub reward: Reward,
+    /// Each rank's bit in the notar and skip certificates together. Empty
+    /// where there was no certificate.
+    pub paid: Vec<bool>,
+}
+
+/// Slots this validator's vote was paid for in an epoch, against the most any
+/// validator's was, counted from `since_slot` where the walk began.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Participation {
+    pub epoch: Epoch,
+    pub since_slot: Slot,
+    pub paid: u64,
+    /// Slots whose certificate paid anybody.
+    pub rewarded: u64,
+    pub cluster_max: u64,
+}
+
+/// Paid slots per rank over one epoch's marks.
+#[derive(Debug)]
+pub struct Tally {
+    epoch: Epoch,
+    since_slot: Slot,
+    paid: u64,
+    rewarded: u64,
+    per_rank: Vec<u64>,
+}
+
+impl Tally {
+    pub fn new(epoch: Epoch, since_slot: Slot) -> Self {
+        Self {
+            epoch,
+            since_slot,
+            paid: 0,
+            rewarded: 0,
+            per_rank: Vec::new(),
+        }
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    /// Counts a mark. A slot with no certificate counts for nobody.
+    pub fn add(&mut self, mark: &Mark) {
+        match mark.reward {
+            Reward::Paid => self.paid = self.paid.saturating_add(1),
+            Reward::Unpaid => {}
+            Reward::NoCertificate => return,
+        }
+        self.rewarded = self.rewarded.saturating_add(1);
+        if self.per_rank.len() < mark.paid.len() {
+            self.per_rank.resize(mark.paid.len(), 0);
+        }
+        for (count, paid) in self.per_rank.iter_mut().zip(&mark.paid) {
+            if *paid {
+                *count = count.saturating_add(1);
+            }
+        }
+    }
+
+    /// The counts so far, the best rank's among them.
+    pub fn participation(&self) -> Participation {
+        Participation {
+            epoch: self.epoch,
+            since_slot: self.since_slot,
+            paid: self.paid,
+            rewarded: self.rewarded,
+            cluster_max: self.per_rank.iter().copied().max().unwrap_or(0),
+        }
+    }
 }
 
 enum Block {
@@ -76,16 +147,14 @@ pub fn walk(
                     footer.notar_reward_cert.as_ref(),
                     footer.skip_reward_cert.as_ref(),
                 );
-                if let Some(reward) = reward_of(notar, skip, rank, len) {
-                    marks.push(Mark {
-                        slot: reward_slot,
-                        reward,
-                    });
+                if let Some(mark) = mark_of(notar, skip, reward_slot, rank, len) {
+                    marks.push(mark);
                 }
             }
             Block::Missing => marks.push(Mark {
                 slot: reward_slot,
                 reward: Reward::NoCertificate,
+                paid: Vec::new(),
             }),
             Block::Pending => break,
             Block::Opaque => {}
@@ -130,34 +199,50 @@ fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
         .map_or(Block::Opaque, |footer| Block::Footer(Box::new(footer)))
 }
 
-/// What a footer's reward certificates say about `rank`. Neither certificate
-/// means nobody was paid. `None` where a bitmap could not be read.
-fn reward_of(
+/// What a footer's reward certificates say about `rank`, with every rank's
+/// bit. Neither certificate means nobody was paid. `None` where a bitmap
+/// could not be read.
+fn mark_of(
     notar: Option<&NotarRewardCertificate>,
     skip: Option<&SkipRewardCertificate>,
+    slot: Slot,
     rank: usize,
     len: usize,
-) -> Option<Reward> {
-    let in_notar = notar.map_or(Some(false), |cert| includes(cert.bitmap(), rank, len));
-    let in_skip = skip.map_or(Some(false), |cert| includes(cert.to_bitmap(), rank, len));
-    match (in_notar, in_skip) {
-        (Some(true), _) | (_, Some(true)) => Some(Reward::Paid),
-        (Some(false), Some(false)) if notar.is_none() && skip.is_none() => {
-            Some(Reward::NoCertificate)
-        }
-        (Some(false), Some(false)) => Some(Reward::Unpaid),
-        _ => None,
+) -> Option<Mark> {
+    if notar.is_none() && skip.is_none() {
+        return Some(Mark {
+            slot,
+            reward: Reward::NoCertificate,
+            paid: Vec::new(),
+        });
     }
+    let bitmaps = notar
+        .map(|cert| cert.bitmap())
+        .into_iter()
+        .chain(skip.map(|cert| cert.to_bitmap()));
+    let paid = union(bitmaps, len)?;
+    let reward = if paid.get(rank).is_some_and(|flag| *flag) {
+        Reward::Paid
+    } else {
+        Reward::Unpaid
+    };
+    Some(Mark { slot, reward, paid })
 }
 
-/// Whether `rank` is set in a certificate's signer bitmap. `None` where the
-/// bitmap does not decode, or uses the two-vector form no certificate here
-/// should carry.
-fn includes(bitmap: &[u8], rank: usize, len: usize) -> Option<bool> {
-    match decode(bitmap, len) {
-        Ok(Decoded::Base2(bits)) => Some(bits.get(rank).is_some_and(|bit| *bit)),
-        Ok(Decoded::Base3(..)) | Err(_) => None,
+/// The ranks set in any of the signer bitmaps, one flag per rank. `None`
+/// where a bitmap does not decode, or uses the two-vector form no certificate
+/// here should carry.
+fn union<'a>(bitmaps: impl Iterator<Item = &'a [u8]>, len: usize) -> Option<Vec<bool>> {
+    let mut paid = vec![false; len];
+    for bitmap in bitmaps {
+        let Ok(Decoded::Base2(bits)) = decode(bitmap, len) else {
+            return None;
+        };
+        for (flag, bit) in paid.iter_mut().zip(bits.iter().by_vals()) {
+            *flag |= bit;
+        }
     }
+    Some(paid)
 }
 
 #[cfg(test)]
@@ -177,27 +262,65 @@ mod tests {
         bytes
     }
 
-    #[test]
-    fn test_a_set_rank_is_in_the_bitmap() {
-        let map = bitmap(10, &[3, 9]);
-        assert_eq!(includes(&map, 3, 10), Some(true));
-        assert_eq!(includes(&map, 9, 10), Some(true));
-        assert_eq!(includes(&map, 4, 10), Some(false));
+    fn flags(len: usize, set: &[usize]) -> Vec<bool> {
+        (0..len).map(|rank| set.contains(&rank)).collect()
+    }
+
+    fn mark(slot: Slot, reward: Reward, paid: &[usize]) -> Mark {
+        Mark {
+            slot,
+            reward,
+            paid: flags(4, paid),
+        }
     }
 
     #[test]
-    fn test_a_rank_past_the_bitmap_is_not_in_it() {
-        assert_eq!(includes(&bitmap(10, &[3]), 12, 10), Some(false));
+    fn test_the_union_has_every_rank_set_in_either_bitmap() {
+        let bitmaps = [bitmap(10, &[3, 9]), bitmap(10, &[4])];
+        let paid = union(bitmaps.iter().map(Vec::as_slice), 10).unwrap();
+        assert_eq!(paid, flags(10, &[3, 4, 9]));
+    }
+
+    #[test]
+    fn test_a_short_bitmap_leaves_the_ranks_past_it_unpaid() {
+        let paid = union([bitmap(4, &[3])].iter().map(Vec::as_slice), 10).unwrap();
+        assert_eq!(paid, flags(10, &[3]));
     }
 
     #[test]
     fn test_garbage_does_not_decode() {
-        assert_eq!(includes(&[0, 1], 0, 10), None);
-        assert_eq!(includes(&[7, 10, 0, 0, 0], 0, 10), None);
+        assert_eq!(union([&[0u8, 1][..]].into_iter(), 10), None);
+        assert_eq!(union([&[7u8, 10, 0, 0, 0][..]].into_iter(), 10), None);
     }
 
     #[test]
     fn test_a_footer_with_no_reward_certificate_paid_nobody() {
-        assert_eq!(reward_of(None, None, 0, 10), Some(Reward::NoCertificate));
+        let mark = mark_of(None, None, 5, 0, 10).unwrap();
+        assert_eq!(mark.reward, Reward::NoCertificate);
+        assert!(mark.paid.is_empty());
+    }
+
+    #[test]
+    fn test_the_tally_counts_paid_slots_for_us_and_the_best_rank() {
+        let mut tally = Tally::new(7, 100);
+        tally.add(&mark(100, Reward::Paid, &[0, 1, 2]));
+        tally.add(&mark(101, Reward::Unpaid, &[1, 2]));
+        tally.add(&mark(102, Reward::NoCertificate, &[]));
+        tally.add(&mark(103, Reward::Paid, &[0, 1]));
+        assert_eq!(
+            tally.participation(),
+            Participation {
+                epoch: 7,
+                since_slot: 100,
+                paid: 2,
+                rewarded: 3,
+                cluster_max: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn test_an_empty_tally_has_no_best() {
+        assert_eq!(Tally::new(7, 100).participation().cluster_max, 0);
     }
 }

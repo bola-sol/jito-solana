@@ -759,6 +759,18 @@ export interface VoteCredits {
   cluster_max: number | null;
 }
 
+/** Slots this validator's vote was paid for this epoch, against the most any
+ *  validator's was, counted from `since_slot` where the certificate walk
+ *  began. Alpenglow only. */
+export interface VoteParticipation {
+  epoch: number;
+  since_slot: number;
+  paid: number;
+  /** Slots whose certificate paid anybody. */
+  rewarded: number;
+  cluster_max: number;
+}
+
 /** The envelope every message arrives in. */
 export interface Envelope {
   topic: string;
@@ -827,6 +839,7 @@ export interface Published {
     snapshots: Snapshots | null;
     bls_key: boolean | null;
     vote_credits: VoteCredits | null;
+    vote_participation: VoteParticipation | null;
     turbine: Turbine | null;
   };
   epoch: { new: EpochInfo };

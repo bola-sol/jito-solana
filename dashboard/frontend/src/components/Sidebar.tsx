@@ -5,6 +5,7 @@ import type { LeaderRef } from "../schedule";
 import type { SlotEntry } from "../types";
 import { useStore } from "../useStore";
 import { Logo } from "./Logo";
+import { SlotLink } from "./SlotLink";
 
 /** Rows in the live slot list: everything the client holds. */
 const ROWS = 512;
@@ -114,7 +115,7 @@ const SidebarRow = memo(function SidebarRow({
         <Logo url={leader.icon} size={14} />
         {name}
       </div>
-      <div className="sidebar-slot">{count(entry.slot)}</div>
+      <div className="sidebar-slot">{entry.mine ? <SlotLink slot={entry.slot} /> : count(entry.slot)}</div>
       <div className={`sidebar-level level-${entry.level}`} title={entry.level.replace(/_/g, " ")} />
     </div>
   );

@@ -4667,14 +4667,15 @@ body {
   color: var(--ours);
 }
 
-.schedule-slot-link {
+/* One of our slots, on the schedule and in the sidebar. */
+.slot-link {
   color: inherit;
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: 2px;
 }
 
-.schedule-slot-link:hover {
+.slot-link:hover {
   text-decoration-color: currentColor;
 }
 

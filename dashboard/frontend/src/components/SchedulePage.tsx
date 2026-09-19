@@ -272,14 +272,14 @@ const TurnCard = memo(
   }) {
     const alpenglow = useAlpenglow();
     return (
-      <div className="schedule-group">
+      <div className={`schedule-group${turn.mine ? " is-ours" : ""}`}>
         <TurnLeader turn={turn} peer={peer} totalStake={totalStake} />
         <div className="schedule-slots">
           <div className="schedule-row schedule-head">
             <span className="schedule-slot">Slot</span>
             <span>{alpenglow ? "Voted" : "Votes"}</span>
             <span>{alpenglow ? "Transactions" : "Non-votes"}</span>
-            <span>Base</span>
+            <span>Base fee</span>
             <span>Priority</span>
             <span title="Reaching the distribution account, after jito's cut. Derived, not measured.">
               Tips
@@ -289,7 +289,7 @@ const TurnCard = memo(
               Shreds
             </span>
             <span title="First shred to block full, then to replay finishing, drawn against one second.">
-              Received → replayed
+              Received to replayed
             </span>
             <span>Compute</span>
           </div>

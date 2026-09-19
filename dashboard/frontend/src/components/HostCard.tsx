@@ -25,24 +25,49 @@ import {
 } from "../threads";
 import type { DeviceLoad, FilesystemUsage, ThreadsSample } from "../types";
 import { useStore } from "../useStore";
-import { Card, Explain } from "./primitives";
+import { Explain, Fold } from "./primitives";
 
 /** The machine underneath the validator, from /proc and statvfs. A bar means
  *  a container that can fill; load and device saturation get none. */
 export function HostCard(): ReactElement | null {
   const store = useStore();
   const host = store.get("summary", "host");
+  const samples = store.getThreads();
   if (!host) return null;
 
   const memory = memoryUse(host);
   const trend = loadTrend(host);
+  const top = busiest(threadRows(samples));
+  // The filesystem the validator cannot run without, or the fullest.
+  const ledger =
+    host.filesystems.find((filesystem) => filesystem.name === "ledger") ??
+    [...host.filesystems].sort((a, b) => fullness(b) - fullness(a))[0];
+
+  const summary = (
+    <>
+      load <b>{decimal(host.load_one, 2)}</b> of {count(host.cores)} cores
+      {host.cpu && (
+        <>
+          , cpu <b>{percent(host.cpu.busy, 0)}</b> busy
+        </>
+      )}
+      , <b>{bytes(memory.available)}</b> free
+      {ledger && (
+        <>
+          , {ledger.name} <b>{percent(fullness(ledger), 0)}</b> full
+        </>
+      )}
+      {top && (
+        <>
+          , busiest thread {top.label} at <b>{percent(top.now, 0)}</b>
+        </>
+      )}
+    </>
+  );
 
   return (
-    <Card
-      title="Host"
-      aside={`${count(host.cores)} cores · ${bytes(host.memory_total)}`}
-      className="host-body"
-    >
+    <Fold id="machine" title="Machine" summary={summary}>
+      <div className="host-body">
       <div className="host-top">
         <div className="host-figure">
           <div className="host-label">
@@ -51,10 +76,10 @@ export function HostCard(): ReactElement | null {
             </Explain>
           </div>
           <div className="host-value">
-            {decimal(host.load_one, 2)} <small>/ {count(host.cores)} cores</small>
+            {decimal(host.load_one, 2)} <small>of {count(host.cores)} cores</small>
           </div>
           <div className="host-sub">
-            5m {decimal(host.load_five, 1)} · 15m {decimal(host.load_fifteen, 1)}{" "}
+            5m {decimal(host.load_five, 1)}, 15m {decimal(host.load_fifteen, 1)},{" "}
             <span className={`host-trend is-${trend}`}>{trend}</span>
             <br />
             <span className="host-faint">
@@ -80,12 +105,12 @@ export function HostCard(): ReactElement | null {
               <i className="is-cache" style={{ width: share(host.cpu.iowait, 1) }} />
             </div>
             <div className="host-sub">
-              user {percent(host.cpu.user, 0)} · system {percent(host.cpu.system, 0)} ·{" "}
+              user {percent(host.cpu.user, 0)}, system {percent(host.cpu.system, 0)},{" "}
               iowait {percent(host.cpu.iowait, 0)}
               {host.cpu.steal >= 0.001 && (
                 <>
                   {" "}
-                  · <span className="tone-warn">steal {percent(host.cpu.steal, 1)}</span>
+                  , <span className="tone-warn">steal {percent(host.cpu.steal, 1)}</span>
                 </>
               )}
             </div>
@@ -99,7 +124,7 @@ export function HostCard(): ReactElement | null {
             </Explain>
           </div>
           <div className="host-value">
-            {bytes(memory.inUse)} <small>/ {bytes(memory.total)}</small>
+            {bytes(memory.inUse)} <small>of {bytes(memory.total)}</small>
           </div>
           <div className="host-memory" aria-hidden="true">
             <i className="is-used" style={{ width: share(memory.inUse, memory.total) }} />
@@ -108,8 +133,8 @@ export function HostCard(): ReactElement | null {
           <div className="host-sub">
             <span className={`tone-${availableTone(memory.available, memory.total)}`}>
               {bytes(memory.available)} available
-            </span>{" "}
-            · {bytes(memory.reclaimable)} page cache
+            </span>
+            , {bytes(memory.reclaimable)} page cache
           </div>
         </div>
 
@@ -124,7 +149,7 @@ export function HostCard(): ReactElement | null {
               </Explain>
             </div>
             <div className={`host-value tone-${swapTone(host.swap.used)}`}>
-              {bytes(host.swap.used)} <small>/ {bytes(host.swap.total)}</small>
+              {bytes(host.swap.used)} <small>of {bytes(host.swap.total)}</small>
             </div>
             <div className="host-sub">
               {host.swap.used > 0 ? "in use, which it should not be" : "none, as it should be"}
@@ -160,7 +185,7 @@ export function HostCard(): ReactElement | null {
             <span className="host-n">time busy</span>
             <span className="host-n is-wait">wait</span>
             <span className="host-n is-io">iops</span>
-            <span className="host-n is-tp">read / write</span>
+            <span className="host-n is-tp">read and write</span>
           </div>
           {host.devices.map((device) => (
             <Device key={device.device} device={device} />
@@ -168,8 +193,9 @@ export function HostCard(): ReactElement | null {
         </>
       )}
 
-      <Threads samples={store.getThreads()} />
-    </Card>
+      <Threads samples={samples} />
+      </div>
+    </Fold>
   );
 }
 
@@ -209,7 +235,7 @@ function Device({ device }: { device: DeviceLoad }) {
       </span>
       <span className="host-n is-io host-faint">{count(device.operations_per_second)}</span>
       <span className="host-n is-tp host-faint">
-        {bytes(device.read_per_second)} / {bytes(device.write_per_second)}
+        {bytes(device.read_per_second)}, {bytes(device.write_per_second)}
       </span>
     </div>
   );
@@ -318,7 +344,7 @@ function ThreadLine({ row }: { row: ThreadRow }) {
             shown only where the columns are not: a phone. */}
         <span className="host-countline host-faint"> {count(row.count)}</span>
         {row.cores !== null && (
-          <span className="host-pinline host-pin"> · {pinnedLabel(row.cores)}</span>
+          <span className="host-pinline host-pin">, {pinnedLabel(row.cores)}</span>
         )}
         {row.poh && <s>holds a core</s>}
       </span>

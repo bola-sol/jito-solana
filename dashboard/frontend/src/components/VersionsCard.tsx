@@ -13,13 +13,13 @@ export function VersionsCard(): ReactElement {
   const ours = release(store.get("summary", "version"));
 
   if (!shares || shares.length === 0) {
-    return <Card title="Cluster Versions">waiting for data…</Card>;
+    return <Card title="Versions">waiting for data…</Card>;
   }
 
   const totalStake = shares.reduce((sum, share) => sum + share.stake, 0);
 
   return (
-    <Card title="Cluster Versions">
+    <Card title="Versions" aside="by stake">
       <div className="versions">
         {shares.map((share, index) => {
           const fraction = totalStake === 0 ? 0 : share.stake / totalStake;
@@ -40,7 +40,7 @@ export function VersionsCard(): ReactElement {
               </div>
               <div className="version-share">{percent(fraction, 1)}</div>
               <div className="version-count">
-                {count(share.validators)} validators · {solCompact(share.stake)} SOL
+                {count(share.validators)} validators, {solCompact(share.stake)} SOL
               </div>
             </div>
           );

@@ -12,20 +12,22 @@ import { Explain, PeakLine } from "./primitives";
 const STRIP_LENGTH = 64;
 
 /** What each bar colour means, in the order a slot passes through them,
- *  named to match the position readouts above. */
+ *  named to match the position readouts under the bars. */
 const LEVELS: Array<[SlotLevel, string, string]> = [
-  ["incomplete", "Pending", "Received but not yet replayed, or still arriving"],
-  ["completed", "Processed", "Replayed and frozen by this validator"],
-  ["optimistically_confirmed", "Confirmed", "The cluster has voted to confirm it"],
-  ["rooted", "Rooted", "This validator has rooted it"],
-  ["finalized", "Finalized", "Rooted by a supermajority of stake"],
-  ["skipped", "Skipped", "The leader produced no block, or it did not arrive in time"],
+  ["incomplete", "pending", "Received but not yet replayed, or still arriving"],
+  ["completed", "processed", "Replayed and frozen by this validator"],
+  ["optimistically_confirmed", "confirmed", "The cluster has voted to confirm it"],
+  ["rooted", "rooted", "This validator has rooted it"],
+  ["finalized", "finalized", "Rooted by a supermajority of stake"],
+  ["skipped", "skipped", "The leader produced no block, or it did not arrive in time"],
 ];
 
 const LEVEL_NAMES = new Map<SlotLevel, string>(
   LEVELS.map(([level, label]) => [level, label]),
 );
 
+/** The last minute of slots as bars, the six positions under them as the
+ *  axis, and the key. */
 export function SlotStrip(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
@@ -98,6 +100,7 @@ export function SlotStrip(): ReactElement {
       store.get("summary", "estimated_slot"),
       "Highest slot this validator holds a bank for, whether or not it has been replayed",
     ],
+    ["Block height", store.get("summary", "block_height"), "Blocks in the chain to Processed, which is slots less skips"],
   ];
 
   const levels = alpenglow
@@ -154,36 +157,22 @@ export function SlotStrip(): ReactElement {
   };
 
   return (
-    <section className="card slot-strip">
+    <section className="slot-strip">
       <div className="slot-strip-head">
-        <h2 className="card-title">Slots</h2>
-        {/* Shaped like a slot position rather than given a mark on the strip.
-            The peak line describes the bars on screen, whereas a minute covers
-            more slots than the strip holds, so drawn across them it would claim
-            to be their level and would not be. */}
-        <div className="slot-position slot-head-stat">
-          <div className="slot-position-label">
-            <Explain text="Mean time between slots arriving here over the last minute: the cluster's rate as seen from this node.">
-              Slot time (1 min avg)
-            </Explain>
-          </div>
-          <div className="slot-position-value">
+        <span className="slot-strip-title">Slots</span>
+        {/* In the head, not on the strip: a minute covers more slots than
+            the strip holds. */}
+        <span>
+          <Explain text="Mean time between slots arriving here over the last minute: the cluster's rate as seen from this node.">
+            slot time
+          </Explain>{" "}
+          <b>
             {observedSlotNanos === null || observedSlotNanos === undefined
               ? "—"
               : `${Math.round(observedSlotNanos / 1e6)} ms`}
-          </div>
-        </div>
-        <div className="slot-positions">
-          {positions.map(([label, slot, explanation]) => (
-            <div className="slot-position" key={label}>
-              <div className="slot-position-label">
-                <Explain text={explanation}>{label}</Explain>
-                <span className="slot-position-delta">{slotDelta(slot, processed)}</span>
-              </div>
-              <div className="slot-position-value">{count(slot)}</div>
-            </div>
-          ))}
-        </div>
+          </b>{" "}
+          over the last minute
+        </span>
       </div>
 
       <div
@@ -220,6 +209,21 @@ export function SlotStrip(): ReactElement {
         ))}
       </div>
 
+      <div className="slot-axis">
+        {positions.map(([label, slot, explanation]) => (
+          <div className="slot-position" key={label}>
+            <div className="slot-position-label">
+              <Explain text={explanation}>{label}</Explain>
+              {/* The chain's height is not a slot and has no distance. */}
+              {label !== "Block height" && (
+                <span className="slot-position-delta">{slotDelta(slot, processed)}</span>
+              )}
+            </div>
+            <div className="slot-position-value">{count(slot)}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="slot-key">
         {levels.map(([level, label, explanation]) => (
           <Explain className="slot-key-item" text={explanation} key={level}>
@@ -229,7 +233,7 @@ export function SlotStrip(): ReactElement {
         ))}
         <Explain className="slot-key-item" text="A slot this validator was scheduled to lead">
           <i className="slot-key-swatch slot-key-mine" />
-          Ours{ours > 0 && ` · ${ours} in window`}
+          ours{ours > 0 && `, ${ours} in window`}
         </Explain>
         {pinned !== null && (
           <SlotDetail
@@ -248,7 +252,7 @@ function SlotDetail({ entry, leader }: { entry: SlotEntry | null; leader: Leader
   if (!entry) {
     return (
       <span className="slot-detail is-idle" role="status">
-        paused · tap or arrow to a slot
+        paused, tap or arrow to a slot
       </span>
     );
   }
@@ -302,7 +306,7 @@ const SlotBar = memo(function SlotBar({
     entry.mine ? "our leader slot" : null,
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(", ");
 
   return (
     // Labelled rather than titled: the detail row carries this visually, and a

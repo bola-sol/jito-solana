@@ -20,18 +20,18 @@ export function IngestCard(): ReactElement | null {
   if (!summary || paths.length === 0) return null;
 
   return (
-    <Card title="Socket Ingest" className="ingest-body">
+    <Card title="Socket ingest" aside="dropped by the kernel, per UDP port" className="ingest-body">
       <div className="ingest">
         <div className="ingest-row is-head">
-          <span>Socket</span>
+          <span>socket</span>
           <Explain text="Bytes waiting unread at the moment of the sample.">
-            Queued
+            queued
           </Explain>
           <Explain text="Drops in the window, and their share of what arrived on the port.">
             {windowLabel(summary.window_seconds)}
           </Explain>
           <Explain text="Drops since the validator finished starting, and their share of what arrived since.">
-            Total
+            total
           </Explain>
         </div>
         {paths.map((path) => (
@@ -106,6 +106,6 @@ function socketTitle(path: IngestPath): string {
 /** The period the recent column covers, counting up through the first minute
  *  and rounded to five seconds. */
 export function windowLabel(seconds: number): string {
-  if (seconds >= 55) return "Last min";
-  return `Last ${Math.max(5, Math.round(seconds / 5) * 5)}s`;
+  if (seconds >= 55) return "last min";
+  return `last ${Math.max(5, Math.round(seconds / 5) * 5)}s`;
 }

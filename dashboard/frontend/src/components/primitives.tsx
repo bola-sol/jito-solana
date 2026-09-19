@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
+import { readFolded, writeFolded } from "../layout";
 
 /** Gap kept between an open explanation and the edge of the window. */
 const EDGE_MARGIN = 12;
@@ -203,5 +204,51 @@ export function Meter({ fraction }: { fraction: number }): ReactElement {
     <div className="meter" role="progressbar" aria-valuenow={Math.round(clamped * 100)}>
       <div className="meter-fill" style={{ width: `${clamped * 100}%` }} />
     </div>
+  );
+}
+
+/** A section under the cards, summed up in a line and folded as the viewer
+ *  last left it. */
+export function Fold({
+  id,
+  title,
+  summary,
+  children,
+}: {
+  /** What the choice is remembered under. */
+  id: string;
+  title: string;
+  /** One line that says what the body would, for while it is folded. */
+  summary: ReactNode;
+  children: ReactNode;
+}): ReactElement {
+  const [open, setOpen] = useState(() => !readFolded().includes(id));
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    const rest = readFolded().filter((held) => held !== id);
+    writeFolded(next ? rest : [...rest, id]);
+  };
+
+  return (
+    <section className={`fold${open ? " is-open" : ""}`}>
+      <div className="fold-head" onClick={toggle}>
+        <h2 className="fold-title">{title}</h2>
+        <span className="fold-sum">{summary}</span>
+        <button
+          type="button"
+          className="fold-toggle"
+          aria-expanded={open}
+          onClick={(event) => {
+            // The row under it toggles too, and two toggles are none.
+            event.stopPropagation();
+            toggle();
+          }}
+        >
+          {open ? "fold" : "open"}
+        </button>
+      </div>
+      {open && <div className="fold-body">{children}</div>}
+    </section>
   );
 }

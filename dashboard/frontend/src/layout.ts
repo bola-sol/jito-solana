@@ -46,3 +46,24 @@ export function writeThreadsCollapsed(collapsed: boolean): void {
     // As above.
   }
 }
+
+/** Which of the folding sections under the cards the viewer has folded.
+ *  Every section starts open. */
+export const FOLDED_STORAGE_KEY = "agave-dashboard-folded";
+
+export function readFolded(): string[] {
+  try {
+    const held = window.localStorage.getItem(FOLDED_STORAGE_KEY);
+    return held ? held.split(",").filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeFolded(folded: string[]): void {
+  try {
+    window.localStorage.setItem(FOLDED_STORAGE_KEY, folded.join(","));
+  } catch {
+    // As above.
+  }
+}

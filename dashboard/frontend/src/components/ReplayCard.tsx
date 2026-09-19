@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { count, decimal, micros, percent } from "../format";
 import { cpuRows, parts, serialRows, verifyRows, type ReplayPart, type ReplayRow } from "../replay";
 import { useStore } from "../useStore";
-import { Card, Explain } from "./primitives";
+import { Explain, Fold } from "./primitives";
 
 /** What replay spends its time on over the last few hundred slots: its own
  *  serial thread, and worker time in cores. Absent where the point never
@@ -26,44 +26,50 @@ export function ReplayCard(): ReactElement | null {
 
   const inside = parts(replay);
 
+  const summary = (
+    <>
+      replay thread <b>{micros(serial)}</b> a slot
+      {ofSlot !== null && (
+        <>
+          , <b>{percent(ofSlot, 1)}</b> of slot time
+        </>
+      )}
+      , worst <b>{micros(replay.serial_peak)}</b> in the last {count(replay.slots)};{" "}
+      <b>{count(replay.transactions)}</b> transactions a slot
+    </>
+  );
+
   return (
-    <Card
-      title="Replay"
-      aside={`${count(replay.transactions)} tx/slot`}
-      className="replay-body"
-    >
+    <Fold id="replay" title="Replay" summary={summary}>
+      <div className="replay-body">
       <div className="replay-figures">
         <Figure
-          label="Replay thread"
+          label="replay's own thread, per slot"
           value={micros(serial)}
-          sub="per slot"
           explain="Time replay's own thread spent on the average slot, which is the serial limit."
         />
         <Figure
-          label="Of slot time"
-          value={ofSlot === null ? "—" : percent(ofSlot, 1)}
           // Not "of 400 ms". The figure divides by what the cluster is keeping,
           // and the two part company under load, which is when it gets read.
-          sub="of observed slot"
+          label="of the observed slot time"
+          value={ofSlot === null ? "—" : percent(ofSlot, 1)}
           explain="That time as a share of the observed slot time on this cluster."
         />
         <Figure
-          label="CPU per slot"
+          label={cores === null ? "CPU per slot, across threads" : `CPU per slot, ${decimal(cores, 2)} cores`}
           value={micros(cpu)}
-          sub={cores === null ? "across threads" : `${decimal(cores, 2)} cores`}
           explain="Thread time one slot costs across every worker, and the cores that holds busy."
         />
         <Figure
-          label="Worst slot"
+          label={`worst slot of the last ${count(replay.slots)}`}
           value={micros(replay.serial_peak)}
-          sub={`last ${count(replay.slots)} slots`}
           explain="The worst single slot in the window, by its own total."
         />
       </div>
 
       <Section
         title="Time spent on this slot"
-        total={`${micros(serial)} wall clock`}
+        total={`${micros(serial)} wall clock, three spans one after another`}
         rows={serialRows(replay)}
         explain="Replay's own thread, split into three spans that run one after another."
       />
@@ -93,30 +99,28 @@ export function ReplayCard(): ReactElement | null {
         <Part part={inside.deserialising} />. Of program loading,{" "}
         <Part part={inside.compiling} verb="is" />.
       </p>
-    </Card>
+      </div>
+    </Fold>
   );
 }
 
-/** One of the four figures across the head of the card, each with an
- *  explanation of how it was measured. */
+/** One of the four figures across the head of the section: the value, then
+ *  what it is, with an explanation of how it was measured. */
 function Figure({
   label,
   value,
-  sub,
   explain,
 }: {
   label: string;
   value: string;
-  sub: string;
   explain: string;
 }) {
   return (
     <div className="replay-figure">
+      <span className="replay-figure-value">{value}</span>
       <span className="replay-figure-label">
         <Explain text={explain}>{label}</Explain>
       </span>
-      <span className="replay-figure-value">{value}</span>
-      <span className="replay-figure-sub">{sub}</span>
     </div>
   );
 }
@@ -149,10 +153,11 @@ function Section({
         {rows.map((row, index) => (
           <i
             key={row.key}
+            className={`is-${index + 1}`}
             // Grown from a basis of nothing rather than given a width, so that
             // the gaps in a broken bar come out of the track before the shares
             // are shared out, instead of pushing the total past its width.
-            style={{ flexGrow: row.share, ...segment(index) }}
+            style={{ flexGrow: row.share }}
           />
         ))}
       </div>
@@ -160,7 +165,7 @@ function Section({
       <div className="replay-legend">
         {rows.map((row, index) => (
           <div key={row.key} className="replay-item">
-            <i className="replay-swatch" style={segment(index)} aria-hidden="true" />
+            <i className={`replay-swatch is-${index + 1}`} aria-hidden="true" />
             <Explain text={row.explain} className="replay-name">
               {row.label}
             </Explain>
@@ -171,15 +176,6 @@ function Section({
       </div>
     </div>
   );
-}
-
-/** How dark a segment is, by its place in the order: a ramp from the accent
- *  towards the panel, stopping where the legend swatches lose contrast. */
-const SEGMENT_MIX = [100, 82, 68, 57, 48, 40];
-
-function segment(index: number) {
-  const mix = SEGMENT_MIX[Math.min(index, SEGMENT_MIX.length - 1)];
-  return { background: `color-mix(in srgb, var(--accent) ${mix}%, var(--panel-raised))` };
 }
 
 /** One nested figure, named in the sentence under the card. */

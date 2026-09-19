@@ -2,23 +2,12 @@ import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { leaderSlotsLeft } from "../schedule";
-import { snapshotLine } from "../snapshot";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
-import type { Health } from "../types";
 import { useNarrow } from "../narrow";
 import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
-import { StartupPhases } from "./StartupPhases";
 import { TpsMatrix } from "./TpsMatrix";
-
-/** Amber for a backup identity: meant to be here, worth noticing. */
-const VOTE_TONE: Record<Health["vote"], "good" | "bad" | "warn" | "muted"> = {
-  voting: "good",
-  delinquent: "bad",
-  not_voting: "warn",
-  not_started: "muted",
-};
 
 export function EpochCard(): ReactElement {
   const store = useStore();
@@ -28,7 +17,7 @@ export function EpochCard(): ReactElement {
   // still unless it really moves.
   const remainingNanos = store.get("summary", "epoch_remaining_nanos");
 
-  if (!epoch) return <Card title="Epoch">{waiting}</Card>;
+  if (!epoch) return <Card title="This epoch">{waiting}</Card>;
 
   const completed = slot ?? epoch.start_slot;
   const elapsed = Math.max(0, completed - epoch.start_slot);
@@ -37,102 +26,18 @@ export function EpochCard(): ReactElement {
   const left = leaderSlotsLeft(epoch.my_leader_slots, completed);
 
   return (
-    <Card title="Epoch" className="epoch-body">
-      <Stat label="Current Epoch" value={count(epoch.epoch)} />
-      <Stat label="Time to Next Epoch" value={duration(remainingMs)} />
+    <Card title="This epoch" aside={count(epoch.epoch)} className="epoch-body">
+      <div className="stat-grid">
+        <Stat label="until the next epoch" value={duration(remainingMs)} />
+        <Stat
+          label={`of our leader slots left, ${count(epoch.my_leader_slots.length)} this epoch`}
+          value={count(left)}
+        />
+      </div>
       <Meter fraction={progress} />
       <div className="card-footnote">
-        slot {count(elapsed)} of {count(epoch.slots_in_epoch)} · {count(epoch.my_leader_slots.length)}{" "}
-        leader slots · {count(left)} left
+        slot {count(elapsed)} of {count(epoch.slots_in_epoch)}
       </div>
-    </Card>
-  );
-}
-
-export function StatusCard(): ReactElement {
-  const store = useStore();
-  const slot = store.get("summary", "completed_slot");
-  const blockHeight = store.get("summary", "block_height");
-  const nextLeader = store.get("summary", "next_leader_slot");
-  const health = store.get("summary", "health");
-  const behindCluster = store.get("summary", "behind_cluster");
-  const slotDurationNanos = store.get("summary", "estimated_slot_duration_nanos");
-  const startup = store.get("summary", "startup_progress");
-  const gossipStake = store.get("summary", "gossip_stake");
-  const skip = store.get("summary", "skip_rate");
-  const shreds = store.get("summary", "shreds");
-  const snapshots = store.get("summary", "snapshots");
-  const serverTimeNanos = store.get("summary", "server_time_nanos");
-
-  // The leader countdown means nothing until the validator is running, so show
-  // where it has got to in its boot sequence instead. The wait's own card
-  // carries the stake figure where the validator hands over its handles.
-  if (startup && !startup.running) {
-    return (
-      <Card title="Status" lit>
-        <StartupPhases startup={startup} withStake={!gossipStake} />
-      </Card>
-    );
-  }
-
-  const untilLeaderMs =
-    nextLeader !== null && nextLeader !== undefined && slot !== undefined && slotDurationNanos
-      ? Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6))
-      : undefined;
-  const snapshot = snapshots
-    ? snapshotLine(
-        snapshots,
-        serverTimeNanos === undefined ? undefined : serverTimeNanos / 1e6,
-        blockHeight,
-        slotDurationNanos === undefined ? undefined : slotDurationNanos / 1e6,
-      )
-    : null;
-
-  return (
-    <Card title="Status">
-      <div className="stat-grid">
-        <Stat label="Slot" value={count(slot)} />
-        <Stat label="Time until leader" value={duration(untilLeaderMs)} />
-        <Stat label="Block height" value={count(blockHeight)} />
-        <Stat
-          label="Vote Status"
-          value={health?.vote === "not_voting" ? "not voting" : (health?.vote ?? "—")}
-          // How far replay trails the cluster. Untoned: the status word above
-          // carries the colour.
-          sub={
-            behindCluster === null || behindCluster === undefined
-              ? undefined
-              : `${count(behindCluster)} behind cluster`
-          }
-          tone={health ? VOTE_TONE[health.vote] : "muted"}
-          explain="Whether this process is voting. A node running its backup identity reads not voting."
-        />
-        <Stat
-          label="Next leader slot"
-          value={nextLeader === null || nextLeader === undefined ? "—" : count(nextLeader)}
-        />
-        <Stat
-          label="Replay"
-          value={health?.replay ?? "—"}
-          tone={health?.replay === "running" ? "good" : "bad"}
-        />
-        <Stat label="Skip rate" value={percent(skip?.rate)} />
-        <Stat
-          label="Repaired shreds"
-          explain="Share of shreds repaired rather than received over turbine, last five minutes."
-          value={percent(shreds?.repair_rate ?? null, 2)}
-          sub={shreds ? `${count(shreds.repaired)} of ${count(shreds.received)}` : undefined}
-          tone={shreds && shreds.repair_rate > 0.05 ? "bad" : undefined}
-        />
-      </div>
-      {/* The bubble rather than a title: a title is redrawn on every change,
-          and the countdown inside changes every second. */}
-      {snapshot && (
-        <div className="card-footnote">
-          {snapshot.title ? <Explain text={snapshot.title}>snapshot</Explain> : "snapshot"}{" "}
-          {snapshot.detail}
-        </div>
-      )}
     </Card>
   );
 }
@@ -164,57 +69,44 @@ function StakeStrip({ delinquent, total }: { delinquent: number; total: number }
   );
 }
 
-export function ValidatorsCard(): ReactElement {
+/** The cluster this validator is one of: its stake, and how much of it is
+ *  keeping up. */
+export function ClusterCard(): ReactElement {
   const store = useStore();
   const counts = store.get("summary", "validator_counts");
-  if (!counts) return <Card title="Validators">{waiting}</Card>;
+  if (!counts) return <Card title="Cluster">{waiting}</Card>;
 
   const total = counts.non_delinquent_stake + counts.delinquent_stake;
-  const healthy = total === 0 ? 0 : counts.non_delinquent_stake / total;
+  const delinquent = total === 0 ? 0 : counts.delinquent_stake / total;
 
   return (
-    <Card title="Validators" className="validators-body">
+    <Card title="Cluster" className="validators-body">
       <div className="stat-grid">
-        <Stat label="Active Stake" value={solCompact(counts.non_delinquent_stake)} sub="SOL" />
+        <Stat label="active stake, SOL" value={solCompact(counts.non_delinquent_stake)} />
         <Stat
-          label="Delinquent Stake"
-          value={solCompact(counts.delinquent_stake)}
-          sub="SOL"
+          label={`delinquent, ${solCompact(counts.delinquent_stake)} SOL`}
+          value={percent(delinquent)}
           tone={counts.delinquent_stake > 0 ? "bad" : undefined}
           explain="Stake of validators whose last vote is more than 128 slots behind this node's own bank."
         />
         <Stat
-          label="Validators"
+          label={`validators voting, ${count(counts.delinquent)} delinquent`}
           value={
             <>
               {count(counts.total - counts.delinquent)}{" "}
-              <small className="stat-of">/ {count(counts.total)}</small>
+              <small className="stat-of">of {count(counts.total)}</small>
             </>
           }
-          sub={`${count(counts.delinquent)} delinquent`}
         />
         <Stat
-          label="RPC Nodes"
+          label="nodes advertising RPC"
           value={count(counts.rpc_nodes)}
-          sub="advertising RPC"
           explain="Peers advertising an RPC address in gossip on this shred version."
         />
       </div>
       <div className="stake-share">
-        <div className="stake-share-head">
-          <span>Stake active</span>
-          <b>{percent(healthy)}</b>
-        </div>
         <StakeStrip delinquent={counts.delinquent_stake} total={total} />
-        <div className="stake-share-key">
-          Each tick 2% of staked SOL
-          {counts.delinquent_stake > 0 && (
-            <>
-              {" · "}
-              <em>{percent(1 - healthy)} delinquent</em>
-            </>
-          )}
-        </div>
+        <div className="stake-share-key">each tick is 2% of staked SOL</div>
       </div>
     </Card>
   );
@@ -232,14 +124,14 @@ export function TransactionsCard(): ReactElement {
 
   const figures = (
     <div className="tps-rows">
-      {!alpenglow && <SeriesRow label="Vote" series="vote" value={decimal(tps?.vote)} />}
+      {!alpenglow && <SeriesRow label="vote" series="vote" value={decimal(tps?.vote)} />}
       <SeriesRow
-        label={alpenglow ? "Failed" : "Non-vote failed"}
+        label={alpenglow ? "failed" : "non-vote failed"}
         series="failed"
         value={decimal(tps?.non_vote_failed)}
       />
       <SeriesRow
-        label={alpenglow ? "Succeeded" : "Non-vote ok"}
+        label={alpenglow ? "succeeded" : "non-vote succeeded"}
         series="success"
         value={decimal(tps?.non_vote_success)}
       />
@@ -258,6 +150,7 @@ export function TransactionsCard(): ReactElement {
     <Card title="Transactions" aside="last 60s" className="transactions-body">
       <div className="tps-readout">
         <div className="tps-total">
+          <div className="tps-total-value">{decimal(tps?.total)}</div>
           <div className="tps-total-label">
             <Explain
               text={
@@ -266,12 +159,8 @@ export function TransactionsCard(): ReactElement {
                   : "Transactions confirmed per second, averaged over the newest samples, with votes as the base of each column."
               }
             >
-              Total TPS
+              per second, {READOUT_SECONDS}s mean
             </Explain>
-          </div>
-          <div className="tps-total-value">
-            {decimal(tps?.total)}
-            <span className="tps-total-unit">{READOUT_SECONDS}s mean</span>
           </div>
         </div>
         {!narrow && figures}

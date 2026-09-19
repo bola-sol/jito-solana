@@ -1,6 +1,5 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type ReactElement } from "react";
+import type { ReactNode, ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
-import { useNarrow } from "../narrow";
 import { bootTimes, type BootTimes } from "../startup";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
@@ -8,20 +7,7 @@ import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
-/** The figures both layouts draw, already formatted. */
-interface HeaderFigures {
-  stakeAmount: string;
-  share: string;
-  commission: string;
-  identityBalance: string;
-  voteBalance: string;
-  uptime: string;
-  shred: string;
-}
-
-/** Who this validator is, what it runs, and what it is worth. Two layouts:
- *  everything on a screen, five figures and a panel behind the name on a
- *  phone. See `useNarrow`. */
+/** Who this validator is, and what it is worth in the line under it. */
 export function Header(): ReactElement {
   const store = useStore();
   const identity = store.get("summary", "identity_key");
@@ -42,211 +28,93 @@ export function Header(): ReactElement {
   const client = store.get("summary", "client");
   const shredVersion = store.get("summary", "shred_version");
   const connection = store.getConnection();
-  const narrow = useNarrow();
 
   const name = store.get("summary", "identity_name") ?? "Private";
   const icon = store.get("summary", "identity_icon") ?? null;
   const build = buildLabel(client, version);
 
-  const figures: HeaderFigures = {
-    stakeAmount: `${solCompact(stake?.activated_stake)} SOL`,
-    share: percent(stake?.share, 4),
-    commission: commission === null || commission === undefined ? "—" : `${commission} %`,
-    identityBalance: `${sol(identityBalance)} SOL`,
-    voteBalance: `${sol(voteBalance)} SOL`,
-    uptime: duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6),
-    shred: shredVersion === undefined ? "—" : String(shredVersion),
-  };
-
-  const cluster_ = <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>;
-  const buildLabel_ = build && (
-    <Explain
-      className="version"
-      text="Client and version. A fork carries the version of the release it follows."
-    >
-      {build}
-    </Explain>
-  );
-
-  if (narrow) {
-    return (
-      <header className="header is-narrow">
-        <div className="header-brand">
-          {cluster_}
-          {buildLabel_}
-        </div>
-        <Connection state={connection} showLabel={connection !== "open"} />
-        <ThemeToggle />
-        <Identity
-          name={name}
-          icon={icon}
-          stake={figures.stakeAmount}
-          identity={identity}
-          voteKey={voteKey}
-          figures={figures}
-          boot={boot}
-        />
-      </header>
-    );
-  }
+  const up = duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6);
+  const upLabel =
+    boot && boot.catchUpMillis !== null
+      ? `up, caught up after ${duration(boot.catchUpMillis)}`
+      : "up";
 
   return (
     <header className="header">
-      <div className="header-brand">
-        {cluster_}
-        {buildLabel_}
+      <div className="who">
+        <span className="who-name">
+          <Logo url={icon} size={22} />
+          {name}
+        </span>
+        {identity ? (
+          <Copyable text={identity} className="who-key" />
+        ) : (
+          <span className="who-key">—</span>
+        )}
+        <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
+        {build && (
+          <Explain text="Client and version. A fork carries the version of the release it follows.">
+            {build}
+          </Explain>
+        )}
         {shredVersion !== undefined && (
-          <Explain className="version" text="Shred version. Nodes only gossip with matching versions.">
+          <Explain text="Shred version. Nodes only gossip with matching versions.">
             shred {shredVersion}
           </Explain>
         )}
+        <span className="who-right">
+          <Connection state={connection} />
+          <ThemeToggle />
+        </span>
       </div>
 
-      <div className="header-identity">
-        <div className="header-name">
-          <Logo url={icon} size={20} />
-          {name}
-        </div>
-        {identity ? (
-          <Copyable text={identity} className="header-key" />
-        ) : (
-          <div className="header-key">—</div>
-        )}
-      </div>
-
-      <div className="header-stats">
-        {/* The vote account has nowhere of its own to live and does not earn a
-            column of its own, so it hangs off the figure it belongs to: the
-            stake is the stake delegated to that account. */}
-        <HeaderStat
-          label="Stake Amount"
-          value={figures.stakeAmount}
+      <div className="figures">
+        {/* The vote account hangs off the stake delegated to it. */}
+        <Figure
+          value={`${solCompact(stake?.activated_stake)} SOL`}
+          label={`staked, ${percent(stake?.share, 4)} of the cluster`}
           detail={
             voteKey ? (
               <>
-                <span className="header-panel-label">Vote account</span>
+                <span className="figure-panel-label">Vote account</span>
                 <Copyable text={voteKey} />
               </>
             ) : undefined
           }
         />
-        <HeaderStat label="Stake %" value={figures.share} />
-        <HeaderStat label="Commission" value={figures.commission} />
-        <HeaderStat label="Identity Balance" value={figures.identityBalance} />
-        <HeaderStat label="Vote Balance" value={figures.voteBalance} />
-        <HeaderStat label="Uptime" value={figures.uptime} detail={boot && <Boot boot={boot} />} />
+        <Figure
+          value={commission === null || commission === undefined ? "—" : `${commission}%`}
+          label="commission"
+        />
+        <Figure value={`${sol(identityBalance)} SOL`} label="identity" />
+        <Figure value={`${sol(voteBalance)} SOL`} label="vote" />
+        <Figure value={up} label={upLabel} detail={boot && <Boot boot={boot} />} />
       </div>
-
-      <Connection state={connection} showLabel />
-      <ThemeToggle />
     </header>
   );
 }
 
-/** The name, the stake, and everything else behind a press. Not an
- *  `Explain`: there is no hover on a phone and the key must be copyable. */
-function Identity({
-  name,
-  icon,
-  stake,
-  identity,
-  voteKey,
-  figures,
-  boot,
-}: {
-  name: string;
-  icon: string | null;
-  stake: string;
-  identity: string | undefined;
-  voteKey: string | undefined;
-  figures: HeaderFigures;
-  boot: BootTimes | null;
-}) {
-  const panelId = useId();
-  const [open, setOpen] = useState(false);
-  const wrapper = useRef<HTMLDivElement>(null);
-
-  // Dismissed by pressing anywhere else or by Escape, which is what a panel
-  // opened over the page owes whoever opened it. Copying the key closes it too,
-  // since that press lands outside nothing.
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => {
-      if (event.target instanceof Node && !wrapper.current?.contains(event.target)) setOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-
-  return (
-    <div className="header-identity" ref={wrapper}>
-      <button
-        type="button"
-        className="header-name is-trigger"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((was) => !was)}
-      >
-        <Logo url={icon} size={20} />
-        <span>{name}</span>
-      </button>
-      <span className="header-stake">{stake}</span>
-
-      {open && (
-        <div className="header-panel" id={panelId}>
-          <div className="header-panel-key">
-            <span className="header-panel-label">Identity</span>
-            {identity ? <Copyable text={identity} /> : "—"}
-          </div>
-          {voteKey && (
-            <div className="header-panel-key">
-              <span className="header-panel-label">Vote account</span>
-              <Copyable text={voteKey} />
-            </div>
-          )}
-          <dl className="header-panel-rows">
-            <PanelRow label="Stake share" value={figures.share} />
-            <PanelRow label="Commission" value={figures.commission} />
-            <PanelRow label="Identity balance" value={figures.identityBalance} />
-            <PanelRow label="Vote balance" value={figures.voteBalance} />
-            <PanelRow label="Uptime" value={figures.uptime} detail={boot && <Boot boot={boot} />} />
-            <PanelRow label="Shred version" value={figures.shred} />
-          </dl>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PanelRow({
-  label,
+/** One figure and what it is; the label opens the detail where there is one. */
+function Figure({
   value,
+  label,
   detail,
 }: {
-  label: string;
   value: string;
+  label: string;
   detail?: ReactNode;
 }) {
   return (
-    <>
-      <dt>{label}</dt>
-      <dd>
-        {detail ? (
-          <Explain interactive className="header-stat-detail" text={detail}>
-            {value}
-          </Explain>
-        ) : (
-          value
-        )}
-      </dd>
-    </>
+    <span className="figure">
+      <b>{value}</b>
+      {detail ? (
+        <Explain interactive className="figure-detail" text={detail}>
+          {label}
+        </Explain>
+      ) : (
+        label
+      )}
+    </span>
   );
 }
 
@@ -285,39 +153,12 @@ function Boot({ boot }: { boot: BootTimes }) {
   );
 }
 
-/** The websocket's state; the word is dropped while it is open. */
-function Connection({ state, showLabel }: { state: string; showLabel: boolean }) {
+/** The websocket's state: a dot, and the word "live" while it is open. */
+function Connection({ state }: { state: string }) {
   return (
     <div className={`connection connection-${state}`} title={`websocket ${state}`}>
       <span className="connection-dot" />
-      {showLabel && state}
-    </div>
-  );
-}
-
-/** One figure, with an optional detail behind it. The affordance appears
- *  only where there is a detail. */
-function HeaderStat({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: ReactNode;
-}) {
-  return (
-    <div className="header-stat">
-      <div className="header-stat-label">{label}</div>
-      <div className="header-stat-value">
-        {detail === undefined ? (
-          value
-        ) : (
-          <Explain interactive className="header-stat-detail" text={detail}>
-            {value}
-          </Explain>
-        )}
-      </div>
+      {state === "open" ? "live" : state}
     </div>
   );
 }

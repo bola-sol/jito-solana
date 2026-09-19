@@ -1,11 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./layout";
-import {
-  EpochCard,
-  StatusCard,
-  TransactionsCard,
-  ValidatorsCard,
-} from "./components/cards";
+import { EpochCard, ClusterCard, TransactionsCard } from "./components/cards";
 import { Header } from "./components/Header";
 import { CachesCard } from "./components/CachesCard";
 import { HostCard } from "./components/HostCard";
@@ -15,6 +10,7 @@ import { ReplayCard } from "./components/ReplayCard";
 import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
 import { Sidebar } from "./components/Sidebar";
+import { Verdict } from "./components/Verdict";
 import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
 import { GossipStakeCard } from "./components/GossipStakeCard";
@@ -48,9 +44,9 @@ export function App(): ReactElement {
   const classes = ["app"];
   if (rail && collapsed) classes.push("is-collapsed");
   if (!rail) classes.push("is-full");
-  // While the validator boots every card but the one showing the boot sequence
-  // is blurred: the rest have nothing to say yet, and the eye goes to the one
-  // that does. The same test the status card makes to show the phases.
+  // While the validator boots everything but the boot sequence is blurred:
+  // the rest has nothing to say yet, and the eye goes to the one thing that
+  // does. The same test the verdict makes to show the phases.
   const startup = store.get("summary", "startup_progress");
   if (startup && !startup.running) classes.push("is-booting");
 
@@ -82,15 +78,16 @@ export function App(): ReactElement {
   );
 }
 
-/** What this validator is doing, which is what the dashboard opens on. */
+/** What this validator is doing, which is what the dashboard opens on: the
+ *  sentence, the slots, the three cards, then the sections that fold. */
 function Overview() {
   return (
     <>
+      <Verdict />
       <SlotStrip />
-      <div className="grid">
+      <div className="grid is-three">
         <EpochCard />
-        <StatusCard />
-        <ValidatorsCard />
+        <ClusterCard />
         <VersionsCard />
       </div>
       <GossipStakeCard />
@@ -101,15 +98,15 @@ function Overview() {
         <NetworkCard />
         <IngestCard />
       </div>
-      {/* The machine the three cards above are running on. Last of the host
-          group rather than first: an operator comes to this page for the
-          validator, and reaches for the box only once something here says the
-          validator is struggling. */}
+      {/* The machine the cards above are running on. Last of the host group
+          rather than first: an operator comes to this page for the validator,
+          and reaches for the box only once something here says the validator
+          is struggling. */}
       <HostCard />
       {/* What replay does, then the two things it spends that time waiting
-          on. Loading programs and loading accounts are rows on the first card
-          and sections of the one under it, so they read downwards: how long,
-          then how well each of the two is going. */}
+          on. Loading programs and loading accounts are rows on the first
+          section and parts of the one under it, so they read downwards: how
+          long, then how well each of the two is going. */}
       <ReplayCard />
       <CachesCard />
       {/* Picks the same traffic up where the socket card leaves it. That one

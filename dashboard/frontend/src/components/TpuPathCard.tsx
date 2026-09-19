@@ -26,9 +26,9 @@ import {
   type PathLoss,
   type PathSection,
 } from "../tpuPath";
-import type { EpochSpan, QuicPaths, QuicPort } from "../types";
+import type { EpochSpan, ExecutedStage, QuicPaths, QuicPort, VerifyStage } from "../types";
 import { useStore } from "../useStore";
-import { Card, Explain } from "./primitives";
+import { Explain, Fold } from "./primitives";
 
 /**
  * Everything that happens to a transaction before the scheduler sees it.
@@ -69,7 +69,9 @@ export function TpuPathCard(): ReactElement | null {
     />
   );
 
-  if (paths.tpu_offhost) return <Elsewhere paths={paths} stages={stages} ports={ports} />;
+  if (paths.tpu_offhost) {
+    return <Elsewhere paths={paths} stages={stages} ports={ports} verify={verify} executed={executed} />;
+  }
 
   const tpu = portNamed(paths.ports, "tpu");
   // No advertised TPU address at all, which is not the same as one answered
@@ -84,12 +86,22 @@ export function TpuPathCard(): ReactElement | null {
     listenerSection(tpu),
   ];
 
+  const summary = (
+    <>
+      <b>{admitted === null ? "—" : percent(admitted, 1)}</b> of offered connections
+      admitted
+      {staked !== null && (
+        <>
+          , <b>{percent(staked, 0)}</b> staked
+        </>
+      )}
+      <Stages verify={verify} executed={executed} />
+    </>
+  );
+
   return (
-    <Card
-      title="TPU Path"
-      aside={`${count(tpu.open)} open · ${count(tpu.active_streams)} streams`}
-      className="path-body"
-    >
+    <Fold id="tpu" title="TPU path" summary={summary}>
+      <div className="path-body">
       <div className="path-headline">
         <div className="path-figure">
           <span className="path-figure-value is-through">
@@ -97,7 +109,7 @@ export function TpuPathCard(): ReactElement | null {
           </span>
           <span className="path-figure-label">
             <Explain text="Share of connections offered to the TPU port that this validator admitted.">
-              Admitted of offered
+              of offered connections admitted
             </Explain>
           </span>
         </div>
@@ -107,8 +119,14 @@ export function TpuPathCard(): ReactElement | null {
           </span>
           <span className="path-figure-label">
             <Explain text="Share of admitted connections from staked peers.">
-              Staked
+              of those from staked peers
             </Explain>
+          </span>
+        </div>
+        <div className="path-figure">
+          <span className="path-figure-value">{count(tpu.open)}</span>
+          <span className="path-figure-label">
+            open, {count(tpu.active_streams)} streams
           </span>
         </div>
       </div>
@@ -128,7 +146,43 @@ export function TpuPathCard(): ReactElement | null {
         counts a transaction across all of them. What the scheduler then did
         with a leader slot's traffic is on that slot's own page.
       </div>
-    </Card>
+      </div>
+    </Fold>
+  );
+}
+
+/** The two epoch stages in the summary line: what verify was given and what
+ *  the workers ran, where either has reported. */
+function Stages({
+  verify,
+  executed,
+}: {
+  verify: VerifyStage | null | undefined;
+  executed: ExecutedStage | null | undefined;
+}) {
+  if (!verify && !executed) return null;
+  return (
+    <>
+      ; this epoch
+      {verify && (
+        <>
+          {" "}
+          verify <b>{count(verify.received)}</b>
+        </>
+      )}
+      {verify && executed && ","}
+      {executed && (
+        <>
+          {" "}
+          executed <b>{count(executed.succeeded)}</b>
+          {executed.retryable > 0 && (
+            <>
+              , <b>{count(executed.retryable)}</b> sent back to retry
+            </>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
@@ -173,10 +227,14 @@ function Elsewhere({
   paths,
   stages,
   ports,
+  verify,
+  executed,
 }: {
   paths: QuicPaths;
   stages: ReactNode;
   ports: ReactNode;
+  verify: VerifyStage | null | undefined;
+  executed: ExecutedStage | null | undefined;
 }) {
   // Summed across the ports rather than taken from the TPU port, which is not
   // the subject here. What is live on this host is mostly vote connections.
@@ -188,12 +246,16 @@ function Elsewhere({
     { open: 0, streams: 0 },
   );
 
+  const summary = (
+    <>
+      answered off this host, <b>{count(live.open)}</b> open here, {count(live.streams)} streams
+      <Stages verify={verify} executed={executed} />
+    </>
+  );
+
   return (
-    <Card
-      title="TPU Path"
-      aside={`${count(live.open)} open · ${count(live.streams)} streams`}
-      className="path-body"
-    >
+    <Fold id="tpu" title="TPU path" summary={summary}>
+      <div className="path-body">
       <div className="path-notice">
         The TPU address this validator advertises in gossip is{" "}
         <b>not a socket on this host</b>, so the cluster's connections are
@@ -214,7 +276,8 @@ function Elsewhere({
         scheduler then did with a leader slot's traffic is on that slot's own
         page.
       </div>
-    </Card>
+      </div>
+    </Fold>
   );
 }
 
@@ -273,7 +336,7 @@ export function Section({ section }: { section: PathSection }): ReactElement {
             line for anyone not reading the rest of it. The word is the
             section's own: admitted, carried, verified. */}
         <span className="path-section-flow">
-          {count(section.total)} in · {count(section.through.count)}{" "}
+          {count(section.total)} in, {count(section.through.count)}{" "}
           {section.through.label}
         </span>
       </div>
@@ -376,7 +439,7 @@ function OtherPort({
             text={`Connections offered to the ${port.name} port over the last five minutes, and the share admitted.`}
           >
             {count(port.offered)} offered
-            {admitted === null ? "" : ` · ${percent(admitted, 1)} admitted`}
+            {admitted === null ? "" : `, ${percent(admitted, 1)} admitted`}
           </Explain>
         </span>
         <button

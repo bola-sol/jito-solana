@@ -102,7 +102,7 @@ export function SlotDetailsPage(): ReactElement {
           return (
             <Fragment key={block.slot}>
               {divided && at !== null && at !== numbered[index - 1]?.epoch && (
-                <div className="produced-epoch">epoch {count(at)}</div>
+                <div className="produced-epoch">Epoch {count(at)}</div>
               )}
               {turn && turn !== turnAt(index - 1) && (
                 <TurnDivider
@@ -160,14 +160,14 @@ function TurnDivider({
     <div className={`turn${open ? " is-open" : ""}`}>
       {/* The whole row opens it, as a block row does. */}
       <button type="button" className="turn-head" onClick={onToggle} aria-expanded={open}>
-        <span className="turn-name">turn</span>
+        <span className="turn-name">Turn</span>
         <span className="turn-span">
-          {turnRangeLabel(turn)}
-          {turn.produced < slots && ` · ${count(turn.produced)} of ${count(slots)} produced`}
-          {" · "}
+          <span className="turn-range">{turnRangeLabel(turn)}</span>
+          {turn.produced < slots && `, ${count(turn.produced)} of ${count(slots)} produced`}
+          {", "}
           {turnSpanLabel(turn)}
         </span>
-        <span className="turn-more">{open ? "tpu path ▾" : "tpu path"}</span>
+        <span className="turn-more">{open ? "TPU path ▾" : "TPU path"}</span>
       </button>
       {open && (
         <div className="turn-drawer">
@@ -242,7 +242,7 @@ function SummaryRows({
             className="produced-avg-label"
             text={`Mean of each column over the ${held} blocks held. A block missing a figure is left out of that column.`}
           >
-            mean
+            Mean
           </Explain>
           {sort && (
             <button type="button" className="produced-clear" onClick={onClear} aria-label="Clear sort">
@@ -264,12 +264,12 @@ function SummaryRows({
         </SortButton>
       </div>
       <FiguresRow
-        label="median"
+        label="Median"
         explain={`The middle block of each column over the ${held} held.`}
         figures={summary.median}
       />
       <FiguresRow
-        label="worst 5%"
+        label="Worst 5%"
         explain={`The fifth percentile of transactions, fill and fees, and the ninety fifth of duration, over the ${held} blocks held.`}
         figures={summary.worst}
       />
@@ -448,32 +448,32 @@ function BlockCompute({
           </div>
           <div className="sx-cu-value">{count(block.block_cost)}</div>
           <div className="sx-cu-of">
-            of {count(block.block_cost_limit)} limit · {count(unused)} unused
+            of {count(block.block_cost_limit)}, {count(unused)} unused
           </div>
         </div>
         <div className="sx-stats">
           <Stat
-            label={alpenglow ? "Transactions" : "Non-vote"}
+            label={alpenglow ? "transactions" : "non-vote"}
             value={count(block.non_vote_transactions)}
           />
-          {!alpenglow && <Stat label="Votes" value={count(votes)} />}
+          {!alpenglow && <Stat label="votes" value={count(votes)} />}
           {/* Toned only when it happened. A failed transaction is still in the
               block and still paid its fee, so this is worth noticing and is not
               in itself a fault. */}
           <Stat
-            label="Failed"
+            label="failed"
             value={count(block.failed_transactions)}
             warn={block.failed_transactions > 0}
           />
-          <Stat label="Entries" value={count(block.entries)} />
+          <Stat label="entries" value={count(block.entries)} />
           {/* Base is the remainder: the bank reports the two together and the
               priority half separately, never the base fee on its own. */}
           <Stat
-            label="Base fees"
-            value={`${sol(block.total_fees - block.priority_fees, 6)} SOL`}
+            label="base fees, SOL"
+            value={sol(block.total_fees - block.priority_fees, 6)}
             className="sx-fee"
           />
-          <Stat label="Priority fees" value={`${sol(block.priority_fees, 6)} SOL`} className="sx-fee" />
+          <Stat label="priority fees, SOL" value={sol(block.priority_fees, 6)} className="sx-fee" />
           {/* Ours, which is the question an operator is asking of their own
               block. The wider figure it came from is on the hover rather than
               in a column of its own: it is the same number twice, and only one
@@ -482,9 +482,9 @@ function BlockCompute({
               turn never measured is absent. */}
           {rates && block.tips != null && (
             <Stat
-              label="Our tips"
+              label="our tips, SOL"
               className="sx-fee"
-              value={`${sol(ourShare(block.tips, rates) ?? 0, 6)} SOL`}
+              value={sol(ourShare(block.tips, rates) ?? 0, 6)}
               title={`${sol(jitoShare(block.tips, rates), 6)} SOL reached the distribution account, of ${sol(block.tips, 6)} paid. Derived from the configured rates, not measured.`}
             />
           )}
@@ -492,7 +492,7 @@ function BlockCompute({
               stage reported the slot: a stock validator, or one under BAM. */}
           {block.bundles && (
             <Stat
-              label="Bundles"
+              label="bundles"
               value={bundlesValue(block.bundles)}
               title={`${count(block.bundles.sanitized)} bundles sanitised, ${count(block.bundles.executed)} executed and in the block.`}
             />
@@ -501,7 +501,7 @@ function BlockCompute({
               moment on a fresh block. */}
           {block.versions && (
             <Stat
-              label="Legacy · v0 · v1"
+              label="legacy, v0, v1"
               className="sx-wide"
               value={versionsValue(block.versions)}
               title={versionsTitle(block.versions)}
@@ -528,15 +528,15 @@ function CapacityBar({ cap }: { cap: Capacity }) {
       <div className="sx-legend">
         <span className="sx-key">
           <i className="sx-sw is-top" aria-hidden="true" />
-          costliest account {percent(cap.top, 1)}
+          costliest account <b>{percent(cap.top, 1)}</b>
         </span>
         <span className="sx-key">
           <i className="sx-sw is-rest" aria-hidden="true" />
-          everything else {percent(cap.rest, 1)}
+          everything else <b>{percent(cap.rest, 1)}</b>
         </span>
         <span className="sx-key">
           <i className="sx-sw is-free" aria-hidden="true" />
-          unused {percent(cap.free, 1)}
+          unused <b>{percent(cap.free, 1)}</b>
         </span>
       </div>
     </div>
@@ -581,7 +581,7 @@ function BlockAccount({
           {/* The account ceiling moves with feature activation, so it is taken
               from the bank rather than held here. Absent on a block captured
               before it was read, and the clause goes with it. */}
-          {ofLimit === null ? "" : `${percent(ofLimit, 0)} of account limit · `}
+          {ofLimit === null ? "" : `${percent(ofLimit, 0)} of account limit, `}
           {ofBlock === null ? "—" : `${percent(ofBlock, 0)} of block`}
         </span>
       </div>
@@ -623,7 +623,7 @@ function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
           </Explain>
           {bam && (
             <>
-              {" · "}
+              {", "}
               <Explain text="BAM built this block, so the first figure is counted in batches and the rest in transactions.">
                 BAM
               </Explain>
@@ -648,7 +648,7 @@ function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
         </div>
         <span className="sx-strip-right">
           <span className={view.lost > 0 ? "tone-warn" : ""}>
-            {count(dropped)} dropped / {count(held)} held back
+            {count(dropped)} dropped, {count(held)} held back
           </span>
           <button
             type="button"
@@ -715,7 +715,7 @@ function Breakdown({ view }: { view: SchedulerView }) {
             {group.aside.map((row) => (
               <div className="sx-aside" key={row.key}>
                 <Explain text={row.explain}>
-                  {row.label} · {count(row.count)}
+                  {row.label}, {count(row.count)}
                 </Explain>
               </div>
             ))}
@@ -774,15 +774,15 @@ function ExecutionTime({ execution }: { execution: Execution }) {
         </span>
         <span className="sx-strip-right">
           <span>
-            {count(execution.workers)} workers · {count(execution.window_millis)} ms slot
+            {count(execution.workers)} workers, {count(execution.window_millis)} ms slot
           </span>
         </span>
       </div>
       <div className="sx-cu">
         <div className="sx-cu-value">{micros(view.total)}</div>
         <div className="sx-cu-of">
-          thread time · {micros(view.nonVote)} non-vote
-          {view.votes !== null && ` + ${micros(view.votes)} votes`}
+          thread time, {micros(view.nonVote)} non-vote
+          {view.votes !== null && ` and ${micros(view.votes)} votes`}
         </div>
       </div>
       <div className="sx-cap">
@@ -799,18 +799,18 @@ function ExecutionTime({ execution }: { execution: Execution }) {
           {view.segments.map((segment) => (
             <span className="sx-key" key={segment.key}>
               <i className={`sx-sw is-${segment.key}`} />
-              {segment.label} {micros(segment.micros)}
+              {segment.label} <b>{micros(segment.micros)}</b>
             </span>
           ))}
         </div>
       </div>
       <div className="sx-keep">
         <Stat
-          label="Thread time / slot"
+          label="thread time over the slot"
           value={view.perSlot === null ? "—" : `${view.perSlot.toFixed(2)}×`}
         />
-        <Stat label="Per worker" value={micros(view.perWorker)} />
-        <Stat label="Longest batch" value={micros(execution.longest_batch)} />
+        <Stat label="per worker" value={micros(view.perWorker)} />
+        <Stat label="longest batch" value={micros(execution.longest_batch)} />
       </div>
     </div>
   );
@@ -820,10 +820,10 @@ function ExecutionTime({ execution }: { execution: Execution }) {
 function BlockFigures({ cost }: { cost: SlotCost }) {
   return (
     <div className="sx-keep">
-      <Stat label="Accounts written" value={count(cost.accounts)} />
-      <Stat label="Contended" value={count(cost.contended)} />
-      <Stat label="New account data" value={bytes(cost.new_account_data)} />
-      <Stat label="In flight" value={count(cost.in_flight)} />
+      <Stat label="accounts written" value={count(cost.accounts)} />
+      <Stat label="contended" value={count(cost.contended)} />
+      <Stat label="new account data" value={bytes(cost.new_account_data)} />
+      <Stat label="in flight" value={count(cost.in_flight)} />
     </div>
   );
 }

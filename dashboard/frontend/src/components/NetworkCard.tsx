@@ -51,12 +51,12 @@ export function NetworkCard(): ReactElement | null {
 
   return (
     <Card
-      title="Host Network"
+      title="Host network"
       aside={`last ${NETWORK_WINDOW_SECONDS}s`}
       className="network-body"
     >
       <Row
-        label="Ingress"
+        label="In"
         kind="ingress"
         read={direction(received) ?? steady(rates.received_per_second)}
         samples={visible}
@@ -67,7 +67,7 @@ export function NetworkCard(): ReactElement | null {
         explain={scope}
       />
       <Row
-        label="Egress"
+        label="Out"
         kind="egress"
         read={egress}
         samples={visible}

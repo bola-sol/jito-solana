@@ -10,7 +10,7 @@ import {
 import { bytes, count, percent } from "../format";
 import type { AccountsCache, ProgramCache } from "../types";
 import { useStore } from "../useStore";
-import { Card, Explain, Meter, Stat } from "./primitives";
+import { Explain, Fold, Meter, Stat } from "./primitives";
 
 /** The two caches replay waits on. Each section folds to a heading that
  *  states its health; both start folded, and the choice is remembered. */
@@ -28,8 +28,26 @@ export function CachesCard(): ReactElement | null {
   const fold = (key: string) =>
     setOpen((was) => (was.includes(key) ? was.filter((k) => k !== key) : [...was, key]));
 
+  const rate = (value: number | null) => (value === null ? "—" : percent(value, 2));
+  const summary = (
+    <>
+      {programs && (
+        <>
+          program cache <b>{rate(programs.hit_rate)}</b>
+        </>
+      )}
+      {programs && accounts && ", "}
+      {accounts && (
+        <>
+          accounts <b>{rate(servedFromMemory(accounts).rate)}</b> from memory
+        </>
+      )}
+      , over the last minute
+    </>
+  );
+
   return (
-    <Card title="Caches and storage" aside="one-minute counters · reset every bank">
+    <Fold id="caches" title="Caches and storage" summary={summary}>
       <div className="caches">
         {programs && (
           <Group
@@ -56,7 +74,7 @@ export function CachesCard(): ReactElement | null {
           </Group>
         )}
       </div>
-    </Card>
+    </Fold>
   );
 }
 
@@ -133,7 +151,7 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
     `${count(cache.insertions)} new`,
     `${count(cache.reloads)} reloaded`,
     ...(cache.lost_insertions > 0 ? [`${count(cache.lost_insertions)} lost`] : []),
-  ].join(" · ");
+  ].join(", ");
 
   return (
     <>
@@ -142,7 +160,7 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
           label="Lookups"
           explain="Program cache lookups in the window, hits and misses together."
           value={count(cache.looked_up)}
-          sub={`${count(cache.hits)} hits · ${count(cache.misses)} misses`}
+          sub={`${count(cache.hits)} hits, ${count(cache.misses)} misses`}
         />
         <Stat
           label="Compiled"
@@ -160,7 +178,7 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
           label="Pruned"
           explain="Entries dropped with an abandoned fork, or not recompiled for the incoming epoch."
           value={count(cache.prunes_orphan + cache.prunes_environment)}
-          sub={`${count(cache.prunes_orphan)} orphaned · ${count(cache.prunes_environment)} epoch`}
+          sub={`${count(cache.prunes_orphan)} orphaned, ${count(cache.prunes_environment)} epoch`}
         />
       </div>
 
@@ -174,7 +192,7 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
           </Explain>
           <span className="cache-storage-value">
             {cache.peak_entries === null ? "—" : count(cache.peak_entries)}
-            <span className="cache-storage-limit"> / {count(cache.entry_limit)}</span>
+            <span className="cache-storage-limit"> of {count(cache.entry_limit)}</span>
           </span>
         </div>
         <Meter fraction={filled ?? 0} />
@@ -212,7 +230,7 @@ function AccountsBody({ accounts }: { accounts: AccountsCache }) {
           label="Read cache"
           explain="Accounts kept in memory after being read, with the cache's current size beneath."
           value={count(accounts.from_read_cache)}
-          sub={`${bytes(accounts.cache_bytes)} · ${count(accounts.cache_entries)} accounts · ${count(accounts.evictions)} evicted`}
+          sub={`${bytes(accounts.cache_bytes)}, ${count(accounts.cache_entries)} accounts, ${count(accounts.evictions)} evicted`}
         />
         <Stat
           label="Storage"
@@ -224,7 +242,7 @@ function AccountsBody({ accounts }: { accounts: AccountsCache }) {
           label="Written to storage"
           explain="Accounts flushed from the cache to storage files over the window."
           value={`${bytes(Math.round(perSecond(accounts.stored_bytes)))}/s`}
-          sub={`${bytes(accounts.stored_bytes)} · ${count(accounts.stored_accounts)} accounts · ${count(Math.round(perSecond(accounts.stored_accounts)))}/s`}
+          sub={`${bytes(accounts.stored_bytes)}, ${count(accounts.stored_accounts)} accounts, ${count(Math.round(perSecond(accounts.stored_accounts)))}/s`}
         />
       </div>
 
@@ -233,11 +251,11 @@ function AccountsBody({ accounts }: { accounts: AccountsCache }) {
           <div className="cache-storage">
             <div className="cache-storage-head">
               <Explain text="Space the storage files take, and how much of it live accounts still reference.">
-                <span className="cache-storage-label">On disk · live of allocated</span>
+                <span className="cache-storage-label">On disk, live of allocated</span>
               </Explain>
               <span className="cache-storage-value">
                 {bytes(disk.used)}
-                <span className="cache-storage-limit"> / {bytes(disk.allocated)}</span>
+                <span className="cache-storage-limit"> of {bytes(disk.allocated)}</span>
               </span>
             </div>
             <Meter fraction={live ?? 0} />

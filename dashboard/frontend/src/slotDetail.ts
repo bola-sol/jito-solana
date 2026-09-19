@@ -243,7 +243,7 @@ export function versionsValue(versions: TxVersions): string {
   if (total === 0) return "—";
   return [versions.legacy, versions.v0, versions.v1]
     .map((n) => percent(n / total, 0))
-    .join(" · ");
+    .join(", ");
 }
 
 /** The counts behind the shares, for the hover. */

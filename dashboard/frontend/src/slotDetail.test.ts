@@ -307,8 +307,8 @@ describe("executionView", () => {
 
 describe("versionsValue", () => {
   it("gives each version its share, legacy first", () => {
-    expect(versionsValue({ legacy: 312, v0: 41, v1: 0 })).toBe("88% · 12% · 0%");
-    expect(versionsValue({ legacy: 0, v0: 0, v1: 5 })).toBe("0% · 0% · 100%");
+    expect(versionsValue({ legacy: 312, v0: 41, v1: 0 })).toBe("88%, 12%, 0%");
+    expect(versionsValue({ legacy: 0, v0: 0, v1: 5 })).toBe("0%, 0%, 100%");
   });
 
   it("has no share to give for a block of votes alone", () => {

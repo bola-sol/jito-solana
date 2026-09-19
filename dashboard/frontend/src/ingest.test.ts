@@ -6,14 +6,14 @@ describe("windowLabel", () => {
     // The point of the heading: for the first minute the card must not claim a
     // minute it has not watched, because "0 drops in the last minute" read off
     // a five-second window is a reassurance nobody measured.
-    expect(windowLabel(0)).toBe("Last 5s");
-    expect(windowLabel(12)).toBe("Last 10s");
-    expect(windowLabel(38)).toBe("Last 40s");
+    expect(windowLabel(0)).toBe("last 5s");
+    expect(windowLabel(12)).toBe("last 10s");
+    expect(windowLabel(38)).toBe("last 40s");
   });
 
   it("settles once the window is full", () => {
-    expect(windowLabel(55)).toBe("Last min");
-    expect(windowLabel(60)).toBe("Last min");
+    expect(windowLabel(55)).toBe("last min");
+    expect(windowLabel(60)).toBe("last min");
   });
 
   it("rounds so the heading does not redraw every tick", () => {

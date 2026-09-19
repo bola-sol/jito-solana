@@ -10,15 +10,15 @@ export interface BalanceWarning {
   title: string;
 }
 
-/** Under TowerBFT, the identity pays each vote; under a week of them is a
- *  warning and under a day a fault. Nothing where votes cost nothing. */
+/** Under TowerBFT, the identity pays each vote; under three days of them is
+ *  a warning and under a day a fault. Nothing where votes cost nothing. */
 export function identityWarning(balance: number | undefined, cost: VoteCost | undefined): BalanceWarning | null {
   if (balance === undefined || cost === undefined || cost.kind !== "fees" || cost.per_day <= 0) return null;
   const days = balance / cost.per_day;
-  if (days >= 7) return null;
+  if (days >= 3) return null;
   const title = `${days.toFixed(1)} days of votes at ${sol(cost.per_day)} SOL a day.`;
   if (days < 1) return { tone: "bad", label: "identity, under a day of votes", title };
-  return { tone: "warn", label: "identity, under a week of votes", title };
+  return { tone: "warn", label: "identity, under three days of votes", title };
 }
 
 /** Under alpenglow, the epoch's turn burns the admission ticket from the vote

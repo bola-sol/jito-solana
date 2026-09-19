@@ -7,13 +7,13 @@ const fees: VoteCost = { kind: "fees", per_day: 1.08 * SOL };
 const ticket: VoteCost = { kind: "ticket", lamports: 1.6 * SOL, minimum: 1.63 * SOL };
 
 describe("identityWarning", () => {
-  it("is quiet with a week of votes in hand", () => {
-    expect(identityWarning(8 * SOL, fees)).toBeNull();
+  it("is quiet with three days of votes in hand", () => {
+    expect(identityWarning(4 * SOL, fees)).toBeNull();
   });
 
-  it("warns under a week and faults under a day", () => {
-    expect(identityWarning(3 * SOL, fees)?.tone).toBe("warn");
-    expect(identityWarning(3 * SOL, fees)?.label).toBe("identity, under a week of votes");
+  it("warns under three days and faults under a day", () => {
+    expect(identityWarning(2 * SOL, fees)?.tone).toBe("warn");
+    expect(identityWarning(2 * SOL, fees)?.label).toBe("identity, under three days of votes");
     expect(identityWarning(0.5 * SOL, fees)?.tone).toBe("bad");
     expect(identityWarning(0.5 * SOL, fees)?.label).toBe("identity, under a day of votes");
   });

@@ -59,11 +59,16 @@ impl DashboardContext {
                 .as_ref()
                 .map(|cert| cert.block().slot)
         } else {
-            self.blockstore
+            // After a restart the confirmed slot predates the snapshot. The
+            // highest slot with shreds is the floor.
+            let confirmed = self
+                .blockstore
                 .get_latest_optimistic_slots(1)
-                .ok()?
-                .pop()
-                .map(|(slot, _, _)| slot)
+                .ok()
+                .and_then(|mut slots| slots.pop())
+                .map(|(slot, _, _)| slot);
+            let shredded = self.blockstore.highest_slot().ok().flatten();
+            confirmed.into_iter().chain(shredded).max()
         }
     }
 }

@@ -812,6 +812,9 @@ export interface Published {
     next_leader_slot: number | null;
     vote_slot: number | null;
     behind_cluster: number | null;
+    /** Completed slots a second over the last half minute; null until the
+     *  window spans five seconds. */
+    replay_rate: number | null;
     identity_balance: number;
     vote_balance: number;
     vote_cost: VoteCost;

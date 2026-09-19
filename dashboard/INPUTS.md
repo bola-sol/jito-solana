@@ -105,7 +105,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times for slot durations, skipped slots, the skip rate's window, and which filesystem holds the ledger |
 | `Blockstore::get_slot_components_with_shred_info` on a block's last two FEC sets | The block footer's reward certificates, read against the rank map. Under alpenglow, if this node's vote was paid for each slot, and how many slots each rank was paid for this epoch, against which the epoch card measures this vote. The vote account's own figure is lamports there and counts leader slots too, so it cannot be compared across validators. The count starts where the dashboard did, not at the epoch's start. |
 | `Blockstore::get_slot_entries` on our own slots, once full | The block's non-vote transactions by message version: legacy, v0, v1 |
-| `Blockstore::get_latest_optimistic_slots` | The cluster's tip under TowerBFT, for the distance behind it |
+| `Blockstore::get_latest_optimistic_slots`, `highest_slot` | The cluster's tip under TowerBFT, for the distance behind it: the last confirmed slot, floored by the highest slot shreds have arrived for, since the confirmed slot predates the snapshot after a restart |
 | `BlockCommitmentCache::highest_confirmed_slot`, `highest_super_majority_root`, `root` | The confirmed, rooted and finalized levels on the slot strip |
 | `Validator::highest_finalized` | The cluster's tip under alpenglow, from votor's last certificate |
 | `LeaderScheduleCache::slot_leader_at`, `next_leader_slot` | The epoch's leader turns, who is in the peer table, and the countdown to our slot |

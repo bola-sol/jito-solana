@@ -58,6 +58,11 @@ const CERT_SLOTS_PER_TICK: u64 = 64;
 /// In the bank's slot-duration unit, for a day of votes at one a slot.
 const NANOS_PER_DAY: u128 = 86_400_000_000_000;
 
+/// Completed-slot samples kept for the replay rate, and the least span they
+/// must cover before a rate is read from them.
+const REPLAY_RATE_WINDOW: Duration = Duration::from_secs(30);
+const REPLAY_RATE_MIN_SPAN: Duration = Duration::from_secs(5);
+
 /// Slots behind the root the running totals are kept for. A parent is a few
 /// slots back at most.
 const TOTALS_KEPT: u64 = 64;
@@ -317,6 +322,7 @@ struct Debounces {
     estimated_slot: Debounced<Slot>,
     vote_slot: Debounced<Option<Slot>>,
     behind_cluster: Debounced<Option<u64>>,
+    replay_rate: Debounced<Option<f64>>,
     identity_balance: Debounced<u64>,
     vote_balance: Debounced<u64>,
     vote_commission: Debounced<Option<u8>>,
@@ -366,6 +372,9 @@ pub struct Collector {
     /// Tip at the moment the collector started. Slots below it were never
     /// watched, so they are neither tracked nor counted as skipped.
     first_observed_slot: Option<Slot>,
+    /// The completed slot at each tick of the last half minute, for the
+    /// replay rate.
+    completed_window: VecDeque<(Instant, Slot)>,
     /// Detail for blocks this validator produced, captured as they froze.
     produced: ProducedRing,
     /// Our blocks whose entries have not been read back yet.
@@ -517,6 +526,7 @@ impl Collector {
             skip_elapsed: 0,
             last_completed_slot: 0,
             last_completed_at: now,
+            completed_window: VecDeque::new(),
             slot_timed_to: None,
             certs_walk: None,
             certs_tally: None,
@@ -784,9 +794,17 @@ impl Collector {
     /// strip's bars are drawn against, and what it is doing, which is the strip's
     /// readout.
     fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
+        let now = Instant::now();
         if completed > self.last_completed_slot {
             self.last_completed_slot = completed;
-            self.last_completed_at = Instant::now();
+            self.last_completed_at = now;
+        }
+        self.completed_window.push_back((now, completed));
+        while let Some((at, _)) = self.completed_window.front() {
+            if now.duration_since(*at) <= REPLAY_RATE_WINDOW {
+                break;
+            }
+            self.completed_window.pop_front();
         }
 
         // Constant between epoch boundaries, which is what makes it usable as
@@ -1938,6 +1956,11 @@ impl Collector {
         self.debounces
             .health
             .publish(&self.publisher, TOPIC_SUMMARY, "health", health);
+        // To a tenth, so an in-step node rarely republishes.
+        let rate = replay_rate(&self.completed_window).map(|rate| (rate * 10.0).round() / 10.0);
+        self.debounces
+            .replay_rate
+            .publish(&self.publisher, TOPIC_SUMMARY, "replay_rate", rate);
     }
 
     /// Skip rate across this validator's leader slots for the epoch, from the
@@ -2001,6 +2024,17 @@ impl Collector {
             self.metrics_tap.stake_in_gossip(),
         );
     }
+}
+
+/// Completed slots a second across the window, once it spans the minimum.
+fn replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
+    let (oldest_at, oldest) = window.front()?;
+    let (newest_at, newest) = window.back()?;
+    let span = newest_at.duration_since(*oldest_at);
+    if span < REPLAY_RATE_MIN_SPAN {
+        return None;
+    }
+    Some(newest.saturating_sub(*oldest) as f64 / span.as_secs_f64())
 }
 
 /// What voting costs on `bank`, under whichever consensus it runs.
@@ -2897,6 +2931,24 @@ mod tests {
         harness.collector().tick();
 
         assert_eq!(published_number(&harness, "behind_cluster"), Some(0));
+    }
+
+    #[test]
+    fn test_the_replay_rate_is_read_across_the_window() {
+        let now = Instant::now();
+        let at = |secs_ago: u64| now.checked_sub(Duration::from_secs(secs_ago)).unwrap();
+        let window: VecDeque<(Instant, Slot)> =
+            [(at(20), 1_000), (at(10), 1_400), (at(0), 1_800)].into();
+        assert_eq!(replay_rate(&window), Some(40.0));
+    }
+
+    #[test]
+    fn test_the_replay_rate_waits_for_a_span_worth_reading() {
+        let now = Instant::now();
+        let at = |secs_ago: u64| now.checked_sub(Duration::from_secs(secs_ago)).unwrap();
+        let window: VecDeque<(Instant, Slot)> = [(at(2), 1_000), (at(0), 1_010)].into();
+        assert_eq!(replay_rate(&window), None);
+        assert_eq!(replay_rate(&VecDeque::new()), None);
     }
 
     #[test]

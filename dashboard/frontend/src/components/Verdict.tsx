@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { count, duration, percent } from "../format";
 import { agoLabel, snapshotLine } from "../snapshot";
-import { verdictOf } from "../verdict";
+import { catchUpClause, verdictOf } from "../verdict";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
@@ -25,7 +25,7 @@ export function Verdict(): ReactElement {
 
   const health = store.get("summary", "health");
   const behindCluster = store.get("summary", "behind_cluster");
-  const verdict = verdictOf(health, behindCluster);
+  const verdict = verdictOf(health, behindCluster, store.get("summary", "completed_slot"));
 
   return (
     <>
@@ -34,6 +34,7 @@ export function Verdict(): ReactElement {
         {verdict.headline}
       </h1>
       <p className="verdict-sub">
+        <CatchUp />
         <Leader />
         <Skips />
         <Repair />
@@ -41,6 +42,18 @@ export function Verdict(): ReactElement {
       </p>
     </>
   );
+}
+
+/** The catch-up clause while replay trails the cluster; nothing in step. */
+function CatchUp() {
+  const store = useStore();
+  const clause = catchUpClause(
+    store.get("summary", "behind_cluster"),
+    store.get("summary", "replay_rate"),
+    store.get("summary", "estimated_slot_duration_nanos"),
+  );
+  if (clause === null) return null;
+  return <>{clause} </>;
 }
 
 /** When this validator next leads, from its slot and the measured slot rate. */

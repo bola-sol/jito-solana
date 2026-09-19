@@ -1,6 +1,6 @@
-import { useState, type ReactNode, type ReactElement } from "react";
+import type { ReactNode, ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
-import { readBalancesHidden, writeBalancesHidden } from "../layout";
+import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { bootTimes, type BootTimes } from "../startup";
 import { useAlpenglow } from "../consensus";
 import { useStore } from "../useStore";
@@ -35,13 +35,8 @@ export function Header(): ReactElement {
   const name = store.get("summary", "identity_name") ?? "Private";
   const icon = store.get("summary", "identity_icon") ?? null;
   const build = buildLabel(client, version);
-  // The two balances can be taken off a screen others see; remembered per host.
-  const [balancesHidden, setBalancesHidden] = useState(readBalancesHidden);
-  const toggleBalances = () => {
-    const next = !balancesHidden;
-    setBalancesHidden(next);
-    writeBalancesHidden(next);
-  };
+  // The balances can be taken off a screen others see; remembered per host.
+  const balancesHidden = useBalancesHidden();
 
   const up = duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6);
   const upLabel =
@@ -74,7 +69,7 @@ export function Header(): ReactElement {
         )}
         <span className="who-right">
           <Connection state={connection} />
-          <BalancesToggle hidden={balancesHidden} onToggle={toggleBalances} />
+          <BalancesToggle hidden={balancesHidden} onToggle={toggleBalancesHidden} />
           <ThemeToggle />
         </span>
       </div>

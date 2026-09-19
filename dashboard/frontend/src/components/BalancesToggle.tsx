@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 
-/** Hides the two balances in the header, for a screen that others can see. */
+/** Hides the two balances in the header and the epoch's earnings, for a
+ *  screen that others can see. */
 export function BalancesToggle({
   hidden,
   onToggle,

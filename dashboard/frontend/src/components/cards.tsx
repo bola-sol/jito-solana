@@ -6,6 +6,7 @@ import { leaderSlotsLeft } from "../schedule";
 import type { EpochInfo } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
+import { useBalancesHidden } from "../balances";
 import { useNarrow } from "../narrow";
 import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
@@ -46,26 +47,30 @@ export function EpochCard(): ReactElement {
 }
 
 /** Vote performance this epoch against the best any validator has: credits
- *  under TowerBFT, and under alpenglow the slots the reward certificates paid
- *  this vote for, since the vote account's own figure is lamports that leader
- *  slots pay into. Absent until the vote account has been read. */
+ *  under TowerBFT, and under alpenglow the slots whose reward certificates
+ *  included this validator's vote, since the vote account's own figure is
+ *  lamports that leader slots pay into. That figure goes with the balances
+ *  when they are hidden. Absent until the vote account has been read. */
 function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   const store = useStore();
   const credits = store.get("summary", "vote_credits");
   const participation = store.get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
+  const balancesHidden = useBalancesHidden();
   if (!credits || credits.epoch !== epoch.epoch) return null;
   if (alpenglow) {
+    const earned = balancesHidden ? undefined : `${sol(credits.credits)} SOL earned, leader slots included`;
     const share = participationShare(participation, epoch.epoch);
     if (share === null || !participation) {
+      if (earned === undefined) return null;
       return <Stat label="earned this epoch, SOL" value={sol(credits.credits)} />;
     }
     return (
       <Stat
-        label={`of the best this epoch, paid for ${count(participation.paid)} of ${count(participation.rewarded)} rewarded slots`}
+        label={`of the best since slot ${count(participation.since_slot)}, votes rewarded in ${count(participation.paid)} of ${count(participation.rewarded)} slots`}
         value={percent(share, 1)}
-        sub={`${sol(credits.credits)} SOL earned, leader slots included`}
-        explain={`Slots since ${count(participation.since_slot)} whose reward certificate paid this vote, against the most any validator has.`}
+        sub={earned}
+        explain="Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them."
       />
     );
   }

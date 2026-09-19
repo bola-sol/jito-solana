@@ -72,6 +72,10 @@ the domain in the site block is the name to allow, and nothing else is needed.
   other validators leading the slots on screen. All of that is already public,
   since every node in the cluster holds it, but serving the page publishes it to
   anyone who can reach it.
+- The machine card shows what is not on chain: the host's memory and the
+  validator's share of it, each disk's device name and fill, the network
+  interface's driver and model where XDP is on, thread names, and when a
+  snapshot is being written.
 
 ### What it costs the validator
 
@@ -83,6 +87,11 @@ bookkeeping, the meters keep the clock, throughput, network counters and the
 totals lifted from metrics points, and little else runs. A viewer connecting
 finds the throughput and network charts whole; the host, thread and socket
 panels fill from that moment.
+
+What runs whatever the audience, beyond that: a metrics tap that observes the
+datapoints the validator already emits, and under alpenglow a walk of the
+block footers for their reward certificates, which reads the last two FEC sets
+of each new block out of the blockstore, at most 64 slots a tick.
 
 The one-off read that maps identities to names runs once, when the collector
 attaches. It asks the secondary index which accounts the config program owns and
@@ -104,8 +113,13 @@ core/src/validator.rs ──► DashboardService
 `context.rs` holds the handles the dashboard reads through. The validator binary
 starts the service before the snapshot download, so the page is up through the
 slowest part of a cold start, and builds the context from the `Validator` once
-`Validator::new` returns. `solana-core` itself is untouched beyond exposing
-three handles.
+`Validator::new` returns. `solana-core` itself changes in two places: the
+config gains two hooks (a list of extra bank notification senders, served by a
+relay thread that copies each of replay's notifications to them and to the
+RPC tracker, and a sender handed gossip and bank forks before the
+supermajority wait), and `Validator` makes three fields public: the block
+commitment cache, the leader schedule cache and the highest finalized
+certificate.
 
 `collect.rs` samples five times a second but publishes only what changed, so an
 idle validator produces almost no websocket traffic. `proto.rs` defines the
@@ -132,7 +146,7 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `commit_hash`, `cluster`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `block_height`, `next_leader_slot`, `vote_slot`, `vote_distance`, `identity_balance`, `vote_balance`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `program_cache`, `accounts_cache`, `shreds`, `waterfall`, `slot_waterfalls`, `quic`, `verify`, `executed`, `epoch_remaining_nanos`, `produced_blocks`, `produced_turns`, `skip_rate`, `health`, `host`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_history`, `network_sample`, `threads_history`, `threads_sample`, `ingest_paths`, `snapshots`, `bls_key`, `vote_credits`, `vote_participation`, `turbine` |
+| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `vote_credits`, `vote_participation` |
 | `epoch`   | `new` |
 | `peers`   | `all` |
 | `slot`    | `overview`, `update`, `upcoming` |
@@ -216,12 +230,13 @@ Two things have no equivalent here, because the data behind them does not exist
 in Agave.
 
 A shred timeline. `shred_fetch_stage` distinguishes turbine from repair via
-`PacketFlags::REPAIR`, but nothing records per-shred arrival timing. Recording
-it on the packet is not open to us: `solana-packet` is a published crate rather
-than a workspace member, so `Meta` cannot gain a field. The timing would have to
-be kept alongside and written from `modify_packets`, which handles tens of
-thousands of shreds a second, so it would want aggregating per slot rather than
-per shred.
+`PacketFlags::REPAIR`, but nothing records per-shred arrival timing; the
+blockstore keeps only each slot's first arrival, which is what the slot timing
+reads. Recording it on the packet is not open to us: `solana-packet` is a
+published crate rather than a workspace member, so `Meta` cannot gain a field.
+The timing would have to be kept alongside and written from `modify_packets`,
+which handles tens of thousands of shreds a second, so it would want
+aggregating per slot rather than per shred.
 
 Per-slot transaction detail. The fee, compute units and status of each
 transaction are written by `TransactionStatusService`, which runs only when a
@@ -230,4 +245,7 @@ requires it. A voting validator with no RPC records none of it, and turning the
 flag on grows the blockstore substantially, which is not a trade worth making
 for a panel. Without it the blockstore holds the entries and nothing more, so
 the panel would come to a list of signatures beside counts this dashboard
-already publishes.
+already publishes. The blocks this validator produces are the exception in
+part: the banking stage's own metrics give each of them its counts, fees,
+tips and execution times, and the block page shows those, but still nothing
+per transaction.

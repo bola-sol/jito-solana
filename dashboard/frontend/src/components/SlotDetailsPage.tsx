@@ -782,7 +782,7 @@ function ExecutionTime({ execution }: { execution: Execution }) {
         <div className="sx-cu-value">{micros(view.total)}</div>
         <div className="sx-cu-of">
           thread time, {micros(view.nonVote)} non-vote
-          {view.votes !== null && ` and ${micros(view.votes)} votes`}
+          {view.votes !== null && view.votes > 0 && ` and ${micros(view.votes)} votes`}
         </div>
       </div>
       <div className="sx-cap">
@@ -799,7 +799,12 @@ function ExecutionTime({ execution }: { execution: Execution }) {
           {view.segments.map((segment) => (
             <span className="sx-key" key={segment.key}>
               <i className={`sx-sw is-${segment.key}`} />
-              {segment.label} <b>{micros(segment.micros)}</b>
+              {segment.explain ? (
+                <Explain text={segment.explain}>{segment.label}</Explain>
+              ) : (
+                segment.label
+              )}{" "}
+              <b>{micros(segment.micros)}</b>
             </span>
           ))}
         </div>

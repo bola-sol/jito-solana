@@ -270,6 +270,20 @@ describe("executionView", () => {
     expect(view.perWorker).toBe(157_700);
   });
 
+  it("leaves the vote worker out where it reports nought, as under alpenglow", () => {
+    const idle = { ...workers, cost_model: 0, load_execute: 0, record: 0, commit: 0, send_votes: 0, freeze_lock: 0 };
+    const view = executionView({
+      non_vote: workers,
+      workers: 4,
+      longest_batch: 14_800,
+      votes: idle,
+      window_millis: 402,
+    });
+    expect(view.votes).toBe(0);
+    expect(view.segments.some((s) => s.key === "votes")).toBe(false);
+    expect(view.segments.find((s) => s.key === "send")?.label).toBe("after commit");
+  });
+
   it("has no vote segment and no ratios where nothing reported them", () => {
     const view = executionView({
       non_vote: workers,

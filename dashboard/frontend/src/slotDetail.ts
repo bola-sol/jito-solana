@@ -176,6 +176,8 @@ export function shareOfGroup(group: CounterGroup, row: WaterfallRow): number {
 export interface ExecutionSegment {
   key: string;
   label: string;
+  /** For a segment whose name does not say what it holds. */
+  explain?: string;
   /** Microseconds. */
   micros: number;
   /** Of the thread time. */
@@ -205,24 +207,31 @@ function stageTotal(times: StageTimes): number {
   );
 }
 
+/** What the committer does after each batch lands, timed upstream as
+ *  `find_and_send_votes_us`. */
+const AFTER_COMMIT =
+  "After each commit the workers scan for votes, update the fee cache and send the transaction statuses.";
+
 /** The stacked bar: the workers' stages largest first, the two fixed costs
- *  folded together, and the vote worker as one segment where it reported. */
+ *  folded together, and the vote worker as one segment where it spent time.
+ *  Under alpenglow it reports nought, and the segment is left out. */
 export function executionView(execution: Execution): ExecutionView {
   const w = execution.non_vote;
   const nonVote = stageTotal(w);
   const votes = execution.votes ? stageTotal(execution.votes) : null;
   const total = nonVote + (votes ?? 0);
-  const parts: Array<[string, string, number]> = [
+  const parts: Array<[string, string, number, string?]> = [
     ["load", "load & execute", w.load_execute],
     ["commit", "commit", w.commit],
     ["record", "record", w.record],
-    ["send", "votes to send", w.send_votes],
+    ["send", "after commit", w.send_votes, AFTER_COMMIT],
     ["fixed", "cost model + freeze lock", w.cost_model + w.freeze_lock],
   ];
-  if (votes !== null) parts.push(["votes", "vote worker", votes]);
-  const segments = parts.map(([key, label, micros]) => ({
+  if (votes !== null && votes > 0) parts.push(["votes", "vote worker", votes]);
+  const segments = parts.map(([key, label, micros, explain]) => ({
     key,
     label,
+    explain,
     micros,
     share: total > 0 ? micros / total : 0,
   }));

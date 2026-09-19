@@ -68,7 +68,7 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
     return (
       <Stat
         label={`of the best since slot ${count(participation.since_slot)}, votes rewarded in ${count(participation.paid)} of ${count(participation.rewarded)} slots`}
-        value={percent(share, 1)}
+        value={percent(share, 2)}
         sub={earned}
         explain="Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them."
       />
@@ -78,7 +78,7 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   if (share === null) {
     return <Stat label="vote credits" value={count(credits.credits)} />;
   }
-  return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={percent(share, 1)} />;
+  return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={percent(share, 2)} />;
 }
 
 /** Staked SOL as fifty ticks, the delinquent share eating them from the

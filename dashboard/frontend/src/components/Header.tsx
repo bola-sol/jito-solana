@@ -128,14 +128,13 @@ function Balance({
   );
 }
 
-/** Whether the vote account carries a BLS key. Alpenglow counts no vote
- *  without one, so a missing key is a warning before the switch and a fault
- *  after it. Absent until the vote account has been read. */
+/** A missing BLS key on the vote account, a warning before alpenglow and a
+ *  fault after it, since it counts no vote without one. Nothing while the
+ *  key is set, or until the vote account has been read. */
 function Bls() {
   const set = useStore().get("summary", "bls_key");
   const alpenglow = useAlpenglow();
-  if (set === undefined || set === null) return null;
-  if (set) return <Figure value="set" label="BLS key" />;
+  if (set !== false) return null;
   return (
     <Figure
       value="none"

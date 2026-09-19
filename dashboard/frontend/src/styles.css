@@ -2325,9 +2325,14 @@ body {
 /* The unit goes with the fill column rather than a figure: fees on this
    page are only ever in SOL, and the detail under an opened row says so. */
 @media (max-width: 560px) {
+  /* Sized to the figures, since the Mean row's sort buttons carry an arrow
+     the plain rows do not; the arrow's slot collapses until it is shown. */
   .produced-head,
   .produced-averages {
-    grid-template-columns: minmax(0, 1fr) 5em 4.6em 3.8em;
+    grid-template-columns: minmax(0, 1fr) 6.2em 5em 4.2em;
+  }
+  .produced-sort-arrow:empty {
+    width: 0;
   }
   .produced-clear-word {
     display: none;

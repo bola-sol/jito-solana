@@ -176,6 +176,7 @@ dependencies = [
  "solana-transaction",
  "solana-version",
  "solana-vote",
+ "solana-vote-interface",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",

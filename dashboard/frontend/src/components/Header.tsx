@@ -1,6 +1,7 @@
 import type { ReactNode, ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
+import { identityWarning, voteWarning, type BalanceWarning } from "../voteCost";
 import { bootTimes, type BootTimes } from "../startup";
 import { useAlpenglow } from "../consensus";
 import { useStore } from "../useStore";
@@ -18,6 +19,7 @@ export function Header(): ReactElement {
   const stake = store.get("summary", "stake");
   const commission = store.get("summary", "vote_commission");
   const identityBalance = store.get("summary", "identity_balance");
+  const voteCost = store.get("summary", "vote_cost");
   const voteBalance = store.get("summary", "vote_balance");
   const uptimeNanos = store.get("summary", "uptime_nanos");
   const boot = bootTimes(
@@ -94,14 +96,35 @@ export function Header(): ReactElement {
         />
         {!balancesHidden && (
           <>
-            <Figure value={`${sol(identityBalance)} SOL`} label="identity" />
-            <Figure value={`${sol(voteBalance)} SOL`} label="vote" />
+            <Balance value={identityBalance} name="identity" warning={identityWarning(identityBalance, voteCost)} />
+            <Balance value={voteBalance} name="vote" warning={voteWarning(voteBalance, voteCost)} />
           </>
         )}
         <Bls />
         <Figure value={up} label={upLabel} detail={boot && <Boot boot={boot} />} />
       </div>
     </header>
+  );
+}
+
+/** A balance, toned and relabelled where voting is about to outrun it. Hidden
+ *  with the balances toggle, warning and all. */
+function Balance({
+  value,
+  name,
+  warning,
+}: {
+  value: number | undefined;
+  name: string;
+  warning: BalanceWarning | null;
+}) {
+  return (
+    <Figure
+      value={`${sol(value)} SOL`}
+      label={warning?.label ?? name}
+      tone={warning?.tone}
+      title={warning?.title}
+    />
   );
 }
 
@@ -128,14 +151,16 @@ function Figure({
   label,
   detail,
   tone,
+  title,
 }: {
   value: string;
   label: string;
   detail?: ReactNode;
   tone?: "warn" | "bad";
+  title?: string;
 }) {
   return (
-    <span className={`figure${tone ? ` tone-${tone}` : ""}`}>
+    <span className={`figure${tone ? ` tone-${tone}` : ""}`} title={title}>
       <b>{value}</b>
       {detail ? (
         <Explain interactive className="figure-detail" text={detail}>

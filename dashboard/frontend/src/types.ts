@@ -749,6 +749,13 @@ export interface Turbine {
   xdp: boolean | null;
 }
 
+/** What voting costs, for the header's balance warnings: fees leave the
+ *  identity with each vote under TowerBFT, the admission ticket leaves the
+ *  vote account at each epoch's turn under alpenglow. */
+export type VoteCost =
+  | { kind: "fees"; per_day: number }
+  | { kind: "ticket"; lamports: number; minimum: number };
+
 /** This validator's vote credits in the epoch being built on, against the
  *  most any staked validator has earned in it. Under alpenglow the vote
  *  account keeps lamports of reward in the same field. */
@@ -807,6 +814,7 @@ export interface Published {
     behind_cluster: number | null;
     identity_balance: number;
     vote_balance: number;
+    vote_cost: VoteCost;
     vote_commission: number | null;
     stake: StakeSummary;
     validator_counts: ValidatorCounts;

@@ -31,6 +31,7 @@ use {
         BankNotification, BankNotificationReceiver,
     },
     solana_runtime::bank::Bank,
+    solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
         sync::{Arc, Mutex, RwLock},
@@ -53,6 +54,9 @@ const OVERVIEW_INTERVAL: Duration = Duration::from_secs(1);
 /// Block footers read for certificates on one tick, so a restart catches up
 /// over a few ticks rather than stalling one.
 const CERT_SLOTS_PER_TICK: u64 = 64;
+
+/// In the bank's slot-duration unit, for a day of votes at one a slot.
+const NANOS_PER_DAY: u128 = 86_400_000_000_000;
 
 /// Slots behind the root the running totals are kept for. A parent is a few
 /// slots back at most.
@@ -262,6 +266,24 @@ pub enum Consensus {
     Alpenglow,
 }
 
+/// What voting costs, for the header's balance warnings. Fees leave the
+/// identity with each vote under TowerBFT; the admission ticket leaves the
+/// vote account at each epoch's turn under alpenglow.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VoteCost {
+    Fees {
+        /// Lamports a day of votes costs, at one vote a slot.
+        per_day: u64,
+    },
+    Ticket {
+        lamports: u64,
+        /// What the vote account must hold at the turn: rent exemption plus
+        /// the ticket.
+        minimum: u64,
+    },
+}
+
 /// This validator's vote credits in the epoch being built on, against the
 /// most any staked validator has earned in it. Under alpenglow the vote
 /// account keeps lamports of reward in the same field.
@@ -316,6 +338,7 @@ struct Debounces {
     bls_key: Debounced<Option<bool>>,
     vote_credits: Debounced<Option<VoteCredits>>,
     vote_participation: Debounced<certs::Participation>,
+    vote_cost: Debounced<VoteCost>,
 }
 
 pub struct Collector {
@@ -1448,6 +1471,12 @@ impl Collector {
             "vote_balance",
             bank.get_balance(&self.ctx.vote_account),
         );
+        self.debounces.vote_cost.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "vote_cost",
+            vote_cost(bank),
+        );
 
         let vote_accounts = bank.vote_accounts();
         let mine = vote_accounts.get(&self.ctx.vote_account);
@@ -1971,6 +2000,24 @@ impl Collector {
             progress,
             self.metrics_tap.stake_in_gossip(),
         );
+    }
+}
+
+/// What voting costs on `bank`, under whichever consensus it runs.
+fn vote_cost(bank: &Bank) -> VoteCost {
+    if bank.is_alpenglow() {
+        let minimum = bank.minimum_vote_account_balance_for_vat();
+        let rent = bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of());
+        return VoteCost::Ticket {
+            lamports: minimum.saturating_sub(rent),
+            minimum,
+        };
+    }
+    let ns_per_slot = bank.ns_per_slot_at_slot(bank.slot()).max(1);
+    let slots_per_day =
+        u64::try_from(NANOS_PER_DAY.checked_div(ns_per_slot).unwrap_or(0)).unwrap_or(u64::MAX);
+    VoteCost::Fees {
+        per_day: slots_per_day.saturating_mul(bank.get_lamports_per_signature()),
     }
 }
 
@@ -2850,6 +2897,25 @@ mod tests {
         harness.collector().tick();
 
         assert_eq!(published_number(&harness, "behind_cluster"), Some(0));
+    }
+
+    #[test]
+    fn test_under_tower_the_vote_cost_is_a_day_of_fees() {
+        // The fixture runs TowerBFT, so the ticket branch has no test here.
+        let harness = fixture();
+        harness.collector().tick();
+        let bank = harness.working_bank();
+        let slots_per_day = NANOS_PER_DAY
+            .checked_div(bank.ns_per_slot_at_slot(bank.slot()))
+            .unwrap();
+        let per_day = u64::try_from(slots_per_day)
+            .unwrap()
+            .checked_mul(bank.get_lamports_per_signature())
+            .unwrap();
+
+        let cost = harness.published_key("summary", "vote_cost").unwrap();
+        assert!(cost.contains(r#""kind":"fees""#), "{cost}");
+        assert!(cost.contains(&format!(r#""per_day":{per_day}"#)), "{cost}");
     }
 
     #[test]

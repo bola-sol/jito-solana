@@ -118,23 +118,25 @@ export function xdpTooltip(xdp: XdpConfig): string {
  *  path not working. */
 function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   const detail = xdpDetail(xdp);
+  const mode = xdp.zero_copy ? "zero-copy" : "copy";
+  // The drops come before the card's long model name, which is what the
+  // ellipsis takes; the whole line is on the hover.
+  const drops = dropped === null ? null : dropsLabel(dropped);
+  const whole = [mode, drops, ...detail].filter((part) => part !== null).join(" · ");
 
   return (
     <div className="net-xdp">
-      {/* A sentence and the two figures the line cannot fit. What the tooltip
-          used to carry beyond that was background about zero-copy and the
-          socket bind that an operator running these flags knows already. */}
       <span className="net-xdp-label">
         <Explain text={xdpTooltip(xdp)}>XDP transmit</Explain>
       </span>
-      <span className="net-xdp-detail">
-        <span className="net-xdp-mode">{xdp.zero_copy ? "zero-copy" : "copy"}</span>
+      <span className="net-xdp-detail" title={whole}>
+        <span className="net-xdp-mode">{mode}</span>
+        {drops !== null && (
+          <span className={dropped !== null && dropped > 0 ? "tone-bad" : "tone-good"}> · {drops}</span>
+        )}
         {detail.map((part) => (
           <span key={part}> · {part}</span>
         ))}
-        {dropped !== null && (
-          <span className={dropped > 0 ? "tone-bad" : "tone-good"}> · {dropsLabel(dropped)}</span>
-        )}
       </span>
     </div>
   );

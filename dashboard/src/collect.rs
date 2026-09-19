@@ -31,7 +31,6 @@ use {
         BankNotification, BankNotificationReceiver,
     },
     solana_runtime::bank::Bank,
-    solana_vote_interface::state::VOTE_CREDITS_MAXIMUM_PER_SLOT,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
         sync::{Arc, Mutex, RwLock},
@@ -263,13 +262,15 @@ pub enum Consensus {
     Alpenglow,
 }
 
-/// This validator's vote credits in the epoch being built on.
+/// This validator's vote credits in the epoch being built on, against the
+/// most any staked validator has earned in it. Under alpenglow the vote
+/// account keeps lamports of reward in the same field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VoteCredits {
     pub epoch: Epoch,
     pub credits: u64,
-    /// The most one slot can earn under TowerBFT.
-    pub max_per_slot: u8,
+    /// Read on the slow tier, so absent until a viewer has been attached.
+    pub cluster_max: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -402,6 +403,9 @@ pub struct Collector {
     /// Viewers attached as of the last tick, kept only so that pausing and
     /// resuming are logged once rather than on every tick.
     subscribers: usize,
+    /// The most credits any staked validator has earned this epoch, as of the
+    /// last walk of the vote accounts.
+    cluster_max_credits: Option<(Epoch, u64)>,
 
     /// Reads what each slot paid in jito tips. `None` where no tip payment
     /// program is configured, which is every plain agave validator.
@@ -502,6 +506,7 @@ impl Collector {
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             subscribers: 0,
+            cluster_max_credits: None,
             tips,
             commission_bps,
             tips_residual: None,
@@ -1447,12 +1452,11 @@ impl Collector {
             mine.map(|(_, account)| account.vote_state_view().bls_pubkey_compressed().is_some());
         let vote_credits = mine.map(|(_, account)| VoteCredits {
             epoch,
-            credits: account
-                .vote_state_view()
-                .epoch_credits_iter()
-                .find(|item| item.epoch() == epoch)
-                .map_or(0, |item| item.credits().saturating_sub(item.prev_credits())),
-            max_per_slot: VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            credits: epoch_credits(account.vote_state_view(), epoch),
+            cluster_max: self
+                .cluster_max_credits
+                .filter(|(held, _)| *held == epoch)
+                .map(|(_, max)| max),
         });
         self.debounces
             .bls_key
@@ -1747,6 +1751,15 @@ impl Collector {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
 
+        // The best credits this epoch, for the stat that reads ours against it.
+        let epoch = bank.epoch();
+        self.cluster_max_credits = vote_accounts
+            .values()
+            .filter(|(stake, _)| *stake > 0)
+            .map(|(_, account)| epoch_credits(account.vote_state_view(), epoch))
+            .max()
+            .map(|max| (epoch, max));
+
         // Gossip reports a client version; vote accounts report stake. A
         // validator can appear in one and not the other, so both are walked.
         let versions: HashMap<Pubkey, String> = peers
@@ -1938,6 +1951,13 @@ impl Collector {
             self.metrics_tap.stake_in_gossip(),
         );
     }
+}
+
+/// Credits a vote account earned in `epoch`, nought where it has none yet.
+fn epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch: Epoch) -> u64 {
+    view.epoch_credits_iter()
+        .find(|item| item.epoch() == epoch)
+        .map_or(0, |item| item.credits().saturating_sub(item.prev_credits()))
 }
 
 /// How settled a frozen slot is. Tested most-settled first, because the
@@ -2573,7 +2593,15 @@ mod tests {
         );
         let credits = harness.published_key("summary", "vote_credits").unwrap();
         assert!(credits.contains(r#""credits":0"#), "{credits}");
-        assert!(credits.contains(r#""max_per_slot":16"#), "{credits}");
+        assert!(credits.contains(r#""cluster_max":null"#), "{credits}");
+
+        // The slow walk fills the cluster's best in, which for the fixture's
+        // one staked validator is our own figure.
+        let mut collector = harness.collector();
+        collector.collect_peers(&harness.working_bank(), &[]);
+        collector.tick();
+        let credits = harness.published_key("summary", "vote_credits").unwrap();
+        assert!(credits.contains(r#""cluster_max":0"#), "{credits}");
     }
 
     #[test]

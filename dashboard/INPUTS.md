@@ -88,7 +88,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | --- | --- |
 | `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Failed transaction totals for TPS. |
 | `BankForks::migration_status`, `Bank::is_alpenglow` | Which consensus the cluster runs, and which of two cluster tip sources to read |
-| `Bank::vote_accounts` | Our stake and commission, whether our vote account has a BLS key, and our vote credits this epoch. The validators card's counts and delinquency. The peer table's stake. The wait's validator list. |
+| `Bank::vote_accounts` | Our stake and commission, whether our vote account has a BLS key, and our vote credits this epoch (lamports of reward under alpenglow, in the same field). The validators card's counts and delinquency. The peer table's stake. The wait's validator list. |
 | `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | The epoch card, block height, and the configured slot time |
 | `Bank::clock` | The epoch's measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | This node's rank in the BLS rank map, to find its bit in a certificate |

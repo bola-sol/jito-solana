@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactElement } from "react";
-import { count, decimal, duration, percent, solCompact } from "../format";
+import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { creditsShare } from "../credits";
 import { leaderSlotsLeft } from "../schedule";
@@ -35,7 +35,7 @@ export function EpochCard(): ReactElement {
           label={`of our leader slots left, ${count(epoch.my_leader_slots.length)} this epoch`}
           value={count(left)}
         />
-        <VoteCreditsStat epoch={epoch} completed={completed} />
+        <VoteCreditsStat epoch={epoch} />
       </div>
       <Meter fraction={progress} />
       <div className="card-footnote">
@@ -45,25 +45,21 @@ export function EpochCard(): ReactElement {
   );
 }
 
-/** Vote credits this epoch. Under TowerBFT as a share of the most the slots
- *  so far could have paid; under alpenglow the count alone, whose ceiling is
- *  not known here. Absent until the vote account has been read. */
-function VoteCreditsStat({ epoch, completed }: { epoch: EpochInfo; completed: number }) {
+/** Vote credits this epoch as a share of the best any validator has earned,
+ *  or the count alone until that figure arrives. Under alpenglow the same
+ *  field counts lamports of reward, so it is drawn as SOL earned and not
+ *  compared: rewards follow stake. Absent until the vote account has been
+ *  read. */
+function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   const credits = useStore().get("summary", "vote_credits");
   const alpenglow = useAlpenglow();
   if (!credits || credits.epoch !== epoch.epoch) return null;
-  const share = alpenglow
-    ? null
-    : creditsShare(credits.credits, completed - epoch.start_slot, credits.max_per_slot);
+  if (alpenglow) return <Stat label="earned this epoch, SOL" value={sol(credits.credits)} />;
+  const share = creditsShare(credits.credits, credits.cluster_max);
   if (share === null) {
-    return <Stat label="vote credits this epoch" value={count(credits.credits)} />;
+    return <Stat label="vote credits" value={count(credits.credits)} />;
   }
-  return (
-    <Stat
-      label={`of the most vote credits this epoch could pay so far, ${count(credits.credits)} earned`}
-      value={percent(share, 1)}
-    />
-  );
+  return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={percent(share, 1)} />;
 }
 
 /** Staked SOL as fifty ticks, the delinquent share eating them from the

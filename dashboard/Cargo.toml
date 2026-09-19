@@ -46,7 +46,7 @@ solana-sdk-ids = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }
-solana-vote-interface = { workspace = true }
+solana-vote = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["compat"] }

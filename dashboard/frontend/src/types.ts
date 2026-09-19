@@ -749,12 +749,14 @@ export interface Turbine {
   xdp: boolean | null;
 }
 
-/** This validator's vote credits in the epoch being built on. */
+/** This validator's vote credits in the epoch being built on, against the
+ *  most any staked validator has earned in it. Under alpenglow the vote
+ *  account keeps lamports of reward in the same field. */
 export interface VoteCredits {
   epoch: number;
   credits: number;
-  /** The most one slot can earn under TowerBFT. */
-  max_per_slot: number;
+  /** Read on the slow tier, so null until a viewer has been attached. */
+  cluster_max: number | null;
 }
 
 /** The envelope every message arrives in. */

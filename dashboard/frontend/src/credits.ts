@@ -1,10 +1,8 @@
-/** Vote credits against the most an epoch could have paid so far. */
+/** Vote credits against the cluster's best this epoch. */
 
-/** Credits as a share of `elapsedSlots` at `maxPerSlot` each. Null before
- *  the epoch has run a slot. Capped at one: a credit lands a slot or two
- *  after its vote. */
-export function creditsShare(credits: number, elapsedSlots: number, maxPerSlot: number): number | null {
-  const ceiling = elapsedSlots * maxPerSlot;
-  if (ceiling <= 0) return null;
-  return Math.min(1, Math.max(0, credits) / ceiling);
+/** Our credits as a share of the most any validator has earned. Null until
+ *  the cluster figure is known or while it is still nought. */
+export function creditsShare(credits: number, clusterMax: number | null): number | null {
+  if (clusterMax === null || clusterMax <= 0) return null;
+  return Math.min(1, Math.max(0, credits) / clusterMax);
 }

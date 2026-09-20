@@ -94,7 +94,7 @@ function MissesStat({ epoch }: { epoch: EpochInfo }) {
   const total = missTotal(misses);
   return (
     <Stat
-      label="not rewarded, and where"
+      label="votes not rewarded, and where"
       value={count(total)}
       sub={total > 0 ? <MissesSplit misses={misses} /> : undefined}
       explain="Slots whose certificate paid others but not this validator, by where they fell: the epoch's first thousand slots, our own leader slots, a snapshot write, or none of those."

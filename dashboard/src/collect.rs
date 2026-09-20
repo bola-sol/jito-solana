@@ -1611,7 +1611,8 @@ impl Collector {
         // Measured against the cluster's tip, not this node's own view, which
         // lags when replay lags.
         let behind_cluster = cluster_tip.map(|tip| tip.saturating_sub(self.last_completed_slot));
-        if let (Some((_, fell_behind)), Some(behind)) = (&mut self.snapshot_writing, behind_cluster)
+        if let (Some((_, fell_behind, _)), Some(behind)) =
+            (&mut self.snapshot_writing, behind_cluster)
         {
             *fell_behind = (*fell_behind).max(behind);
         }

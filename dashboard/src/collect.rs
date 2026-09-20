@@ -30,7 +30,7 @@ use {
     solana_rpc::optimistically_confirmed_bank_tracker::{
         BankNotification, BankNotificationReceiver,
     },
-    solana_runtime::bank::Bank,
+    solana_runtime::bank::{Bank, VATHealthError},
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -300,6 +300,42 @@ pub struct VoteCredits {
     pub cluster_max: Option<u64>,
 }
 
+/// Whether this vote account holds a seat in the admitted set, the validators
+/// whose votes count under alpenglow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Admission {
+    pub seat: bool,
+    /// Absent until the next epoch's stakes are known.
+    pub next_seat: Option<bool>,
+    /// Lamports the vote account is short of the ticket for the epoch after
+    /// the next, absent where it covers it or cannot be read.
+    pub ticket_short: Option<u64>,
+}
+
+/// Read off the bank's rank maps, which hold the admitted set of each epoch
+/// whose stakes are known. Nothing before alpenglow.
+fn admission(bank: &Bank, vote_account: &Pubkey) -> Option<Admission> {
+    if !bank.is_alpenglow() {
+        return None;
+    }
+    let schedule = bank.epoch_schedule();
+    let seated = |epoch: Epoch| {
+        bank.get_rank_map(schedule.get_first_slot_in_epoch(epoch))
+            .map(|map| map.get_rank_for_vote_pubkey(vote_account).is_some())
+    };
+    let ticket_short = match bank.get_vat_health_for_next_epoch(vote_account) {
+        Err(VATHealthError::InsufficientFundsInVoteAccount(balance, minimum)) => {
+            Some(minimum.saturating_sub(balance))
+        }
+        Ok(()) | Err(_) => None,
+    };
+    Some(Admission {
+        seat: seated(bank.epoch())?,
+        next_seat: seated(bank.epoch().saturating_add(1)),
+        ticket_short,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipRate {
     pub epoch: Epoch,
@@ -342,6 +378,7 @@ struct Debounces {
     peers: Debounced<Vec<Peer>>,
     snapshots: Debounced<Option<Snapshots>>,
     bls_key: Debounced<Option<bool>>,
+    admission: Debounced<Option<Admission>>,
     vote_credits: Debounced<Option<VoteCredits>>,
     vote_participation: Debounced<certs::Participation>,
     vote_cost: Debounced<VoteCost>,
@@ -1569,6 +1606,12 @@ impl Collector {
         self.debounces
             .bls_key
             .publish(&self.publisher, TOPIC_SUMMARY, "bls_key", bls_key);
+        self.debounces.admission.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "admission",
+            admission(bank, &self.ctx.vote_account),
+        );
         self.debounces.vote_credits.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -2737,6 +2780,9 @@ mod tests {
         let credits = harness.published_key("summary", "vote_credits").unwrap();
         assert!(credits.contains(r#""credits":0"#), "{credits}");
         assert!(credits.contains(r#""cluster_max":null"#), "{credits}");
+        // No admitted set before alpenglow, which the fixture is not on.
+        let admission = harness.published_key("summary", "admission").unwrap();
+        assert!(admission.contains(r#""value":null"#), "{admission}");
 
         // The slow walk fills the cluster's best in, which for the fixture's
         // one staked validator is our own figure.

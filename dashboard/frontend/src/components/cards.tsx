@@ -1,10 +1,11 @@
 import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
+import { noSeatDetail } from "../admission";
 import { creditsShare, participationShare } from "../credits";
 import { MISS_PLACES, missMarks, missTotal, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
-import type { EpochInfo, Misses } from "../types";
+import type { Admission, EpochInfo, Misses } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import { useBalancesHidden } from "../balances";
@@ -28,6 +29,8 @@ export function EpochCard(): ReactElement {
   const progress = elapsed / Math.max(1, epoch.slots_in_epoch);
   const remainingMs = remainingNanos === undefined ? undefined : remainingNanos / 1e6;
   const left = leaderSlotsLeft(epoch.my_leader_slots, completed);
+  const admission = store.get("summary", "admission");
+  const seated = !admission || admission.seat;
 
   return (
     <Card title="This epoch" aside={count(epoch.epoch)} className="epoch-body">
@@ -37,8 +40,14 @@ export function EpochCard(): ReactElement {
           label={`of our leader slots left, ${count(epoch.my_leader_slots.length)} this epoch`}
           value={count(left)}
         />
-        <VoteCreditsStat epoch={epoch} />
-        <MissesStat epoch={epoch} />
+        {seated ? (
+          <>
+            <VoteCreditsStat epoch={epoch} />
+            <MissesStat epoch={epoch} />
+          </>
+        ) : (
+          <NoSeatStat admission={admission} />
+        )}
       </div>
       <EpochMeter fraction={progress} epoch={epoch} />
       <div className="card-footnote">
@@ -83,9 +92,21 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={percent(share, 2)} />;
 }
 
+/** In place of the vote figure while the vote account has no seat. */
+function NoSeatStat({ admission }: { admission: Admission }) {
+  return (
+    <Stat
+      label="this epoch, so no vote is rewarded"
+      value="no seat"
+      tone="warn"
+      sub={noSeatDetail(admission)}
+      explain="The admitted set is the two thousand highest-staked vote accounts that cover the admission ticket, and votes from outside it count for nothing."
+    />
+  );
+}
+
 /** Where this validator's unrewarded votes fell this epoch. Alpenglow only,
- *  since only the reward certificates say which slots went unpaid, and absent
- *  until one from this epoch has been read. */
+ *  and absent until a certificate from this epoch has been read. */
 function MissesStat({ epoch }: { epoch: EpochInfo }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();

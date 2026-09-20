@@ -2,6 +2,7 @@ import type { ReactNode, ReactElement } from "react";
 import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { identityWarning, voteWarning, type BalanceWarning } from "../voteCost";
+import { noSeatLabel } from "../admission";
 import { bootTimes, type BootTimes } from "../startup";
 import { useAlpenglow } from "../consensus";
 import { useStore } from "../useStore";
@@ -108,6 +109,7 @@ export function Header(): ReactElement {
           </>
         )}
         <Bls />
+        <Seat />
         <Figure value={up} label={upLabel} detail={boot && <Boot boot={boot} />} />
       </div>
     </header>
@@ -152,6 +154,14 @@ function Bls() {
 }
 
 /** One figure and what it is; the label opens the detail where there is one. */
+/** A vote account outside the admitted set. Nothing while it holds a seat,
+ *  or before alpenglow. */
+function Seat() {
+  const admission = useStore().get("summary", "admission");
+  if (!admission || admission.seat) return null;
+  return <Figure value="no seat" label={noSeatLabel(admission)} tone="warn" />;
+}
+
 function Figure({
   value,
   label,

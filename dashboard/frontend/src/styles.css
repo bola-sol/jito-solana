@@ -684,8 +684,7 @@ body {
   opacity: 0.55;
 }
 
-/* Terracotta, not red: a miss is routine, and a run of them shows as a
-   darker stretch on its own. */
+/* Terracotta, not red: a miss is routine. */
 .meter-mark.is-miss {
   background: var(--warn);
 }

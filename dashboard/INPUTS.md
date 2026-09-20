@@ -89,6 +89,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Failed transaction totals for TPS. |
 | `BankForks::migration_status`, `Bank::is_alpenglow` | Which consensus the cluster runs, and which of two cluster tip sources to read |
 | `Bank::vote_accounts` | Our stake and commission, whether our vote account has a BLS key, and our vote credits this epoch (lamports of reward under alpenglow, in the same field). The validators card's counts and delinquency. The peer table's stake. The wait's validator list. |
+| `Bank::get_rank_map` for this epoch and the next, `get_vat_health_for_next_epoch` | Under alpenglow, whether this vote account holds a seat in the admitted set now and next epoch, and how far the vote account is short of the ticket after that. The header's "no seat" figure and the epoch card's stat in place of the vote figure. |
 | `Bank::get_lamports_per_signature`, `minimum_vote_account_balance_for_vat`, `get_minimum_balance_for_rent_exemption` | What voting costs: a day of vote fees under TowerBFT, and under alpenglow the admission ticket and the balance the vote account must hold at the epoch's turn. The header's balance warnings. |
 | `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | The epoch card, block height, and the configured slot time |
 | `Bank::clock` | The epoch's measured slot rate, for the epoch countdown |

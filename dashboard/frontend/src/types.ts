@@ -781,6 +781,17 @@ export interface VoteParticipation {
   miss_bins: number[];
 }
 
+/** Whether this vote account holds a seat in the admitted set, the
+ *  validators whose votes count under alpenglow. Null before alpenglow. */
+export interface Admission {
+  seat: boolean;
+  /** Null until the next epoch's stakes are known. */
+  next_seat: boolean | null;
+  /** Lamports short of the ticket for the epoch after the next; null where
+   *  the vote account covers it. */
+  ticket_short: number | null;
+}
+
 /** Slots that paid others but not this validator, by where they fell. A
  *  slot in more than one place counts in the first. */
 export interface Misses {
@@ -864,6 +875,7 @@ export interface Published {
     ingest_paths: IngestSummary;
     snapshots: Snapshots | null;
     bls_key: boolean | null;
+    admission: Admission | null;
     vote_credits: VoteCredits | null;
     vote_participation: VoteParticipation | null;
     turbine: Turbine | null;

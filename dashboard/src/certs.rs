@@ -66,8 +66,7 @@ pub struct Participation {
 }
 
 /// Slots that paid others but not this validator, by where they fell. A slot
-/// in more than one place counts in the first: the boundary is the cluster's
-/// doing, a leader slot ours.
+/// in more than one place counts in the first.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Misses {
     /// Within `BOUNDARY_SLOTS` of the epoch's first slot.

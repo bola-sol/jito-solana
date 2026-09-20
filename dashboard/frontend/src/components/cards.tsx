@@ -96,25 +96,25 @@ function MissesStat({ epoch }: { epoch: EpochInfo }) {
     <Stat
       label="not rewarded, and where"
       value={count(total)}
-      sub={<MissesSplit misses={misses} total={total} />}
+      sub={total > 0 ? <MissesSplit misses={misses} /> : undefined}
       explain="Slots whose certificate paid others but not this validator, by where they fell: the epoch's first thousand slots, our own leader slots, a snapshot write, or none of those."
     />
   );
 }
 
-/** The misses as a bar cut by place, and a legend that names each place. */
-function MissesSplit({ misses, total }: { misses: Misses; total: number }) {
+/** The misses as a bar cut by place, and a legend naming each place that
+ *  has any. */
+function MissesSplit({ misses }: { misses: Misses }) {
+  const places = MISS_PLACES.filter((place) => misses[place] > 0);
   return (
     <div className="misses">
-      {total > 0 && (
-        <div className="misses-bar" aria-hidden="true">
-          {MISS_PLACES.filter((place) => misses[place] > 0).map((place) => (
-            <i key={place} className={`is-${place}`} style={{ flexGrow: misses[place] }} />
-          ))}
-        </div>
-      )}
+      <div className="misses-bar" aria-hidden="true">
+        {places.map((place) => (
+          <i key={place} className={`is-${place}`} style={{ flexGrow: misses[place] }} />
+        ))}
+      </div>
       <div className="misses-legend">
-        {MISS_PLACES.map((place) => (
+        {places.map((place) => (
           <span key={place}>
             <i className={`misses-swatch is-${place}`} />
             <b>{count(misses[place])}</b> {place}

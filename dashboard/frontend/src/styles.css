@@ -743,8 +743,29 @@ body {
   background: var(--part-5);
 }
 
-.misses .is-elsewhere {
+.misses .is-thin {
+  background: var(--path-3);
+}
+
+.misses .is-late {
+  background: var(--part-4);
+}
+
+.misses .is-lost {
   background: var(--path-4);
+}
+
+.misses-note {
+  color: var(--text-faint);
+}
+
+/* One leader a line, with its count. */
+.misses-leaders .explain-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  white-space: nowrap;
+  font-weight: 400;
 }
 
 /* ---- staked SOL as ticks ---- */

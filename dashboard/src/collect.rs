@@ -1464,8 +1464,10 @@ impl Collector {
                 self.snapshot_spans
                     .retain(|span| span.to.is_none_or(|to| to >= start));
             }
+            let detail = (mark.reward == certs::Reward::Unpaid)
+                .then(|| self.miss_detail(root_bank, mark.slot));
             if let Some(tally) = self.certs_tally.as_mut() {
-                tally.add(&mark, &spans);
+                tally.add(&mark, &spans, detail);
             }
             let updated = self
                 .slots
@@ -1475,11 +1477,15 @@ impl Collector {
             }
         }
         if let Some(tally) = &self.certs_tally {
+            let info = self.info_cache.read().unwrap();
+            let participation =
+                tally.participation(|leader| info.get(leader).and_then(|info| info.name.clone()));
+            drop(info);
             self.debounces.vote_participation.publish(
                 &self.publisher,
                 TOPIC_SUMMARY,
                 "vote_participation",
-                tally.participation(),
+                participation,
             );
         }
     }
@@ -1495,6 +1501,33 @@ impl Collector {
             schedule.get_slots_in_epoch(epoch),
             self.leader_slots_in_epoch(bank, epoch).unwrap_or_default(),
         )
+    }
+
+    /// Who wrote the certificate for `slot`, and whether this node finished
+    /// replaying `slot` only after that leader's own slot had begun arriving.
+    fn miss_detail(&self, bank: &Bank, slot: Slot) -> certs::MissDetail {
+        let writer_slot = certs::writer_slot(slot);
+        let writer = self
+            .ctx
+            .leader_schedule_cache
+            .slot_leader_at(writer_slot, Some(bank))
+            .map(|leader| leader.id);
+        let late = match (self.slots.get(slot), self.slots.get(writer_slot)) {
+            (Some(voted), Some(written)) => {
+                match (
+                    voted.time_millis,
+                    voted.replayed_millis,
+                    written.time_millis,
+                ) {
+                    (Some(arrived), Some(replayed), Some(writer_arrived)) => {
+                        arrived.saturating_add(replayed) > writer_arrived
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        certs::MissDetail { writer, late }
     }
 
     /// The finished snapshot writes, and the one in progress as an open span.

@@ -779,6 +779,14 @@ export interface VoteParticipation {
   misses: Misses;
   /** Unpaid slots per four-hundredth of the epoch. */
   miss_bins: number[];
+  /** The leaders whose certificates left the most lost votes out, most first. */
+  lost_leaders: LostLeader[];
+}
+
+export interface LostLeader {
+  identity: string;
+  name: string | null;
+  count: number;
 }
 
 /** Whether this vote account holds a seat in the admitted set, the
@@ -801,7 +809,13 @@ export interface Misses {
   leader: number;
   /** While a snapshot archive was being written. */
   snapshot: number;
-  elsewhere: number;
+  /** The certificate paid fewer ranks than the lowest tenth of the epoch's. */
+  thin: number;
+  /** This node finished replaying the slot after the certificate's writer
+   *  had begun its own. */
+  late: number;
+  /** None of the above: the vote was in time and the certificate full. */
+  lost: number;
 }
 
 /** The envelope every message arrives in. */

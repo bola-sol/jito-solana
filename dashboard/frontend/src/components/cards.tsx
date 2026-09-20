@@ -3,9 +3,9 @@ import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
 import { creditsShare, participationShare } from "../credits";
-import { MISS_PLACES, missMarks, missTotal, turnMarks } from "../misses";
+import { leaderLabel, lostNote, MISS_PLACES, missMarks, missTotal, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
-import type { Admission, EpochInfo, Misses } from "../types";
+import type { Admission, EpochInfo, VoteParticipation } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import { useBalancesHidden } from "../balances";
@@ -111,22 +111,23 @@ function MissesStat({ epoch }: { epoch: EpochInfo }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
   if (!alpenglow || !participation || participation.epoch !== epoch.epoch) return null;
-  const { misses } = participation;
-  const total = missTotal(misses);
+  const total = missTotal(participation.misses);
   return (
     <Stat
       label="votes not rewarded, and where"
       value={count(total)}
-      sub={total > 0 ? <MissesSplit misses={misses} /> : undefined}
-      explain="Slots whose certificate paid others but not this validator, by where they fell: the epoch's first thousand slots, our own leader slots, a snapshot write, or none of those."
+      sub={total > 0 ? <MissesSplit participation={participation} /> : undefined}
+      explain="Slots whose certificate paid others but not this validator, by where they fell: the epoch's first thousand slots, our own leader slots, a snapshot write, a certificate thinner than the epoch's lowest tenth, a slot we replayed after its certificate's writer had begun, or lost on the way."
     />
   );
 }
 
-/** The misses as a bar cut by place, and a legend naming each place that
- *  has any. */
-function MissesSplit({ misses }: { misses: Misses }) {
+/** The misses as a bar cut by place, a legend naming each place that has
+ *  any, and who wrote the lost ones out when a few leaders did. */
+function MissesSplit({ participation }: { participation: VoteParticipation }) {
+  const { misses } = participation;
   const places = MISS_PLACES.filter((place) => misses[place] > 0);
+  const note = lostNote(participation);
   return (
     <div className="misses">
       <div className="misses-bar" aria-hidden="true">
@@ -142,6 +143,20 @@ function MissesSplit({ misses }: { misses: Misses }) {
           </span>
         ))}
       </div>
+      {note && (
+        <div className="misses-note">
+          <Explain
+            className="misses-leaders"
+            text={note.leaders.map((leader) => (
+              <span key={leader.identity}>
+                {leaderLabel(leader)} · {count(leader.count)}
+              </span>
+            ))}
+          >
+            {note.text}
+          </Explain>
+        </div>
+      )}
     </div>
   );
 }

@@ -21,6 +21,15 @@ use {
 /// block. Reading from there costs two sets of shreds whatever the block holds.
 const FOOTER_SPAN: u64 = 2 * DATA_SHREDS_PER_FEC_BLOCK as u64;
 
+/// Slots from the epoch's first over which the cluster pays out stake
+/// rewards, when every validator misses votes.
+pub const BOUNDARY_SLOTS: Slot = 1_000;
+
+/// How finely unpaid slots are placed along the epoch for the marks on the
+/// epoch meter.
+pub const MISS_BINS: usize = 400;
+const LAST_BIN: usize = MISS_BINS - 1;
+
 /// What the reward certificate for a slot said about this node's vote. The
 /// certificate for slot N can only be written by the leader of slot N+8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -51,6 +60,36 @@ pub struct Participation {
     /// Slots whose certificate paid anybody.
     pub rewarded: u64,
     pub cluster_max: u64,
+    pub misses: Misses,
+    /// Unpaid slots per `MISS_BINS`th of the epoch.
+    pub miss_bins: Vec<u32>,
+}
+
+/// Slots that paid others but not this validator, by where they fell. A slot
+/// in more than one place counts in the first: the boundary is the cluster's
+/// doing, a leader slot ours.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct Misses {
+    /// Within `BOUNDARY_SLOTS` of the epoch's first slot.
+    pub boundary: u64,
+    /// One of this validator's leader slots.
+    pub leader: u64,
+    /// While a snapshot archive was being written.
+    pub snapshot: u64,
+    pub elsewhere: u64,
+}
+
+/// The slots a snapshot write spanned. Open where it is still being written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub from: Slot,
+    pub to: Option<Slot>,
+}
+
+impl Span {
+    fn covers(&self, slot: Slot) -> bool {
+        slot >= self.from && self.to.is_none_or(|to| slot <= to)
+    }
 }
 
 /// Paid slots per rank over one epoch's marks.
@@ -58,19 +97,37 @@ pub struct Participation {
 pub struct Tally {
     epoch: Epoch,
     since_slot: Slot,
+    epoch_start: Slot,
+    slots_in_epoch: u64,
+    /// Ascending. Empty where the schedule was not known when the tally began,
+    /// when those misses fall under `elsewhere`.
+    leader_slots: Vec<Slot>,
     paid: u64,
     rewarded: u64,
     per_rank: Vec<u64>,
+    misses: Misses,
+    miss_bins: Vec<u32>,
 }
 
 impl Tally {
-    pub fn new(epoch: Epoch, since_slot: Slot) -> Self {
+    pub fn new(
+        epoch: Epoch,
+        since_slot: Slot,
+        epoch_start: Slot,
+        slots_in_epoch: u64,
+        leader_slots: Vec<Slot>,
+    ) -> Self {
         Self {
             epoch,
             since_slot,
+            epoch_start,
+            slots_in_epoch,
+            leader_slots,
             paid: 0,
             rewarded: 0,
             per_rank: Vec::new(),
+            misses: Misses::default(),
+            miss_bins: vec![0; MISS_BINS],
         }
     }
 
@@ -78,11 +135,12 @@ impl Tally {
         self.epoch
     }
 
-    /// Counts a mark. A slot with no certificate counts for nobody.
-    pub fn add(&mut self, mark: &Mark) {
+    /// Counts a mark, placing an unpaid slot against `snapshots`, the writes
+    /// seen so far. A slot with no certificate counts for nobody.
+    pub fn add(&mut self, mark: &Mark, snapshots: &[Span]) {
         match mark.reward {
             Reward::Paid => self.paid = self.paid.saturating_add(1),
-            Reward::Unpaid => {}
+            Reward::Unpaid => self.miss(mark.slot, snapshots),
             Reward::NoCertificate => return,
         }
         self.rewarded = self.rewarded.saturating_add(1);
@@ -96,6 +154,28 @@ impl Tally {
         }
     }
 
+    fn miss(&mut self, slot: Slot, snapshots: &[Span]) {
+        let count = if slot < self.epoch_start.saturating_add(BOUNDARY_SLOTS) {
+            &mut self.misses.boundary
+        } else if self.leader_slots.binary_search(&slot).is_ok() {
+            &mut self.misses.leader
+        } else if snapshots.iter().any(|span| span.covers(slot)) {
+            &mut self.misses.snapshot
+        } else {
+            &mut self.misses.elsewhere
+        };
+        *count = count.saturating_add(1);
+        let bin = slot
+            .saturating_sub(self.epoch_start)
+            .saturating_mul(MISS_BINS as u64)
+            .checked_div(self.slots_in_epoch)
+            .unwrap_or(0);
+        let bin = usize::try_from(bin).unwrap_or(LAST_BIN).min(LAST_BIN);
+        if let Some(count) = self.miss_bins.get_mut(bin) {
+            *count = count.saturating_add(1);
+        }
+    }
+
     /// The counts so far, the best rank's among them.
     pub fn participation(&self) -> Participation {
         Participation {
@@ -104,6 +184,8 @@ impl Tally {
             paid: self.paid,
             rewarded: self.rewarded,
             cluster_max: self.per_rank.iter().copied().max().unwrap_or(0),
+            misses: self.misses,
+            miss_bins: self.miss_bins.clone(),
         }
     }
 }
@@ -300,27 +382,101 @@ mod tests {
         assert!(mark.paid.is_empty());
     }
 
+    /// An epoch of 4,000 slots from slot 0, with leader slots at 2,000 to 2,003.
+    fn tally() -> Tally {
+        Tally::new(7, 100, 0, 4_000, vec![2_000, 2_001, 2_002, 2_003])
+    }
+
+    fn misses(tally: &Tally) -> Misses {
+        tally.participation().misses
+    }
+
     #[test]
     fn test_the_tally_counts_paid_slots_for_us_and_the_best_rank() {
-        let mut tally = Tally::new(7, 100);
-        tally.add(&mark(100, Reward::Paid, &[0, 1, 2]));
-        tally.add(&mark(101, Reward::Unpaid, &[1, 2]));
-        tally.add(&mark(102, Reward::NoCertificate, &[]));
-        tally.add(&mark(103, Reward::Paid, &[0, 1]));
+        let mut tally = tally();
+        tally.add(&mark(100, Reward::Paid, &[0, 1, 2]), &[]);
+        tally.add(&mark(101, Reward::Unpaid, &[1, 2]), &[]);
+        tally.add(&mark(102, Reward::NoCertificate, &[]), &[]);
+        tally.add(&mark(103, Reward::Paid, &[0, 1]), &[]);
+        let participation = tally.participation();
         assert_eq!(
-            tally.participation(),
-            Participation {
-                epoch: 7,
-                since_slot: 100,
-                paid: 2,
-                rewarded: 3,
-                cluster_max: 3,
+            (
+                participation.epoch,
+                participation.since_slot,
+                participation.paid,
+                participation.rewarded,
+                participation.cluster_max,
+            ),
+            (7, 100, 2, 3, 3)
+        );
+        assert_eq!(participation.misses.boundary, 1);
+        assert_eq!(participation.miss_bins.iter().sum::<u32>(), 1);
+    }
+
+    #[test]
+    fn test_an_empty_tally_has_no_best() {
+        assert_eq!(tally().participation().cluster_max, 0);
+    }
+
+    #[test]
+    fn test_a_miss_is_placed_by_where_it_fell() {
+        let mut tally = tally();
+        let written = [Span {
+            from: 3_000,
+            to: Some(3_010),
+        }];
+        tally.add(&mark(999, Reward::Unpaid, &[1]), &written);
+        tally.add(&mark(2_001, Reward::Unpaid, &[1]), &written);
+        tally.add(&mark(3_005, Reward::Unpaid, &[1]), &written);
+        tally.add(&mark(3_011, Reward::Unpaid, &[1]), &written);
+        assert_eq!(
+            misses(&tally),
+            Misses {
+                boundary: 1,
+                leader: 1,
+                snapshot: 1,
+                elsewhere: 1,
             }
         );
     }
 
     #[test]
-    fn test_an_empty_tally_has_no_best() {
-        assert_eq!(Tally::new(7, 100).participation().cluster_max, 0);
+    fn test_a_write_still_going_covers_every_slot_since_it_began() {
+        let mut tally = tally();
+        let writing = [Span {
+            from: 3_000,
+            to: None,
+        }];
+        tally.add(&mark(3_999, Reward::Unpaid, &[1]), &writing);
+        tally.add(&mark(2_999, Reward::Unpaid, &[1]), &writing);
+        assert_eq!(misses(&tally).snapshot, 1);
+        assert_eq!(misses(&tally).elsewhere, 1);
+    }
+
+    #[test]
+    fn test_the_boundary_takes_a_leader_slot_within_it() {
+        let mut tally = Tally::new(7, 0, 0, 4_000, vec![500]);
+        tally.add(&mark(500, Reward::Unpaid, &[1]), &[]);
+        assert_eq!(misses(&tally).boundary, 1);
+        assert_eq!(misses(&tally).leader, 0);
+    }
+
+    #[test]
+    fn test_misses_fall_in_the_bin_for_their_place_in_the_epoch() {
+        let mut tally = tally();
+        tally.add(&mark(0, Reward::Unpaid, &[1]), &[]);
+        tally.add(&mark(2_000, Reward::Unpaid, &[1]), &[]);
+        tally.add(&mark(2_001, Reward::Unpaid, &[1]), &[]);
+        tally.add(&mark(3_999, Reward::Unpaid, &[1]), &[]);
+        let bins = tally.participation().miss_bins;
+        assert_eq!(bins.len(), MISS_BINS);
+        assert_eq!((bins[0], bins[200], bins[MISS_BINS - 1]), (1, 2, 1));
+    }
+
+    #[test]
+    fn test_a_slot_past_the_epoch_lands_in_the_last_bin() {
+        let mut tally = tally();
+        tally.add(&mark(9_000, Reward::Unpaid, &[1]), &[]);
+        assert_eq!(tally.participation().miss_bins[MISS_BINS - 1], 1);
     }
 }

@@ -197,12 +197,22 @@ export function Stat({
   );
 }
 
-/** A labelled horizontal progress bar, as used by the epoch countdown. */
-export function Meter({ fraction }: { fraction: number }): ReactElement {
+/** A labelled horizontal progress bar, as used by the epoch countdown. The
+ *  children are marks laid along it, outside what a reader is told. */
+export function Meter({ fraction, children }: { fraction: number; children?: ReactNode }): ReactElement {
   const clamped = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
   return (
-    <div className="meter" role="progressbar" aria-valuenow={Math.round(clamped * 100)}>
+    <div
+      className={`meter${children ? " has-marks" : ""}`}
+      role="progressbar"
+      aria-valuenow={Math.round(clamped * 100)}
+    >
       <div className="meter-fill" style={{ width: `${clamped * 100}%` }} />
+      {children && (
+        <span className="meter-marks" aria-hidden="true">
+          {children}
+        </span>
+      )}
     </div>
   );
 }

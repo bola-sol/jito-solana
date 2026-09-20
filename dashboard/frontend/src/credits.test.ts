@@ -24,6 +24,8 @@ describe("participationShare", () => {
     paid: 1_200,
     rewarded: 1_210,
     cluster_max: 1_208,
+    misses: { boundary: 10, leader: 0, snapshot: 0, elsewhere: 0 },
+    miss_bins: [],
   };
 
   it("is our paid slots over the most any validator has", () => {

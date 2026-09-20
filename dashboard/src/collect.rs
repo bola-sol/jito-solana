@@ -407,6 +407,10 @@ pub struct Collector {
     certs_walk: Option<(Slot, Slot)>,
     /// Paid slots per rank in the epoch the walk is in.
     certs_tally: Option<certs::Tally>,
+    /// The slots each finished snapshot write spanned, from the write the
+    /// tally's epoch began in. Together with the write in progress these
+    /// place the unpaid slots.
+    snapshot_spans: Vec<certs::Span>,
     /// Highest slot examined for a shred timestamp, whether or not it had one.
     /// Skipped slots never do, so this advances past them independently.
     slot_timed_to: Option<Slot>,
@@ -466,8 +470,9 @@ pub struct Collector {
     /// that was.
     overview_dirty: bool,
     overview_retained_at: Instant,
-    /// The archive being staged, and the most replay fell behind while it was.
-    snapshot_writing: Option<(Writing, u64)>,
+    /// The archive being staged, the most replay fell behind while it was, and
+    /// the slot replay was at when the staging was first seen.
+    snapshot_writing: Option<(Writing, u64, Slot)>,
     snapshot_last: Option<Written>,
 }
 
@@ -530,6 +535,7 @@ impl Collector {
             slot_timed_to: None,
             certs_walk: None,
             certs_tally: None,
+            snapshot_spans: Vec::new(),
             last_shred_time: None,
             slot_time_window: VecDeque::new(),
             caught_up_at: None,
@@ -721,15 +727,21 @@ impl Collector {
         let mut snapshots = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
         let writing = snapshots.as_ref().and_then(|snapshots| snapshots.writing);
         match (writing, self.snapshot_writing.take()) {
-            (Some(writing), None) => self.snapshot_writing = Some((writing, 0)),
-            (Some(writing), Some((_, fell_behind))) => {
-                self.snapshot_writing = Some((writing, fell_behind));
+            (Some(writing), None) => {
+                self.snapshot_writing = Some((writing, 0, self.last_completed_slot));
             }
-            (None, Some((writing, fell_behind_slots))) => {
+            (Some(writing), Some((_, fell_behind, from))) => {
+                self.snapshot_writing = Some((writing, fell_behind, from));
+            }
+            (None, Some((writing, fell_behind_slots, from))) => {
                 self.snapshot_last = Some(Written {
                     slot: writing.slot,
                     took_millis: unix_millis().saturating_sub(writing.since_millis),
                     fell_behind_slots,
+                });
+                self.snapshot_spans.push(certs::Span {
+                    from,
+                    to: Some(self.last_completed_slot),
                 });
             }
             (None, None) => {}
@@ -1399,18 +1411,25 @@ impl Collector {
             self.certs_walk = Some((floor, read_to));
         }
         let schedule = root_bank.epoch_schedule();
+        let spans = self.snapshot_spans().collect::<Vec<_>>();
         for mark in marks {
             if mark.slot < floor {
                 continue;
             }
             let epoch = schedule.get_epoch(mark.slot);
-            let tally = self
+            if self
                 .certs_tally
-                .get_or_insert_with(|| certs::Tally::new(epoch, mark.slot));
-            if tally.epoch() != epoch {
-                *tally = certs::Tally::new(epoch, mark.slot);
+                .as_ref()
+                .is_none_or(|tally| tally.epoch() != epoch)
+            {
+                self.certs_tally = Some(self.new_tally(root_bank, epoch, mark.slot));
+                let start = schedule.get_first_slot_in_epoch(epoch);
+                self.snapshot_spans
+                    .retain(|span| span.to.is_none_or(|to| to >= start));
             }
-            tally.add(&mark);
+            if let Some(tally) = self.certs_tally.as_mut() {
+                tally.add(&mark, &spans);
+            }
             let updated = self
                 .slots
                 .update(mark.slot, |entry| entry.reward = Some(mark.reward));
@@ -1426,6 +1445,27 @@ impl Collector {
                 tally.participation(),
             );
         }
+    }
+
+    /// A tally for `epoch` from `since_slot`. An unknown leader schedule is
+    /// taken as no leader slots; it is known for every slot the root has passed.
+    fn new_tally(&self, bank: &Bank, epoch: Epoch, since_slot: Slot) -> certs::Tally {
+        let schedule = bank.epoch_schedule();
+        certs::Tally::new(
+            epoch,
+            since_slot,
+            schedule.get_first_slot_in_epoch(epoch),
+            schedule.get_slots_in_epoch(epoch),
+            self.leader_slots_in_epoch(bank, epoch).unwrap_or_default(),
+        )
+    }
+
+    /// The finished snapshot writes, and the one in progress as an open span.
+    fn snapshot_spans(&self) -> impl Iterator<Item = certs::Span> + '_ {
+        self.snapshot_spans.iter().copied().chain(
+            self.snapshot_writing
+                .map(|(_, _, from)| certs::Span { from, to: None }),
+        )
     }
 
     /// Sends one changed slot to live clients and keeps it in the packed history.
@@ -2716,6 +2756,7 @@ mod tests {
                 since_millis: unix_millis().saturating_sub(90_000),
             },
             0,
+            10,
         ));
         // Replay trails the cluster while the write is on.
         harness.advance_to(64);
@@ -2726,8 +2767,13 @@ mod tests {
             collector
                 .snapshot_writing
                 .as_ref()
-                .map(|(_, behind)| *behind),
+                .map(|(_, behind, _)| *behind),
             Some(100 - completed)
+        );
+        // While it writes, the span is open from where replay was.
+        assert_eq!(
+            collector.snapshot_spans().collect::<Vec<_>>(),
+            vec![certs::Span { from: 10, to: None }]
         );
 
         // No config in the fixture, so the next read sees no staging file.
@@ -2737,6 +2783,13 @@ mod tests {
         assert!(written.took_millis >= 90_000);
         assert_eq!(written.fell_behind_slots, 100 - completed);
         assert!(collector.snapshot_writing.is_none());
+        assert_eq!(
+            collector.snapshot_spans,
+            vec![certs::Span {
+                from: 10,
+                to: Some(completed),
+            }]
+        );
     }
 
     // ---- what this build is ---------------------------------------------

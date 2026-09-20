@@ -2,8 +2,9 @@ import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { creditsShare, participationShare } from "../credits";
+import { MISS_PLACES, missMarks, missTotal, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
-import type { EpochInfo } from "../types";
+import type { EpochInfo, Misses } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import { useBalancesHidden } from "../balances";
@@ -37,8 +38,9 @@ export function EpochCard(): ReactElement {
           value={count(left)}
         />
         <VoteCreditsStat epoch={epoch} />
+        <MissesStat epoch={epoch} />
       </div>
-      <Meter fraction={progress} />
+      <EpochMeter fraction={progress} epoch={epoch} />
       <div className="card-footnote">
         slot {count(elapsed)} of {count(epoch.slots_in_epoch)}
       </div>
@@ -79,6 +81,76 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
     return <Stat label="vote credits" value={count(credits.credits)} />;
   }
   return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={percent(share, 2)} />;
+}
+
+/** Where this validator's unrewarded votes fell this epoch. Alpenglow only,
+ *  since only the reward certificates say which slots went unpaid, and absent
+ *  until one from this epoch has been read. */
+function MissesStat({ epoch }: { epoch: EpochInfo }) {
+  const participation = useStore().get("summary", "vote_participation");
+  const alpenglow = useAlpenglow();
+  if (!alpenglow || !participation || participation.epoch !== epoch.epoch) return null;
+  const { misses } = participation;
+  const total = missTotal(misses);
+  return (
+    <Stat
+      label="not rewarded, and where"
+      value={count(total)}
+      sub={<MissesSplit misses={misses} total={total} />}
+      explain="Slots whose certificate paid others but not this validator, by where they fell: the epoch's first thousand slots, our own leader slots, a snapshot write, or none of those."
+    />
+  );
+}
+
+/** The misses as a bar cut by place, and a legend that names each place. */
+function MissesSplit({ misses, total }: { misses: Misses; total: number }) {
+  return (
+    <div className="misses">
+      {total > 0 && (
+        <div className="misses-bar" aria-hidden="true">
+          {MISS_PLACES.filter((place) => misses[place] > 0).map((place) => (
+            <i key={place} className={`is-${place}`} style={{ flexGrow: misses[place] }} />
+          ))}
+        </div>
+      )}
+      <div className="misses-legend">
+        {MISS_PLACES.map((place) => (
+          <span key={place}>
+            <i className={`misses-swatch is-${place}`} />
+            <b>{count(misses[place])}</b> {place}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The epoch's progress, with this validator's leader turns and unrewarded
+ *  votes marked along it once the certificates say where they fell. The
+ *  turns are left off when there are too many to read as marks. */
+function EpochMeter({ fraction, epoch }: { fraction: number; epoch: EpochInfo }) {
+  const participation = useStore().get("summary", "vote_participation");
+  const alpenglow = useAlpenglow();
+  if (!alpenglow || !participation || participation.epoch !== epoch.epoch) {
+    return <Meter fraction={fraction} />;
+  }
+  const turns = turnMarks(epoch.my_leader_slots, epoch.start_slot, epoch.slots_in_epoch) ?? [];
+  const misses = missMarks(participation.miss_bins);
+  if (turns.length === 0 && misses.length === 0) return <Meter fraction={fraction} />;
+  return (
+    <Meter fraction={fraction}>
+      {turns.map((at) => (
+        <i key={at} className="meter-mark is-turn" style={{ left: `${at * 100}%` }} />
+      ))}
+      {misses.map(({ at, weight }) => (
+        <i
+          key={at}
+          className="meter-mark is-miss"
+          style={{ left: `${at * 100}%`, opacity: 0.35 + weight * 0.6 }}
+        />
+      ))}
+    </Meter>
+  );
 }
 
 /** Staked SOL as fifty ticks, the delinquent share eating them from the

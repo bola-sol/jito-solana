@@ -776,6 +776,21 @@ export interface VoteParticipation {
   /** Slots whose certificate paid anybody. */
   rewarded: number;
   cluster_max: number;
+  misses: Misses;
+  /** Unpaid slots per four-hundredth of the epoch. */
+  miss_bins: number[];
+}
+
+/** Slots that paid others but not this validator, by where they fell. A
+ *  slot in more than one place counts in the first. */
+export interface Misses {
+  /** In the epoch's first thousand slots. */
+  boundary: number;
+  /** One of this validator's leader slots. */
+  leader: number;
+  /** While a snapshot archive was being written. */
+  snapshot: number;
+  elsewhere: number;
 }
 
 /** The envelope every message arrives in. */

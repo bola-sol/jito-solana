@@ -652,6 +652,102 @@ body {
   transition: width 0.4s ease;
 }
 
+/* Marks along the meter, taller than it: the epoch card's leader turns and
+   unrewarded votes. The fill keeps its own corners once nothing clips it. */
+.meter.has-marks {
+  position: relative;
+  overflow: visible;
+}
+
+.meter.has-marks .meter-fill {
+  border-radius: 2px;
+}
+
+.meter-marks {
+  position: absolute;
+  inset: 0;
+}
+
+.meter-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  margin-left: -1px;
+  border-radius: 1px;
+}
+
+.meter-mark.is-turn {
+  top: -2px;
+  height: 8px;
+  background: var(--text-faint);
+  opacity: 0.55;
+}
+
+/* Terracotta, not red: a miss is routine, and a run of them shows as a
+   darker stretch on its own. */
+.meter-mark.is-miss {
+  background: var(--warn);
+}
+
+/* ---- unrewarded votes by where they fell ---- */
+
+.misses {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.misses-bar {
+  display: flex;
+  gap: 1px;
+  height: 6px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.misses-bar > i {
+  display: block;
+}
+
+.misses-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-dim);
+}
+
+.misses-legend b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.misses-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 1px;
+  vertical-align: -0.5px;
+}
+
+.misses .is-boundary {
+  background: var(--part-1);
+}
+
+.misses .is-leader {
+  background: var(--part-2);
+}
+
+.misses .is-snapshot {
+  background: var(--part-5);
+}
+
+.misses .is-elsewhere {
+  background: var(--path-4);
+}
+
 /* ---- staked SOL as ticks ---- */
 
 .validators-body {

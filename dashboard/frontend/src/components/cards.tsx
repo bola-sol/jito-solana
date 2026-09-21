@@ -2,7 +2,7 @@ import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
-import { creditsShare, participationShare } from "../credits";
+import { creditsShare, participationShare, shareText } from "../credits";
 import { leaderLabel, lostNote, MISS_PLACES, missMarks, missTotal, placeExplain, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
 import type { Admission, EpochInfo, VoteParticipation } from "../types";
@@ -79,7 +79,7 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
     return (
       <Stat
         label={`of the best since slot ${count(participation.since_slot)}, votes rewarded in ${count(participation.paid)} of ${count(participation.rewarded)} slots`}
-        value={percent(share, 2)}
+        value={shareText(share)}
         sub={earned}
         explain="Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them."
       />
@@ -89,7 +89,7 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   if (share === null) {
     return <Stat label="vote credits" value={count(credits.credits)} />;
   }
-  return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={percent(share, 2)} />;
+  return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={shareText(share)} />;
 }
 
 /** In place of the vote figure while the vote account has no seat. */

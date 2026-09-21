@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { creditsShare, participationShare } from "./credits";
+import { creditsShare, participationShare, shareText } from "./credits";
 import type { VoteParticipation } from "./types";
 
 describe("creditsShare", () => {
@@ -14,6 +14,20 @@ describe("creditsShare", () => {
 
   it("is capped at one", () => {
     expect(creditsShare(1_700, 1_600)).toBe(1);
+  });
+});
+
+describe("shareText", () => {
+  it("rounds down, so only the best reads as all of it", () => {
+    expect(shareText(1_937_033 / 1_937_113)).toBe("99.99%");
+    expect(shareText(0.99996)).toBe("99.99%");
+    expect(shareText(0.9999)).toBe("99.99%");
+    expect(shareText(2 / 3)).toBe("66.66%");
+    expect(shareText(1)).toBe("100.00%");
+  });
+
+  it("is a dash with no share", () => {
+    expect(shareText(null)).toBe("—");
   });
 });
 

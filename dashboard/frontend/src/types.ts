@@ -115,6 +115,8 @@ export interface Displays {
 export interface Peer {
   identity: string;
   version: string | null;
+  /** The client, as the version crate names it: `Agave`, `JitoLabs`, `Firedancer`. */
+  client: string | null;
   stake: number;
   ip: string | null;
   /** Display name from the validator's on-chain info, if it published one. */

@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { blockStamp, count, percent, shortKey, sol, solCompact } from "../format";
+import { blockStamp, buildLabel, count, percent, shortKey, sol, solCompact } from "../format";
 import { matchesQuery, rewardTitle, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
 import type { Store } from "../store";
@@ -350,15 +350,23 @@ function TurnLeader({
           is timed and the peer table on the slow tier, and a turn that grew a
           line when either did would be measured twice. */}
       <span className="schedule-leader-when">{began === null ? "" : blockStamp(began)}</span>
+      {/* Three lines, each drawn empty until the peer table reaches the
+          leader, for the same reason as the stamp above. */}
       <div className="schedule-leader-meta">
-        {peer?.version && <span className="schedule-version">{peer.version}</span>}
-        {peer && peer.stake > 0 && (
-          <span>
-            {solCompact(peer.stake)} SOL
-            {share !== null && <span className="schedule-share">{percent(share, 3)}</span>}
-          </span>
-        )}
-        {peer?.ip && <span className="schedule-ip">{peer.ip}</span>}
+        <span className="schedule-version">
+          {peer?.version ? buildLabel(peer.client ?? undefined, peer.version) : ""}
+        </span>
+        <span>
+          {peer && peer.stake > 0 && (
+            <>
+              {solCompact(peer.stake)} SOL
+              {share !== null && <span className="schedule-share">{percent(share, 3)}</span>}
+            </>
+          )}
+        </span>
+        <span className="schedule-ip" title={peer?.ip ?? undefined}>
+          {peer?.ip ?? ""}
+        </span>
       </div>
     </div>
   );

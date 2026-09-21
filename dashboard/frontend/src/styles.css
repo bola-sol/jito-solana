@@ -4704,19 +4704,23 @@ body {
   color: var(--ours);
 }
 
-/* One line, always, whether or not the peer table has reached this leader yet.
-   Wrapping or collapsing would change the height of a turn after it was drawn,
-   which moves every turn below it. */
+/* Three lines, each held open whether or not the peer table has reached
+   this leader yet, so a turn's height does not move after it is drawn. */
 .schedule-leader-meta {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 4px 10px;
-  min-height: 14px;
-  overflow: hidden;
-  white-space: nowrap;
+  flex-direction: column;
+  gap: 2px;
   font-size: 12px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+}
+
+.schedule-leader-meta > span {
+  min-height: 14px;
+  line-height: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .schedule-version {
@@ -4903,6 +4907,13 @@ body {
   .schedule-group {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
+  }
+
+  /* The leader sits above the slots here, so the three lines go across. */
+  .schedule-leader-meta {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 2px 10px;
   }
 }
 

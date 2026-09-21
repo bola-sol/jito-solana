@@ -192,6 +192,8 @@ pub struct Peer {
     /// Client version as gossip reports it, absent for a node not being heard
     /// from.
     pub version: Option<String>,
+    /// The client, as the version crate names it: `Agave`, `JitoLabs`, `Firedancer`.
+    pub client: Option<String>,
     /// Active stake this epoch, in lamports. Zero for an unstaked node.
     pub stake: u64,
     /// Host of the gossip address, without the port.
@@ -201,6 +203,14 @@ pub struct Peer {
     pub name: Option<String>,
     /// The validator's on-chain icon URL, when it published one.
     pub icon: Option<String>,
+}
+
+/// What gossip says about a leader.
+#[derive(Default)]
+struct Heard {
+    version: Option<String>,
+    client: Option<String>,
+    ip: Option<String>,
 }
 
 /// A scheduled slot that has not happened yet. Leaner than [`SlotEntry`]: no
@@ -1140,7 +1150,7 @@ impl Collector {
             }
         }
 
-        let mut gossip: HashMap<Pubkey, (Option<String>, Option<String>)> = HashMap::new();
+        let mut gossip: HashMap<Pubkey, Heard> = HashMap::new();
         for (contact_info, _) in peers {
             let identity = contact_info.pubkey();
             if !leaders.contains(identity) {
@@ -1148,21 +1158,27 @@ impl Collector {
             }
             gossip.insert(
                 *identity,
-                (
-                    Some(contact_info.version().to_string()),
-                    contact_info.gossip().map(|addr| addr.ip().to_string()),
-                ),
+                Heard {
+                    version: Some(contact_info.version().to_string()),
+                    client: Some(contact_info.version().client().to_string()),
+                    ip: contact_info.gossip().map(|addr| addr.ip().to_string()),
+                },
             );
         }
 
         let mut peers: Vec<Peer> = leaders
             .into_iter()
             .map(|identity| {
-                let (version, ip) = gossip.get(&identity).cloned().unwrap_or_default();
+                let Heard {
+                    version,
+                    client,
+                    ip,
+                } = gossip.remove(&identity).unwrap_or_default();
                 let (name, icon) = self.peer_display(&identity);
                 Peer {
                     stake: stakes.get(&identity).copied().unwrap_or(0),
                     version,
+                    client,
                     ip,
                     name,
                     icon,

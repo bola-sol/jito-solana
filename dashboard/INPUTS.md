@@ -68,7 +68,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | `transaction_count`, `non_vote_transaction_count_since_restart` | Transactions and votes per block |
 | `transaction_error_count`, `transaction_entries_count` | Failed transactions and entries per block |
 | The cost tracker: block cost, block limit, account limit | Compute per block, and the limits it is drawn against |
-| Collector fee details: total and priority fees | Base and priority fees per block |
+| Collector fee details: total and priority fees | Base and priority fees per block, and with the tips what the block earned this validator |
 | The balance of the eight tip accounts | Tips per block, as the difference from the parent (jito only) |
 | `last_blockhash` | The blockhash of our own blocks, on the block panel |
 

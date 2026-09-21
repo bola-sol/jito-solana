@@ -3,8 +3,10 @@ import { blockStamp, blockTime, bytes, count, micros, percent, sol, units } from
 import { recurrence } from "../cost";
 import {
   blockSummary,
+  earnedOf,
   sortBlocks,
   type BlockFigures,
+  type Earned,
   type SortDir,
   type SortKey,
 } from "../produced";
@@ -98,7 +100,7 @@ export function SlotDetailsPage({
   }
 
   // Newest first: a validator wants its last block, not its oldest.
-  const ordered = sort ? sortBlocks(blocks, sort.key, sort.dir) : [...blocks].reverse();
+  const ordered = sort ? sortBlocks(blocks, sort.key, sort.dir, rates) : [...blocks].reverse();
   // Commas dropped, since the page shows every slot with them.
   const needle = query.replace(/,/g, "").trim();
   const listed = needle ? ordered.filter((block) => String(block.slot).includes(needle)) : ordered;
@@ -131,7 +133,13 @@ export function SlotDetailsPage({
         />
       </div>
       <div className="produced">
-        <SummaryRows blocks={blocks} sort={sort} onSort={toggle} onClear={() => setSort(null)} />
+        <SummaryRows
+          blocks={blocks}
+          rates={rates}
+          sort={sort}
+          onSort={toggle}
+          onClear={() => setSort(null)}
+        />
         {numbered.map(({ block, epoch: at }, index) => {
           const turn = turnAt(index);
           return (
@@ -254,7 +262,7 @@ function SortButton({
 const SORT_WORD: Record<SortKey, string> = {
   transactions: "transactions",
   filled: "fullness",
-  fees: "fees",
+  earned: "earnings",
   duration: "duration",
 };
 
@@ -262,16 +270,18 @@ const SORT_WORD: Record<SortKey, string> = {
  *  head of the columns. The mean row's figures sort their column. */
 function SummaryRows({
   blocks,
+  rates,
   sort,
   onSort,
   onClear,
 }: {
   blocks: ProducedBlock[];
+  rates: TipRates | undefined;
   sort: { key: SortKey; dir: SortDir } | null;
   onSort: (key: SortKey) => void;
   onClear: () => void;
 }) {
-  const summary = blockSummary(blocks);
+  const summary = blockSummary(blocks, rates);
   const held = count(summary.blocks);
   const { mean } = summary;
   return (
@@ -296,8 +306,8 @@ function SummaryRows({
         <SortButton column="filled" sort={sort} onSort={onSort} className="produced-fill">
           {full(mean.filled)}
         </SortButton>
-        <SortButton column="fees" sort={sort} onSort={onSort} className="produced-fees">
-          {fees(mean.fees)}
+        <SortButton column="earned" sort={sort} onSort={onSort} className="produced-fees">
+          {solFigure(mean.earned)}
         </SortButton>
         <SortButton column="duration" sort={sort} onSort={onSort} className="produced-ms">
           {millis(mean.durationMillis)}
@@ -310,7 +320,7 @@ function SummaryRows({
       />
       <FiguresRow
         label="Worst 5%"
-        explain={`The fifth percentile of transactions, fill and fees, and the ninety fifth of duration, over the ${held} blocks held.`}
+        explain={`The fifth percentile of transactions, fill and earnings, and the ninety fifth of duration, over the ${held} blocks held.`}
         figures={summary.worst}
       />
     </>
@@ -335,7 +345,7 @@ function FiguresRow({
       </span>
       <span className="produced-txns">{txns(figures.transactions)}</span>
       <span className="produced-fill">{full(figures.filled)}</span>
-      <span className="produced-fees">{fees(figures.fees)}</span>
+      <span className="produced-fees">{solFigure(figures.earned)}</span>
       <span className="produced-ms">{millis(figures.durationMillis)}</span>
     </div>
   );
@@ -344,7 +354,7 @@ function FiguresRow({
 const txns = (value: number | null) => (value === null ? "—" : `${count(Math.round(value))} txns`);
 const full = (value: number | null) => (value === null ? "—" : `${percent(value, 1)} full`);
 const millis = (value: number | null) => (value === null ? "—" : `${Math.round(value)} ms`);
-const fees = (value: number | null) =>
+const solFigure = (value: number | null) =>
   value === null ? (
     "—"
   ) : (
@@ -379,6 +389,7 @@ function BlockRow({
   onToggle: () => void;
 }) {
   const filled = block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : 0;
+  const earned = earnedOf(block, rates);
 
   return (
     <div className={`produced-block${open ? " is-open" : ""}`} id={`block-${block.slot}`}>
@@ -394,10 +405,9 @@ function BlockRow({
         </span>
         <span className="produced-txns">{count(block.transactions)} txns</span>
         <span className="produced-fill">{percent(filled, 1)} full</span>
-        {/* Base and priority together, which is what the block earned. The
-            detail below splits them; the row wants one figure. */}
-        <span className="produced-fees">
-          {sol(block.total_fees, 5)}
+        {/* What the block earned us; the detail below has the parts. */}
+        <span className="produced-fees" title={earnedTitle(earned)}>
+          {sol(earned.total, 5)}
           {/* Dropped on the narrowest screens, where the column it costs is
               the slot number's. SOL is the only unit fees are ever in here,
               and the expanded detail below states it either way. */}
@@ -437,6 +447,12 @@ function BlockRow({
       )}
     </div>
   );
+}
+
+/** The parts behind the row's earnings figure. */
+function earnedTitle(earned: Earned): string {
+  const tips = earned.tips === null ? "" : ` and ${sol(earned.tips, 6)} SOL our tips`;
+  return `${sol(earned.base, 6)} SOL base fees after the burn, ${sol(earned.priority, 6)} SOL priority${tips}.`;
 }
 
 /** A label over a figure, which is most of what this body is made of. */

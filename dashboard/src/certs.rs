@@ -31,9 +31,9 @@ pub const BOUNDARY_SLOTS: Slot = 1_000;
 pub const MISS_BINS: usize = 400;
 const LAST_BIN: usize = MISS_BINS - 1;
 
-/// A certificate paying fewer ranks than the lowest this percent of the
-/// epoch's certificates is thin, once `THIN_MIN_CERTIFICATES` have been seen.
-pub const THIN_PERCENTILE: u64 = 10;
+/// A certificate paying at least this share fewer ranks than the epoch's
+/// median certificate is thin, once `THIN_MIN_CERTIFICATES` have been seen.
+pub const THIN_SHORTFALL_PERCENT: u64 = 10;
 pub const THIN_MIN_CERTIFICATES: u64 = 100;
 
 /// How many of the leaders behind lost votes are named.
@@ -76,8 +76,8 @@ pub struct Participation {
     pub lost_leaders: Vec<LostLeader>,
     /// Ranks in the epoch's certificates, one per admitted validator.
     pub ranks: u32,
-    /// A certificate paying fewer ranks than this is thin. Absent until
-    /// `THIN_MIN_CERTIFICATES` are in.
+    /// A certificate paying fewer ranks than this is thin: a tenth under the
+    /// epoch's median certificate. Absent until `THIN_MIN_CERTIFICATES` are in.
     pub thin_below: Option<u32>,
 }
 
@@ -91,8 +91,8 @@ pub struct Misses {
     pub leader: u64,
     /// While a snapshot archive was being written.
     pub snapshot: u64,
-    /// The certificate paid fewer ranks than the lowest `THIN_PERCENTILE`
-    /// percent of the epoch's certificates.
+    /// The certificate paid at least `THIN_SHORTFALL_PERCENT` fewer ranks than
+    /// the epoch's median certificate.
     pub thin: u64,
     /// This node finished replaying the slot after the certificate's writer
     /// had begun its own.
@@ -253,24 +253,27 @@ impl Tally {
         });
     }
 
-    /// The paid-rank count the lowest `THIN_PERCENTILE` percent of the epoch's
-    /// certificates fall under. `None` until `THIN_MIN_CERTIFICATES` are in.
+    /// A tenth under the median paid-rank count of the epoch's certificates,
+    /// below which one is thin. `None` until `THIN_MIN_CERTIFICATES` are in.
     fn thin_below(&self) -> Option<u32> {
         if self.rewarded < THIN_MIN_CERTIFICATES {
             return None;
         }
-        let cutoff = self
-            .rewarded
-            .saturating_mul(THIN_PERCENTILE)
-            .checked_div(100)?;
+        let half = self.rewarded.checked_div(2)?;
         let mut seen = 0u64;
+        let mut median = None;
         for (ranks, count) in self.paid_ranks.iter().enumerate() {
             seen = seen.saturating_add(u64::from(*count));
-            if seen > cutoff {
-                return u32::try_from(ranks).ok();
+            if seen > half {
+                median = Some(ranks);
+                break;
             }
         }
-        None
+        let median = u64::try_from(median?).ok()?;
+        let shortfall = median
+            .saturating_mul(THIN_SHORTFALL_PERCENT)
+            .checked_div(100)?;
+        u32::try_from(median.saturating_sub(shortfall)).ok()
     }
 
     fn bin_of(&self, slot: Slot) -> usize {
@@ -553,16 +556,21 @@ mod tests {
         Some(MissDetail { writer, late })
     }
 
+    /// A mark over twenty ranks, the first `paid` of them set.
+    fn wide(slot: Slot, reward: Reward, paid: usize) -> Mark {
+        Mark {
+            slot,
+            reward,
+            paid: (0..20).map(|rank| rank < paid).collect(),
+        }
+    }
+
     /// Enough certificates that a thin one can be told: seventy paying all
-    /// four ranks and thirty paying three, this node among them either way.
+    /// twenty ranks and thirty paying eighteen, so the median pays twenty.
     fn fill(tally: &mut Tally, from: Slot) {
         for (index, slot) in (from..from.saturating_add(THIN_MIN_CERTIFICATES)).enumerate() {
-            let ranks: &[usize] = if index < 70 {
-                &[0, 1, 2, 3]
-            } else {
-                &[0, 1, 2]
-            };
-            tally.add(&mark(slot, Reward::Paid, ranks), &[], None);
+            let paid = if index < 70 { 20 } else { 18 };
+            tally.add(&wide(slot, Reward::Paid, paid), &[], None);
         }
     }
 
@@ -644,18 +652,16 @@ mod tests {
     }
 
     #[test]
-    fn test_a_certificate_paying_fewer_than_the_lowest_tenth_is_thin() {
+    fn test_a_certificate_a_tenth_short_of_the_median_is_thin() {
         let mut tally = tally();
         fill(&mut tally, 1_000);
-        // The lowest tenth of the hundred ends at three ranks: two is under it.
-        tally.add(&mark(3_000, Reward::Unpaid, &[1, 2]), &[], None);
-        tally.add(
-            &mark(3_001, Reward::Unpaid, &[1, 2, 3]),
-            &[],
-            detail(None, true),
-        );
+        // The median pays twenty, so under eighteen is thin. Eighteen and
+        // nineteen are ordinary jitter and fall through to late and lost.
+        tally.add(&wide(3_000, Reward::Unpaid, 17), &[], None);
+        tally.add(&wide(3_001, Reward::Unpaid, 18), &[], detail(None, true));
+        tally.add(&wide(3_002, Reward::Unpaid, 19), &[], None);
         let misses = misses(&tally);
-        assert_eq!((misses.thin, misses.late, misses.lost), (1, 1, 0));
+        assert_eq!((misses.thin, misses.late, misses.lost), (1, 1, 1));
     }
 
     #[test]
@@ -674,7 +680,7 @@ mod tests {
         let participation = read(&tally);
         assert_eq!(
             (participation.ranks, participation.thin_below),
-            (4, Some(3))
+            (20, Some(18))
         );
     }
 

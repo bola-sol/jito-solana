@@ -16,7 +16,7 @@ const PLACE_EXPLAIN: Record<MissPlace, string> = {
   boundary: "The slot is in the first 1,000 slots of the epoch.",
   leader: "The slot is one of the leader slots of this validator.",
   snapshot: "This node wrote a snapshot archive during the slot.",
-  thin: "The certificate paid fewer validators than the lowest tenth of this epoch's certificates",
+  thin: "The certificate paid at least a tenth fewer validators than this epoch's typical certificate",
   late: "This node completed replay of the slot after the first shred of the certificate writer's slot arrived.",
   lost: "No other cause applies, but the certificate did not pay this validator.",
 };

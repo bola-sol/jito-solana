@@ -67,10 +67,10 @@ function participation(lost: number, counts: number[]): VoteParticipation {
 describe("placeExplain", () => {
   it("puts the cutoff on the thin place", () => {
     expect(placeExplain("thin", participation(0, []))).toBe(
-      "The certificate paid fewer validators than the lowest tenth of this epoch's certificates, now under 108 of 114.",
+      "The certificate paid at least a tenth fewer validators than this epoch's typical certificate, now under 108 of 114.",
     );
     expect(placeExplain("thin", { ...participation(0, []), thin_below: null })).toBe(
-      "The certificate paid fewer validators than the lowest tenth of this epoch's certificates.",
+      "The certificate paid at least a tenth fewer validators than this epoch's typical certificate.",
     );
   });
 

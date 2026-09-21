@@ -785,8 +785,8 @@ export interface VoteParticipation {
   lost_leaders: LostLeader[];
   /** Ranks in the epoch's certificates, one per admitted validator. */
   ranks: number;
-  /** A certificate paying fewer ranks than this is thin. Null until a
-   *  hundred certificates are in. */
+  /** A certificate paying fewer ranks than this is thin: a tenth under the
+   *  epoch's median certificate. Null until a hundred certificates are in. */
   thin_below: number | null;
 }
 

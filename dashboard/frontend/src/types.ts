@@ -809,13 +809,14 @@ export interface Admission {
 
 export type MissPlace = "boundary" | "leader" | "snapshot" | "thin" | "late" | "lost";
 
-/** When votor sent this node's votes for a slot, in microseconds from the
- *  slot's first shred, or from votor's own start on the slot where no
- *  shred had arrived. */
+/** Votor's timeline for a slot, in microseconds from when it began tracking
+ *  the slot. The first shred is reported only for the first slot of a
+ *  leader window; the parent becoming ready anchors the rest. */
 export interface VoteSent {
+  first_shred_us: number | null;
+  parent_ready_us: number | null;
   notarize_us: number | null;
   skip_us: number | null;
-  from_first_shred: boolean;
 }
 
 /** A leader whose certificate left this node out, with what it wrote. */

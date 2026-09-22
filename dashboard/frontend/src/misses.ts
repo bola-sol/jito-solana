@@ -97,16 +97,27 @@ export function leaderLabel(leader: LostLeader): string {
   return leader.name ?? shortKey(leader.identity);
 }
 
-/** The vote this node sent for the slot and how long after the first shred
- *  it went out; `none` where votor sent neither, a dash where it has not
+/** The vote this node sent for the slot and how long after its anchor it
+ *  went out: the first shred where votor saw it, else the parent becoming
+ *  ready. `none` where votor sent neither, a dash where it has not
  *  reported the slot. */
 export function voteText(vote: VoteSent | null): string {
   if (!vote) return "—";
   const sent: [word: string, micros: number] | null =
     vote.notarize_us !== null ? ["notarize", vote.notarize_us] : vote.skip_us !== null ? ["skip", vote.skip_us] : null;
   if (!sent) return "none";
-  const [word, micros] = sent;
-  return `${word} +${count(Math.round(micros / 1000))} ms`;
+  const [word, at] = sent;
+  const anchor: [name: string, micros: number] | null =
+    vote.first_shred_us !== null
+      ? ["shred", vote.first_shred_us]
+      : vote.parent_ready_us !== null
+        ? ["parent", vote.parent_ready_us]
+        : null;
+  if (!anchor) return word;
+  const [name, from] = anchor;
+  const millis = Math.round((at - from) / 1000);
+  // A vote before its anchor is the anchor's event delivered late.
+  return `${word}, ${name} ${millis < 0 ? "−" : "+"}${count(Math.abs(millis))} ms`;
 }
 
 /** Who else the certificate left out. */

@@ -805,6 +805,12 @@ body {
   color: var(--text);
 }
 
+.misses-panel-controls {
+  display: flex;
+  flex: none;
+  gap: 14px;
+}
+
 .misses-close {
   flex: none;
   white-space: nowrap;
@@ -814,6 +820,11 @@ body {
   font: inherit;
   color: var(--text-dim);
   cursor: pointer;
+}
+
+.misses-close:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 
 .misses-panel-body {
@@ -855,7 +866,7 @@ body {
 /* Eight columns: the writer takes what the fixed ones leave. */
 .misses-row {
   display: grid;
-  grid-template-columns: 8.5em 9em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 11em;
+  grid-template-columns: 8.5em 12.5em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 15.5em;
   gap: 12px;
   align-items: baseline;
   padding: 5px 0;
@@ -1024,6 +1035,7 @@ body {
   .misses-vote {
     grid-area: vote;
     text-align: right;
+    white-space: normal;
   }
 }
 

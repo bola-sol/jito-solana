@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { blockStamp, buildLabel, count, shortKey } from "../format";
 import {
   leftOutMost,
@@ -23,6 +23,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const participation = store.get("summary", "vote_participation");
   const [list, setList] = useState<MissList | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<MissPlace | null>(null);
   /** What the pointer is on, shown on the line; the filtered place's sentence otherwise. */
   const [hint, setHint] = useState<string | null>(null);
@@ -35,20 +36,33 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
     panel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, []);
 
-  useEffect(() => {
-    let live = true;
+  // Asked for on open and on the refresh control; a reply that lands after
+  // the panel closed is dropped.
+  const live = useRef(true);
+  const load = useCallback(() => {
+    setLoading(true);
     store.request<MissList>("summary", "misses", {}).then(
       (got) => {
-        if (live) setList(got);
+        if (!live.current) return;
+        setList(got);
+        setFailed(false);
+        setLoading(false);
       },
       () => {
-        if (live) setFailed(true);
+        if (!live.current) return;
+        setFailed(true);
+        setLoading(false);
       },
     );
-    return () => {
-      live = false;
-    };
   }, [store]);
+
+  useEffect(() => {
+    live.current = true;
+    load();
+    return () => {
+      live.current = false;
+    };
+  }, [load]);
 
   const counts = new Map<MissPlace, number>();
   for (const row of list?.rows ?? []) counts.set(row.place, (counts.get(row.place) ?? 0) + 1);
@@ -64,13 +78,19 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
           Votes not rewarded this epoch
           {list && `, ${count(list.rows.length)} of ${count(list.rewarded)}`}
         </h2>
-        <button type="button" className="misses-close" onClick={onClose}>
-          × close
-        </button>
+        <span className="misses-panel-controls">
+          <button type="button" className="misses-close" onClick={load} disabled={loading}>
+            {loading ? "reading…" : "↻ refresh"}
+          </button>
+          <button type="button" className="misses-close" onClick={onClose}>
+            × close
+          </button>
+        </span>
       </div>
       {list === null && (
         <div className="misses-summary">{failed ? "The list could not be read." : "Reading the list…"}</div>
       )}
+      {list !== null && failed && <div className="misses-summary">The list could not be refreshed.</div>}
       {list && list.rows.length === 0 && <div className="misses-summary">Nothing this epoch.</div>}
       {list && list.rows.length > 0 && (
         <div className="misses misses-panel-body">
@@ -113,7 +133,10 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
                 </Hinted>
               </span>
               <span>
-                <Hinted hint="When votor sent this node's vote, after the slot's first shred." onHint={setHint}>
+                <Hinted
+                  hint="When votor sent this node's vote, after the slot's first shred where votor saw it, else after the parent was ready."
+                  onHint={setHint}
+                >
                   our vote
                 </Hinted>
               </span>

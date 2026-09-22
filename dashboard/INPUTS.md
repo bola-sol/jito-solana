@@ -31,7 +31,7 @@ Each of these points carries a slot and describes one block.
 | `bundle_stage-stats` (jito only) | `slot`, `num_sanitized_ok`, `execution_results_ok` | Bundles sanitised and landed per produced block |
 | `banking_stage_worker_timing` | tag `id`; `cost_model_us`, `load_execute_us`, `load_execute_us_max`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | Execution time on a produced block: the reports that arrived between the block's first shred and its last, summed across the workers |
 | `banking_stage-leader_slot_vote_execute_and_commit_timings` | `slot`, `load_execute_us`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | The vote worker's part of the same figure |
-| `event_handler_slot_tracking` | `slot`, `first_shred`, `vote_notarize`, `vote_skip` | When this node's vote for a slot went out, on the list of unrewarded votes (alpenglow only) |
+| `event_handler_slot_tracking` | `slot`, `first_shred`, `parent_ready`, `vote_notarize`, `vote_skip` | When this node's vote for a slot went out, after the first shred or the parent becoming ready, on the list of unrewarded votes (alpenglow only). The first shred is reported for the first slot of a leader window only. |
 
 ### Per second
 

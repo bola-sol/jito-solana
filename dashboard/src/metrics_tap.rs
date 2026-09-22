@@ -1087,9 +1087,8 @@ impl MetricsTap {
         }
     }
 
-    /// Records when this node voted for a slot. The point's times count from
-    /// votor's own start on the slot; they are rebased to the first shred
-    /// where one arrived.
+    /// Records votor's timeline for a slot, as it reports it: microseconds
+    /// from its own start on the slot.
     fn remember_vote_track(&self, point: &DataPoint) {
         let field = |wanted: &str| {
             point
@@ -1101,12 +1100,11 @@ impl MetricsTap {
         let Some(slot) = field(SLOT) else {
             return;
         };
-        let first_shred = field("first_shred");
-        let rebase = |sent: Option<u64>| sent.map(|at| at.saturating_sub(first_shred.unwrap_or(0)));
         let vote = VoteSent {
-            notarize_us: rebase(field("vote_notarize")),
-            skip_us: rebase(field("vote_skip")),
-            from_first_shred: first_shred.is_some(),
+            first_shred_us: field("first_shred"),
+            parent_ready_us: field("parent_ready"),
+            notarize_us: field("vote_notarize"),
+            skip_us: field("vote_skip"),
         };
         let Ok(mut tracks) = self.vote_tracks.lock() else {
             return;
@@ -2626,6 +2624,46 @@ mod tests {
     /// real mainnet line.
     fn replay_point(fields: &[(&'static str, &str)]) -> DataPoint {
         named(REPLAY_SLOT_STATS, fields)
+    }
+
+    #[test]
+    fn test_votor_timelines_are_kept_by_slot_until_taken() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "6726788i"),
+                ("first_shred", "1200i"),
+                ("vote_notarize", "413200i"),
+            ],
+        ));
+        // A window slot after the first: no first shred, the parent instead.
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "6726789i"),
+                ("parent_ready", "90i"),
+                ("vote_notarize", "150i"),
+            ],
+        ));
+        tap.observe(&named(VOTE_TRACKING, &[("first_shred", "5i")]));
+
+        let tracks = tap.take_vote_tracks();
+        assert_eq!(tracks.len(), 2, "the point without a slot is dropped");
+        assert_eq!(
+            tracks[0],
+            (
+                6_726_788,
+                VoteSent {
+                    first_shred_us: Some(1_200),
+                    parent_ready_us: None,
+                    notarize_us: Some(413_200),
+                    skip_us: None,
+                }
+            )
+        );
+        assert_eq!(tracks[1].1.parent_ready_us, Some(90));
+        assert!(tap.take_vote_tracks().is_empty(), "taken once");
     }
 
     #[test]

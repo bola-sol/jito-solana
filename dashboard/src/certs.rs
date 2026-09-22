@@ -118,14 +118,15 @@ pub struct LostLeader {
     pub count: u64,
 }
 
-/// When votor sent this node's votes for a slot, in microseconds from the
-/// slot's first shred, or from when votor began tracking the slot where no
-/// shred had arrived.
+/// Votor's timeline for a slot, in microseconds from when it began tracking
+/// the slot. The first shred is only reported for the first slot of a leader
+/// window; the parent becoming ready is the anchor for the rest.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct VoteSent {
+    pub first_shred_us: Option<u64>,
+    pub parent_ready_us: Option<u64>,
     pub notarize_us: Option<u64>,
     pub skip_us: Option<u64>,
-    pub from_first_shred: bool,
 }
 
 /// One unpaid slot, as the list a viewer asks for carries it.
@@ -894,9 +895,10 @@ mod tests {
     fn test_a_vote_is_kept_for_a_miss_whichever_arrives_first() {
         let mut tally = tally();
         let vote = VoteSent {
-            notarize_us: Some(412_000),
+            first_shred_us: Some(1_200),
+            parent_ready_us: None,
+            notarize_us: Some(413_200),
             skip_us: None,
-            from_first_shred: true,
         };
         tally.note_vote(3_000, vote);
         tally.add(&mark(3_000, Reward::Unpaid, &[1]), &[], None);

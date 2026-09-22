@@ -13,7 +13,7 @@ import {
   voteText,
   writerSummary,
 } from "./misses";
-import type { MissList, VoteParticipation } from "./types";
+import type { MissList, VoteParticipation, VoteSent } from "./types";
 
 function list(
   rows: [writer: number | null, others: number[]][],
@@ -60,14 +60,34 @@ describe("leftOutMost", () => {
   });
 });
 
+const sent = (over: Partial<VoteSent>): VoteSent => ({
+  first_shred_us: null,
+  parent_ready_us: null,
+  notarize_us: null,
+  skip_us: null,
+  ...over,
+});
+
 describe("voteText", () => {
-  it("names the vote and its delay after the first shred", () => {
-    expect(voteText({ notarize_us: 412_400, skip_us: null, from_first_shred: true })).toBe("notarize +412 ms");
-    expect(voteText({ notarize_us: null, skip_us: 1_850_000, from_first_shred: true })).toBe("skip +1,850 ms");
+  it("names the vote and its delay after the first shred where votor saw it", () => {
+    expect(voteText(sent({ first_shred_us: 1_200, notarize_us: 413_600 }))).toBe("notarize, shred +412 ms");
+    expect(voteText(sent({ first_shred_us: 0, skip_us: 1_850_000 }))).toBe("skip, shred +1,850 ms");
+  });
+
+  it("falls back to the parent becoming ready, which is all a later window slot has", () => {
+    expect(voteText(sent({ parent_ready_us: 90, notarize_us: 150 }))).toBe("notarize, parent +0 ms");
+    expect(voteText(sent({ first_shred_us: 900, parent_ready_us: 90, notarize_us: 100_900 }))).toBe(
+      "notarize, shred +100 ms",
+    );
+  });
+
+  it("shows a vote before its anchor as a negative delay, and no anchor as the word alone", () => {
+    expect(voteText(sent({ first_shred_us: 20_000, notarize_us: 5_000 }))).toBe("notarize, shred −15 ms");
+    expect(voteText(sent({ notarize_us: 5_000 }))).toBe("notarize");
   });
 
   it("says none where votor sent neither, and nothing where it has not reported", () => {
-    expect(voteText({ notarize_us: null, skip_us: null, from_first_shred: false })).toBe("none");
+    expect(voteText(sent({ first_shred_us: 10 }))).toBe("none");
     expect(voteText(null)).toBe("—");
   });
 });

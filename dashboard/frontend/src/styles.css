@@ -835,20 +835,34 @@ body {
   font-size: 12.5px;
 }
 
+/* These filter, so they take the pointer rather than the help cursor. */
+.misses-legend .explain-trigger {
+  cursor: pointer;
+}
+
 .misses-legend .is-on {
   color: var(--text);
+}
+
+/* Two lines held open on a desktop, three on a phone. */
+.misses-hint {
+  min-height: 2.8em;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-faint);
 }
 
 /* Eight columns: the writer takes what the fixed ones leave. */
 .misses-row {
   display: grid;
-  grid-template-columns: 8.5em 9em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 9em;
+  grid-template-columns: 8.5em 9em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 11em;
   gap: 12px;
   align-items: baseline;
   padding: 5px 0;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .misses-row.is-head {
@@ -925,6 +939,10 @@ body {
 
   .misses-table {
     max-height: 60vh;
+  }
+
+  .misses-hint {
+    min-height: 4.2em;
   }
 
   .misses-slot {

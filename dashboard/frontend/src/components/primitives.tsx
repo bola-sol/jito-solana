@@ -61,13 +61,10 @@ export function Explain({
   children,
   className,
   interactive = false,
-  onClick,
 }: {
   text: ReactNode;
   children: ReactNode;
   className?: string;
-  /** What a press does beyond opening the bubble, for a label that filters. */
-  onClick?: () => void;
   /** Whether the bubble takes the pointer and keyboard, for the few that
    *  hold something to copy. Then not an ARIA tooltip. */
   interactive?: boolean;
@@ -121,7 +118,6 @@ export function Explain({
       <button
         type="button"
         className="explain-trigger"
-        onClick={onClick}
         aria-describedby={interactive ? undefined : id}
         aria-expanded={interactive ? open : undefined}
         aria-controls={interactive ? id : undefined}

@@ -809,6 +809,51 @@ export interface Admission {
 
 export type MissPlace = "boundary" | "leader" | "snapshot" | "thin" | "late" | "lost";
 
+/** When votor sent this node's votes for a slot, in microseconds from the
+ *  slot's first shred, or from votor's own start on the slot where no
+ *  shred had arrived. */
+export interface VoteSent {
+  notarize_us: number | null;
+  skip_us: number | null;
+  from_first_shred: boolean;
+}
+
+/** A leader whose certificate left this node out, with what it wrote. */
+export interface MissWriter {
+  identity: string;
+  name: string | null;
+  client: string | null;
+  version: string | null;
+  ip: string | null;
+  /** Certificates it wrote this epoch that paid anybody. */
+  certificates: number;
+  /** Of those, the ones that left this node out. */
+  misses: number;
+}
+
+export interface MissRow {
+  slot: number;
+  time_millis: number | null;
+  place: MissPlace;
+  paid_ranks: number;
+  /** Regulars the certificate left out beside this node. */
+  others_out: number;
+  /** Index into the list's writers. */
+  writer: number | null;
+  vote: VoteSent | null;
+}
+
+/** The epoch's unpaid slots, asked for when the list is opened. */
+export interface MissList {
+  epoch: number;
+  since_slot: number;
+  rewarded: number;
+  ranks: number;
+  writers: MissWriter[];
+  /** Oldest first. */
+  rows: MissRow[];
+}
+
 /** Slots that paid others but not this validator, by where they fell. A
  *  slot in more than one place counts in the first. */
 export interface Misses {

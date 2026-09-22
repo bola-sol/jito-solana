@@ -14,6 +14,7 @@ import { Verdict } from "./components/Verdict";
 import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
 import { GossipStakeCard } from "./components/GossipStakeCard";
+import { MissesPanel } from "./components/MissesPanel";
 import { SlotStrip } from "./components/SlotStrip";
 import { HOME, useRoute, type Page } from "./route";
 import { useStore } from "./useStore";
@@ -89,15 +90,19 @@ export function App(): ReactElement {
 /** What this validator is doing, which is what the dashboard opens on: the
  *  sentence, the slots, the three cards, then the sections that fold. */
 function Overview() {
+  // Open for this visit only: a list of a hundred rows is not a place to
+  // come back to on a reload.
+  const [missesOpen, setMissesOpen] = useState(false);
   return (
     <>
       <Verdict />
       <SlotStrip />
       <div className="grid is-three">
-        <EpochCard />
+        <EpochCard missesOpen={missesOpen} onToggleMisses={() => setMissesOpen((was) => !was)} />
         <ClusterCard />
         <VersionsCard />
       </div>
+      {missesOpen && <MissesPanel onClose={() => setMissesOpen(false)} />}
       <GossipStakeCard />
       <TransactionsCard />
       {/* Both read the same traffic from opposite ends: bytes on the wire, and

@@ -15,7 +15,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_signer_store::{Decoded, decode},
-    std::collections::HashMap,
+    std::collections::{BTreeMap, HashMap},
 };
 
 /// The footer sits in the second to last FEC set; the last one closes the
@@ -36,6 +36,13 @@ const LAST_BIN: usize = MISS_BINS - 1;
 pub const THIN_SHORTFALL_PERCENT: u64 = 10;
 pub const THIN_MIN_CERTIFICATES: u64 = 100;
 
+/// A rank paid in at least this share of the epoch's certificates is a
+/// regular, whose absence from one is the writer's doing.
+pub const REGULAR_PERCENT: u64 = 90;
+
+/// Vote timings held for slots whose certificate has not been read yet.
+const PENDING_VOTES: usize = 4096;
+
 /// How many of the leaders behind lost votes are named.
 const LOST_LEADERS: usize = 3;
 
@@ -54,6 +61,8 @@ pub enum Reward {
 pub struct Mark {
     pub slot: Slot,
     pub reward: Reward,
+    /// This node's rank in the map the certificate was read against.
+    pub rank: usize,
     /// Each rank's bit in the notar and skip certificates together. Empty
     /// where there was no certificate.
     pub paid: Vec<bool>,
@@ -109,6 +118,28 @@ pub struct LostLeader {
     pub count: u64,
 }
 
+/// When votor sent this node's votes for a slot, in microseconds from the
+/// slot's first shred, or from when votor began tracking the slot where no
+/// shred had arrived.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct VoteSent {
+    pub notarize_us: Option<u64>,
+    pub skip_us: Option<u64>,
+    pub from_first_shred: bool,
+}
+
+/// One unpaid slot, as the list a viewer asks for carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissRecord {
+    pub slot: Slot,
+    pub place: Place,
+    pub paid_ranks: u32,
+    /// Regulars the certificate left out besides this node.
+    pub others_out: u32,
+    pub writer: Option<Pubkey>,
+    pub vote: Option<VoteSent>,
+}
+
 /// What the collector knows about an unpaid slot beyond where it fell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MissDetail {
@@ -135,8 +166,9 @@ pub fn writer_slot(slot: Slot) -> Slot {
     slot.saturating_add(NUM_SLOTS_FOR_REWARD)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Place {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Place {
     Boundary,
     Leader,
     Snapshot,
@@ -147,14 +179,17 @@ enum Place {
 
 /// One unpaid slot. A place settled when the slot was seen, else one decided
 /// against the epoch's certificates when read.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Miss {
     slot: Slot,
     fixed: Option<Place>,
     /// Ranks the certificate paid.
     paid_ranks: u32,
+    /// Ranks it did not pay, this node's aside.
+    unpaid: Vec<u32>,
     writer: Option<Pubkey>,
     late: bool,
+    vote: Option<VoteSent>,
 }
 
 /// Paid slots per rank over one epoch's marks.
@@ -171,8 +206,14 @@ pub struct Tally {
     rewarded: u64,
     per_rank: Vec<u64>,
     misses: Vec<Miss>,
+    /// Index into `misses` by slot.
+    by_slot: HashMap<Slot, usize>,
     /// Certificates by how many ranks they paid, indexed by that count.
     paid_ranks: Vec<u32>,
+    /// Certificates each writer wrote that paid anybody.
+    writer_certs: HashMap<Pubkey, u64>,
+    /// Votes sent for slots whose certificate has not been read yet.
+    pending_votes: BTreeMap<Slot, VoteSent>,
 }
 
 impl Tally {
@@ -193,7 +234,10 @@ impl Tally {
             rewarded: 0,
             per_rank: Vec::new(),
             misses: Vec::new(),
+            by_slot: HashMap::new(),
             paid_ranks: Vec::new(),
+            writer_certs: HashMap::new(),
+            pending_votes: BTreeMap::new(),
         }
     }
 
@@ -207,10 +251,14 @@ impl Tally {
         let paid_ranks = mark.paid.iter().filter(|paid| **paid).count();
         match mark.reward {
             Reward::Paid => self.paid = self.paid.saturating_add(1),
-            Reward::Unpaid => self.miss(mark.slot, paid_ranks, snapshots, detail),
+            Reward::Unpaid => self.miss(mark, paid_ranks, snapshots, detail),
             Reward::NoCertificate => return,
         }
         self.rewarded = self.rewarded.saturating_add(1);
+        if let Some(writer) = detail.and_then(|detail| detail.writer) {
+            let count = self.writer_certs.entry(writer).or_default();
+            *count = count.saturating_add(1);
+        }
         if self.paid_ranks.len() <= paid_ranks {
             self.paid_ranks.resize(paid_ranks.saturating_add(1), 0);
         }
@@ -229,11 +277,12 @@ impl Tally {
 
     fn miss(
         &mut self,
-        slot: Slot,
+        mark: &Mark,
         paid_ranks: usize,
         snapshots: &[Span],
         detail: Option<MissDetail>,
     ) {
+        let slot = mark.slot;
         let fixed = if slot < self.epoch_start.saturating_add(BOUNDARY_SLOTS) {
             Some(Place::Boundary)
         } else if self.leader_slots.binary_search(&slot).is_ok() {
@@ -244,13 +293,109 @@ impl Tally {
             None
         };
         let detail = detail.unwrap_or_default();
+        let unpaid = mark
+            .paid
+            .iter()
+            .enumerate()
+            .filter(|(rank, paid)| !**paid && *rank != mark.rank)
+            .filter_map(|(rank, _)| u32::try_from(rank).ok())
+            .collect();
+        self.by_slot.insert(slot, self.misses.len());
         self.misses.push(Miss {
             slot,
             fixed,
             paid_ranks: u32::try_from(paid_ranks).unwrap_or(u32::MAX),
+            unpaid,
             writer: detail.writer,
             late: detail.late,
+            vote: self.pending_votes.remove(&slot),
         });
+    }
+
+    /// Records when this node voted for `slot`. Kept for a slot whose
+    /// certificate has not been read yet, since votor reports later than the
+    /// walk on some slots and earlier on others.
+    pub fn note_vote(&mut self, slot: Slot, vote: VoteSent) {
+        if let Some(miss) = self
+            .by_slot
+            .get(&slot)
+            .and_then(|at| self.misses.get_mut(*at))
+        {
+            miss.vote = Some(vote);
+            return;
+        }
+        self.pending_votes.insert(slot, vote);
+        while self.pending_votes.len() > PENDING_VOTES {
+            self.pending_votes.pop_first();
+        }
+    }
+
+    /// Certificates `writer` wrote that paid anybody, so far this epoch.
+    pub fn writer_certificates(&self, writer: &Pubkey) -> u64 {
+        self.writer_certs.get(writer).copied().unwrap_or(0)
+    }
+
+    pub fn since_slot(&self) -> Slot {
+        self.since_slot
+    }
+
+    /// Slots whose certificate paid anybody.
+    pub fn rewarded(&self) -> u64 {
+        self.rewarded
+    }
+
+    pub fn ranks(&self) -> u32 {
+        u32::try_from(self.per_rank.len()).unwrap_or(u32::MAX)
+    }
+
+    /// Where a miss falls, against the certificates seen so far.
+    fn place_of(&self, miss: &Miss, thin_below: Option<u32>) -> Place {
+        let decided = if thin_below.is_some_and(|below| miss.paid_ranks < below) {
+            Place::Thin
+        } else if miss.late {
+            Place::Late
+        } else {
+            Place::Lost
+        };
+        miss.fixed.unwrap_or(decided)
+    }
+
+    /// The ranks paid in at least `REGULAR_PERCENT` of the certificates.
+    fn regulars(&self) -> Vec<bool> {
+        let floor = self.rewarded.saturating_mul(REGULAR_PERCENT);
+        self.per_rank
+            .iter()
+            .map(|paid| self.rewarded > 0 && paid.saturating_mul(100) >= floor)
+            .collect()
+    }
+
+    /// Every unpaid slot, oldest first, placed as of now.
+    pub fn records(&self) -> Vec<MissRecord> {
+        let thin_below = self.thin_below();
+        let regulars = self.regulars();
+        self.misses
+            .iter()
+            .map(|miss| {
+                let others_out = miss
+                    .unpaid
+                    .iter()
+                    .filter(|rank| {
+                        usize::try_from(**rank)
+                            .ok()
+                            .and_then(|rank| regulars.get(rank))
+                            .is_some_and(|regular| *regular)
+                    })
+                    .count();
+                MissRecord {
+                    slot: miss.slot,
+                    place: self.place_of(miss, thin_below),
+                    paid_ranks: miss.paid_ranks,
+                    others_out: u32::try_from(others_out).unwrap_or(u32::MAX),
+                    writer: miss.writer,
+                    vote: miss.vote,
+                }
+            })
+            .collect()
     }
 
     /// A tenth under the median paid-rank count of the epoch's certificates,
@@ -293,14 +438,7 @@ impl Tally {
         let mut miss_bins = vec![0u32; MISS_BINS];
         let mut by_writer: HashMap<Pubkey, u64> = HashMap::new();
         for miss in &self.misses {
-            let decided = if thin_below.is_some_and(|below| miss.paid_ranks < below) {
-                Place::Thin
-            } else if miss.late {
-                Place::Late
-            } else {
-                Place::Lost
-            };
-            let place = miss.fixed.unwrap_or(decided);
+            let place = self.place_of(miss, thin_below);
             let count = match place {
                 Place::Boundary => &mut misses.boundary,
                 Place::Leader => &mut misses.leader,
@@ -341,7 +479,7 @@ impl Tally {
                     count,
                 })
                 .collect(),
-            ranks: u32::try_from(self.per_rank.len()).unwrap_or(u32::MAX),
+            ranks: self.ranks(),
             thin_below,
         }
     }
@@ -393,6 +531,7 @@ pub fn walk(
             Block::Missing => marks.push(Mark {
                 slot: reward_slot,
                 reward: Reward::NoCertificate,
+                rank,
                 paid: Vec::new(),
             }),
             Block::Pending => break,
@@ -452,6 +591,7 @@ fn mark_of(
         return Some(Mark {
             slot,
             reward: Reward::NoCertificate,
+            rank,
             paid: Vec::new(),
         });
     }
@@ -465,7 +605,12 @@ fn mark_of(
     } else {
         Reward::Unpaid
     };
-    Some(Mark { slot, reward, paid })
+    Some(Mark {
+        slot,
+        reward,
+        rank,
+        paid,
+    })
 }
 
 /// The ranks set in any of the signer bitmaps, one flag per rank. `None`
@@ -505,10 +650,12 @@ mod tests {
         (0..len).map(|rank| set.contains(&rank)).collect()
     }
 
+    /// A mark over four ranks, this node at rank nought.
     fn mark(slot: Slot, reward: Reward, paid: &[usize]) -> Mark {
         Mark {
             slot,
             reward,
+            rank: 0,
             paid: flags(4, paid),
         }
     }
@@ -561,6 +708,7 @@ mod tests {
         Mark {
             slot,
             reward,
+            rank: 0,
             paid: (0..20).map(|rank| rank < paid).collect(),
         }
     }
@@ -692,6 +840,72 @@ mod tests {
         assert_eq!(misses(&tally).lost, 1);
         fill(&mut tally, 2_100);
         assert_eq!(misses(&tally).thin, 1);
+    }
+
+    #[test]
+    fn test_a_miss_counts_the_regulars_left_out_beside_us() {
+        let mut tally = tally();
+        fill(&mut tally, 1_000);
+        // Ranks 18 and 19 are paid in seventy of the hundred, under the
+        // regular share; ranks 1 to 17 in every one.
+        let mut alone = wide(3_000, Reward::Unpaid, 20);
+        alone.paid[0] = false;
+        tally.add(&alone, &[], None);
+        let mut with_others = wide(3_001, Reward::Unpaid, 20);
+        for rank in [0, 3, 4, 19] {
+            with_others.paid[rank] = false;
+        }
+        tally.add(&with_others, &[], None);
+        let records = tally.records();
+        assert_eq!(records[0].others_out, 0, "only this node was left out");
+        assert_eq!(
+            records[1].others_out, 2,
+            "two regulars beside it, rank 19 is not one"
+        );
+        assert_eq!(records[1].paid_ranks, 16);
+    }
+
+    #[test]
+    fn test_certificates_are_counted_per_writer_paid_or_not() {
+        let mut tally = tally();
+        let writer = Pubkey::new_unique();
+        tally.add(
+            &mark(3_000, Reward::Paid, &[0, 1]),
+            &[],
+            detail(Some(writer), false),
+        );
+        tally.add(
+            &mark(3_001, Reward::Unpaid, &[1]),
+            &[],
+            detail(Some(writer), false),
+        );
+        tally.add(
+            &mark(3_002, Reward::NoCertificate, &[]),
+            &[],
+            detail(Some(writer), false),
+        );
+        assert_eq!(tally.writer_certificates(&writer), 2);
+        assert_eq!(tally.writer_certificates(&Pubkey::new_unique()), 0);
+    }
+
+    #[test]
+    fn test_a_vote_is_kept_for_a_miss_whichever_arrives_first() {
+        let mut tally = tally();
+        let vote = VoteSent {
+            notarize_us: Some(412_000),
+            skip_us: None,
+            from_first_shred: true,
+        };
+        tally.note_vote(3_000, vote);
+        tally.add(&mark(3_000, Reward::Unpaid, &[1]), &[], None);
+        tally.add(&mark(3_001, Reward::Unpaid, &[1]), &[], None);
+        tally.note_vote(3_001, vote);
+        // A paid slot's vote is never asked for and is not kept.
+        tally.note_vote(2_999, vote);
+        let records = tally.records();
+        assert_eq!(records[0].vote, Some(vote));
+        assert_eq!(records[1].vote, Some(vote));
+        assert_eq!(tally.pending_votes.len(), 1);
     }
 
     #[test]

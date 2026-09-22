@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        collect::{Collector, CollectorShared, EpochInfo, system_time_nanos},
+        collect::{Collector, CollectorShared, EpochInfo, MissList, system_time_nanos},
         config::DashboardConfig,
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
@@ -72,6 +72,8 @@ pub struct DashboardService {
     /// This epoch and the one before it, shared with the server, which answers
     /// a query for either out of it.
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    /// The epoch's unpaid slots, shared with the server the same way.
+    misses: Arc<RwLock<MissList>>,
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
@@ -109,6 +111,8 @@ impl DashboardService {
         // This epoch and the one before it, for pages reading back across the
         // boundary.
         let epochs: Arc<RwLock<Vec<EpochInfo>>> = Arc::new(RwLock::new(Vec::new()));
+        // The epoch's unpaid slots, answered on request.
+        let misses = Arc::new(RwLock::new(MissList::default()));
         let attached = Arc::new(AtomicBool::new(false));
         let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
 
@@ -131,13 +135,14 @@ impl DashboardService {
             let history = history.clone();
             let info_cache = info_cache.clone();
             let epochs = epochs.clone();
+            let misses = misses.clone();
             let exit = exit.clone();
             thread::Builder::new()
                 .name("solDashSrv".to_string())
                 .spawn(move || {
                     runtime.block_on(async move {
                         tokio::select! {
-                            _ = server::serve(listener, publisher, history, info_cache, epochs, allowed_hosts) => {}
+                            _ = server::serve(listener, publisher, history, info_cache, epochs, misses, allowed_hosts) => {}
                             _ = wait_for_exit(exit) => {}
                         }
                     });
@@ -227,6 +232,7 @@ impl DashboardService {
             history,
             info_cache,
             epochs,
+            misses,
             server: Some(server),
             boot: Some(boot),
             collector: None,
@@ -290,6 +296,7 @@ impl DashboardService {
             let publisher = self.publisher.clone();
             let history = self.history.clone();
             let epochs = self.epochs.clone();
+            let misses = self.misses.clone();
             let startup_progress = self.startup_progress.clone();
             let startup = self.startup.clone();
             let metrics_tap = self.metrics_tap.clone();
@@ -305,6 +312,7 @@ impl DashboardService {
                         info_cache,
                         history,
                         epochs,
+                        misses,
                         startup_progress,
                         startup,
                         metrics_tap,

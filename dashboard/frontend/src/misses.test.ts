@@ -6,10 +6,79 @@ import {
   MAX_TURN_MARKS,
   missMarks,
   missTotal,
+  leftOutText,
   placeExplain,
   turnMarks,
+  voteText,
+  writerSummary,
 } from "./misses";
-import type { VoteParticipation } from "./types";
+import type { MissList, VoteParticipation } from "./types";
+
+function list(rows: [writer: number | null, others: number][], writers: [name: string, misses: number, certificates: number][]): MissList {
+  return {
+    epoch: 124,
+    since_slot: 6_696_000,
+    rewarded: 5_774,
+    ranks: 112,
+    writers: writers.map(([name, misses, certificates]) => ({
+      identity: `${name}Key111111111111111`,
+      name,
+      client: "Agave",
+      version: "4.3.0",
+      ip: null,
+      certificates,
+      misses,
+    })),
+    rows: rows.map(([writer, others_out], index) => ({
+      slot: 6_700_000 + index,
+      time_millis: null,
+      place: "lost",
+      paid_ranks: 111,
+      others_out,
+      writer,
+      vote: null,
+    })),
+  };
+}
+
+describe("voteText", () => {
+  it("names the vote and its delay after the first shred", () => {
+    expect(voteText({ notarize_us: 412_400, skip_us: null, from_first_shred: true })).toBe("notarize +412 ms");
+    expect(voteText({ notarize_us: null, skip_us: 1_850_000, from_first_shred: true })).toBe("skip +1,850 ms");
+  });
+
+  it("says none where votor sent neither, and nothing where it has not reported", () => {
+    expect(voteText({ notarize_us: null, skip_us: null, from_first_shred: false })).toBe("none");
+    expect(voteText(null)).toBe("—");
+  });
+});
+
+describe("leftOutText", () => {
+  it("says only us, else how many others", () => {
+    expect(leftOutText(0)).toBe("only us");
+    expect(leftOutText(9)).toBe("9 others");
+  });
+});
+
+describe("writerSummary", () => {
+  it("names the writer behind at least half the misses", () => {
+    const summary = writerSummary(list([[0, 0], [0, 0], [0, 0], [1, 4]], [["CaraSol", 3, 63], ["Hamsa", 1, 58]]));
+    expect(summary).toBe(
+      "CaraSol wrote 3 of the 4 certificates that left this validator out, 3 of the 63 it wrote. Every one of them paid everybody else.",
+    );
+  });
+
+  it("counts how many of them paid everybody else", () => {
+    const summary = writerSummary(list([[0, 0], [0, 2], [0, 0]], [["CaraSol", 3, 63]]));
+    expect(summary).toMatch(/ 2 of them paid everybody else\.$/);
+    expect(writerSummary(list([[0, 3], [0, 2]], [["CaraSol", 2, 63]]))).toMatch(/it wrote\.$/);
+  });
+
+  it("says nothing where no writer holds half, or there is nothing to say", () => {
+    expect(writerSummary(list([[0, 0], [1, 0], [2, 0]], [["A", 1, 9], ["B", 1, 9], ["C", 1, 9]]))).toBeNull();
+    expect(writerSummary(list([], []))).toBeNull();
+  });
+});
 
 describe("leaderTurns", () => {
   it("starts a turn where the slots stop running on", () => {

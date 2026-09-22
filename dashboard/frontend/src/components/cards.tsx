@@ -14,7 +14,13 @@ import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
 import { TpsMatrix } from "./TpsMatrix";
 
-export function EpochCard(): ReactElement {
+export function EpochCard({
+  missesOpen,
+  onToggleMisses,
+}: {
+  missesOpen: boolean;
+  onToggleMisses: () => void;
+}): ReactElement {
   const store = useStore();
   const epoch = store.get("epoch", "new");
   const slot = store.get("summary", "completed_slot");
@@ -43,7 +49,7 @@ export function EpochCard(): ReactElement {
         {seated ? (
           <>
             <VoteCreditsStat epoch={epoch} />
-            <MissesStat epoch={epoch} />
+            <MissesStat epoch={epoch} open={missesOpen} onToggle={onToggleMisses} />
           </>
         ) : (
           <NoSeatStat admission={admission} />
@@ -105,9 +111,10 @@ function NoSeatStat({ admission }: { admission: Admission }) {
   );
 }
 
-/** Where this validator's unrewarded votes fell this epoch. Alpenglow only,
- *  and absent until a certificate from this epoch has been read. */
-function MissesStat({ epoch }: { epoch: EpochInfo }) {
+/** Where this validator's unrewarded votes fell this epoch, the figure
+ *  opening the list of each one under the cards. Alpenglow only, and absent
+ *  until a certificate from this epoch has been read. */
+function MissesStat({ epoch, open, onToggle }: { epoch: EpochInfo; open: boolean; onToggle: () => void }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
   if (!alpenglow || !participation || participation.epoch !== epoch.epoch) return null;
@@ -115,7 +122,21 @@ function MissesStat({ epoch }: { epoch: EpochInfo }) {
   return (
     <Stat
       label="votes not rewarded, and where"
-      value={count(total)}
+      value={
+        total > 0 ? (
+          <button
+            type="button"
+            className="stat-trigger"
+            aria-expanded={open}
+            title={open ? "Close the list" : "List each one"}
+            onClick={onToggle}
+          >
+            {count(total)}
+          </button>
+        ) : (
+          count(total)
+        )
+      }
       sub={total > 0 ? <MissesSplit participation={participation} /> : undefined}
       explain="Slots whose certificate paid other validators but not this one. A slot with more than one cause counts in the first."
     />

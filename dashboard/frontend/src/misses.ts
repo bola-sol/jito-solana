@@ -1,7 +1,7 @@
 /** Where this validator's unrewarded votes fell, for the epoch card. */
 
 import { count, shortKey } from "./format";
-import type { LostLeader, MissPlace, Misses, VoteParticipation } from "./types";
+import type { LostLeader, MissList, MissPlace, Misses, VoteParticipation, VoteSent } from "./types";
 
 /** More leader turns than this read as a band on the meter, not marks, and
  *  are left off it. */
@@ -87,4 +87,37 @@ export function lostNote(participation: VoteParticipation): { text: string; lead
 /** The leader's published name, else its key shortened. */
 export function leaderLabel(leader: LostLeader): string {
   return leader.name ?? shortKey(leader.identity);
+}
+
+/** The vote this node sent for the slot and how long after the first shred
+ *  it went out; `none` where votor sent neither, a dash where it has not
+ *  reported the slot. */
+export function voteText(vote: VoteSent | null): string {
+  if (!vote) return "—";
+  const sent: [word: string, micros: number] | null =
+    vote.notarize_us !== null ? ["notarize", vote.notarize_us] : vote.skip_us !== null ? ["skip", vote.skip_us] : null;
+  if (!sent) return "none";
+  const [word, micros] = sent;
+  return `${word} +${count(Math.round(micros / 1000))} ms`;
+}
+
+/** Who else the certificate left out. */
+export function leftOutText(others: number): string {
+  return others === 0 ? "only us" : `${count(others)} others`;
+}
+
+/** The writer behind at least half the misses, and how its certificates
+ *  treated everybody else. Null where no writer holds half. */
+export function writerSummary(list: MissList): string | null {
+  if (list.rows.length === 0 || list.writers.length === 0) return null;
+  const at = list.writers.reduce(
+    (best, writer, index) => (writer.misses > list.writers[best].misses ? index : best),
+    0,
+  );
+  const top = list.writers[at];
+  if (top.misses * 2 < list.rows.length) return null;
+  const alone = list.rows.filter((row) => row.writer === at && row.others_out === 0).length;
+  const others =
+    alone === top.misses ? " Every one of them paid everybody else." : alone > 0 ? ` ${count(alone)} of them paid everybody else.` : "";
+  return `${top.name ?? shortKey(top.identity)} wrote ${count(top.misses)} of the ${count(list.rows.length)} certificates that left this validator out, ${count(top.misses)} of the ${count(top.certificates)} it wrote.${others}`;
 }

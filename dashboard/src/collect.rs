@@ -6,7 +6,7 @@ use {
     crate::{
         certs,
         context::{DashboardContext, StartProgress},
-        history::SlotHistory,
+        history::{HAS_CLOCK, SlotHistory},
         meters::QuicPort,
         metrics_tap::{
             BundleLanding, MetricsTap, ShredFill, StageTimes, TapCounters, WindowedCounters,
@@ -211,6 +211,46 @@ struct Heard {
     version: Option<String>,
     client: Option<String>,
     ip: Option<String>,
+}
+
+/// The epoch's unpaid slots, as a viewer asks for them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct MissList {
+    pub epoch: Epoch,
+    pub since_slot: Slot,
+    pub rewarded: u64,
+    pub ranks: u32,
+    /// The writers the rows point into.
+    pub writers: Vec<MissWriter>,
+    /// Oldest first.
+    pub rows: Vec<MissRow>,
+}
+
+/// A leader whose certificate left this node out, with what it wrote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MissWriter {
+    pub identity: String,
+    pub name: Option<String>,
+    pub client: Option<String>,
+    pub version: Option<String>,
+    pub ip: Option<String>,
+    /// Certificates it wrote this epoch that paid anybody.
+    pub certificates: u64,
+    /// Of those, the ones that left this node out.
+    pub misses: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MissRow {
+    pub slot: Slot,
+    /// The slot's first shred, in unix milliseconds, where it was timed.
+    pub time_millis: Option<u64>,
+    pub place: certs::Place,
+    pub paid_ranks: u32,
+    pub others_out: u32,
+    /// Index into `writers`.
+    pub writer: Option<u32>,
+    pub vote: Option<certs::VoteSent>,
 }
 
 /// A scheduled slot that has not happened yet. Leaner than [`SlotEntry`]: no
@@ -452,6 +492,8 @@ pub struct Collector {
     /// for slots before the start are dropped: a slot the walk never covered
     /// cannot be told apart from one alpenglow was not yet running for.
     certs_walk: Option<(Slot, Slot)>,
+    /// Shared with the server, rebuilt on the slow tier.
+    misses: Arc<RwLock<MissList>>,
     /// Paid slots per rank in the epoch the walk is in.
     certs_tally: Option<certs::Tally>,
     /// The slots each finished snapshot write spanned, from the write the
@@ -530,6 +572,8 @@ pub struct CollectorShared {
     pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
     pub history: Arc<RwLock<SlotHistory>>,
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    /// The epoch's unpaid slots, answered by the server on request.
+    pub misses: Arc<RwLock<MissList>>,
     pub startup_progress: StartProgress,
     pub startup: Arc<Mutex<StartupPublisher>>,
     pub metrics_tap: Arc<MetricsTap>,
@@ -548,6 +592,7 @@ impl Collector {
             info_cache,
             history,
             epochs,
+            misses,
             startup_progress,
             startup,
             metrics_tap,
@@ -581,6 +626,7 @@ impl Collector {
             completed_window: VecDeque::new(),
             slot_timed_to: None,
             certs_walk: None,
+            misses,
             certs_tally: None,
             snapshot_spans: Vec::new(),
             last_shred_time: None,
@@ -740,6 +786,7 @@ impl Collector {
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
             self.collect_snapshots();
+            self.collect_miss_list(&peers);
         }
 
         // Encoded on a timer rather than per change: live clients follow the
@@ -1465,6 +1512,11 @@ impl Collector {
         }
         let schedule = root_bank.epoch_schedule();
         let spans = self.snapshot_spans().collect::<Vec<_>>();
+        if let Some(tally) = self.certs_tally.as_mut() {
+            for (slot, vote) in self.metrics_tap.take_vote_tracks() {
+                tally.note_vote(slot, vote);
+            }
+        }
         for mark in marks {
             if mark.slot < floor {
                 continue;
@@ -1480,8 +1532,8 @@ impl Collector {
                 self.snapshot_spans
                     .retain(|span| span.to.is_none_or(|to| to >= start));
             }
-            let detail = (mark.reward == certs::Reward::Unpaid)
-                .then(|| self.miss_detail(root_bank, mark.slot));
+            // For every mark: the writer's certificates are counted paid or not.
+            let detail = Some(self.miss_detail(root_bank, mark.slot));
             if let Some(tally) = self.certs_tally.as_mut() {
                 tally.add(&mark, &spans, detail);
             }
@@ -1504,6 +1556,72 @@ impl Collector {
                 participation,
             );
         }
+    }
+
+    /// Rebuilds the list a viewer asks for from the tally: each unpaid slot with
+    /// its time, and each writer named from gossip and the info cache once.
+    fn collect_miss_list(&self, peers: &[(ContactInfo, u64)]) {
+        let Some(tally) = &self.certs_tally else {
+            return;
+        };
+        let records = tally.records();
+        let mut writers: Vec<MissWriter> = Vec::new();
+        let mut writer_at: HashMap<Pubkey, u32> = HashMap::new();
+        let info = self.info_cache.read().unwrap();
+        let history = self.history.read().unwrap();
+        let rows = records
+            .iter()
+            .map(|record| {
+                let writer = record.writer.map(|key| {
+                    let at = *writer_at.entry(key).or_insert_with(|| {
+                        let heard = peers
+                            .iter()
+                            .find(|(contact, _)| *contact.pubkey() == key)
+                            .map(|(contact, _)| contact);
+                        writers.push(MissWriter {
+                            identity: key.to_string(),
+                            name: info.get(&key).and_then(|info| info.name.clone()),
+                            client: heard.map(|contact| contact.version().client().to_string()),
+                            version: heard.map(|contact| contact.version().to_string()),
+                            ip: heard
+                                .and_then(|contact| contact.gossip())
+                                .map(|addr| addr.ip().to_string()),
+                            certificates: tally.writer_certificates(&key),
+                            misses: 0,
+                        });
+                        u32::try_from(writers.len().saturating_sub(1)).unwrap_or(u32::MAX)
+                    });
+                    if let Some(writer) =
+                        usize::try_from(at).ok().and_then(|at| writers.get_mut(at))
+                    {
+                        writer.misses = writer.misses.saturating_add(1);
+                    }
+                    at
+                });
+                MissRow {
+                    slot: record.slot,
+                    time_millis: history
+                        .get(record.slot)
+                        .filter(|row| (row.flags & HAS_CLOCK) != 0)
+                        .map(|row| row.time_millis),
+                    place: record.place,
+                    paid_ranks: record.paid_ranks,
+                    others_out: record.others_out,
+                    writer,
+                    vote: record.vote,
+                }
+            })
+            .collect();
+        drop(history);
+        drop(info);
+        *self.misses.write().unwrap() = MissList {
+            epoch: tally.epoch(),
+            since_slot: tally.since_slot(),
+            rewarded: tally.rewarded(),
+            ranks: tally.ranks(),
+            writers,
+            rows,
+        };
     }
 
     /// A tally for `epoch` from `since_slot`. An unknown leader schedule is

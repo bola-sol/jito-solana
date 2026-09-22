@@ -5,6 +5,7 @@
 //! summed.
 
 use {
+    crate::certs::VoteSent,
     serde::Serialize,
     solana_clock::Slot,
     solana_metrics::datapoint::DataPoint,
@@ -141,6 +142,13 @@ const SLOT: &str = "slot";
 /// Replayed slots kept, about a minute and a half. Shorter samples missed the
 /// program cache's mean by a third, because compilation arrives in bursts.
 const REPLAY_SLOTS: usize = 256;
+
+/// Votor's own timeline for a slot: when its first shred arrived and when
+/// this node's votes went out, reported once the slot is below the root.
+const VOTE_TRACKING: &str = "event_handler_slot_tracking";
+
+/// Vote timelines kept until the collector drains them.
+const VOTE_TRACKS: usize = 4096;
 
 /// Filled slots kept. A slot's record is read when replay freezes it, and
 /// during a catch-up the blockstore fills a long way ahead of replay.
@@ -403,6 +411,8 @@ pub struct MetricsTap {
     /// The last few hundred replayed slots, keyed by slot. Kept one by one
     /// because the panel wants the worst slot as well as the mean.
     replay_slots: Mutex<BTreeMap<Slot, ReplaySlotTimes>>,
+    /// When this node voted, by slot, until drained.
+    vote_tracks: Mutex<BTreeMap<Slot, VoteSent>>,
 
     /// How each recent slot's shreds arrived, keyed by slot for the same reason.
     shred_fills: Mutex<BTreeMap<Slot, ShredFill>>,
@@ -936,6 +946,7 @@ impl MetricsTap {
             }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
+            VOTE_TRACKING => self.remember_vote_track(point),
             SHRED_FULL => self.remember_fill(point),
             BUNDLE_SLOT_STATS => self.remember_bundles(point),
             WORKER_TIMING => self.remember_worker_timing(point, now_millis()),
@@ -1073,6 +1084,44 @@ impl MetricsTap {
         };
         if let Ok(mut held) = self.xdp.lock() {
             *held = Some(config);
+        }
+    }
+
+    /// Records when this node voted for a slot. The point's times count from
+    /// votor's own start on the slot; they are rebased to the first shred
+    /// where one arrived.
+    fn remember_vote_track(&self, point: &DataPoint) {
+        let field = |wanted: &str| {
+            point
+                .fields
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .and_then(|(_, value)| field_u64(value))
+        };
+        let Some(slot) = field(SLOT) else {
+            return;
+        };
+        let first_shred = field("first_shred");
+        let rebase = |sent: Option<u64>| sent.map(|at| at.saturating_sub(first_shred.unwrap_or(0)));
+        let vote = VoteSent {
+            notarize_us: rebase(field("vote_notarize")),
+            skip_us: rebase(field("vote_skip")),
+            from_first_shred: first_shred.is_some(),
+        };
+        let Ok(mut tracks) = self.vote_tracks.lock() else {
+            return;
+        };
+        tracks.insert(slot, vote);
+        while tracks.len() > VOTE_TRACKS {
+            tracks.pop_first();
+        }
+    }
+
+    /// Takes every vote timeline reported since the last call.
+    pub fn take_vote_tracks(&self) -> Vec<(Slot, VoteSent)> {
+        match self.vote_tracks.lock() {
+            Ok(mut tracks) => std::mem::take(&mut *tracks).into_iter().collect(),
+            Err(_) => Vec::new(),
         }
     }
 

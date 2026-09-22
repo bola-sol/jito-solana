@@ -222,8 +222,18 @@ pub struct MissList {
     pub ranks: u32,
     /// The writers the rows point into.
     pub writers: Vec<MissWriter>,
+    /// The validators the rows' `others` point into.
+    pub validators: Vec<MissValidator>,
     /// Oldest first.
     pub rows: Vec<MissRow>,
+}
+
+/// A validator a certificate left out beside this node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MissValidator {
+    pub identity: String,
+    pub name: Option<String>,
+    pub ip: Option<String>,
 }
 
 /// A leader whose certificate left this node out, with what it wrote.
@@ -247,7 +257,8 @@ pub struct MissRow {
     pub time_millis: Option<u64>,
     pub place: certs::Place,
     pub paid_ranks: u32,
-    pub others_out: u32,
+    /// Indices into `validators`: the regulars left out beside this node.
+    pub others: Vec<u32>,
     /// Index into `writers`.
     pub writer: Option<u32>,
     pub vote: Option<certs::VoteSent>,
@@ -786,7 +797,7 @@ impl Collector {
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
             self.collect_snapshots();
-            self.collect_miss_list(&peers);
+            self.collect_miss_list(&working_bank, &peers);
         }
 
         // Encoded on a timer rather than per change: live clients follow the
@@ -1559,25 +1570,57 @@ impl Collector {
     }
 
     /// Rebuilds the list a viewer asks for from the tally: each unpaid slot with
-    /// its time, and each writer named from gossip and the info cache once.
-    fn collect_miss_list(&self, peers: &[(ContactInfo, u64)]) {
+    /// its time, and each writer and left-out validator named from gossip and
+    /// the info cache once. Ranks resolve through the epoch's rank map.
+    fn collect_miss_list(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let Some(tally) = &self.certs_tally else {
             return;
         };
         let records = tally.records();
+        let epoch_start = bank.epoch_schedule().get_first_slot_in_epoch(tally.epoch());
+        let rank_map = bank.get_rank_map(epoch_start);
+        let heard = |key: &Pubkey| {
+            peers
+                .iter()
+                .find(|(contact, _)| contact.pubkey() == key)
+                .map(|(contact, _)| contact)
+        };
         let mut writers: Vec<MissWriter> = Vec::new();
         let mut writer_at: HashMap<Pubkey, u32> = HashMap::new();
+        let mut validators: Vec<MissValidator> = Vec::new();
+        let mut validator_at: HashMap<u32, u32> = HashMap::new();
         let info = self.info_cache.read().unwrap();
         let history = self.history.read().unwrap();
         let rows = records
             .iter()
             .map(|record| {
+                let others = record
+                    .others
+                    .iter()
+                    .filter_map(|rank| {
+                        if let Some(at) = validator_at.get(rank) {
+                            return Some(*at);
+                        }
+                        let key = rank_map
+                            .and_then(|map| {
+                                map.get_pubkey_stake_entry(usize::try_from(*rank).ok()?)
+                            })
+                            .map(|entry| entry.node_pubkey)?;
+                        validators.push(MissValidator {
+                            identity: key.to_string(),
+                            name: info.get(&key).and_then(|info| info.name.clone()),
+                            ip: heard(&key)
+                                .and_then(|contact| contact.gossip())
+                                .map(|addr| addr.ip().to_string()),
+                        });
+                        let at = u32::try_from(validators.len().saturating_sub(1)).ok()?;
+                        validator_at.insert(*rank, at);
+                        Some(at)
+                    })
+                    .collect();
                 let writer = record.writer.map(|key| {
                     let at = *writer_at.entry(key).or_insert_with(|| {
-                        let heard = peers
-                            .iter()
-                            .find(|(contact, _)| *contact.pubkey() == key)
-                            .map(|(contact, _)| contact);
+                        let heard = heard(&key);
                         writers.push(MissWriter {
                             identity: key.to_string(),
                             name: info.get(&key).and_then(|info| info.name.clone()),
@@ -1606,7 +1649,7 @@ impl Collector {
                         .map(|row| row.time_millis),
                     place: record.place,
                     paid_ranks: record.paid_ranks,
-                    others_out: record.others_out,
+                    others,
                     writer,
                     vote: record.vote,
                 }
@@ -1620,6 +1663,7 @@ impl Collector {
             rewarded: tally.rewarded(),
             ranks: tally.ranks(),
             writers,
+            validators,
             rows,
         };
     }

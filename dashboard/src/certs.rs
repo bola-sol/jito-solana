@@ -134,8 +134,8 @@ pub struct MissRecord {
     pub slot: Slot,
     pub place: Place,
     pub paid_ranks: u32,
-    /// Regulars the certificate left out besides this node.
-    pub others_out: u32,
+    /// The regulars the certificate left out beside this node, by rank.
+    pub others: Vec<u32>,
     pub writer: Option<Pubkey>,
     pub vote: Option<VoteSent>,
 }
@@ -376,21 +376,22 @@ impl Tally {
         self.misses
             .iter()
             .map(|miss| {
-                let others_out = miss
+                let others = miss
                     .unpaid
                     .iter()
+                    .copied()
                     .filter(|rank| {
-                        usize::try_from(**rank)
+                        usize::try_from(*rank)
                             .ok()
                             .and_then(|rank| regulars.get(rank))
                             .is_some_and(|regular| *regular)
                     })
-                    .count();
+                    .collect();
                 MissRecord {
                     slot: miss.slot,
                     place: self.place_of(miss, thin_below),
                     paid_ranks: miss.paid_ranks,
-                    others_out: u32::try_from(others_out).unwrap_or(u32::MAX),
+                    others,
                     writer: miss.writer,
                     vote: miss.vote,
                 }
@@ -857,9 +858,10 @@ mod tests {
         }
         tally.add(&with_others, &[], None);
         let records = tally.records();
-        assert_eq!(records[0].others_out, 0, "only this node was left out");
+        assert!(records[0].others.is_empty(), "only this node was left out");
         assert_eq!(
-            records[1].others_out, 2,
+            records[1].others,
+            vec![3, 4],
             "two regulars beside it, rank 19 is not one"
         );
         assert_eq!(records[1].paid_ranks, 16);

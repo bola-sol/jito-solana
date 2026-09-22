@@ -6,6 +6,7 @@ import {
   MAX_TURN_MARKS,
   missMarks,
   missTotal,
+  leftOutMost,
   leftOutText,
   placeExplain,
   turnMarks,
@@ -14,7 +15,11 @@ import {
 } from "./misses";
 import type { MissList, VoteParticipation } from "./types";
 
-function list(rows: [writer: number | null, others: number][], writers: [name: string, misses: number, certificates: number][]): MissList {
+function list(
+  rows: [writer: number | null, others: number[]][],
+  writers: [name: string, misses: number, certificates: number][],
+  validators: string[] = [],
+): MissList {
   return {
     epoch: 124,
     since_slot: 6_696_000,
@@ -29,17 +34,31 @@ function list(rows: [writer: number | null, others: number][], writers: [name: s
       certificates,
       misses,
     })),
-    rows: rows.map(([writer, others_out], index) => ({
+    validators: validators.map((name) => ({ identity: `${name}Key111111111111111`, name, ip: null })),
+    rows: rows.map(([writer, others], index) => ({
       slot: 6_700_000 + index,
       time_millis: null,
       place: "lost",
       paid_ranks: 111,
-      others_out,
+      others,
       writer,
       vote: null,
     })),
   };
 }
+
+describe("leftOutMost", () => {
+  it("names the validators most often left out beside us, most first", () => {
+    const summary = leftOutMost(
+      list([[0, [1]], [0, [0, 1]], [0, [1, 2]], [0, []]], [["CaraSol", 4, 63]], ["Bitwise", "Hamsa", "Pigs"]),
+    );
+    expect(summary).toBe("Left out beside us most: Hamsa in 3, Bitwise in 1, Pigs in 1.");
+  });
+
+  it("says nothing where every certificate left out only us", () => {
+    expect(leftOutMost(list([[0, []], [0, []]], [["CaraSol", 2, 63]]))).toBeNull();
+  });
+});
 
 describe("voteText", () => {
   it("names the vote and its delay after the first shred", () => {
@@ -62,20 +81,24 @@ describe("leftOutText", () => {
 
 describe("writerSummary", () => {
   it("names the writer behind at least half the misses", () => {
-    const summary = writerSummary(list([[0, 0], [0, 0], [0, 0], [1, 4]], [["CaraSol", 3, 63], ["Hamsa", 1, 58]]));
+    const summary = writerSummary(
+      list([[0, []], [0, []], [0, []], [1, [0, 1, 2, 3]]], [["CaraSol", 3, 63], ["Hamsa", 1, 58]], ["A", "B", "C", "D"]),
+    );
     expect(summary).toBe(
       "CaraSol wrote 3 of the 4 certificates that left this validator out, 3 of the 63 it wrote. Every one of them paid everybody else.",
     );
   });
 
   it("counts how many of them paid everybody else", () => {
-    const summary = writerSummary(list([[0, 0], [0, 2], [0, 0]], [["CaraSol", 3, 63]]));
+    const summary = writerSummary(list([[0, []], [0, [0, 1]], [0, []]], [["CaraSol", 3, 63]], ["A", "B", "C"]));
     expect(summary).toMatch(/ 2 of them paid everybody else\.$/);
-    expect(writerSummary(list([[0, 3], [0, 2]], [["CaraSol", 2, 63]]))).toMatch(/it wrote\.$/);
+    expect(writerSummary(list([[0, [0, 1, 2]], [0, [0, 1]]], [["CaraSol", 2, 63]], ["A", "B", "C"]))).toMatch(
+      /it wrote\.$/,
+    );
   });
 
   it("says nothing where no writer holds half, or there is nothing to say", () => {
-    expect(writerSummary(list([[0, 0], [1, 0], [2, 0]], [["A", 1, 9], ["B", 1, 9], ["C", 1, 9]]))).toBeNull();
+    expect(writerSummary(list([[0, []], [1, []], [2, []]], [["A", 1, 9], ["B", 1, 9], ["C", 1, 9]]))).toBeNull();
     expect(writerSummary(list([], []))).toBeNull();
   });
 });

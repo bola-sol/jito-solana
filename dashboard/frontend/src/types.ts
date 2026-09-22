@@ -831,13 +831,20 @@ export interface MissWriter {
   misses: number;
 }
 
+/** A validator a certificate left out beside this node. */
+export interface MissValidator {
+  identity: string;
+  name: string | null;
+  ip: string | null;
+}
+
 export interface MissRow {
   slot: number;
   time_millis: number | null;
   place: MissPlace;
   paid_ranks: number;
-  /** Regulars the certificate left out beside this node. */
-  others_out: number;
+  /** Indices into the list's validators: the regulars left out beside this node. */
+  others: number[];
   /** Index into the list's writers. */
   writer: number | null;
   vote: VoteSent | null;
@@ -850,6 +857,7 @@ export interface MissList {
   rewarded: number;
   ranks: number;
   writers: MissWriter[];
+  validators: MissValidator[];
   /** Oldest first. */
   rows: MissRow[];
 }

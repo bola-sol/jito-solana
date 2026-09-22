@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { blockStamp, buildLabel, count, shortKey } from "../format";
-import { leftOutText, MISS_PLACES, placeExplain, voteText, writerSummary } from "../misses";
-import type { MissList, MissPlace, MissRow, MissWriter } from "../types";
+import {
+  leftOutMost,
+  leftOutText,
+  MISS_PLACES,
+  placeExplain,
+  validatorLabel,
+  voteText,
+  writerSummary,
+} from "../misses";
+import type { MissList, MissPlace, MissRow, MissValidator, MissWriter } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 
@@ -18,6 +26,8 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const [filter, setFilter] = useState<MissPlace | null>(null);
   /** What the pointer is on, shown on the line; the filtered place's sentence otherwise. */
   const [hint, setHint] = useState<string | null>(null);
+  /** The row unfolded to name who else its certificate left out. */
+  const [opened, setOpened] = useState<number | null>(null);
   const panel = useRef<HTMLElement>(null);
 
   // On a phone the section opens below two more cards, out of sight.
@@ -43,6 +53,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const counts = new Map<MissPlace, number>();
   for (const row of list?.rows ?? []) counts.set(row.place, (counts.get(row.place) ?? 0) + 1);
   const summary = list ? writerSummary(list) : null;
+  const leftOut = list ? leftOutMost(list) : null;
   const shown = (list?.rows ?? []).filter((row) => filter === null || row.place === filter);
   const sentence = (place: MissPlace) => (participation ? placeExplain(place, participation) : place);
 
@@ -64,6 +75,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
       {list && list.rows.length > 0 && (
         <div className="misses misses-panel-body">
           {summary && <div className="misses-summary">{summary}</div>}
+          {leftOut && <div className="misses-summary">{leftOut}</div>}
           <div className="misses-legend">
             {MISS_PLACES.filter((place) => counts.has(place)).map((place) => (
               <Hinted
@@ -111,7 +123,10 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
                 key={row.slot}
                 row={row}
                 writer={row.writer === null ? undefined : list.writers[row.writer]}
+                validators={list.validators}
                 ranks={list.ranks}
+                open={opened === row.slot}
+                onToggle={() => setOpened(opened === row.slot ? null : row.slot)}
               />
             ))}
           </div>
@@ -154,37 +169,77 @@ function Hinted({
   );
 }
 
-function Row({ row, writer, ranks }: { row: MissRow; writer: MissWriter | undefined; ranks: number }) {
+/** One miss, and under it, when opened, who else its certificate left out. */
+function Row({
+  row,
+  writer,
+  validators,
+  ranks,
+  open,
+  onToggle,
+}: {
+  row: MissRow;
+  writer: MissWriter | undefined;
+  validators: MissValidator[];
+  ranks: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
   const build = writer ? buildLabel(writer.client ?? undefined, writer.version ?? undefined) : "";
   return (
-    <div className="misses-row">
-      <span className="misses-slot">
-        <Copyable text={String(row.slot)} label={count(row.slot)} />
-      </span>
-      <span className="misses-when">{row.time_millis === null ? "—" : blockStamp(row.time_millis)}</span>
-      <span className="misses-place">
-        <i className={`misses-swatch is-${row.place}`} />
-        {row.place}
-      </span>
-      <span className="misses-writer">
-        {writer ? (
-          <>
-            <b>{writer.name ?? shortKey(writer.identity, 6, 5)}</b>
-            <span>
-              <Copyable text={writer.identity} label={shortKey(writer.identity, 8, 8)} className="misses-key" />
-              {build && ` · ${build}`}
-            </span>
-          </>
-        ) : (
-          "—"
-        )}
-      </span>
-      <span className="misses-ip">{writer?.ip ? <Copyable text={writer.ip} /> : "—"}</span>
-      <span className="misses-paid">
-        {count(row.paid_ranks)} of {count(ranks)}
-      </span>
-      <span className="misses-others">{leftOutText(row.others_out)}</span>
-      <span className="misses-vote">{voteText(row.vote)}</span>
-    </div>
+    <>
+      <div className="misses-row">
+        <span className="misses-slot">
+          <Copyable text={String(row.slot)} label={count(row.slot)} />
+        </span>
+        <span className="misses-when">{row.time_millis === null ? "—" : blockStamp(row.time_millis)}</span>
+        <span className="misses-place">
+          <i className={`misses-swatch is-${row.place}`} />
+          {row.place}
+        </span>
+        <span className="misses-writer">
+          {writer ? (
+            <>
+              <b>{writer.name ?? shortKey(writer.identity, 6, 5)}</b>
+              <span>
+                <Copyable text={writer.identity} label={shortKey(writer.identity, 8, 8)} className="misses-key" />
+                {build && ` · ${build}`}
+              </span>
+            </>
+          ) : (
+            "—"
+          )}
+        </span>
+        <span className="misses-ip">{writer?.ip ? <Copyable text={writer.ip} /> : "—"}</span>
+        <span className="misses-paid">
+          {count(row.paid_ranks)} of {count(ranks)}
+        </span>
+        <span className="misses-others">
+          {row.others.length === 0 ? (
+            leftOutText(0)
+          ) : (
+            <button type="button" className="misses-open" aria-expanded={open} onClick={onToggle}>
+              {leftOutText(row.others.length)}
+            </button>
+          )}
+        </span>
+        <span className="misses-vote">{voteText(row.vote)}</span>
+      </div>
+      {open && (
+        <div className="misses-out-list">
+          {row.others.map((at) => {
+            const validator = validators[at];
+            if (!validator) return null;
+            return (
+              <span className="misses-out" key={at}>
+                <b>{validatorLabel(validator)}</b>
+                <Copyable text={validator.identity} label={shortKey(validator.identity, 6, 5)} />
+                {validator.ip && <Copyable text={validator.ip} />}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }

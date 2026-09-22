@@ -1,7 +1,15 @@
 /** Where this validator's unrewarded votes fell, for the epoch card. */
 
 import { count, shortKey } from "./format";
-import type { LostLeader, MissList, MissPlace, Misses, VoteParticipation, VoteSent } from "./types";
+import type {
+  LostLeader,
+  MissList,
+  MissPlace,
+  MissValidator,
+  Misses,
+  VoteParticipation,
+  VoteSent,
+} from "./types";
 
 /** More leader turns than this read as a band on the meter, not marks, and
  *  are left off it. */
@@ -106,6 +114,31 @@ export function leftOutText(others: number): string {
   return others === 0 ? "only us" : `${count(others)} others`;
 }
 
+/** The validator's published name, else its key shortened. */
+export function validatorLabel(validator: MissValidator): string {
+  return validator.name ?? shortKey(validator.identity);
+}
+
+/** How many validators are named as most often left out beside us. */
+export const LEFT_OUT_MOST = 3;
+
+/** The validators most often left out beside us, most first. Null where no
+ *  certificate left out anybody else. */
+export function leftOutMost(list: MissList): string | null {
+  const counts = new Map<number, number>();
+  for (const row of list.rows) for (const at of row.others) counts.set(at, (counts.get(at) ?? 0) + 1);
+  if (counts.size === 0) return null;
+  const top = [...counts.entries()]
+    .sort(([a, aCount], [b, bCount]) => bCount - aCount || a - b)
+    .slice(0, LEFT_OUT_MOST)
+    .flatMap(([at, n]) => {
+      const validator = list.validators[at];
+      return validator ? [`${validatorLabel(validator)} in ${count(n)}`] : [];
+    });
+  if (top.length === 0) return null;
+  return `Left out beside us most: ${top.join(", ")}.`;
+}
+
 /** The writer behind at least half the misses, and how its certificates
  *  treated everybody else. Null where no writer holds half. */
 export function writerSummary(list: MissList): string | null {
@@ -116,7 +149,7 @@ export function writerSummary(list: MissList): string | null {
   );
   const top = list.writers[at];
   if (top.misses * 2 < list.rows.length) return null;
-  const alone = list.rows.filter((row) => row.writer === at && row.others_out === 0).length;
+  const alone = list.rows.filter((row) => row.writer === at && row.others.length === 0).length;
   const others =
     alone === top.misses ? " Every one of them paid everybody else." : alone > 0 ? ` ${count(alone)} of them paid everybody else.` : "";
   return `${top.name ?? shortKey(top.identity)} wrote ${count(top.misses)} of the ${count(list.rows.length)} certificates that left this validator out, ${count(top.misses)} of the ${count(top.certificates)} it wrote.${others}`;

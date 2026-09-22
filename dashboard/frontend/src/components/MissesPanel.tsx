@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { blockStamp, buildLabel, count, shortKey } from "../format";
 import { leftOutText, MISS_PLACES, placeExplain, voteText, writerSummary } from "../misses";
 import type { MissList, MissPlace, MissRow, MissWriter } from "../types";
@@ -6,14 +6,21 @@ import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Explain } from "./primitives";
 
-/** Every vote of this epoch a certificate left out, one a row, newest first.
- *  Asked for when opened rather than pushed: a few kilobytes on a good node
- *  and far more on a bad one. */
+/** Every vote of this epoch a certificate left out, one a row, newest first,
+ *  the legend filtering to one place. Asked for when opened rather than
+ *  pushed: a few kilobytes on a good node and far more on a bad one. */
 export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement {
   const store = useStore();
   const participation = store.get("summary", "vote_participation");
   const [list, setList] = useState<MissList | null>(null);
   const [failed, setFailed] = useState(false);
+  const [filter, setFilter] = useState<MissPlace | null>(null);
+  const panel = useRef<HTMLElement>(null);
+
+  // On a phone the section opens below two more cards, out of sight.
+  useEffect(() => {
+    panel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -33,9 +40,10 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const counts = new Map<MissPlace, number>();
   for (const row of list?.rows ?? []) counts.set(row.place, (counts.get(row.place) ?? 0) + 1);
   const summary = list ? writerSummary(list) : null;
+  const shown = (list?.rows ?? []).filter((row) => filter === null || row.place === filter);
 
   return (
-    <section className="misses-panel" aria-label="Votes not rewarded this epoch">
+    <section className="misses-panel" aria-label="Votes not rewarded this epoch" ref={panel}>
       <div className="misses-panel-head">
         <h2>
           Votes not rewarded this epoch
@@ -54,13 +62,23 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
           {summary && <div className="misses-summary">{summary}</div>}
           <div className="misses-legend">
             {MISS_PLACES.filter((place) => counts.has(place)).map((place) => (
-              <Explain key={place} text={participation ? placeExplain(place, participation) : place}>
+              <Explain
+                key={place}
+                className={filter === place ? "is-on" : undefined}
+                text={participation ? placeExplain(place, participation) : place}
+                onClick={() => setFilter(filter === place ? null : place)}
+              >
                 <i className={`misses-swatch is-${place}`} />
                 <span>
                   <b>{count(counts.get(place) ?? 0)}</b> {place}
                 </span>
               </Explain>
             ))}
+            {filter && (
+              <button type="button" className="produced-clear" onClick={() => setFilter(null)} aria-label="Clear filter">
+                ×<span className="produced-clear-word"> clear</span>
+              </button>
+            )}
           </div>
           <div className="misses-table">
             <div className="misses-row is-head">
@@ -79,7 +97,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
                 <Explain text="When votor sent this node's vote, after the slot's first shred.">our vote</Explain>
               </span>
             </div>
-            {[...list.rows].reverse().map((row) => (
+            {[...shown].reverse().map((row) => (
               <Row
                 key={row.slot}
                 row={row}

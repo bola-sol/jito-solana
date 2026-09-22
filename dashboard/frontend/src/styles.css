@@ -825,10 +825,18 @@ body {
   color: var(--text-dim);
 }
 
+/* Eight rows deep, then it scrolls, the head staying put. */
 .misses-table {
   display: flex;
   flex-direction: column;
+  max-height: 416px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   font-size: 12.5px;
+}
+
+.misses-legend .is-on {
+  color: var(--text);
 }
 
 /* Eight columns: the writer takes what the fixed ones leave. */
@@ -844,8 +852,12 @@ body {
 }
 
 .misses-row.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   padding-bottom: 2px;
   border-top: 0;
+  background: var(--panel);
   font-size: 12px;
   color: var(--text-faint);
 }
@@ -909,6 +921,10 @@ body {
   .misses-row.is-head,
   .misses-ip {
     display: none;
+  }
+
+  .misses-table {
+    max-height: 60vh;
   }
 
   .misses-slot {

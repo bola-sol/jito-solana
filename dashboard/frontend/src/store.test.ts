@@ -67,6 +67,26 @@ describe("clock offset", () => {
     expect(store.get("summary", "server_time_nanos")).toBe(7_000 * 1e6);
   });
 
+  it("measures the feed's lag from the quickest delivery the connection has had", () => {
+    // Readings arrive 300, then 250, then 1,400 ms after the validator's clock
+    // said: the quickest is 250 and the newest is 1,150 behind it.
+    vi.useFakeTimers();
+    const store = new Store();
+    expect(store.getFeedLag()).toBeNull();
+    vi.setSystemTime(5_300);
+    store.apply(envelope("summary", "server_time_nanos", 5_000 * 1e6));
+    expect(store.getFeedLag()).toBe(0);
+    vi.setSystemTime(6_250);
+    store.apply(envelope("summary", "server_time_nanos", 6_000 * 1e6));
+    vi.setSystemTime(8_400);
+    store.apply(envelope("summary", "server_time_nanos", 7_000 * 1e6));
+    expect(store.getFeedLag()).toBe(1_150);
+
+    // A new connection starts its baseline over.
+    store.setConnection("closed");
+    expect(store.getFeedLag()).toBeNull();
+  });
+
   it("lets an old low reading age out after a minute of readings", () => {
     vi.useFakeTimers();
     const store = new Store();

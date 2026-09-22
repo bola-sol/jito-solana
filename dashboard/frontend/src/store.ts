@@ -57,6 +57,9 @@ export class Store {
    *  smallest of them. */
   private clockOffsets: number[] = [];
   private clockOffset: number | null = null;
+  /** The smallest offset this connection has seen, which the lag is measured from. */
+  private quickestOffset: number | null = null;
+  private feedLag: number | null = null;
   private sender: ((frame: string) => void) | null = null;
   private pending = new Map<number, Pending>();
   private nextRequestId = 1;
@@ -121,6 +124,8 @@ export class Store {
       this.sender = null;
       this.clockOffsets = [];
       this.clockOffset = null;
+      this.quickestOffset = null;
+      this.feedLag = null;
       const inflight = [...this.pending.values()];
       this.pending.clear();
       for (const pending of inflight) pending.reject(new Error("connection lost"));
@@ -264,6 +269,12 @@ export class Store {
     return this.clockOffset;
   }
 
+  /** How much later than this connection's quickest delivery the newest server
+   *  clock arrived, in milliseconds: the backlog between here and the validator. */
+  getFeedLag(): number | null {
+    return this.feedLag;
+  }
+
   getThreads(): ThreadsSample[] {
     return this.threads;
   }
@@ -316,6 +327,9 @@ export class Store {
         const offset = Date.now() - value / 1e6;
         this.clockOffsets = [...this.clockOffsets, offset].slice(-CLOCK_READINGS);
         this.clockOffset = Math.min(...this.clockOffsets);
+        this.quickestOffset =
+          this.quickestOffset === null ? offset : Math.min(this.quickestOffset, offset);
+        this.feedLag = offset - this.quickestOffset;
       }
       this.values.set(`${topic}.${key}`, value);
       // The two things a resolved leader is made of. Either changing makes

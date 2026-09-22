@@ -20,6 +20,21 @@ const SILENCE_LIMIT_MS = 8_000;
 /** How often the silence is checked. */
 const WATCHDOG_INTERVAL_MS = 2_000;
 
+/** The subprotocol that asks the server for long messages as deflated binary
+ *  frames, offered when this browser can inflate them, which every current
+ *  one can. */
+const DEFLATE_PROTOCOL = "deflate";
+
+function canInflate(): boolean {
+  return typeof DecompressionStream === "function";
+}
+
+/** The JSON a deflated frame holds. */
+async function inflate(bytes: ArrayBuffer): Promise<string> {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new Response(stream).text();
+}
+
 /** Whether a decoded frame has the envelope's shape. */
 function isEnvelope(value: unknown): value is Envelope {
   return (
@@ -75,9 +90,28 @@ export function connect(store: Store): () => void {
   const open = () => {
     if (closed) return;
     store.setConnection("connecting");
-    const ws = new WebSocket(url());
+    const ws = canInflate() ? new WebSocket(url(), [DEFLATE_PROTOCOL]) : new WebSocket(url());
+    ws.binaryType = "arraybuffer";
     socket = ws;
     lastMessageAt = Date.now();
+
+    const deliver = (text: string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // A malformed frame is a server bug. Dropping it beats tearing down a
+        // connection that is otherwise working.
+        return;
+      }
+      if (!isEnvelope(parsed)) return;
+      store.apply(parsed);
+    };
+
+    // A deflated frame inflates on a promise, so every frame behind one waits
+    // on the same promise to be applied in the order it arrived.
+    let queue: Promise<void> = Promise.resolve();
+    let queued = 0;
 
     // Every handler checks it is still the current socket. An abandoned one can
     // fire late, and it must not disturb the connection that replaced it.
@@ -102,17 +136,27 @@ export function connect(store: Store): () => void {
       // Recorded before the frame is understood: anything arriving proves the
       // connection is delivering, which is all this is watching for.
       lastMessageAt = Date.now();
-      if (typeof event.data !== "string") return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(event.data);
-      } catch {
-        // A malformed frame is a server bug. Dropping it beats tearing down a
-        // connection that is otherwise working.
+      const data: unknown = event.data;
+      if (typeof data === "string" && queued === 0) {
+        deliver(data);
         return;
       }
-      if (!isEnvelope(parsed)) return;
-      store.apply(parsed);
+      queued += 1;
+      queue = queue
+        .then(async () => {
+          const text =
+            typeof data === "string"
+              ? data
+              : data instanceof ArrayBuffer
+                ? await inflate(data).catch(() => null)
+                : null;
+          if (ws === socket && text !== null) deliver(text);
+        })
+        // A frame that fails is dropped rather than stalling the ones behind it.
+        .catch(() => {})
+        .finally(() => {
+          queued -= 1;
+        });
     };
 
     ws.onclose = () => {

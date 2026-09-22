@@ -37,6 +37,7 @@ export function Header(): ReactElement {
   const client = store.get("summary", "client");
   const shredVersion = store.get("summary", "shred_version");
   const connection = store.getConnection();
+  const feedLag = store.getFeedLag();
 
   const name = store.get("summary", "identity_name") ?? "Private";
   const icon = store.get("summary", "identity_icon") ?? null;
@@ -74,7 +75,7 @@ export function Header(): ReactElement {
           </Explain>
         )}
         <span className="who-right">
-          <Connection state={connection} />
+          <Connection state={connection} lagMs={feedLag} />
           <BalancesToggle hidden={balancesHidden} onToggle={toggleBalancesHidden} />
           <ThemeToggle />
         </span>
@@ -224,12 +225,22 @@ function Boot({ boot }: { boot: BootTimes }) {
   );
 }
 
-/** The websocket's state: a dot, and the word "live" while it is open. */
-function Connection({ state }: { state: string }) {
+/** Lag under this is delivery jitter, not worth a word. */
+const LAG_SHOWN_MS = 3_000;
+
+/** The websocket's state: a dot, and the word "live" while it is open, or how
+ *  far behind the feed is running when the connection cannot carry it. */
+function Connection({ state, lagMs }: { state: string; lagMs: number | null }) {
+  const behind = state === "open" && lagMs !== null && lagMs >= LAG_SHOWN_MS;
+  const seconds = Math.round((lagMs ?? 0) / 1000);
+  const word = behind ? `${seconds} s behind` : state === "open" ? "live" : state;
   return (
-    <div className={`connection connection-${state}`} title={`websocket ${state}`}>
+    <div
+      className={`connection connection-${state}${behind ? " is-behind" : ""}`}
+      title={behind ? "Updates are reaching this page late." : `websocket ${state}`}
+    >
       <span className="connection-dot" />
-      {state === "open" ? "live" : state}
+      {word}
     </div>
   );
 }

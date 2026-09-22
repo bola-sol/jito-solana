@@ -6,7 +6,10 @@ use {
     crate::{
         collect::{EpochInfo, MissList},
         history::SlotHistory,
-        proto::{MAX_MESSAGE, Message, Publisher, Request, encode_with_id},
+        proto::{
+            DEFLATE_PROTOCOL, Frame, MAX_MESSAGE, Message, Publisher, Request, coalesce,
+            encode_with_id,
+        },
         validator_info::ValidatorInfoCache,
     },
     soketto::handshake::{Server, server},
@@ -27,7 +30,7 @@ use {
         },
         time::{Duration, sleep, timeout},
     },
-    tokio_util::compat::TokioAsyncReadCompatExt,
+    tokio_util::compat::{Compat, TokioAsyncReadCompatExt},
 };
 
 const WEBSOCKET_PATH: &str = "/websocket";
@@ -424,6 +427,18 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
 
 /// Fails the connection if a send cannot complete promptly. Cancelling a
 /// partly written frame leaves the stream indeterminate, so a timeout is fatal.
+/// Sends one message as the frame this client takes.
+async fn send_frame(
+    sender: &mut soketto::Sender<Compat<TcpStream>>,
+    message: &Message,
+    deflate: bool,
+) -> Result<(), soketto::connection::Error> {
+    match message.frame(deflate) {
+        Frame::Text(text) => sender.send_text(text).await,
+        Frame::Binary(bytes) => sender.send_binary(bytes).await,
+    }
+}
+
 macro_rules! send_or_timeout {
     ($expr:expr) => {
         timeout(WRITE_TIMEOUT, $expr)
@@ -442,9 +457,17 @@ async fn serve_websocket(
     path: &str,
 ) -> Result<(), ConnectionError> {
     let mut server = Server::new(socket.compat());
+    // Only a protocol the server lists is reported back from the request.
+    server.add_protocol(DEFLATE_PROTOCOL);
     // The request borrows the server, so the key is copied out and the borrow
     // dropped before the response goes back over that same server.
-    let key = server.receive_request().await?.key();
+    let (key, deflate) = {
+        let request = server.receive_request().await?;
+        let deflate = request
+            .protocols()
+            .any(|protocol| protocol == DEFLATE_PROTOCOL);
+        (request.key(), deflate)
+    };
 
     if path != WEBSOCKET_PATH {
         server
@@ -455,7 +478,7 @@ async fn serve_websocket(
     server
         .send_response(&server::Response::Accept {
             key,
-            protocol: None,
+            protocol: deflate.then_some(DEFLATE_PROTOCOL),
         })
         .await?;
 
@@ -471,9 +494,11 @@ async fn serve_websocket(
     builder.set_max_frame_size(MAX_MESSAGE);
     let (mut sender, mut receiver) = builder.finish();
 
-    let total: usize = snapshot.iter().map(|message| message.len()).sum();
+    let total = snapshot.iter().fold(0usize, |sum, message| {
+        sum.saturating_add(message.wire_len(deflate))
+    });
     for (index, message) in snapshot.iter().enumerate() {
-        let sent = timeout(WRITE_TIMEOUT, sender.send_text(&**message))
+        let sent = timeout(WRITE_TIMEOUT, send_frame(&mut sender, message, deflate))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "snapshot send"))?;
         if let Err(err) = sent {
@@ -484,8 +509,8 @@ async fn serve_websocket(
                  total, starts {:.120}): {err}",
                 index.saturating_add(1),
                 snapshot.len(),
-                message.len(),
-                message,
+                message.wire_len(deflate),
+                message.text(),
             );
             return Err(err.into());
         }
@@ -515,19 +540,21 @@ async fn serve_websocket(
 
                     update = updates.recv() => match update {
                         Ok(message) => {
-                            send_or_timeout!(sender.send_text(&*message));
-                            // Drain whatever else is queued before flushing, so a burst costs one write.
+                            // Whatever else is queued goes in the same write, and a
+                            // retained key queued twice goes once, with its newer value.
+                            let mut burst = vec![message];
                             loop {
                                 match updates.try_recv() {
-                                    Ok(message) => {
-                                        send_or_timeout!(sender.send_text(&*message))
-                                    }
+                                    Ok(message) => burst.push(message),
                                     Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
                                     // A client that cannot keep up is dropped rather than waited for.
                                     Err(TryRecvError::Lagged(_)) => {
                                         return Err(ConnectionError::Lagged);
                                     }
                                 }
+                            }
+                            for message in coalesce(burst) {
+                                send_or_timeout!(send_frame(&mut sender, &message, deflate));
                             }
                             send_or_timeout!(sender.flush());
                         }
@@ -544,7 +571,7 @@ async fn serve_websocket(
             return Err(ConnectionError::Oversized(incoming.len()));
         }
         if let Some(reply) = respond(&incoming, &history, &info, &epochs, &misses) {
-            send_or_timeout!(sender.send_text(&*reply));
+            send_or_timeout!(send_frame(&mut sender, &reply, deflate));
             send_or_timeout!(sender.flush());
         }
         incoming.clear();
@@ -677,8 +704,10 @@ fn respond(
 mod tests {
     use {
         super::*,
+        crate::proto::DEFLATE_FROM,
+        flate2::read::ZlibDecoder,
         soketto::handshake::{Client, ServerResponse},
-        tokio_util::compat::Compat,
+        std::io::Read,
     };
 
     /// A history with nothing in it, which is what every test here wants: none
@@ -1436,10 +1465,67 @@ mod tests {
         let stream = TcpStream::connect(addr).await.unwrap();
         let mut client = Client::new(stream.compat(), "x", WEBSOCKET_PATH);
         match client.handshake().await.unwrap() {
-            ServerResponse::Accepted { .. } => {}
+            ServerResponse::Accepted { protocol: None } => {}
             _ => panic!("the server refused a well-formed handshake"),
         }
         client
+    }
+
+    /// Connects a client that offers to take deflated frames.
+    async fn connect_deflating(addr: std::net::SocketAddr) -> Client<'static, Compat<TcpStream>> {
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut client = Client::new(stream.compat(), "x", WEBSOCKET_PATH);
+        client.add_protocol(DEFLATE_PROTOCOL);
+        match client.handshake().await.unwrap() {
+            ServerResponse::Accepted {
+                protocol: Some(protocol),
+            } => assert_eq!(protocol, DEFLATE_PROTOCOL),
+            _ => panic!("the server should accept the subprotocol it knows"),
+        }
+        client
+    }
+
+    #[tokio::test]
+    async fn test_a_client_offering_the_subprotocol_gets_long_messages_deflated() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        publisher.publish("summary", "host", &vec!["a host row"; 200]);
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect_deflating(addr).await.into_builder().finish();
+
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let mut data = Vec::new();
+            let kind = receiver.receive_data(&mut data).await.unwrap();
+            if kind.is_binary() {
+                assert!(
+                    data.len() < DEFLATE_FROM,
+                    "deflated, so shorter than the cut-off"
+                );
+                let mut text = String::new();
+                ZlibDecoder::new(&data[..])
+                    .read_to_string(&mut text)
+                    .unwrap();
+                texts.push((true, text));
+            } else {
+                texts.push((false, String::from_utf8(data).unwrap()));
+            }
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|(binary, text)| !binary && text.contains(r#""key":"cluster""#)),
+            "the short message should stay text: {texts:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|(binary, text)| *binary && text.contains(r#""key":"host""#)),
+            "the long message should arrive deflated: {texts:?}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
     }
 
     #[tokio::test]

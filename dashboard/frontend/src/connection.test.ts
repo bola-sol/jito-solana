@@ -10,8 +10,12 @@ class FakeSocket {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
+  binaryType = "blob";
 
-  constructor(public url: string) {
+  constructor(
+    public url: string,
+    public protocols: string[] = [],
+  ) {
     FakeSocket.live.push(this);
   }
 
@@ -26,6 +30,13 @@ class FakeSocket {
 
   deliver(topic: string, key: string, value: unknown) {
     this.onmessage?.({ data: JSON.stringify({ topic, key, value }) });
+  }
+
+  /** The server's binary frame: the envelope, zlib-deflated. */
+  async deliverDeflated(topic: string, key: string, value: unknown) {
+    const json = JSON.stringify({ topic, key, value });
+    const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("deflate"));
+    this.onmessage?.({ data: await new Response(stream).arrayBuffer() });
   }
 }
 
@@ -47,6 +58,48 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("deflated frames", () => {
+  it("offers the subprotocol and asks for binary frames as buffers", () => {
+    const store = new Store();
+    connect(store);
+    expect(latest().protocols).toEqual(["deflate"]);
+    expect(latest().binaryType).toBe("arraybuffer");
+  });
+
+  it("inflates a deflated frame and keeps the frames behind it in order", async () => {
+    // Inflating is asynchronous, so a text frame arriving behind a deflated one
+    // must not overtake it: the last value sent has to be the last applied.
+    vi.useRealTimers();
+    const store = new Store();
+    const applied: unknown[] = [];
+    vi.spyOn(store, "apply").mockImplementation((envelope) => applied.push(envelope.value));
+    connect(store);
+    latest().accept();
+
+    latest().deliver("summary", "root_slot", 1);
+    await latest().deliverDeflated("summary", "root_slot", 2);
+    latest().deliver("summary", "root_slot", 3);
+    await latest().deliverDeflated("summary", "root_slot", 4);
+
+    await vi.waitFor(() => expect(applied).toHaveLength(4));
+    expect(applied).toEqual([1, 2, 3, 4]);
+  });
+
+  it("drops a binary frame it cannot inflate and goes on", async () => {
+    vi.useRealTimers();
+    const store = new Store();
+    const applied: unknown[] = [];
+    vi.spyOn(store, "apply").mockImplementation((envelope) => applied.push(envelope.value));
+    connect(store);
+    latest().accept();
+
+    latest().onmessage?.({ data: new Uint8Array([1, 2, 3]).buffer });
+    latest().deliver("summary", "root_slot", 9);
+
+    await vi.waitFor(() => expect(applied).toEqual([9]));
+  });
 });
 
 describe("the silence watchdog", () => {

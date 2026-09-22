@@ -403,6 +403,15 @@ body {
   background: var(--bad);
 }
 
+/* Delivering, but late. */
+.connection.is-behind {
+  color: var(--warn);
+}
+
+.connection.is-behind .connection-dot {
+  background: var(--warn);
+}
+
 .banner {
   padding: 8px 12px;
   border-radius: var(--radius);

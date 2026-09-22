@@ -157,6 +157,14 @@ that `id` alone: `summary.ping`, `summary.displays` for the whole name table,
 `epoch.query` for a held epoch's schedule, and `slot.range` for a run of slots
 out of the packed history.
 
+A client that offers the `deflate` websocket subprotocol is sent every message
+of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the
+page inflates with the browser's `DecompressionStream`; shorter messages, and
+everything to a client that did not offer it, go as text. When a client falls
+behind, a burst of queued updates carries each retained key once, at its newest
+value. With the crate's log at debug, the server reports the bytes published per
+key once a minute.
+
 ## Building the frontend
 
 `frontend/dist` is committed to the repository, so a normal `cargo build` needs

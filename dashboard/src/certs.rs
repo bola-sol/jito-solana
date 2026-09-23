@@ -3,9 +3,7 @@
 //! into their block footers.
 
 use {
-    agave_votor_messages::reward_certificate::{
-        NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate,
-    },
+    agave_votor_messages::reward_certificate::NUM_SLOTS_FOR_REWARD,
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_entry::block_component::{
@@ -573,10 +571,11 @@ pub fn walk(
         };
         match read_block(blockstore, slot, root) {
             Block::Footer(footer) => {
-                let (notar, skip) = (
-                    footer.notar_reward_cert.as_ref(),
-                    footer.skip_reward_cert.as_ref(),
-                );
+                let notar = footer.notar_reward_cert.as_ref().map(|cert| cert.bitmap());
+                let skip = footer
+                    .skip_reward_cert
+                    .as_ref()
+                    .map(|cert| cert.to_bitmap());
                 if let Some(mark) = mark_of(notar, skip, reward_slot, rank, len) {
                     marks.push(mark);
                 }
@@ -631,10 +630,11 @@ fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
         .map_or(Block::Opaque, |footer| Block::Footer(Box::new(footer)))
 }
 
-/// Neither certificate means nobody was paid. `None` where a bitmap could not be read.
+/// Takes each certificate's bitmap. Neither means nobody was paid; `None` where one could not
+/// be read.
 fn mark_of(
-    notar: Option<&NotarRewardCertificate>,
-    skip: Option<&SkipRewardCertificate>,
+    notar: Option<&[u8]>,
+    skip: Option<&[u8]>,
     slot: Slot,
     rank: usize,
     len: usize,
@@ -650,11 +650,11 @@ fn mark_of(
         });
     }
     let notar_paid = match notar {
-        Some(cert) => union(std::iter::once(cert.bitmap()), len)?,
+        Some(bitmap) => decode_paid(bitmap, len)?,
         None => Vec::new(),
     };
     let skip_paid = match skip {
-        Some(cert) => union(std::iter::once(cert.to_bitmap()), len)?,
+        Some(bitmap) => decode_paid(bitmap, len)?,
         None => Vec::new(),
     };
     let paid: Vec<bool> = (0..len)
@@ -681,16 +681,14 @@ fn mark_of(
     })
 }
 
-/// `None` where a bitmap does not decode or uses the two-vector form.
-fn union<'a>(bitmaps: impl Iterator<Item = &'a [u8]>, len: usize) -> Option<Vec<bool>> {
+/// `None` where the bitmap does not decode or uses the two-vector form.
+fn decode_paid(bitmap: &[u8], len: usize) -> Option<Vec<bool>> {
+    let Ok(Decoded::Base2(bits)) = decode(bitmap, len) else {
+        return None;
+    };
     let mut paid = vec![false; len];
-    for bitmap in bitmaps {
-        let Ok(Decoded::Base2(bits)) = decode(bitmap, len) else {
-            return None;
-        };
-        for (flag, bit) in paid.iter_mut().zip(bits.iter().by_vals()) {
-            *flag |= bit;
-        }
+    for (flag, bit) in paid.iter_mut().zip(bits.iter().by_vals()) {
+        *flag = bit;
     }
     Some(paid)
 }
@@ -727,22 +725,24 @@ mod tests {
     }
 
     #[test]
-    fn test_the_union_has_every_rank_set_in_either_bitmap() {
-        let bitmaps = [bitmap(10, &[3, 9]), bitmap(10, &[4])];
-        let paid = union(bitmaps.iter().map(Vec::as_slice), 10).unwrap();
-        assert_eq!(paid, flags(10, &[3, 4, 9]));
+    fn test_a_rank_in_either_certificate_was_paid() {
+        let (notar, skip) = (bitmap(10, &[3, 9]), bitmap(10, &[4]));
+        let mark = mark_of(Some(&notar), Some(&skip), 5, 4, 10).unwrap();
+        assert_eq!(mark.paid, flags(10, &[3, 4, 9]));
+        assert_eq!((mark.notar, mark.skip), (2, 1));
+        assert_eq!(mark.reward, Reward::Paid);
     }
 
     #[test]
     fn test_a_short_bitmap_leaves_the_ranks_past_it_unpaid() {
-        let paid = union([bitmap(4, &[3])].iter().map(Vec::as_slice), 10).unwrap();
+        let paid = decode_paid(&bitmap(4, &[3]), 10).unwrap();
         assert_eq!(paid, flags(10, &[3]));
     }
 
     #[test]
     fn test_garbage_does_not_decode() {
-        assert_eq!(union([&[0u8, 1][..]].into_iter(), 10), None);
-        assert_eq!(union([&[7u8, 10, 0, 0, 0][..]].into_iter(), 10), None);
+        assert_eq!(decode_paid(&[0u8, 1], 10), None);
+        assert_eq!(decode_paid(&[7u8, 10, 0, 0, 0], 10), None);
     }
 
     #[test]

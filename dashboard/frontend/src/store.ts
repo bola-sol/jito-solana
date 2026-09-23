@@ -71,7 +71,6 @@ export class Store {
   private leaderCache = new Map<number, LeaderRef>();
   /** Us, rebuilt only when one of the three values it is made of changes. */
   private ours: LeaderRef = NO_LEADER;
-  private oursFrom = "";
   /** Names and icons for the whole cluster, empty until `loadDisplays`. */
   private displays = new Map<string, { name: string | null; icon: string | null }>();
   /** Epochs other than the current one, fetched on demand. `null` for one the
@@ -228,9 +227,8 @@ export class Store {
     const icon = this.get("summary", "identity_icon") ?? null;
     // Rebuilt on change rather than per call: the rows that draw a leader are
     // memoised on their props, and a fresh object each render would defeat it.
-    const stamp = `${key} ${name} ${icon}`;
-    if (this.oursFrom !== stamp) {
-      this.oursFrom = stamp;
+    const ours = this.ours;
+    if (ours.key !== key || ours.name !== name || ours.icon !== icon) {
       this.ours = { key, name, icon };
     }
     return this.ours;

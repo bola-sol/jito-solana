@@ -28,7 +28,7 @@ const REWARDS: (Reward | null)[] = [null, "paid", "unpaid", "no_certificate"];
 
 /** One slot as the validator sends it, positional: level, flags, votes,
  *  non-votes, compute, fees, priority fees, tips, time, replay, shreds,
- *  repaired, full, replayed. Pinned by a test on each side. */
+ *  repaired, full, replayed, left out. Pinned by a test on each side. */
 export type WireRow = [
   level: number,
   flags: number,
@@ -44,6 +44,7 @@ export type WireRow = [
   repaired: number,
   fullMillis: number,
   replayedMillis: number,
+  leftOut: number,
 ];
 
 /** A span of history, oldest first, with `null` for slots it does not hold. */
@@ -93,12 +94,14 @@ export function entriesOf(
       repaired,
       fullMillis,
       replayedMillis,
+      leftOut,
     ] = row;
     // Only to decide whether the slot was ours. Who the leader is, and what
     // they are called, the page resolves for itself through `store.leaderOf`,
     // the same way it does for a live slot.
     const leader = leaderAt(epoch, slot);
     const timed = (flags & HAS_CLOCK) !== 0;
+    const reward = REWARDS[(flags & REWARD_MASK) >> REWARD_SHIFT] ?? null;
 
     entries.push({
       slot,
@@ -130,7 +133,8 @@ export function entriesOf(
           ? null
           : { count: shreds, repaired, full_millis: fullMillis },
       replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
-      reward: REWARDS[(flags & REWARD_MASK) >> REWARD_SHIFT] ?? null,
+      reward,
+      left_out: reward === "paid" || reward === "unpaid" ? leftOut : null,
     });
 
     if (timed) previousTime = timeMillis;

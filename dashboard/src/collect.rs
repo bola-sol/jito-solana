@@ -226,6 +226,34 @@ pub struct MissList {
     pub validators: Vec<MissValidator>,
     /// Oldest first.
     pub rows: Vec<MissRow>,
+    /// What this node's own certificates carried.
+    pub written: WrittenList,
+}
+
+/// What this node's certificates carried, per validator, as a viewer asks for
+/// it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct WrittenList {
+    /// Certificates this node wrote that paid anybody.
+    pub certificates: u64,
+    /// Of those, the ones that left no regular out.
+    pub carried_all: u64,
+    /// One per rank that names a validator.
+    pub rows: Vec<WrittenRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WrittenRow {
+    pub identity: String,
+    pub name: Option<String>,
+    pub client: Option<String>,
+    pub version: Option<String>,
+    pub ip: Option<String>,
+    /// This node's certificates that did not pay it.
+    pub left_out_of_ours: u64,
+    /// Certificates from any writer that did not pay it, of the list's
+    /// `rewarded`.
+    pub left_out_everywhere: u64,
 }
 
 /// A validator a certificate left out beside this node.
@@ -1545,12 +1573,14 @@ impl Collector {
             }
             // For every mark: the writer's certificates are counted paid or not.
             let detail = Some(self.miss_detail(root_bank, mark.slot));
-            if let Some(tally) = self.certs_tally.as_mut() {
+            let left_out = self.certs_tally.as_mut().and_then(|tally| {
                 tally.add(&mark, &spans, detail);
-            }
-            let updated = self
-                .slots
-                .update(mark.slot, |entry| entry.reward = Some(mark.reward));
+                tally.left_out(&mark)
+            });
+            let updated = self.slots.update(mark.slot, |entry| {
+                entry.reward = Some(mark.reward);
+                entry.left_out = left_out.map(|count| u16::try_from(count).unwrap_or(u16::MAX));
+            });
             if let Some(entry) = updated {
                 self.publish_slot(&entry);
             }
@@ -1656,6 +1686,26 @@ impl Collector {
             })
             .collect();
         drop(history);
+        let summary = tally.written();
+        let written_rows = (0..summary.unpaid_everywhere.len())
+            .filter_map(|rank| {
+                let key = rank_map
+                    .and_then(|map| map.get_pubkey_stake_entry(rank))
+                    .map(|entry| entry.node_pubkey)?;
+                let heard = heard(&key);
+                Some(WrittenRow {
+                    identity: key.to_string(),
+                    name: info.get(&key).and_then(|info| info.name.clone()),
+                    client: heard.map(|contact| contact.version().client().to_string()),
+                    version: heard.map(|contact| contact.version().to_string()),
+                    ip: heard
+                        .and_then(|contact| contact.gossip())
+                        .map(|addr| addr.ip().to_string()),
+                    left_out_of_ours: summary.unpaid_by_rank.get(rank).copied().unwrap_or(0),
+                    left_out_everywhere: summary.unpaid_everywhere.get(rank).copied().unwrap_or(0),
+                })
+            })
+            .collect();
         drop(info);
         *self.misses.write().unwrap() = MissList {
             epoch: tally.epoch(),
@@ -1665,6 +1715,11 @@ impl Collector {
             writers,
             validators,
             rows,
+            written: WrittenList {
+                certificates: summary.certificates,
+                carried_all: summary.carried_all,
+                rows: written_rows,
+            },
         };
     }
 

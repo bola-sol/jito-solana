@@ -5476,3 +5476,161 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- our certificates, above the schedule ---- */
+
+.written {
+  gap: 8px;
+}
+
+.written-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.written-head > b {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.written-head .stat-trigger,
+.written-head .misses-close {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.written-legend .misses-swatch.is-worse {
+  background: var(--warn);
+}
+
+.written-legend .misses-swatch.is-missing {
+  background: var(--text-faint);
+}
+
+.written-row {
+  display: grid;
+  grid-template-columns: minmax(14em, 1.4fr) 8em 11em 6em 7.5em 13em;
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.written-row.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 2px;
+  border-top: 0;
+  background: var(--panel);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.written-ours,
+.written-share,
+.written-all,
+.written-ip .copyable {
+  font-family: var(--mono);
+}
+
+.written-share {
+  color: var(--text);
+}
+
+.written-all,
+.written-ip {
+  color: var(--text-faint);
+}
+
+/* Its share of ours as a bar, its share everywhere as a mark on it. */
+.written-gap {
+  position: relative;
+  height: 6px;
+  align-self: center;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.written-gap > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 3px;
+  background: var(--warn);
+}
+
+.written-gap > i.is-down {
+  background: var(--text-faint);
+}
+
+.written-gap > b {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 12px;
+  background: var(--text);
+}
+
+/* A seventh figure column under alpenglow, at 52 px minimums so a turn still
+   fits 1240 without a sideways scroll. */
+.schedule-slots.has-certificate .schedule-row {
+  grid-template-columns: 150px repeat(7, minmax(52px, 1fr)) minmax(80px, 1.1fr) minmax(150px, 2fr) minmax(10em, 1.1fr);
+}
+
+.schedule-cert.is-out {
+  color: var(--warn);
+}
+
+.schedule-cert.is-all,
+.schedule-cert.is-none,
+.schedule-cert.is-unknown {
+  color: var(--text-faint);
+}
+
+@media (max-width: 700px) {
+  .written-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "writer writer"
+      "ours share"
+      "all all"
+      "gap gap";
+    gap: 3px 12px;
+  }
+
+  .written-row.is-head,
+  .written-ip {
+    display: none;
+  }
+
+  .written-row .misses-writer {
+    grid-area: writer;
+  }
+
+  .written-ours {
+    grid-area: ours;
+  }
+
+  .written-share {
+    grid-area: share;
+    text-align: right;
+  }
+
+  .written-all {
+    grid-area: all;
+  }
+
+  .written-gap {
+    grid-area: gap;
+    margin: 4px 0 2px;
+  }
+}

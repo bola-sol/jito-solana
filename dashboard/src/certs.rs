@@ -193,6 +193,26 @@ struct Miss {
     vote: Option<VoteSent>,
 }
 
+/// A certificate written in one of this node's leader slots, by the ranks it
+/// did not pay.
+#[derive(Debug, Clone)]
+struct Written {
+    unpaid: Vec<u32>,
+}
+
+/// What this node's certificates carried, and what every rank was left out of.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WrittenSummary {
+    /// Certificates this node wrote that paid anybody.
+    pub certificates: u64,
+    /// Of those, the ones that left no regular out.
+    pub carried_all: u64,
+    /// Per rank: this node's certificates that did not pay it.
+    pub unpaid_by_rank: Vec<u64>,
+    /// Per rank: certificates from any writer that did not pay it.
+    pub unpaid_everywhere: Vec<u64>,
+}
+
 /// Paid slots per rank over one epoch's marks.
 #[derive(Debug)]
 pub struct Tally {
@@ -215,6 +235,8 @@ pub struct Tally {
     writer_certs: HashMap<Pubkey, u64>,
     /// Votes sent for slots whose certificate has not been read yet.
     pending_votes: BTreeMap<Slot, VoteSent>,
+    /// Certificates written in this node's leader slots, in reading order.
+    ours: Vec<Written>,
 }
 
 impl Tally {
@@ -239,6 +261,7 @@ impl Tally {
             paid_ranks: Vec::new(),
             writer_certs: HashMap::new(),
             pending_votes: BTreeMap::new(),
+            ours: Vec::new(),
         }
     }
 
@@ -259,6 +282,20 @@ impl Tally {
         if let Some(writer) = detail.and_then(|detail| detail.writer) {
             let count = self.writer_certs.entry(writer).or_default();
             *count = count.saturating_add(1);
+        }
+        if self
+            .leader_slots
+            .binary_search(&writer_slot(mark.slot))
+            .is_ok()
+        {
+            let unpaid = mark
+                .paid
+                .iter()
+                .enumerate()
+                .filter(|(_, paid)| !**paid)
+                .filter_map(|(rank, _)| u32::try_from(rank).ok())
+                .collect();
+            self.ours.push(Written { unpaid });
         }
         if self.paid_ranks.len() <= paid_ranks {
             self.paid_ranks.resize(paid_ranks.saturating_add(1), 0);
@@ -334,6 +371,56 @@ impl Tally {
     /// Certificates `writer` wrote that paid anybody, so far this epoch.
     pub fn writer_certificates(&self, writer: &Pubkey) -> u64 {
         self.writer_certs.get(writer).copied().unwrap_or(0)
+    }
+
+    /// How many regulars `mark`'s certificate left out, against the
+    /// certificates read so far. `None` where there was no certificate.
+    pub fn left_out(&self, mark: &Mark) -> Option<u32> {
+        if matches!(mark.reward, Reward::NoCertificate) {
+            return None;
+        }
+        let regulars = self.regulars();
+        let count = mark
+            .paid
+            .iter()
+            .zip(&regulars)
+            .filter(|(paid, regular)| !**paid && **regular)
+            .count();
+        Some(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// What this node's certificates carried, against the regulars as of now.
+    pub fn written(&self) -> WrittenSummary {
+        let regulars = self.regulars();
+        let mut unpaid_by_rank = vec![0u64; self.per_rank.len()];
+        let mut carried_all = 0u64;
+        for written in &self.ours {
+            let mut left_regular_out = false;
+            for rank in &written.unpaid {
+                let Ok(at) = usize::try_from(*rank) else {
+                    continue;
+                };
+                if let Some(count) = unpaid_by_rank.get_mut(at) {
+                    *count = count.saturating_add(1);
+                }
+                if regulars.get(at).is_some_and(|regular| *regular) {
+                    left_regular_out = true;
+                }
+            }
+            if !left_regular_out {
+                carried_all = carried_all.saturating_add(1);
+            }
+        }
+        WrittenSummary {
+            certificates: u64::try_from(self.ours.len()).unwrap_or(u64::MAX),
+            carried_all,
+            unpaid_by_rank,
+            unpaid_everywhere: self
+                .per_rank
+                .iter()
+                .map(|paid| self.rewarded.saturating_sub(*paid))
+                .collect(),
+        }
     }
 
     pub fn since_slot(&self) -> Slot {
@@ -713,6 +800,37 @@ mod tests {
             rank: 0,
             paid: (0..20).map(|rank| rank < paid).collect(),
         }
+    }
+
+    #[test]
+    fn test_our_certificates_are_kept_by_what_they_left_out() {
+        // Leader slots 2,000 to 2,003 write the certificates for 1,992 to 1,995.
+        let mut tally = tally();
+        fill(&mut tally, 100);
+        tally.add(&wide(1_992, Reward::Paid, 20), &[], None);
+        tally.add(&wide(1_993, Reward::Paid, 17), &[], None);
+        tally.add(&wide(1_994, Reward::Paid, 18), &[], None);
+        tally.add(&wide(3_000, Reward::Paid, 10), &[], None);
+        let written = tally.written();
+        assert_eq!(written.certificates, 3);
+        // Ranks 18 and 19 are paid in seven of ten, so not regulars: the
+        // certificate that left only them out carried everyone who counts.
+        assert_eq!(written.carried_all, 2);
+        assert_eq!(written.unpaid_by_rank[17], 1);
+        assert_eq!(written.unpaid_by_rank[19], 2);
+        assert_eq!(written.unpaid_by_rank[0], 0);
+        // Everywhere: thirty of the fill, then three of the four above.
+        assert_eq!(written.unpaid_everywhere[19], 33);
+        assert_eq!(written.unpaid_everywhere[0], 0);
+    }
+
+    #[test]
+    fn test_left_out_counts_only_the_regulars_a_certificate_missed() {
+        let mut tally = tally();
+        fill(&mut tally, 100);
+        assert_eq!(tally.left_out(&wide(500, Reward::Paid, 17)), Some(1));
+        assert_eq!(tally.left_out(&wide(501, Reward::Paid, 20)), Some(0));
+        assert_eq!(tally.left_out(&wide(502, Reward::NoCertificate, 0)), None);
     }
 
     /// Enough certificates that a thin one can be told: seventy paying all

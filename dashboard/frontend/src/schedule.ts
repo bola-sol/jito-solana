@@ -1,5 +1,6 @@
 /** The slot list folded into the leader turns the schedule page shows. */
 
+import { count } from "./format";
 import type { EpochInfo, Reward, SlotEntry } from "./types";
 
 /** Slots the leader schedule hands out at a time. Eight in a row is two
@@ -124,4 +125,42 @@ export function rewardTitle(reward: Reward | null | undefined): string {
     default:
       return "The reward certificate is written eight slots on, and has not been seen yet.";
   }
+}
+
+/** Slots from a slot to the one whose leader writes its reward certificate. */
+export const REWARD_LAG = 8;
+
+/** What the certificate written in a slot left out: a count of the validators
+ *  certificates usually pay; "none" where the leader produced no block; null
+ *  where the certificate has not been read; undefined where the slot it
+ *  rewards is not held. */
+export type Certificate = number | "none" | null | undefined;
+
+export function certificateAt(
+  slot: number,
+  entryOf: (slot: number) => SlotEntry | undefined,
+): Certificate {
+  const rewarded = entryOf(slot - REWARD_LAG);
+  if (rewarded === undefined) return undefined;
+  if (rewarded.reward === "no_certificate") return "none";
+  if (rewarded.reward === null) return null;
+  return rewarded.left_out ?? null;
+}
+
+export type CertificateTone = "all" | "out" | "none" | "unknown";
+
+/** The certificate column's word and tone. */
+export function certificateText(certificate: Certificate): [text: string, tone: CertificateTone] {
+  if (certificate === undefined || certificate === null) return ["—", "unknown"];
+  if (certificate === "none") return ["none", "none"];
+  if (certificate === 0) return ["all", "all"];
+  return [`left out ${count(certificate)}`, "out"];
+}
+
+export function certificateTitle(certificate: Certificate): string {
+  if (certificate === undefined) return "The slot this certificate rewards is not held.";
+  if (certificate === null) return "The certificate written in this slot has not been read yet.";
+  if (certificate === "none") return "No certificate: the leader produced no block in this slot.";
+  if (certificate === 0) return "The certificate written in this slot paid everyone certificates usually pay.";
+  return `The certificate written in this slot left out ${count(certificate)} of the validators certificates usually pay.`;
 }

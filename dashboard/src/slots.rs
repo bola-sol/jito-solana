@@ -52,6 +52,9 @@ pub struct SlotEntry {
     /// Whether this node's vote was paid for the slot. `None` until the reward
     /// certificate has been seen, and always under TowerBFT.
     pub reward: Option<Reward>,
+    /// Regulars the slot's reward certificate left out, counted against the
+    /// certificates read by then. `None` with `reward`.
+    pub left_out: Option<u16>,
 }
 
 /// How a block's shreds arrived. Outside [`BlockDetail`] because a slot fills
@@ -113,6 +116,7 @@ impl SlotEntry {
             shreds: None,
             replayed_millis: None,
             reward: None,
+            left_out: None,
         }
     }
 }
@@ -303,6 +307,7 @@ mod tests {
                     }),
                     replayed_millis: Some(u64::MAX),
                     reward: Some(Reward::NoCertificate),
+                    left_out: Some(u16::MAX),
                     block: Some(BlockDetail {
                         transactions: u64::MAX,
                         non_vote_transactions: u64::MAX,

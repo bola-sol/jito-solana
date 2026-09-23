@@ -49,6 +49,7 @@ function row(over: Partial<Record<number, number>> = {}): WireRow {
     63,
     341,
     393,
+    0,
   ];
   return base.map((value, index) => over[index] ?? value) as WireRow;
 }
@@ -204,6 +205,18 @@ describe("entriesOf", () => {
     expect(entry.mine).toBe(true);
     expect("leader" in entry).toBe(false);
     expect("leader_name" in entry).toBe(false);
+  });
+});
+
+describe("the left-out count", () => {
+  it("comes with a paid or unpaid mark and not otherwise", () => {
+    const leftOut = (bits: number) =>
+      entriesOf({ first_slot: 1000, rows: [row({ 1: bits << REWARD_SHIFT, 14: 3 })] }, epochOf(), undefined)[0]
+        .left_out;
+    expect(leftOut(0)).toBeNull();
+    expect(leftOut(1)).toBe(3);
+    expect(leftOut(2)).toBe(3);
+    expect(leftOut(3)).toBeNull();
   });
 });
 

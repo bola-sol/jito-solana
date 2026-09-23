@@ -1,6 +1,18 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { blockStamp, buildLabel, count, percent, shortKey, sol, solCompact } from "../format";
-import { matchesQuery, rewardTitle, SLOTS_PER_TURN, turnKey, turnsOf, type Turn, type TurnSlot } from "../schedule";
+import {
+  certificateAt,
+  certificateText,
+  certificateTitle,
+  matchesQuery,
+  rewardTitle,
+  SLOTS_PER_TURN,
+  turnKey,
+  turnsOf,
+  type Certificate,
+  type Turn,
+  type TurnSlot,
+} from "../schedule";
 import { entriesOf, type SlotRange } from "../slotHistory";
 import type { Store } from "../store";
 import { timelineOf } from "../timeline";
@@ -12,6 +24,7 @@ import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
 import { SlotLink } from "./SlotLink";
+import { WrittenSection } from "./WrittenSection";
 
 /** What each leader's turn at producing contained, newest first, each turn
  *  drawn whole from its first slot. */
@@ -99,6 +112,18 @@ export function SchedulePage({
   const [loading, setLoading] = useState(false);
   const [exhausted, setExhausted] = useState(false);
   const slots = useMemo(() => [...older, ...live], [older, live]);
+  const alpenglow = useAlpenglow();
+
+  // The entry eight back carries a slot's certificate.
+  const deepBySlot = useMemo(
+    () => new Map((deep ?? []).map((entry) => [entry.slot, entry] as const)),
+    [deep],
+  );
+  const nearBySlot = useMemo(() => new Map(slots.map((entry) => [entry.slot, entry] as const)), [slots]);
+  const entryOf = useCallback(
+    (slot: number) => nearBySlot.get(slot) ?? deepBySlot.get(slot),
+    [nearBySlot, deepBySlot],
+  );
 
   const loadDepth = async () => {
     if (deep !== null || deepLoading) return;
@@ -216,6 +241,8 @@ export function SchedulePage({
         </div>
       </div>
 
+      {alpenglow && <WrittenSection />}
+
       <div className="schedule-list" ref={list}>
         <ScrollTop scroller={list} />
         {turns.length === 0 && (
@@ -230,6 +257,7 @@ export function SchedulePage({
             peer={turn.leader ? byIdentity.get(turn.leader) : undefined}
             totalStake={stake?.total_stake}
             rates={rates}
+            entryOf={entryOf}
           />
         ))}
         {deepLoading && (
@@ -272,20 +300,27 @@ const TurnCard = memo(
     peer,
     totalStake,
     rates,
+    entryOf,
   }: {
     turn: Turn;
     peer: Peer | undefined;
     totalStake: number | undefined;
     rates: TipRates | undefined;
+    entryOf: (slot: number) => SlotEntry | undefined;
   }) {
     const alpenglow = useAlpenglow();
     return (
       <div className={`schedule-group${turn.mine ? " is-ours" : ""}`}>
         <TurnLeader turn={turn} peer={peer} totalStake={totalStake} />
-        <div className="schedule-slots">
+        <div className={`schedule-slots${alpenglow ? " has-certificate" : ""}`}>
           <div className="schedule-row schedule-head">
             <span className="schedule-slot">Slot</span>
             <span>{alpenglow ? "Voted" : "Votes"}</span>
+            {alpenglow && (
+              <span title="Who the reward certificate written in this slot left out, of the validators certificates usually pay.">
+                Certificate
+              </span>
+            )}
             <span>{alpenglow ? "Transactions" : "Non-votes"}</span>
             <span>Base fee</span>
             <span>Priority</span>
@@ -302,7 +337,12 @@ const TurnCard = memo(
             <span>Compute</span>
           </div>
           {turn.slots.map((slot) => (
-            <SlotRow key={slot.slot} slot={slot} rates={rates} />
+            <SlotRow
+              key={slot.slot}
+              slot={slot}
+              rates={rates}
+              certificate={alpenglow ? certificateAt(slot.slot, entryOf) : undefined}
+            />
           ))}
         </div>
       </div>
@@ -313,7 +353,11 @@ const TurnCard = memo(
     before.totalStake === after.totalStake &&
     before.rates === after.rates &&
     before.turn.slots.length === after.turn.slots.length &&
-    before.turn.slots.every((slot, index) => slot.entry === after.turn.slots[index]?.entry),
+    before.turn.slots.every((slot, index) => slot.entry === after.turn.slots[index]?.entry) &&
+    // A slot's certificate sits on another turn's entry.
+    before.turn.slots.every(
+      (slot) => certificateAt(slot.slot, before.entryOf) === certificateAt(slot.slot, after.entryOf),
+    ),
 );
 
 /** Leader, name and key, with what is known about the validator behind them. */
@@ -409,7 +453,15 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
 }
 
 /** One slot, empty until it has been produced. */
-function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined }) {
+function SlotRow({
+  slot,
+  rates,
+  certificate,
+}: {
+  slot: TurnSlot;
+  rates: TipRates | undefined;
+  certificate: Certificate;
+}) {
   const alpenglow = useAlpenglow();
   const entry = slot.entry;
   const block = entry?.block ?? null;
@@ -432,6 +484,7 @@ function SlotRow({ slot, rates }: { slot: TurnSlot; rates: TipRates | undefined 
       ) : (
         <span>{votes === null ? "—" : count(votes)}</span>
       )}
+      {alpenglow && <CertificateCell certificate={certificate} />}
       <span>{block ? count(block.non_vote_transactions) : "—"}</span>
       <span>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
       <span>{block ? sol(block.priority_fees, 4) : "—"}</span>
@@ -464,6 +517,16 @@ const MARKS: Record<Reward, [glyph: string, tone: string]> = {
   unpaid: ["✗", "is-no"],
   no_certificate: ["○", "is-none"],
 };
+
+/** What the certificate written in the slot left out. */
+function CertificateCell({ certificate }: { certificate: Certificate }) {
+  const [text, tone] = certificateText(certificate);
+  return (
+    <span className={`schedule-cert is-${tone}`} title={certificateTitle(certificate)}>
+      {text}
+    </span>
+  );
+}
 
 /** Under alpenglow, whether this node's vote was paid for the slot. */
 function VoteMark({ reward }: { reward: Reward | null }) {

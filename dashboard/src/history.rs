@@ -51,6 +51,9 @@ pub struct PackedSlot {
     /// Nought unless `HAS_SHREDS` and `HAS_REPLAYED` respectively.
     pub full_millis: u32,
     pub replayed_millis: u32,
+    /// Regulars the reward certificate left out. Nought unless the reward bits
+    /// say paid or unpaid.
+    pub left_out: u16,
 }
 
 /// Most slots one range may carry. A row of mainnet-sized figures is about a
@@ -60,7 +63,7 @@ pub const MAX_RANGE_SLOTS: usize = 4096;
 
 /// One slot as it goes on the wire, a JSON array in this order: level, flags,
 /// votes, non-votes, compute, fees, priority fees, tips, time, replay, shreds,
-/// repaired, full, replayed. The frontend mirrors it.
+/// repaired, full, replayed, left out. The frontend mirrors it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireRow(
     pub u8,
@@ -77,6 +80,7 @@ pub struct WireRow(
     pub u32,
     pub u32,
     pub u32,
+    pub u16,
 );
 
 /// A span of the history, as it goes on the wire.
@@ -167,6 +171,7 @@ impl SlotHistory {
                         row.repaired,
                         row.full_millis,
                         row.replayed_millis,
+                        row.left_out,
                     )
                 })
             })
@@ -212,6 +217,7 @@ impl SlotHistory {
             row.replayed_millis = clamp(millis);
         }
         row.flags = (row.flags & !REWARD_MASK) | reward_bits(entry.reward);
+        row.left_out = entry.left_out.unwrap_or(0);
     }
 
     /// When the slot's first shred arrived, which the collector reads from the
@@ -265,6 +271,7 @@ mod tests {
             shreds: None,
             replayed_millis: None,
             reward: None,
+            left_out: None,
         }
     }
 
@@ -420,9 +427,11 @@ mod tests {
             repaired,
             full,
             replayed,
+            left_out,
         ) = history.range(10, 1).rows[0].expect("recorded");
         assert_eq!(level, SlotLevel::Rooted as u8);
         assert_eq!(flags, HAS_BLOCK | HAS_CLOCK);
+        assert_eq!(left_out, 0);
         assert_eq!(votes, 748);
         assert_eq!(non_votes, 8_752);
         assert_eq!(compute, 41_827_311);

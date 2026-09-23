@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  certificateAt,
+  certificateText,
+  certificateTitle,
   epochOf,
   leaderSlotsLeft,
   matchesQuery,
@@ -20,6 +23,7 @@ function held(slot: number): SlotEntry {
     shreds: null,
     replayed_millis: null,
     reward: null,
+    left_out: null,
   };
 }
 
@@ -199,5 +203,34 @@ describe("leaderSlotsLeft", () => {
   it("counts the slot being led until it is completed", () => {
     expect(leaderSlotsLeft(slots, 99)).toBe(8);
     expect(leaderSlotsLeft(slots, 100)).toBe(7);
+  });
+});
+
+describe("the certificate column", () => {
+  const seen = new Map<number, SlotEntry>();
+  const entryOf = (slot: number) => seen.get(slot);
+  const at = (slot: number, reward: SlotEntry["reward"], left_out: number | null) =>
+    seen.set(slot, { ...held(slot), reward, left_out });
+
+  it("reads the slot eight back, whose reward the certificate carries", () => {
+    at(992, "paid", 3);
+    expect(certificateAt(1000, entryOf)).toBe(3);
+    expect(certificateAt(1001, entryOf)).toBeUndefined();
+  });
+
+  it("tells a certificate not yet read from a leader that wrote none", () => {
+    at(992, null, null);
+    at(993, "no_certificate", null);
+    expect(certificateAt(1000, entryOf)).toBeNull();
+    expect(certificateAt(1001, entryOf)).toBe("none");
+  });
+
+  it("words each case", () => {
+    expect(certificateText(0)).toEqual(["all", "all"]);
+    expect(certificateText(7)).toEqual(["left out 7", "out"]);
+    expect(certificateText("none")).toEqual(["none", "none"]);
+    expect(certificateText(null)).toEqual(["—", "unknown"]);
+    expect(certificateText(undefined)).toEqual(["—", "unknown"]);
+    expect(certificateTitle(7)).toContain("left out 7");
   });
 });

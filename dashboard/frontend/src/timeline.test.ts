@@ -13,6 +13,7 @@ function held(over: Partial<SlotEntry> = {}): SlotEntry {
     shreds: { count: 928, repaired: 63, full_millis: 921 },
     replayed_millis: 932,
     reward: null,
+    left_out: null,
     ...over,
   };
 }

@@ -27,6 +27,9 @@ export interface SlotEntry {
   /** Whether this node's vote was paid for the slot. Null until the reward
    *  certificate has been seen, and always under TowerBFT. */
   reward: Reward | null;
+  /** Validators the slot's reward certificate left out, of those certificates
+   *  usually pay, counted when it was read. Null with `reward`. */
+  left_out: number | null;
 }
 
 /** The reward certificate's verdict; no_certificate means the leader eight
@@ -861,6 +864,30 @@ export interface MissList {
   validators: MissValidator[];
   /** Oldest first. */
   rows: MissRow[];
+  /** What this node's own certificates carried. */
+  written: WrittenList;
+}
+
+/** What this node's certificates carried, per validator. */
+export interface WrittenList {
+  /** Certificates this node wrote that paid anybody. */
+  certificates: number;
+  /** Of those, the ones that left out nobody certificates usually pay. */
+  carried_all: number;
+  /** One per validator with a rank this epoch. */
+  rows: WrittenRow[];
+}
+
+export interface WrittenRow {
+  identity: string;
+  name: string | null;
+  client: string | null;
+  version: string | null;
+  ip: string | null;
+  /** This node's certificates that did not pay it. */
+  left_out_of_ours: number;
+  /** Certificates from any writer that did not pay it, of the list's `rewarded`. */
+  left_out_everywhere: number;
 }
 
 /** Slots that paid others but not this validator, by where they fell. A

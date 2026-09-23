@@ -21,6 +21,7 @@ function slot(number: number, level: SlotEntry["level"] = "completed"): SlotEntr
     shreds: null,
     replayed_millis: null,
     reward: null,
+    left_out: null,
     mine: false,
   };
 }

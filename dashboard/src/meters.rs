@@ -1722,6 +1722,8 @@ struct TpuMeter {
     bundles: Debounced<Option<BundleTotals>>,
     slot_waterfalls: Debounced<Vec<SlotWaterfall>>,
     slot_costs: Debounced<Vec<SlotCost>>,
+    /// The tap's revision of the two lists above when they were last read.
+    slot_lists_seen: Option<u64>,
     replay: Debounced<Option<ReplayWindow>>,
 }
 
@@ -1746,6 +1748,7 @@ impl TpuMeter {
             bundles: Debounced::default(),
             slot_waterfalls: Debounced::default(),
             slot_costs: Debounced::default(),
+            slot_lists_seen: None,
             replay: Debounced::default(),
         }
     }
@@ -1924,20 +1927,21 @@ impl TpuMeter {
             );
         }
 
-        // The per-slot points are sent as their own list and joined by slot in the
+        // The per-slot points are sent as their own lists and joined by slot in the
         // browser, since the produced block is captured on the other thread and either
-        // can arrive first. Debounced, so a tick between leader slots sends nothing.
-        self.slot_waterfalls.publish(
-            publisher,
-            TOPIC_SUMMARY,
-            "slot_waterfalls",
-            tap.slot_waterfalls(),
-        );
-
-        // Sent as its own list and joined by slot in the browser, for the same reason
-        // as the waterfalls.
-        self.slot_costs
-            .publish(publisher, TOPIC_SUMMARY, "slot_costs", tap.slot_costs());
+        // can arrive first. Copied only when the tap's revision says a list moved.
+        let revision = tap.slot_lists_revision();
+        if self.slot_lists_seen != Some(revision) {
+            self.slot_lists_seen = Some(revision);
+            self.slot_waterfalls.publish(
+                publisher,
+                TOPIC_SUMMARY,
+                "slot_waterfalls",
+                tap.slot_waterfalls(),
+            );
+            self.slot_costs
+                .publish(publisher, TOPIC_SUMMARY, "slot_costs", tap.slot_costs());
+        }
 
         // Averaged over slots held rather than seconds, so the window holds the same
         // number of samples whatever the cluster's pace.

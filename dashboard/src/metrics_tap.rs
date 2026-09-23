@@ -1,8 +1,8 @@
 //! Counters lifted from the metrics points the validator submits about itself.
-//! The observer runs on the submitting thread: a name match, then atomics;
-//! only the per-slot points take a lock. Points carry deltas, accumulated into
-//! totals. A few fields are levels, replaced by the latest reading and never
-//! summed.
+//! The observer runs on the submitting thread: a name match, then atomics; the
+//! per-slot points and the workers' timing reports take a lock for the insert.
+//! Points carry deltas, accumulated into totals. A few fields are levels,
+//! replaced by the latest reading and never summed.
 
 use {
     crate::certs::VoteSent,
@@ -396,8 +396,7 @@ pub struct MetricsTap {
     /// Where the transactions handed to the banking stage ended up.
     pub scheduler: SchedulerCounters,
 
-    /// The same per leader slot. The one thing here behind a lock, taken once per
-    /// slot this node leads.
+    /// The same per leader slot, locked once per slot this node leads.
     slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
 
     /// Which scheduler sent the interval counts, from the same tag the per-slot
@@ -407,6 +406,10 @@ pub struct MetricsTap {
     /// What each block this validator produced cost, newest last. Bounded like the
     /// waterfalls.
     slot_costs: Mutex<VecDeque<SlotCost>>,
+
+    /// Moves with every change to the waterfalls or the costs, so a reader can
+    /// skip copying lists that have not changed.
+    slot_lists_revision: AtomicU64,
 
     /// The last few hundred replayed slots, keyed by slot. Kept one by one
     /// because the panel wants the worst slot as well as the mean.
@@ -1046,6 +1049,7 @@ impl MetricsTap {
         if let Some(held) = slots.iter_mut().find(|held| held.slot == slot) {
             if describes_more_work(&waterfall.counts, &held.counts) {
                 *held = waterfall;
+                self.note_slot_lists_changed();
             }
             return;
         }
@@ -1053,6 +1057,11 @@ impl MetricsTap {
         while slots.len() > SLOT_WATERFALLS {
             slots.pop_front();
         }
+        self.note_slot_lists_changed();
+    }
+
+    fn note_slot_lists_changed(&self) {
+        self.slot_lists_revision.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Latches how the XDP transmit path is set up. Read from tags as well as
@@ -1378,12 +1387,20 @@ impl MetricsTap {
         // cannot push a real row off the end.
         if let Some(held) = costs.iter_mut().find(|held| held.slot == slot_number) {
             *held = cost;
+            self.note_slot_lists_changed();
             return;
         }
         costs.push_back(cost);
         while costs.len() > SLOT_WATERFALLS {
             costs.pop_front();
         }
+        self.note_slot_lists_changed();
+    }
+
+    /// Moves whenever [`Self::slot_waterfalls`] or [`Self::slot_costs`] would
+    /// return something new. Read before the lists.
+    pub fn slot_lists_revision(&self) -> u64 {
+        self.slot_lists_revision.load(Ordering::Relaxed)
     }
 
     /// What this validator's recent blocks cost, oldest first.
@@ -1448,9 +1465,9 @@ impl MetricsTap {
         let timings = self.worker_timings.lock().ok()?;
         let mut sum = WorkerSum::default();
         let mut workers = BTreeSet::new();
+        let first = timings.partition_point(|timing| timing.at_millis < from);
         for timing in timings
-            .iter()
-            .skip_while(|timing| timing.at_millis < from)
+            .range(first..)
             .take_while(|timing| timing.at_millis <= to)
         {
             sum.times.add(&timing.times);
@@ -2554,6 +2571,20 @@ mod tests {
         let mut point = named(COST_TRACKER, fields);
         point.tags.push((IS_LEADER, is_leader.to_string()));
         point
+    }
+
+    #[test]
+    fn test_the_slot_lists_revision_moves_only_when_a_list_does() {
+        let tap = MetricsTap::default();
+        let start = tap.slot_lists_revision();
+        tap.observe(&slot_point(430_789_128, &[("num_received", "500i")]));
+        let after_waterfall = tap.slot_lists_revision();
+        assert_ne!(after_waterfall, start);
+        // A repeat that does less work is not kept, so nothing moved.
+        tap.observe(&slot_point(430_789_128, &[("num_received", "5i")]));
+        assert_eq!(tap.slot_lists_revision(), after_waterfall);
+        tap.observe(&cost_point(true, &[("bank_slot", "430789128i")]));
+        assert_ne!(tap.slot_lists_revision(), after_waterfall);
     }
 
     #[test]

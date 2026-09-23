@@ -1361,7 +1361,7 @@ impl AccountsMeter {
             self.cache_window.pop_front();
         }
 
-        let totals = windowed(
+        let totals = sum_window(
             &mut self.window,
             current.accounts.since(&previous.accounts),
             ACCOUNTS_CACHE_WINDOW,
@@ -1416,7 +1416,7 @@ impl ProgramCacheMeter {
 
     fn tick(&mut self, previous: &TapCounters, current: &TapCounters, publisher: &Publisher) {
         let sample = current.program_cache.since(&previous.program_cache);
-        let totals = windowed(&mut self.window, sample, PROGRAM_CACHE_WINDOW);
+        let totals = sum_window(&mut self.window, sample, PROGRAM_CACHE_WINDOW);
 
         // The level is not differenced — it is where the cache stood, not what
         // happened — so it is kept as its own window and read as a peak.
@@ -1531,7 +1531,7 @@ impl TpuMeter {
             self.waterfall_window.clear();
             self.waterfall_source = source;
         }
-        let scheduler = windowed(
+        let scheduler = sum_window(
             &mut self.waterfall_window,
             current.scheduler.since(&previous.scheduler),
             WATERFALL_WINDOW,
@@ -1587,7 +1587,7 @@ impl TpuMeter {
         .into_iter()
         .map(|(name, window, sample, levels)| QuicPort {
             name,
-            counts: windowed(window, sample, WATERFALL_WINDOW),
+            counts: sum_window(window, sample, WATERFALL_WINDOW),
             levels,
             kernel_drops: kernel_drops.get(name).copied(),
         })
@@ -1676,7 +1676,7 @@ impl TpuMeter {
     }
 }
 
-fn windowed<T: WindowedCounters>(window: &mut VecDeque<T>, sample: T, span: usize) -> T {
+fn sum_window<T: WindowedCounters>(window: &mut VecDeque<T>, sample: T, span: usize) -> T {
     window.push_back(sample);
     while window.len() > span {
         window.pop_front();

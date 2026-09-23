@@ -576,7 +576,7 @@ pub fn walk(
                     .skip_reward_cert
                     .as_ref()
                     .map(|cert| cert.to_bitmap());
-                if let Some(mark) = mark_of(notar, skip, reward_slot, rank, len) {
+                if let Some(mark) = build_mark(notar, skip, reward_slot, rank, len) {
                     marks.push(mark);
                 }
             }
@@ -632,7 +632,7 @@ fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
 
 /// Takes each certificate's bitmap. Neither means nobody was paid; `None` where one could not
 /// be read.
-fn mark_of(
+fn build_mark(
     notar: Option<&[u8]>,
     skip: Option<&[u8]>,
     slot: Slot,
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn test_a_rank_in_either_certificate_was_paid() {
         let (notar, skip) = (bitmap(10, &[3, 9]), bitmap(10, &[4]));
-        let mark = mark_of(Some(&notar), Some(&skip), 5, 4, 10).unwrap();
+        let mark = build_mark(Some(&notar), Some(&skip), 5, 4, 10).unwrap();
         assert_eq!(mark.paid, flags(10, &[3, 4, 9]));
         assert_eq!((mark.notar, mark.skip), (2, 1));
         assert_eq!(mark.reward, Reward::Paid);
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_a_footer_with_no_reward_certificate_paid_nobody() {
-        let mark = mark_of(None, None, 5, 0, 10).unwrap();
+        let mark = build_mark(None, None, 5, 0, 10).unwrap();
         assert_eq!(mark.reward, Reward::NoCertificate);
         assert!(mark.paid.is_empty());
     }

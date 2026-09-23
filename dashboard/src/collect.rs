@@ -366,7 +366,7 @@ pub struct Admission {
 }
 
 /// From the rank maps, which hold each epoch's admitted set. `None` before alpenglow.
-fn admission(bank: &Bank, vote_account: &Pubkey) -> Option<Admission> {
+fn read_admission(bank: &Bank, vote_account: &Pubkey) -> Option<Admission> {
     if !bank.is_alpenglow() {
         return None;
     }
@@ -893,7 +893,7 @@ impl Collector {
                 .last_shred_time
                 .filter(|(previous_slot, _)| slot > *previous_slot)
                 .map(|(_, previous_arrival)| arrived.saturating_sub(previous_arrival));
-            let shreds = self.metrics_tap.shred_fill(slot).map(arrival);
+            let shreds = self.metrics_tap.shred_fill(slot).map(ShredArrival::from);
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.time_millis = Some(arrived);
                 if let Some(elapsed) = elapsed {
@@ -1243,7 +1243,7 @@ impl Collector {
                 Some(times.observed_millis.saturating_sub(first))
             });
             let shreds = fresh
-                .then(|| self.metrics_tap.shred_fill(slot).map(arrival))
+                .then(|| self.metrics_tap.shred_fill(slot).map(ShredArrival::from))
                 .flatten();
             let detail = counts
                 .filter(|_| fresh)
@@ -1260,7 +1260,7 @@ impl Collector {
                 }
             }
 
-            let level = level_for(slot, root, confirmed, finalized);
+            let level = classify_slot(slot, root, confirmed, finalized);
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.level = level;
                 if let Some(detail) = &detail {
@@ -1296,7 +1296,7 @@ impl Collector {
         let tap = &self.metrics_tap;
         let filled = self
             .produced
-            .fill_bundles(|slot| tap.bundles_landed(slot).map(landed));
+            .fill_bundles(|slot| tap.bundles_landed(slot).map(Bundles::from));
         let read = self.fill_versions();
         let timed = self.fill_execution();
         if captured || filled || read || timed {
@@ -1354,7 +1354,7 @@ impl Collector {
             }
             let workers = self.metrics_tap.worker_time(start, settled);
             let votes = self.metrics_tap.vote_time(slot);
-            let Some(execution) = execution(workers, votes, full_millis) else {
+            let Some(execution) = build_execution(workers, votes, full_millis) else {
                 continue;
             };
             if self.produced.set_execution(slot, execution) {
@@ -1380,7 +1380,7 @@ impl Collector {
             total_fees: detail.total_fees,
             priority_fees: detail.priority_fees,
             tips: detail.tips,
-            bundles: self.metrics_tap.bundles_landed(slot).map(landed),
+            bundles: self.metrics_tap.bundles_landed(slot).map(Bundles::from),
             versions: None,
             execution: None,
             certificate: None,
@@ -1772,7 +1772,7 @@ impl Collector {
             &self.publisher,
             TOPIC_SUMMARY,
             "vote_cost",
-            vote_cost(bank),
+            compute_vote_cost(bank),
         );
 
         let vote_accounts = bank.vote_accounts();
@@ -1797,7 +1797,7 @@ impl Collector {
             mine.map(|(_, account)| account.vote_state_view().bls_pubkey_compressed().is_some());
         let vote_credits = mine.map(|(_, account)| VoteCredits {
             epoch,
-            credits: epoch_credits(account.vote_state_view(), epoch),
+            credits: count_epoch_credits(account.vote_state_view(), epoch),
             cluster_max: self
                 .cluster_max_credits
                 .filter(|(held, _)| *held == epoch)
@@ -1810,7 +1810,7 @@ impl Collector {
             &self.publisher,
             TOPIC_SUMMARY,
             "admission",
-            admission(bank, &self.ctx.vote_account),
+            read_admission(bank, &self.ctx.vote_account),
         );
         self.debounces.vote_credits.publish(
             &self.publisher,
@@ -2079,7 +2079,7 @@ impl Collector {
         self.cluster_max_credits = vote_accounts
             .values()
             .filter(|(stake, _)| *stake > 0)
-            .map(|(_, account)| epoch_credits(account.vote_state_view(), epoch))
+            .map(|(_, account)| count_epoch_credits(account.vote_state_view(), epoch))
             .max()
             .map(|max| (epoch, max));
 
@@ -2183,7 +2183,7 @@ impl Collector {
     }
 
     fn collect_health(&mut self) {
-        let health = health_of(
+        let health = assess_health(
             self.last_completed_at.elapsed(),
             self.last_completed_slot,
             self.voting,
@@ -2199,7 +2199,8 @@ impl Collector {
         self.debounces
             .health
             .publish(&self.publisher, TOPIC_SUMMARY, "health", health);
-        let rate = replay_rate(&self.completed_window).map(|rate| (rate * 10.0).round() / 10.0);
+        let rate =
+            measure_replay_rate(&self.completed_window).map(|rate| (rate * 10.0).round() / 10.0);
         self.debounces
             .replay_rate
             .publish(&self.publisher, TOPIC_SUMMARY, "replay_rate", rate);
@@ -2266,7 +2267,7 @@ impl Collector {
     }
 }
 
-fn replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
+fn measure_replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
     let (oldest_at, oldest) = window.front()?;
     let (newest_at, newest) = window.back()?;
     let span = newest_at.duration_since(*oldest_at);
@@ -2276,7 +2277,7 @@ fn replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
     Some(newest.saturating_sub(*oldest) as f64 / span.as_secs_f64())
 }
 
-fn vote_cost(bank: &Bank) -> VoteCost {
+fn compute_vote_cost(bank: &Bank) -> VoteCost {
     if bank.is_alpenglow() {
         let minimum = bank.minimum_vote_account_balance_for_vat();
         let rent = bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of());
@@ -2293,14 +2294,14 @@ fn vote_cost(bank: &Bank) -> VoteCost {
     }
 }
 
-fn epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch: Epoch) -> u64 {
+fn count_epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch: Epoch) -> u64 {
     view.epoch_credits_iter()
         .find(|item| item.epoch() == epoch)
         .map_or(0, |item| item.credits().saturating_sub(item.prev_credits()))
 }
 
 /// Most settled first: the thresholds cross while the commitment cache lags the root at startup.
-fn level_for(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLevel {
+fn classify_slot(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLevel {
     if slot <= finalized {
         SlotLevel::Finalized
     } else if slot <= root {
@@ -2354,7 +2355,7 @@ const REPLAY_STALL_AFTER: Duration = Duration::from_secs(12);
 const VOTE_STALL_AFTER: Duration = Duration::from_secs(60);
 
 /// The two durations sit at either end of the argument list because swapping them compiles.
-fn health_of(
+fn assess_health(
     since_completed: Duration,
     completed_slot: Slot,
     voting: bool,
@@ -2393,7 +2394,9 @@ fn version_shares(
 ) -> Vec<VersionShare> {
     let mut totals: HashMap<Option<&str>, (usize, u64)> = HashMap::new();
     for (identity, stake) in staked {
-        let release = versions.get(identity).map(|version| release_of(version));
+        let release = versions
+            .get(identity)
+            .map(|version| strip_prerelease(version));
         let entry = totals.entry(release).or_insert((0, 0));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = entry.1.saturating_add(*stake);
@@ -2486,14 +2489,16 @@ fn block_detail(
     }
 }
 
-fn landed(bundles: BundleLanding) -> Bundles {
-    Bundles {
-        sanitized: bundles.sanitized,
-        executed: bundles.executed,
+impl From<BundleLanding> for Bundles {
+    fn from(bundles: BundleLanding) -> Self {
+        Self {
+            sanitized: bundles.sanitized,
+            executed: bundles.executed,
+        }
     }
 }
 
-fn execution(
+fn build_execution(
     workers: Option<WorkerSum>,
     votes: Option<StageTimes>,
     window_millis: u64,
@@ -2511,11 +2516,13 @@ fn execution(
     })
 }
 
-fn arrival(fill: ShredFill) -> ShredArrival {
-    ShredArrival {
-        count: fill.shreds,
-        repaired: fill.repaired,
-        full_millis: fill.full_millis,
+impl From<ShredFill> for ShredArrival {
+    fn from(fill: ShredFill) -> Self {
+        Self {
+            count: fill.shreds,
+            repaired: fill.repaired,
+            full_millis: fill.full_millis,
+        }
     }
 }
 
@@ -2554,7 +2561,7 @@ fn steady_epoch_end(
 }
 
 /// A cluster mid-upgrade reports `4.2.0`, `4.2.0-rc.0` and `4.2.0-rc.1`, which are one release.
-fn release_of(version: &str) -> &str {
+fn strip_prerelease(version: &str) -> &str {
     match version.find(['-', '+']) {
         Some(at) => &version[..at],
         None => version,
@@ -2585,28 +2592,28 @@ mod tests {
 
     #[test]
     fn test_level_reads_the_thresholds_most_settled_first() {
-        assert_eq!(level_for(80, 100, 110, 90), SlotLevel::Finalized);
-        assert_eq!(level_for(95, 100, 110, 90), SlotLevel::Rooted);
+        assert_eq!(classify_slot(80, 100, 110, 90), SlotLevel::Finalized);
+        assert_eq!(classify_slot(95, 100, 110, 90), SlotLevel::Rooted);
         assert_eq!(
-            level_for(105, 100, 110, 90),
+            classify_slot(105, 100, 110, 90),
             SlotLevel::OptimisticallyConfirmed
         );
-        assert_eq!(level_for(120, 100, 110, 90), SlotLevel::Completed);
+        assert_eq!(classify_slot(120, 100, 110, 90), SlotLevel::Completed);
     }
 
     #[test]
     fn test_rooted_slot_not_demoted_by_lagging_confirmed() {
         // During startup the commitment cache trails the root bank, so `confirmed`
         // can sit below a rooted slot.
-        assert_eq!(level_for(100, 100, 50, 0), SlotLevel::Rooted);
+        assert_eq!(classify_slot(100, 100, 50, 0), SlotLevel::Rooted);
     }
 
     #[test]
     fn test_the_boundaries_are_inclusive() {
-        assert_eq!(level_for(90, 100, 110, 90), SlotLevel::Finalized);
-        assert_eq!(level_for(100, 100, 110, 90), SlotLevel::Rooted);
+        assert_eq!(classify_slot(90, 100, 110, 90), SlotLevel::Finalized);
+        assert_eq!(classify_slot(100, 100, 110, 90), SlotLevel::Rooted);
         assert_eq!(
-            level_for(110, 100, 110, 90),
+            classify_slot(110, 100, 110, 90),
             SlotLevel::OptimisticallyConfirmed
         );
     }
@@ -3025,11 +3032,11 @@ mod tests {
     #[test]
     fn test_replay_is_stalled_when_no_slot_completes() {
         assert_eq!(
-            health_of(Duration::from_secs(13), 100, true, Some(99), Some(1), FRESH).replay,
+            assess_health(Duration::from_secs(13), 100, true, Some(99), Some(1), FRESH).replay,
             ReplayHealth::Stalled
         );
         assert_eq!(
-            health_of(FRESH, 100, true, Some(99), Some(1), FRESH).replay,
+            assess_health(FRESH, 100, true, Some(99), Some(1), FRESH).replay,
             ReplayHealth::Running
         );
     }
@@ -3037,7 +3044,7 @@ mod tests {
     #[test]
     fn test_replay_has_not_started_before_the_first_slot() {
         assert_eq!(
-            health_of(FRESH, 0, true, None, None, FRESH).replay,
+            assess_health(FRESH, 0, true, None, None, FRESH).replay,
             ReplayHealth::NotStarted
         );
     }
@@ -3082,7 +3089,7 @@ mod tests {
         let at = |secs_ago: u64| now.checked_sub(Duration::from_secs(secs_ago)).unwrap();
         let window: VecDeque<(Instant, Slot)> =
             [(at(20), 1_000), (at(10), 1_400), (at(0), 1_800)].into();
-        assert_eq!(replay_rate(&window), Some(40.0));
+        assert_eq!(measure_replay_rate(&window), Some(40.0));
     }
 
     #[test]
@@ -3090,8 +3097,8 @@ mod tests {
         let now = Instant::now();
         let at = |secs_ago: u64| now.checked_sub(Duration::from_secs(secs_ago)).unwrap();
         let window: VecDeque<(Instant, Slot)> = [(at(2), 1_000), (at(0), 1_010)].into();
-        assert_eq!(replay_rate(&window), None);
-        assert_eq!(replay_rate(&VecDeque::new()), None);
+        assert_eq!(measure_replay_rate(&window), None);
+        assert_eq!(measure_replay_rate(&VecDeque::new()), None);
     }
 
     #[test]
@@ -3127,7 +3134,7 @@ mod tests {
     #[test]
     fn test_a_validator_on_its_backup_identity_is_not_voting() {
         assert_eq!(
-            health_of(FRESH, 100, false, Some(99), Some(1), FRESH).vote,
+            assess_health(FRESH, 100, false, Some(99), Some(1), FRESH).vote,
             VoteHealth::NotVoting
         );
     }
@@ -3135,7 +3142,7 @@ mod tests {
     #[test]
     fn test_not_voting_outranks_every_other_reading() {
         assert_eq!(
-            health_of(
+            assess_health(
                 FRESH,
                 100,
                 false,
@@ -3147,7 +3154,7 @@ mod tests {
             VoteHealth::NotVoting
         );
         assert_eq!(
-            health_of(FRESH, 100, false, None, None, Duration::from_secs(3_600)).vote,
+            assess_health(FRESH, 100, false, None, None, Duration::from_secs(3_600)).vote,
             VoteHealth::NotVoting
         );
     }
@@ -3155,7 +3162,7 @@ mod tests {
     #[test]
     fn test_replay_is_reported_whether_or_not_this_node_votes() {
         assert_eq!(
-            health_of(FRESH, 100, false, None, None, FRESH).replay,
+            assess_health(FRESH, 100, false, None, None, FRESH).replay,
             ReplayHealth::Running
         );
     }
@@ -3163,7 +3170,7 @@ mod tests {
     #[test]
     fn test_a_vote_far_behind_the_tip_is_delinquent() {
         assert_eq!(
-            health_of(
+            assess_health(
                 FRESH,
                 100,
                 true,
@@ -3175,7 +3182,7 @@ mod tests {
             VoteHealth::Delinquent
         );
         assert_eq!(
-            health_of(FRESH, 100, true, Some(50), Some(VOTE_BEHIND_LIMIT), FRESH).vote,
+            assess_health(FRESH, 100, true, Some(50), Some(VOTE_BEHIND_LIMIT), FRESH).vote,
             VoteHealth::Voting
         );
     }
@@ -3184,7 +3191,7 @@ mod tests {
     fn test_a_vote_that_is_close_but_frozen_is_delinquent() {
         // The case the distance alone misses: near the tip and not moving.
         assert_eq!(
-            health_of(FRESH, 100, true, Some(99), Some(1), Duration::from_secs(61)).vote,
+            assess_health(FRESH, 100, true, Some(99), Some(1), Duration::from_secs(61)).vote,
             VoteHealth::Delinquent
         );
     }
@@ -3193,7 +3200,7 @@ mod tests {
     fn test_a_node_that_has_never_voted_is_not_delinquent() {
         // An unstaked node is not a failing one, however long it sits there.
         assert_eq!(
-            health_of(FRESH, 100, true, None, None, Duration::from_secs(3_600)).vote,
+            assess_health(FRESH, 100, true, None, None, Duration::from_secs(3_600)).vote,
             VoteHealth::NotStarted
         );
     }
@@ -3553,17 +3560,17 @@ mod tests {
 
     #[test]
     fn test_releases_fold_their_prerelease_tags() {
-        assert_eq!(release_of("4.2.0-rc.1"), "4.2.0");
-        assert_eq!(release_of("0.1102.0-beta.40201"), "0.1102.0");
-        assert_eq!(release_of("4.2.0"), "4.2.0");
-        assert_eq!(release_of("1.18.23+build7"), "1.18.23");
+        assert_eq!(strip_prerelease("4.2.0-rc.1"), "4.2.0");
+        assert_eq!(strip_prerelease("0.1102.0-beta.40201"), "0.1102.0");
+        assert_eq!(strip_prerelease("4.2.0"), "4.2.0");
+        assert_eq!(strip_prerelease("1.18.23+build7"), "1.18.23");
     }
 
     #[test]
     fn test_folding_leaves_strings_that_are_not_semver_alone() {
-        assert_eq!(release_of(""), "");
-        assert_eq!(release_of("unknown"), "unknown");
-        assert_eq!(release_of("-leading"), "");
+        assert_eq!(strip_prerelease(""), "");
+        assert_eq!(strip_prerelease("unknown"), "unknown");
+        assert_eq!(strip_prerelease("-leading"), "");
     }
 
     #[test]

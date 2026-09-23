@@ -82,7 +82,7 @@ export function blockStamp(millis: number | null | undefined): string {
   return `${day} ${time}`;
 }
 
-/** Mirrors `release_of` in `collect.rs`, which keys the version rows. */
+/** Mirrors `strip_prerelease` in `collect.rs`, which keys the version rows. */
 export function release(version: string | undefined): string | undefined {
   if (version === undefined) return undefined;
   const at = version.search(/[-+]/);

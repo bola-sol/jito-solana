@@ -1,4 +1,5 @@
 import { count, percent } from "./format";
+import { readStored, writeStored } from "./storage";
 import type {
   BundleStage,
   EpochSpan,
@@ -507,19 +508,10 @@ export function portsBusiestFirst(ports: QuicPort[]): QuicPort[] {
 export const TPU_PATH_STORAGE_KEY = "agave-dashboard-tpu-path-open";
 
 export function readOpenPorts(): string[] {
-  try {
-    const stored = window.localStorage.getItem(TPU_PATH_STORAGE_KEY);
-    return stored ? stored.split(",").filter(Boolean) : [];
-  } catch {
-    // Private browsing and some embedded webviews refuse storage outright.
-    return [];
-  }
+  const stored = readStored(TPU_PATH_STORAGE_KEY);
+  return stored ? stored.split(",").filter(Boolean) : [];
 }
 
 export function writeOpenPorts(open: string[]): void {
-  try {
-    window.localStorage.setItem(TPU_PATH_STORAGE_KEY, open.join(","));
-  } catch {
-    // Not being able to remember the choice is not a reason to refuse it.
-  }
+  writeStored(TPU_PATH_STORAGE_KEY, open.join(","));
 }

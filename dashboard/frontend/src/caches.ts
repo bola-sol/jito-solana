@@ -1,25 +1,17 @@
 
 import { bytes, count } from "./format";
+import { readStored, writeStored } from "./storage";
 import type { AccountsCache, ProgramCache } from "./types";
 
 export const CACHES_STORAGE_KEY = "agave-dashboard-caches";
 
 export function readOpenSections(): string[] {
-  try {
-    const stored = window.localStorage.getItem(CACHES_STORAGE_KEY);
-    return stored ? stored.split(",").filter(Boolean) : [];
-  } catch {
-    // Private browsing and some embedded webviews refuse storage outright.
-    return [];
-  }
+  const stored = readStored(CACHES_STORAGE_KEY);
+  return stored ? stored.split(",").filter(Boolean) : [];
 }
 
 export function writeOpenSections(open: string[]): void {
-  try {
-    window.localStorage.setItem(CACHES_STORAGE_KEY, open.join(","));
-  } catch {
-    // Not being able to remember the choice is not a reason to refuse it.
-  }
+  writeStored(CACHES_STORAGE_KEY, open.join(","));
 }
 
 export type RateTone = "good" | "warn" | "bad" | "muted";

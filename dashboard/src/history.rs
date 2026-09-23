@@ -7,52 +7,32 @@ use {
     solana_clock::Slot,
 };
 
-/// Slots kept in the packed history: about eleven hours in eight megabytes. Allocated by the
-/// service, since the server answers range queries before the collector exists.
+/// About eleven hours in eight megabytes, allocated by the service since the server answers range
+/// queries before the collector exists.
 pub const PACKED_SLOTS: usize = 100_000;
 
-/// One slot, packed to the columns a schedule row draws. The leader comes from the epoch's turn
-/// array and the duration from the previous slot with a clock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PackedSlot {
-    /// [`crate::slots::SlotLevel`] as its discriminant.
     pub level: u8,
-    /// Which of the readings below are known, as the `HAS_*` bits: nought is a
-    /// real reading for every count here.
     pub flags: u16,
     pub votes: u32,
     pub non_votes: u32,
-    /// Compute units the block used, saturating into `u32`, seventy times the
-    /// current block limit.
+    /// Saturating into `u32`, seventy times the current block limit.
     pub compute: u32,
-    /// Base and priority fees together, in lamports; base is `fees -
-    /// priority_fees`.
+    /// In lamports; base is `fees - priority_fees`.
     pub fees: u64,
-    /// The priority half of `fees`, so the split survives into history.
     pub priority_fees: u64,
-    /// Lamports paid into the jito tip accounts during this slot, as measured.
-    /// Nought unless `HAS_TIPS` is set.
     pub tips: u64,
-    /// Wall time replay's own thread spent on the slot, in microseconds and
-    /// saturating into `u32`, which is over an hour. Nought unless `HAS_REPLAY`.
     pub replay_micros: u32,
-    /// Wall clock of the slot's first shred, in milliseconds.
     pub time_millis: u64,
-    /// Data shreds in the block, and how many had to be repaired. Nought unless
-    /// `HAS_SHREDS`.
     pub shreds: u32,
     pub repaired: u32,
-    /// Milliseconds from the first shred to the last, and to replay finishing, saturating in `u32`.
-    /// Nought unless `HAS_SHREDS` and `HAS_REPLAYED` respectively.
     pub full_millis: u32,
     pub replayed_millis: u32,
-    /// Regulars the reward certificate left out. Nought unless the reward bits
-    /// say paid or unpaid.
     pub left_out: u16,
 }
 
-/// Most slots one range may carry: a full span of mainnet-sized rows is under half the frame
-/// ceiling, which a test below holds it to.
+/// A full span of mainnet-sized rows is under half the frame ceiling; a test holds it there.
 pub const MAX_RANGE_SLOTS: usize = 4096;
 
 /// One slot on the wire, a JSON array: level, flags, votes, non-votes, compute, fees, priority
@@ -76,31 +56,19 @@ pub struct WireRow(
     pub u16,
 );
 
-/// A span of the history, as it goes on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SlotRange {
-    /// The slot `rows[0]` describes. Every row after it is one slot on, so the
-    /// slot numbers themselves are never sent.
+    /// Every row after it is one slot on, so slot numbers are never sent.
     pub first_slot: Slot,
-    /// One entry per slot, `null` for a slot the history does not hold, whether
-    /// too old, too new, or never seen.
     pub rows: Vec<Option<WireRow>>,
 }
 
-/// Set where the slot recorded a block, as against one that has not frozen or
-/// was skipped.
 pub const HAS_BLOCK: u16 = 1;
-/// Set where the slot's first shred was timed.
 pub const HAS_CLOCK: u16 = 1 << 1;
-/// Set where the slot's tips were measured. Nought is a real reading: the
-/// searchers passed that leader by.
+/// Nought is a real reading: the searchers passed that leader by.
 pub const HAS_TIPS: u16 = 1 << 2;
-/// Set where replay's time on the slot was seen. Clear for a bank this validator
-/// built, which replay never timed.
 pub const HAS_REPLAY: u16 = 1 << 3;
-/// Set where the blockstore reported the slot filling.
 pub const HAS_SHREDS: u16 = 1 << 4;
-/// Set where replay's finish was seen, and so timed from the first shred.
 pub const HAS_REPLAYED: u16 = 1 << 5;
 /// Two bits for the reward certificate's verdict on this node's vote: unseen,
 /// paid, unpaid, or no certificate written.
@@ -119,30 +87,23 @@ fn reward_bits(reward: Option<Reward>) -> u16 {
     }
 }
 
-/// A fixed-size history of packed slots, direct-mapped at `slot % capacity`. The slot is kept
-/// beside its row so a row from a lap ago cannot answer for a current one.
+/// The slot is kept beside its row so a row from a lap ago cannot answer for a current one.
 pub struct SlotHistory {
     rows: Vec<(Slot, PackedSlot)>,
 }
 
 impl SlotHistory {
-    /// Allocates the whole history up front. It never grows and never shrinks,
-    /// so this is the only allocation it makes.
     pub fn new(capacity: usize) -> Self {
         Self {
             rows: vec![(0, PackedSlot::default()); capacity.max(1)],
         }
     }
 
-    /// The row for `slot`, or `None` where the history has never held it or has
-    /// since lapped past it.
     pub fn get(&self, slot: Slot) -> Option<&PackedSlot> {
         let (held, row) = self.rows.get(self.index(slot))?;
         (*held == slot && slot != 0).then_some(row)
     }
 
-    /// A span of slots, oldest first. `count` is clamped rather than refused; the
-    /// rows are positional, so the caller can see how many it got.
     pub fn range(&self, first_slot: Slot, count: usize) -> SlotRange {
         let count = count.min(MAX_RANGE_SLOTS);
         let rows = (0..count as u64)
@@ -171,15 +132,11 @@ impl SlotHistory {
         SlotRange { first_slot, rows }
     }
 
-    /// What one slot contained. Called on every change to an entry, since there is
-    /// no single moment at which one is finished.
     pub fn record(&mut self, entry: &SlotEntry) {
         let row = self.row(entry.slot);
         row.level = entry.level as u8;
         if let Some(block) = &entry.block {
             row.flags |= HAS_BLOCK;
-            // Votes are what is left of the block once the rest is taken out. Saturating
-            // because a bank whose parent has gone reports neither counter.
             row.votes = clamp(
                 block
                     .transactions
@@ -212,16 +169,12 @@ impl SlotHistory {
         row.left_out = entry.left_out.unwrap_or(0);
     }
 
-    /// When the slot's first shred arrived, which the collector reads from the
-    /// blockstore to difference the slot durations and otherwise discards.
     pub fn record_time(&mut self, slot: Slot, millis: u64) {
         let row = self.row(slot);
         row.flags |= HAS_CLOCK;
         row.time_millis = millis;
     }
 
-    /// The row for `slot`, cleared first if it belongs to an older slot. Both
-    /// writers come through here.
     fn row(&mut self, slot: Slot) -> &mut PackedSlot {
         let index = self.index(slot);
         let held = &mut self.rows[index];
@@ -231,16 +184,13 @@ impl SlotHistory {
         &mut held.1
     }
 
-    /// `slot % capacity` without a bare remainder: the workspace denies
-    /// `arithmetic_side_effects`.
+    /// Without a bare remainder: the workspace denies `arithmetic_side_effects`.
     fn index(&self, slot: Slot) -> usize {
         let capacity = self.rows.len() as u64;
         usize::try_from(slot.checked_rem(capacity).unwrap_or(0)).unwrap_or(0)
     }
 }
 
-/// Into `u32`, clamped: "at least this much" reads better than a wrapped small
-/// number.
 fn clamp(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
@@ -339,7 +289,6 @@ mod tests {
 
     #[test]
     fn test_a_slot_a_lap_ago_is_not_mistaken_for_this_one() {
-        // The bug this shape invites: two slots in the same row.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 5_000, 4_000));
         history.record(&with_block(74, 9, 4));
@@ -350,8 +299,7 @@ mod tests {
 
     #[test]
     fn test_a_lapped_row_keeps_nothing_of_the_slot_it_held() {
-        // Cleared rather than overwritten field by field: the new slot may have
-        // no block yet, and the old one's counts must not answer for it.
+        // Cleared rather than overwritten, so the old slot's counts cannot answer for the new one.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 5_000, 4_000));
         history.record_time(10, 99);
@@ -365,8 +313,6 @@ mod tests {
 
     #[test]
     fn test_a_range_is_positional_and_holds_a_gap_open() {
-        // The slot numbers are never sent, so a missing slot takes its place in the
-        // list.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(10, 10, 4));
         history.record(&with_block(12, 20, 9));
@@ -381,7 +327,6 @@ mod tests {
 
     #[test]
     fn test_a_range_past_the_ceiling_is_clamped_rather_than_refused() {
-        // A client that guesses slightly wrong gets what fits.
         let history = SlotHistory::new(64);
         let range = history.range(10, MAX_RANGE_SLOTS.saturating_add(1_000));
         assert_eq!(range.rows.len(), MAX_RANGE_SLOTS);
@@ -389,8 +334,6 @@ mod tests {
 
     #[test]
     fn test_a_range_off_the_end_of_the_history_is_all_holes() {
-        // Not an error. Scrolling past what has been retained is ordinary, and
-        // the page draws rows with no figures for it.
         let history = SlotHistory::new(64);
         let range = history.range(900, 4);
         assert_eq!(range.rows.len(), 4);
@@ -429,8 +372,6 @@ mod tests {
         assert_eq!(compute, 41_827_311);
         assert_eq!(fees, 104_600_000);
         assert_eq!(priority, 0);
-        // Unmeasured, so the flag is clear and the column reads nothing. The
-        // fixture leaves tips out precisely so this stays the default case.
         assert_eq!(tips, 0);
         assert_eq!(flags & HAS_TIPS, 0);
         assert_eq!(time, 1_756_000_000_123);
@@ -442,8 +383,6 @@ mod tests {
 
     #[test]
     fn test_shred_arrival_and_replay_end_travel_with_their_flags() {
-        // Both live on the entry rather than the block: a slot fills before it
-        // freezes, and a dead one fills without freezing at all.
         let mut history = SlotHistory::new(64);
         let mut filled = entry(50);
         filled.shreds = Some(ShredArrival {
@@ -527,8 +466,7 @@ mod tests {
 
     #[test]
     fn test_tips_of_nought_are_not_tips_that_were_never_read() {
-        // The reason for a third flag bit: a turn the searchers passed by and a turn
-        // never measured must not draw the same.
+        // A turn the searchers passed by and one never measured must not draw the same.
         let mut history = SlotHistory::new(64);
 
         let mut measured = with_block(20, 100, 10);
@@ -549,7 +487,6 @@ mod tests {
 
     #[test]
     fn test_the_two_kinds_of_fee_are_kept_apart() {
-        // Base is the subtraction, so the pair has to survive the trip.
         let mut history = SlotHistory::new(64);
         let mut block = with_block(30, 100, 10);
         if let Some(detail) = block.block.as_mut() {
@@ -572,7 +509,6 @@ mod tests {
 
     #[test]
     fn test_empty_block_differs_from_no_block() {
-        // Both are nought in every count, which is why the flag exists.
         let mut history = SlotHistory::new(64);
         history.record(&with_block(900, 0, 0));
         history.record(&entry(901));

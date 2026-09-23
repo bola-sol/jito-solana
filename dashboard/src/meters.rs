@@ -34,55 +34,33 @@ use {
 
 pub const METER_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Tries at bank forks before a tick goes without a throughput sample.
 const LOCK_ATTEMPTS: u32 = 5;
 const LOCK_RETRY: Duration = Duration::from_millis(5);
 
-/// Samples retained for the transaction and network charts: five minutes at
-/// one a second, which is what the client keeps.
 const CHART_HISTORY: usize = 300;
 
-/// Samples the thread panel keeps: the minute it draws. Shorter than the
-/// charts because each sample is nine rows rather than two figures.
 const THREADS_HISTORY: usize = 60;
 
-/// Thread groups given a row of their own; the rest share one.
 const THREAD_ROWS: usize = 8;
 
-/// Window the reported socket drops accumulate over. Long enough that a burst
-/// stays visible for a while after it stops, short enough that it clears.
 const DROPS_WINDOW: Duration = Duration::from_secs(60);
 
-/// Samples the accounts cache hit rate is taken over, a minute of them, to
-/// match the program cache beside it.
 const ACCOUNTS_CACHE_WINDOW: usize = 60;
 
-/// Samples the shred figures span. Five minutes: repair is bursty, and a
-/// minute says more about the last burst than about the connection.
 const SHREDS_WINDOW: usize = 300;
 
-/// Samples the waterfall is summed over. Five minutes, because the leader half
-/// only moves for four slots every couple of minutes.
 const WATERFALL_WINDOW: usize = 300;
 
-/// Samples the program cache rate spans. One sample is one slot's handful of
-/// loads, so a rate from it alone swings between nothing and everything.
+/// One sample is one slot's handful of loads, too few for a rate.
 const PROGRAM_CACHE_WINDOW: usize = 60;
 
-/// Where this validator's shreds came from over the window. A rising repair
-/// share means the cluster is not reaching this node.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Shreds {
-    /// Shreds received over the window, however they arrived.
     pub received: u64,
-    /// Of those, the ones this validator had to ask another node for.
     pub repaired: u64,
-    /// The share it had to ask for, in `[0, 1]`.
     pub repair_rate: f64,
 }
 
-/// Shreds by the turbine layer they arrived from, and shreds the retransmit
-/// stage dropped when the XDP channel was full, over the last five minutes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Turbine {
     pub window_seconds: u64,
@@ -92,90 +70,57 @@ pub struct Turbine {
     pub layer_3: u64,
     pub xdp_dropped: u64,
     pub xdp_dropped_total: u64,
-    /// The path the stage last reported on. `None` before its first report.
     pub xdp: Option<bool>,
 }
 
-/// How often an account replay needed was already in memory, over the last
-/// minute of the accounts database's own once-a-second points.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccountsCache {
-    /// Reads in the window, hits and misses together.
     pub read: u64,
-    /// Of those, the ones already cached, in `[0, 1]`.
     pub hit_rate: f64,
-    /// Accounts dropped from the cache over the window.
     pub evictions: u64,
-    /// What the cache is holding right now.
     pub cache_bytes: u64,
     pub cache_entries: u64,
 
-    /// Where reads were answered from. `from_storage` is the only one that touches
-    /// a file, counted in accounts because nothing counts bytes.
+    /// Only `from_storage` touches a file; counted in accounts because nothing counts bytes.
     pub from_write_cache: u64,
     pub from_read_cache: u64,
     pub from_storage: u64,
 
-    /// Accounts written out to storage over the window, and their size. Unlike
-    /// the read side this does have a byte figure.
     pub stored_accounts: u64,
     pub stored_bytes: u64,
-    /// Seconds the window actually covers, so the panel can turn the totals
-    /// above into rates without assuming it is full.
     pub window_seconds: f64,
 
-    /// How much storage exists, how much is live, and how many files. `None` until the accounts
-    /// database has reported, which it does on a clean cycle.
     pub disk: Option<AccountsDisk>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccountsDisk {
-    /// Bytes still referenced by a live account.
     pub used: u64,
-    /// Bytes the storage files occupy.
     pub allocated: u64,
-    /// Dead account data still on disk, which is what shrink reclaims.
     pub fragmented: u64,
     pub storages: u64,
 }
 
-/// How often replay found a program already compiled. The counters reset per
-/// bank, so `looked_up` is the window's own total, not since startup.
+/// The counters reset per bank, so `looked_up` is the window's own total.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProgramCache {
-    /// Loads seen in the window, hits and misses together.
     pub looked_up: u64,
     pub hits: u64,
     pub misses: u64,
-    /// Of those, the ones already compiled and in the cache, in `[0, 1]`.
     pub hit_rate: f64,
-    /// Compiled programs dropped from the cache over the window, which is the
-    /// usual reason a hit rate falls.
     pub evictions: u64,
-    /// An evicted program being compiled again: the cost of an eviction, paid
-    /// on the next block that wants it.
     pub reloads: u64,
-    /// Programs added, and additions thrown away because the fork they were
-    /// for had gone by the time they finished compiling.
     pub insertions: u64,
     pub lost_insertions: u64,
-    /// Something already cached compiled a second time by mistake.
     pub replacements: u64,
-    /// Compiled, used once, and evicted — cache space spent for nothing.
     pub one_hit_wonders: u64,
-    /// Dropped for an abandoned fork, or not recompiled for the incoming epoch.
-    /// Neither is a fault.
     pub prunes_orphan: u64,
     pub prunes_environment: u64,
-    /// The most entries seen loaded at any eviction in the window, against the
-    /// limit. `None` until an eviction has happened at all.
     pub peak_entries: Option<u64>,
     pub entry_limit: u64,
 }
 
-/// A window of `(hits, misses, evictions)` as `(asked, rate, evicted)`, or `None` while nothing has
-/// been asked, so an idle cache does not read as failing.
+/// `None` while nothing has been asked, so an idle cache does not read as failing.
 fn cache_rate(window: &VecDeque<(u64, u64, u64)>) -> Option<(u64, f64, u64)> {
     let mut hits = 0u64;
     let mut misses = 0u64;
@@ -206,15 +151,13 @@ pub struct TpsSample {
     pub tps: Tps,
 }
 
-/// Host interface throughput, in bytes per second.
+/// In bytes per second.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Network {
     pub received_per_second: u64,
     pub sent_per_second: u64,
 }
 
-/// The host the validator runs on: what the process has to work with, what will run out of room,
-/// and what will run out of throughput.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Host {
     pub cores: usize,
@@ -223,27 +166,16 @@ pub struct Host {
     pub load_fifteen: f64,
     pub threads: u64,
     pub running: u64,
-    /// Absent where `/proc/stat` could not be read, or a counter went backwards.
     pub cpu: Option<CpuUse>,
 
     pub memory_total: u64,
     pub memory_available: u64,
-    /// What the kernel will hand back on demand. "Used" counts it, and sixty
-    /// gigabytes of page cache is not a shortage.
+    /// "Used" counts it, and sixty gigabytes of page cache is not a shortage.
     pub memory_reclaimable: u64,
-    /// Untouched. With `memory_reclaimable` this gives what is genuinely spoken
-    /// for.
     pub memory_free: u64,
-    /// Absent where `SwapTotal` is nought. A machine with no swap has nothing
-    /// to report and nothing to warn about.
     pub swap: Option<Swap>,
-    /// The validator process's resident memory. Absent where the status file
-    /// cannot be read.
     pub process_resident: Option<u64>,
-    /// The same reading an hour ago. Absent until an hour has been watched.
     pub process_resident_hour_ago: Option<u64>,
-    /// The device the snapshot archives are written to, as the device rows
-    /// name it. Absent where there is no block device under them.
     pub snapshot_device: Option<String>,
 
     pub filesystems: Vec<FilesystemUsage>,
@@ -256,27 +188,19 @@ pub struct Swap {
     pub used: u64,
 }
 
-/// How full one filesystem is. A level, so nothing here is a rate.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FilesystemUsage {
-    /// What the validator uses it for, which is what an operator recognises it
-    /// by. One filesystem holding several accounts directories is named once.
     pub name: String,
     pub path: String,
     pub total: u64,
     pub available: u64,
 }
 
-/// How hard one block device is being worked, over the last sample.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DeviceLoad {
     pub device: String,
-    /// The roles whose paths resolve to this device, joined for the label. Two
-    /// mounts on one disk share its queue, so they share one row.
     pub roles: Vec<String>,
-    /// Share of the sample the device had a request in flight, in `[0, 1]`.
     pub busy: f64,
-    /// Mean milliseconds a request waited, absent where none did.
     pub wait_ms: Option<f64>,
     pub operations_per_second: u64,
     pub read_per_second: u64,
@@ -290,28 +214,20 @@ pub struct NetworkSample {
     pub rates: Network,
 }
 
-/// Where the validator's threads spent one second: the busiest groups by their
-/// minute's mean, and one row for the rest.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ThreadsSample {
     pub timestamp_nanos: u64,
-    /// Threads in the process, every group included.
     pub threads: usize,
     pub groups: Vec<ThreadGroup>,
 }
 
-/// Kernel-side receive health for one of this validator's UDP ports.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct IngestPath {
-    /// Which service the port belongs to, used as the row's label and key.
     pub name: &'static str,
     pub port: u16,
-    /// Drops over the trailing window. Always sent, including as zero, so a
-    /// healthy row and an unmeasured one look different.
+    /// Always sent, including as zero, so a healthy row differs from an unmeasured one.
     pub drops_recent: u64,
-    /// Drops since the validator finished starting.
     pub drops_total: u64,
-    /// Bytes waiting unread at the instant of the sample.
     pub queued_bytes: u64,
 
     /// Packets the port handed over across the same window. `None` for a port with no receiver
@@ -319,16 +235,11 @@ pub struct IngestPath {
     pub received_recent: Option<u64>,
     pub received_total: Option<u64>,
 
-    /// Whether this port speaks QUIC, which decides whether the socket panel or the
-    /// TPU path panel draws it.
     pub quic: bool,
 }
 
-/// One QUIC port's account of what was offered and what got through. Per port,
-/// since the three are separate listeners with separate limits.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QuicPort {
-    /// The same name the socket list uses for this port.
     pub name: &'static str,
     #[serde(flatten)]
     pub counts: QuicTotals,
@@ -343,20 +254,15 @@ pub struct QuicPort {
 pub struct QuicPaths {
     pub window_seconds: f64,
     pub ports: Vec<QuicPort>,
-    /// Whether the TPU address advertised in gossip is a socket on this host.
-    /// False behind a relayer or block-assembly proxy.
     pub tpu_offhost: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct IngestSummary {
-    /// What `drops_recent` actually spans, short until the window has filled.
     pub window_seconds: f64,
     pub paths: Vec<IngestPath>,
 }
 
-/// The live waterfall, and which scheduler produced its counts, which decides
-/// what `received` counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WaterfallWindow {
     #[serde(flatten)]
@@ -364,20 +270,14 @@ pub struct WaterfallWindow {
     pub source: SchedulerSource,
 }
 
-/// What the two per-epoch sections of the TPU path card cover, in slots; a restart partway through
-/// an epoch shortens it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct EpochSpan {
     pub epoch: Epoch,
-    /// Slots of this epoch that have happened.
     pub elapsed_slots: u64,
-    /// Slots of this epoch the totals were actually summed over, which is
-    /// fewer than `elapsed_slots` where counting began part way in.
     pub counted_slots: u64,
     pub slots_in_epoch: u64,
 }
 
-/// Where the chain is in its epoch, taken from a bank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EpochPosition {
     epoch: Epoch,
@@ -386,14 +286,9 @@ struct EpochPosition {
     slots_in_epoch: u64,
 }
 
-/// Verify, Executed and the bundles, summed from the start of the epoch, which they share with
-/// their starting slot.
 #[derive(Debug, Clone, Copy, Default)]
 struct LeaderTotals {
-    /// The epoch these cover. `None` until the first sample lands.
     epoch: Option<Epoch>,
-    /// The slot the summing began at: the epoch's first slot where the
-    /// validator has been up for all of it, and later where it has not.
     from_slot: Slot,
     verify: VerifyTotals,
     executed: ExecutedTotals,
@@ -401,7 +296,6 @@ struct LeaderTotals {
 }
 
 impl LeaderTotals {
-    /// Adds one interval's work, starting over where the epoch has turned.
     fn add(
         &mut self,
         at: EpochPosition,
@@ -421,8 +315,8 @@ impl LeaderTotals {
         self.bundles = self.bundles.plus(&bundles);
     }
 
-    /// What the totals cover as of the last position added, inclusive. `from_slot` is clamped to
-    /// the epoch's first slot, since a bank read can land before the one that turned it.
+    /// `from_slot` is clamped to the epoch's first slot, since a bank read can land before the one
+    /// that turned it.
     fn span(&self, at: EpochPosition) -> EpochSpan {
         let from_slot = self.from_slot.max(at.start_slot);
         EpochSpan {
@@ -443,11 +337,8 @@ impl LeaderTotals {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-/// What replay did with the last few hundred slots, in microseconds: means per slot, and two peaks
-/// that are the worst single slot's sums.
+/// In microseconds: means per slot, and two peaks that are the worst single slot's sums.
 pub struct ReplayWindow {
-    /// Slots behind the figures, so the panel can name what it is showing
-    /// rather than claim a window it has not yet filled.
     pub slots: usize,
     pub transactions: u64,
 
@@ -478,11 +369,8 @@ pub struct ReplayWindow {
     pub cpu_peak: u64,
 }
 
-/// Averages a window of replayed slots and finds its worst. `None` until a slot has been replayed.
 fn replay_window(slots: &[ReplaySlotTimes]) -> Option<ReplayWindow> {
     let count = u64::try_from(slots.len()).ok().filter(|n| *n > 0)?;
-    // Checked: the workspace denies bare arithmetic and cannot see the guard
-    // above.
     let mean = |total: u64| total.checked_div(count).unwrap_or_default();
     let sum = |pick: fn(&ReplaySlotTimes) -> u64| {
         slots
@@ -519,18 +407,13 @@ fn replay_window(slots: &[ReplaySlotTimes]) -> Option<ReplayWindow> {
     })
 }
 
-/// One row's two identities: the port the kernel counts drops against, and the
-/// validator's own count of what it delivered, where there is one.
 struct IngestPort {
     name: &'static str,
     port: u16,
-    /// Running total of packets delivered, or `None` for a port whose traffic
-    /// nothing counts in datagrams.
     received: Option<u64>,
     quic: bool,
 }
 
-/// Cumulative transaction counters, differenced between samples for a rate.
 /// `errors` resets per bank, so it is a running sum the caller keeps.
 #[derive(Clone, Copy)]
 struct TxnCounters {
@@ -553,8 +436,6 @@ impl TxnCounters {
     }
 }
 
-/// Failed transactions in frozen banks newer than `counted_to`, and the newest
-/// frozen slot. With no `counted_to` the newest slot becomes the baseline.
 fn frozen_errors(bank_forks: &BankForks, counted_to: Option<Slot>) -> (u64, Option<Slot>) {
     let mut errors = 0u64;
     let mut newest = counted_to;
@@ -569,15 +450,12 @@ fn frozen_errors(bank_forks: &BankForks, counted_to: Option<Slot>) -> (u64, Opti
     (errors, newest)
 }
 
-/// One path the validator writes to, and what it is for.
 #[derive(Debug, Clone, PartialEq)]
 struct HostPath {
     name: String,
     path: PathBuf,
 }
 
-/// The paths worth reporting, one row per filesystem, since several accounts directories on one
-/// mount share its free space.
 fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
     let mut paths = Vec::new();
     let mut seen = HashSet::new();
@@ -600,8 +478,6 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
             accounts.push(path.clone());
         }
     }
-    // Numbered only when there is more than one to tell apart. A single
-    // "accounts 1" reads as though something is missing.
     let numbered = accounts.len() > 1;
     for (index, path) in accounts.into_iter().enumerate() {
         let ordinal = index.saturating_add(1);
@@ -631,8 +507,6 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
     paths
 }
 
-/// What each device behind those paths did over the sample, grouped by device
-/// since two mounts on one disk share a queue.
 fn device_loads(
     paths: &[HostPath],
     current: &HostSnapshot,
@@ -642,7 +516,6 @@ fn device_loads(
 ) -> Vec<DeviceLoad> {
     let mut roles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in paths {
-        // `Ok(None)` is a filesystem with no block device under it, such as tmpfs.
         if let Ok(Some(device)) = host_stats::device_for(&path.path) {
             roles.entry(device).or_default().push(path.name.clone());
         }
@@ -667,8 +540,6 @@ fn device_loads(
         .collect()
 }
 
-/// Cores the machine has, for reading load average against. Context, not a
-/// denominator.
 fn num_cpus() -> usize {
     std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
@@ -678,13 +549,9 @@ fn num_cpus() -> usize {
 pub struct Meters {
     ctx: DashboardContext,
     publisher: Arc<Publisher>,
-    /// Read directly rather than shared with the collector, so the two threads
-    /// need nothing between them.
     startup_progress: StartProgress,
-    /// When the dashboard came up, for the uptime readout.
     started: SystemTime,
     metrics_tap: Arc<MetricsTap>,
-    /// Running totals as of the last reading, so each sample is the difference.
     last_tap: Option<TapCounters>,
 
     throughput: Throughput,
@@ -783,8 +650,6 @@ impl Meters {
             .publish(TOPIC_SUMMARY, "uptime_nanos", &uptime);
     }
 
-    /// The readings from the metrics tap, each the difference against the last. The first reading
-    /// only sets the baseline.
     fn collect_from_metrics(&mut self) {
         let current = self.metrics_tap.counters();
         let Some(previous) = self.last_tap.replace(current) else {
@@ -800,8 +665,6 @@ impl Meters {
     }
 
     fn collect_waterfall(&mut self, previous: &TapCounters, current: &TapCounters) {
-        // Whether the advertised TPU port is bound here, answerable only once the kernel's table
-        // has been read.
         let tpu_offhost = self.sockets.sampled
             && !self.sockets.unavailable
             && !self.sockets.kernel_drops.contains_key("tpu");
@@ -816,10 +679,8 @@ impl Meters {
     }
 }
 
-/// Transactions per second, from the working bank's counters.
 struct Throughput {
     last_counters: Option<TxnCounters>,
-    /// Failed transactions summed over frozen banks, and the slot summed to.
     errors_total: u64,
     errors_counted_to: Option<Slot>,
     history: Vec<TpsSample>,
@@ -835,7 +696,6 @@ impl Throughput {
         }
     }
 
-    /// Adds the failures in the banks frozen since the last call.
     fn count_frozen(&mut self, bank_forks: &BankForks) {
         let (errors, counted_to) = frozen_errors(bank_forks, self.errors_counted_to);
         self.errors_total = self.errors_total.saturating_add(errors);
@@ -868,8 +728,6 @@ impl Throughput {
 
         let total = current.total.saturating_sub(previous.total) as f64 / seconds;
         let non_vote = current.non_vote.saturating_sub(previous.non_vote) as f64 / seconds;
-        // Errors are not split by vote and non-vote. Failed votes are rare
-        // enough that attributing every failure to non-vote traffic is close.
         let failed = current.errors.saturating_sub(previous.errors) as f64 / seconds;
         let tps = Tps {
             total,
@@ -897,19 +755,14 @@ impl Throughput {
     }
 }
 
-/// Host interface throughput, derived from cumulative counters.
 #[derive(Default)]
 struct NetworkMeter {
     last: Option<(NetCounters, Instant)>,
     history: Vec<NetworkSample>,
-    /// Set once the counters prove unreadable, so the failure is logged once
-    /// rather than every second.
     unavailable: bool,
 }
 
 impl NetworkMeter {
-    /// Publishes nothing when the counters cannot be read, so the panel is
-    /// absent rather than showing zeros that look like an idle network.
     fn tick(&mut self, publisher: &Publisher) {
         if self.unavailable {
             return;
@@ -962,30 +815,19 @@ impl NetworkMeter {
     }
 }
 
-/// Load, memory, filesystem capacity and disk saturation.
 #[derive(Default)]
 struct HostMeter {
     last: Option<(HostSnapshot, Instant)>,
-    /// Set once `/proc` proves unreadable, so the failure is logged once rather
-    /// than every second.
     unavailable: bool,
-    /// Resolved once at the first sample rather than every second: a mount does
-    /// not move.
     paths: Option<Vec<HostPath>>,
-    /// Resident memory readings over the last hour, oldest first.
     resident: VecDeque<(Instant, u64)>,
-    /// Resolved once, with the paths. The outer `None` is "not yet".
     snapshot_device: Option<Option<String>>,
 }
 
-/// How far back the resident memory readings are kept, and how old the
-/// oldest must be before it stands for an hour ago.
 const RESIDENT_HISTORY: Duration = Duration::from_secs(3600);
 const RESIDENT_HOUR_AGO: Duration = Duration::from_secs(3300);
 
 impl HostMeter {
-    /// Publishes nothing when `/proc` cannot be read, so the panel is absent
-    /// rather than showing a healthy-looking idle machine.
     fn tick(&mut self, ctx: &DashboardContext, publisher: &Publisher) {
         if self.unavailable {
             return;
@@ -1059,7 +901,6 @@ impl HostMeter {
             memory_available: current.memory.available,
             memory_reclaimable: current.memory.reclaimable,
             memory_free: current.memory.free,
-            // Absent rather than a permanent nought where none is configured.
             swap: (current.memory.swap_total > 0).then_some(Swap {
                 total: current.memory.swap_total,
                 used: swap_used,
@@ -1085,24 +926,16 @@ impl HostMeter {
     }
 }
 
-/// Where the validator's threads spend each second, grouped by pool.
 #[derive(Default)]
 struct ThreadMeter {
     last: Option<(HashMap<u64, ThreadReading>, Instant)>,
-    /// Each thread's pinning, read once when it is first seen: `Some` where it
-    /// may run on fewer cores than the machine has.
     pinning: HashMap<u64, Option<String>>,
-    /// Each group's share per tick over the window, for ranking the rows.
     recent: VecDeque<Vec<(String, f64)>>,
     history: Vec<ThreadsSample>,
-    /// Set once the task directory proves unreadable, so the failure is logged
-    /// once rather than every second.
     unavailable: bool,
 }
 
 impl ThreadMeter {
-    /// Publishes nothing where the counters cannot be read, so the group is
-    /// absent rather than a list of idle threads.
     fn tick(&mut self, publisher: &Publisher) {
         if self.unavailable {
             return;
@@ -1117,7 +950,6 @@ impl ThreadMeter {
         };
         let cores = num_cpus();
         for thread in &current {
-            // Read once: affinity is set at start and does not move.
             self.pinning.entry(thread.tid).or_insert_with(|| {
                 thread_stats::cores_allowed(thread.tid)
                     .filter(|list| thread_stats::cores_in(list) < cores)
@@ -1167,29 +999,18 @@ impl ThreadMeter {
     }
 }
 
-/// Packets the kernel dropped before the validator read them, per advertised port: the usual way
-/// shreds go missing.
 struct SocketMeter {
-    /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: PortWindow,
-    /// The same drops over the longer window the QUIC counters use, so the TPU
-    /// path card compares like spans.
     quic_drops_window: PortWindow,
-    /// What that window last worked out, per port name, for the TPU meter to
-    /// pick up.
     kernel_drops: HashMap<&'static str, u64>,
     /// Per-port drops when the validator finished starting, so the startup burst is not carried for
     /// the life of the process.
     drops_baseline: Option<HashMap<u16, u64>>,
-    /// The same window and baseline for what each port delivered, which only three of the seven
-    /// ports count.
     received_window: PortWindow,
     received_baseline: Option<HashMap<u16, u64>>,
     /// Last counters seen per reported port: `/proc/net/udp` is not read atomically, so a bound
     /// socket can drop out of one snapshot.
     known_sockets: HashMap<u16, PortCounters>,
-    /// Set once `/proc/net/udp` proves unreadable. It fails independently of
-    /// the other `/proc` files: a container can expose one and not another.
     unavailable: bool,
     /// Set once the table has been read, so an empty table before then does not say the TPU port is
     /// bound elsewhere.
@@ -1238,7 +1059,6 @@ impl SocketMeter {
         let now = Instant::now();
         let ports = ingest_ports(ctx, tap);
 
-        // A port absent from this snapshot keeps the counters it had.
         for port in &ports {
             if let Some(counters) = current.get(&port.port) {
                 self.known_sockets.insert(port.port, *counters);
@@ -1249,14 +1069,11 @@ impl SocketMeter {
             .iter()
             .filter_map(|port| Some((port.port, self.known_sockets.get(&port.port)?.drops)))
             .collect();
-        // Only the ports that have a count, so none acquires a received figure by
-        // accident.
         let received: HashMap<u16, u64> = ports
             .iter()
             .filter_map(|port| Some((port.port, port.received?)))
             .collect();
 
-        // Both baselines at the first running tick, where the startup burst ends.
         if self.drops_baseline.is_none() && running {
             self.drops_baseline = Some(drops.clone());
             self.received_baseline = Some(received.clone());
@@ -1264,7 +1081,6 @@ impl SocketMeter {
         self.drops_window.push(now, drops.clone());
         self.received_window.push(now, received);
         self.quic_drops_window.push(now, drops);
-        // Into a local first: the expression reads two other fields of `self`.
         let kernel_drops: HashMap<&'static str, u64> = ports
             .iter()
             .filter(|port| port.quic)
@@ -1307,7 +1123,6 @@ impl SocketMeter {
             return;
         }
         let summary = IngestSummary {
-            // Capped at the span. Coverage runs a tick over it by design.
             window_seconds: self
                 .drops_window
                 .covers(now)
@@ -1320,8 +1135,6 @@ impl SocketMeter {
     }
 }
 
-/// This validator's UDP ports as advertised in gossip, in the panel's order,
-/// each with its receiver's packet count where one reports.
 fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
     let info = ctx.cluster_info.my_contact_info();
     [
@@ -1333,8 +1146,6 @@ fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
             Some(tap.shreds_turbine),
             false,
         ),
-        // QUIC counts transactions, not datagrams, so no share of a drop count; the TPU path panel
-        // draws these.
         ("tpu", info.tpu(Protocol::QUIC), None, true),
         (
             "tpu forwards",
@@ -1342,8 +1153,6 @@ fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
             None,
             true,
         ),
-        // The UDP vote port, which has a receiver counting datagrams. The QUIC vote
-        // port below is a different socket.
         (
             "tpu vote",
             info.tpu_vote(Protocol::UDP),
@@ -1373,16 +1182,13 @@ fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
     .collect()
 }
 
-/// What the two UDP senders that count their bytes are putting out, in bytes
-/// per second. `None` until a sender has reported once since startup.
+/// In bytes per second; `None` until a sender has reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 struct EgressSplit {
     gossip_per_second: Option<u64>,
     repair_per_second: Option<u64>,
 }
 
-/// The gossip and repair share of egress, from the senders' own reports. Each point covers its own
-/// window, so a rate holds between points.
 #[derive(Default)]
 struct EgressMeter {
     split: EgressSplit,
@@ -1423,7 +1229,6 @@ impl EgressMeter {
 }
 
 struct ShredMeter {
-    /// `(turbine, repair)` shreds per sample.
     window: VecDeque<(u64, u64)>,
     published: Debounced<Option<Shreds>>,
 }
@@ -1455,8 +1260,6 @@ impl ShredMeter {
         }
 
         let received = turbine.saturating_add(repaired);
-        // Nothing rather than nought while no shreds have arrived: a validator not
-        // receiving, not one receiving perfectly.
         let shreds = (received > 0).then(|| Shreds {
             received,
             repaired,
@@ -1467,10 +1270,7 @@ impl ShredMeter {
     }
 }
 
-/// Windows the turbine layer counts and the XDP drops the way the shred
-/// meter windows its two.
 struct TurbineMeter {
-    /// `[root, layer 1, layer 2, layer 3, dropped]` per sample.
     window: VecDeque<[u64; 5]>,
     published: Debounced<Option<Turbine>>,
 }
@@ -1509,8 +1309,6 @@ impl TurbineMeter {
         }
         let [root, layer_1, layer_2, layer_3, xdp_dropped] = sum;
 
-        // Nothing until a point has reported: a node that received no shreds,
-        // not one that received them all from the root.
         let reported = current.retransmit_xdp.is_some()
             || root
                 .saturating_add(layer_1)
@@ -1532,12 +1330,8 @@ impl TurbineMeter {
     }
 }
 
-/// How often an account replay needed was already in memory, and what the
-/// accounts database read, wrote and is holding.
 struct AccountsMeter {
-    /// `(hits, misses, evictions)` of the read cache per sample.
     cache_window: VecDeque<(u64, u64, u64)>,
-    /// One interval's worth of the accounts database's own counters per sample.
     window: VecDeque<AccountsTotals>,
     published: Debounced<Option<AccountsCache>>,
 }
@@ -1576,8 +1370,6 @@ impl AccountsMeter {
         // rate taken against the full minute would read low for the first one.
         let window_seconds = self.cache_window.len() as f64 * METER_INTERVAL.as_secs_f64();
 
-        // Absent until the accounts database has reported its storage once. Nought
-        // allocated would read as a validator holding no accounts.
         let disk = (current.accounts_storage_bytes > 0).then(|| AccountsDisk {
             used: current.accounts_storage_alive_bytes,
             allocated: current.accounts_storage_bytes,
@@ -1607,11 +1399,7 @@ impl AccountsMeter {
     }
 }
 
-/// How often replay found a program already compiled, summed over a minute because the counters
-/// reset per bank.
 struct ProgramCacheMeter {
-    /// One interval's worth of the cache's counters per sample, and beside it
-    /// the level readings, which are peaked rather than summed.
     window: VecDeque<ProgramCacheTotals>,
     levels: VecDeque<u64>,
     published: Debounced<Option<ProgramCache>>,
@@ -1639,8 +1427,6 @@ impl ProgramCacheMeter {
         let peak_entries = self.levels.iter().copied().max().filter(|peak| *peak > 0);
 
         let looked_up = totals.hits.saturating_add(totals.misses);
-        // Nothing rather than nought: a hit rate of zero reads as a cache that is
-        // failing rather than one not asked.
         let cache = (looked_up > 0).then(|| ProgramCache {
             looked_up,
             hits: totals.hits,
@@ -1662,15 +1448,9 @@ impl ProgramCacheMeter {
     }
 }
 
-/// The path a transaction takes through this validator, the two stages that
-/// only run while it is leader, and the per-slot lists the block pages join on.
 struct TpuMeter {
-    /// One interval of the scheduler's counters per sample, windowed apart from the QUIC and leader
-    /// stages, which do not reconcile with it.
     waterfall_window: VecDeque<SchedulerTotals>,
     waterfall: Debounced<Option<WaterfallWindow>>,
-    /// Which scheduler the samples in that window came from, so that a
-    /// changeover can be noticed rather than summed through.
     waterfall_source: SchedulerSource,
     quic_window: VecDeque<QuicTotals>,
     quic_forwards_window: VecDeque<QuicTotals>,
@@ -1679,16 +1459,9 @@ struct TpuMeter {
     /// The vote port is listed from its first connection until an epoch
     /// passes without another: under alpenglow votes leave it for good.
     vote_quiet: bool,
-    /// The port's cumulative offer as of the last epoch boundary seen.
     vote_offered_at_epoch: Option<(Epoch, u64)>,
-    /// How the XDP transmit path is configured, or nothing where the
-    /// validator is not running one.
     xdp: Debounced<Option<XdpConfig>>,
-    /// Epoch position as of the last tick that could take bank forks. Kept across
-    /// a missed read.
     epoch_now: Option<EpochPosition>,
-    /// The two stages that only run while this validator is leader, gathered
-    /// over the epoch rather than over the window the sections above use.
     leader_totals: LeaderTotals,
     epoch_span: Debounced<Option<EpochSpan>>,
     verify: Debounced<Option<VerifyTotals>>,
@@ -1696,7 +1469,6 @@ struct TpuMeter {
     bundles: Debounced<Option<BundleTotals>>,
     slot_waterfalls: Debounced<Vec<SlotWaterfall>>,
     slot_costs: Debounced<Vec<SlotCost>>,
-    /// The tap's revision of the two lists above when they were last read.
     slot_lists_seen: Option<u64>,
     replay: Debounced<Option<ReplayWindow>>,
 }
@@ -1727,8 +1499,6 @@ impl TpuMeter {
         }
     }
 
-    /// Remembers where the chain is in its epoch, from the working bank: the counters are reported
-    /// as the work happens.
     fn note_epoch(&mut self, working_bank: &Bank) {
         let schedule = working_bank.epoch_schedule();
         let slot = working_bank.slot();
@@ -1741,14 +1511,10 @@ impl TpuMeter {
         });
     }
 
-    /// Publishes how the XDP transmit path is set up. Debounced, and the tap
-    /// latches it, so the wire carries it once.
     fn collect_xdp(&mut self, tap: &MetricsTap, publisher: &Publisher) {
         self.xdp.publish(publisher, TOPIC_SUMMARY, "xdp", tap.xdp());
     }
 
-    /// Publishes where the transactions handed to the banking stage went. The scheduler reports
-    /// each second with its counters reset, so the window is a sum.
     fn tick(
         &mut self,
         tap: &MetricsTap,
@@ -1823,19 +1589,13 @@ impl TpuMeter {
             name,
             counts: windowed(window, sample, WATERFALL_WINDOW),
             levels,
-            // Absent where the socket read found no such port, which is not a port that
-            // dropped nothing.
             kernel_drops: kernel_drops.get(name).copied(),
         })
         .filter(|port| port.name != "tpu vote quic" || !vote_quiet)
         .collect();
-        // The cumulative figures: `offered` is stored as the listener reports it, so
-        // this is the count since the port opened.
         let ever_offered = current.quic.offered > 0
             || current.quic_forwards.offered > 0
             || current.quic_vote.offered > 0;
-        // Every port's window is pushed on the same tick and trimmed to the
-        // same length, so any one of them says how much time the figures cover.
         let window_seconds = (self.quic_window.len() as f64) * METER_INTERVAL.as_secs_f64();
         self.quic_paths.publish(
             publisher,
@@ -1865,8 +1625,6 @@ impl TpuMeter {
             } = self.leader_totals;
             let span = self.leader_totals.span(at);
 
-            // One span for both sections: summed and started over on the same tick, so
-            // two copies would be two chances to disagree.
             self.epoch_span.publish(
                 publisher,
                 TOPIC_SUMMARY,
@@ -1886,7 +1644,6 @@ impl TpuMeter {
                 "executed",
                 (executed.attempted > 0).then_some(executed),
             );
-            // A note on what Executed is made of, absent where no bundle arrived.
             self.bundles.publish(
                 publisher,
                 TOPIC_SUMMARY,
@@ -1910,8 +1667,6 @@ impl TpuMeter {
                 .publish(publisher, TOPIC_SUMMARY, "slot_costs", tap.slot_costs());
         }
 
-        // Averaged over slots held rather than seconds, so the window holds the same
-        // number of samples whatever the cluster's pace.
         self.replay.publish(
             publisher,
             TOPIC_SUMMARY,
@@ -1921,8 +1676,6 @@ impl TpuMeter {
     }
 }
 
-/// Pushes one interval onto a window, forgets what fell out, and sums the
-/// rest.
 fn windowed<T: WindowedCounters>(window: &mut VecDeque<T>, sample: T, span: usize) -> T {
     window.push_back(sample);
     while window.len() > span {
@@ -1933,7 +1686,6 @@ fn windowed<T: WindowedCounters>(window: &mut VecDeque<T>, sample: T, span: usiz
         .fold(T::default(), |total, sample| total.plus(sample))
 }
 
-/// What a port's counter read when the baseline was taken, or nought before there is one.
 fn at_baseline(baseline: Option<&HashMap<u16, u64>>, port: u16) -> u64 {
     baseline
         .and_then(|baseline| baseline.get(&port))
@@ -1941,8 +1693,6 @@ fn at_baseline(baseline: Option<&HashMap<u16, u64>>, port: u16) -> u64 {
         .unwrap_or(0)
 }
 
-/// Appends a chart sample, keeping `keep` of them, and republishes the retained
-/// series, which a connecting client needs whole.
 fn push_history<T: Serialize>(
     history: &mut Vec<T>,
     sample: T,
@@ -1964,7 +1714,6 @@ mod tests {
         super::*, crate::fixture::fixture, solana_metrics::datapoint::DataPoint, std::thread::sleep,
     };
 
-    /// A tap reading carrying only the scheduler, so each test moves one thing.
     fn tap(scheduler: SchedulerTotals) -> TapCounters {
         TapCounters {
             scheduler,
@@ -1972,8 +1721,6 @@ mod tests {
         }
     }
 
-    /// A tap reading where the TPU port has taken `offered` connections since it
-    /// opened, the one QUIC counter stored as reported.
     fn quic_tap(offered: u64) -> TapCounters {
         TapCounters {
             quic: QuicTotals {
@@ -1984,12 +1731,10 @@ mod tests {
         }
     }
 
-    /// A window of `(hits, misses, evictions)` samples.
     fn window(samples: &[(u64, u64, u64)]) -> VecDeque<(u64, u64, u64)> {
         samples.iter().copied().collect()
     }
 
-    /// A replayed slot with only the fields a test cares about set.
     fn replayed(set: impl Fn(&mut ReplaySlotTimes)) -> ReplaySlotTimes {
         let mut slot = ReplaySlotTimes::default();
         set(&mut slot);
@@ -1998,8 +1743,6 @@ mod tests {
 
     #[test]
     fn test_a_replay_window_reports_the_mean_slot() {
-        // What one slot costs, which is the figure that compares against how
-        // long a slot lasts. A total over the window would not.
         let window = replay_window(&[
             replayed(|s| {
                 s.confirming = 10;
@@ -2039,8 +1782,6 @@ mod tests {
 
     #[test]
     fn test_the_program_cache_carries_its_own_peak() {
-        // Compilation arrives in bursts, so the mean alone hides the thing worth
-        // seeing.
         let mut slots = vec![replayed(|s| s.program_cache = 1_000); 9];
         slots.push(replayed(|s| s.program_cache = 45_000));
         let window = replay_window(&slots).unwrap();
@@ -2051,8 +1792,6 @@ mod tests {
 
     #[test]
     fn test_no_replayed_slots_is_no_panel() {
-        // Absent rather than a card of noughts, which a quiet log filter would
-        // otherwise show for ever.
         assert!(replay_window(&[]).is_none());
     }
 
@@ -2067,8 +1806,6 @@ mod tests {
 
     #[test]
     fn test_evictions_are_summed_alongside() {
-        // The usual reason a hit rate falls, so it is reported beside it rather
-        // than left to be inferred from the rate dropping.
         let (_, _, evictions) = cache_rate(&window(&[(10, 1, 2), (10, 1, 3)])).unwrap();
         assert_eq!(evictions, 5);
     }
@@ -2117,8 +1854,6 @@ mod tests {
 
     #[test]
     fn test_the_quic_ports_are_flagged_and_the_udp_vote_port_is_not() {
-        // Two panels split this list on the flag. The vote ports are the pair worth
-        // pinning: `tpu_vote` is UDP, the QUIC vote endpoint another socket.
         let harness = fixture();
         let ports = ingest_ports(&harness.ctx, &TapCounters::default());
         let quic: HashMap<&str, bool> = ports.iter().map(|port| (port.name, port.quic)).collect();
@@ -2129,21 +1864,16 @@ mod tests {
         assert_eq!(quic.get("turbine"), Some(&false));
         assert_eq!(quic.get("gossip"), Some(&false));
         assert_eq!(quic.get("serve repair"), Some(&false));
-        // Present only where the node advertises one, which is why this is
-        // checked for absence rather than asserted into existence.
         assert_ne!(quic.get("tpu vote quic"), Some(&false));
     }
 
     #[test]
     fn test_a_port_with_no_baseline_yet_counts_from_its_own_start() {
-        // What the panel shows over the startup burst, before the baselines are
-        // taken.
         assert_eq!(at_baseline(None, 8001), 0);
         assert_eq!(at_baseline(Some(&HashMap::new()), 8001), 0);
         assert_eq!(at_baseline(Some(&HashMap::from([(8001, 42)])), 8001), 42);
     }
 
-    /// A tap reading with only the turbine counters set.
     fn turbine_tap(layers: [u64; 4], dropped: u64, xdp: Option<bool>) -> TapCounters {
         TapCounters {
             turbine_root: layers[0],
@@ -2190,13 +1920,9 @@ mod tests {
 
     #[test]
     fn test_waterfall_reports_the_window() {
-        // The tap's counters only climb; published as they stand they would present
-        // every transaction since startup as the last five minutes.
         let harness = fixture();
         let mut meters = harness.meters();
 
-        // A counter already well into its life, as it is by the time anyone
-        // opens the page.
         let start = SchedulerTotals {
             received: 1_000,
             buffered: 40,
@@ -2216,15 +1942,12 @@ mod tests {
         meters.collect_waterfall(&tap(next), &tap(last));
 
         let published = harness.published_key("summary", "waterfall").unwrap();
-        // A hundred then a hundred and fifty, against a counter reading 1,250.
         assert!(published.contains(r#""received":250"#), "{published}");
         assert!(published.contains(r#""buffered":25"#), "{published}");
     }
 
     #[test]
     fn test_idle_scheduler_reports_nothing() {
-        // An empty window is a validator nothing was sent, not one throwing
-        // everything away.
         let harness = fixture();
         let mut meters = harness.meters();
         meters.collect_waterfall(&TapCounters::default(), &TapCounters::default());
@@ -2240,7 +1963,6 @@ mod tests {
         let harness = fixture();
         let mut meters = harness.meters();
 
-        // Three samples under the scheduler the fixture's tap reports.
         let mut previous = SchedulerTotals::default();
         for step in 1..=3u64 {
             let current = SchedulerTotals {
@@ -2252,8 +1974,6 @@ mod tests {
         }
         assert_eq!(meters.tpu.waterfall_window.len(), 3);
 
-        // Now say those three were BAM's. The tap still reports the validator's own
-        // scheduler, so the next tick is a handover.
         meters.tpu.waterfall_source = SchedulerSource::Bam;
         let current = SchedulerTotals {
             received: 145,
@@ -2265,11 +1985,9 @@ mod tests {
         assert_eq!(meters.tpu.waterfall_source, SchedulerSource::Scheduler);
         let published = harness.published_key("summary", "waterfall").unwrap();
         assert!(published.contains(r#""source":"scheduler""#), "{published}");
-        // 145 against a previous reading of 30: the one sample, not the four.
         assert!(published.contains(r#""received":115"#), "{published}");
     }
 
-    /// Where the chain is, a given number of slots into a 432,000-slot epoch.
     fn at(epoch: Epoch, slots_in: u64) -> EpochPosition {
         let start_slot = epoch.saturating_mul(432_000);
         EpochPosition {
@@ -2302,7 +2020,6 @@ mod tests {
 
     #[test]
     fn test_bundles_are_summed_over_the_epoch() {
-        // Printed on Executed's heading, so they have to cover what Executed covers.
         let mut totals = LeaderTotals::default();
         totals.add(at(842, 10), verified(100), attempted(40), bundled(6, 21));
         totals.add(at(842, 20), verified(0), attempted(0), bundled(0, 0));
@@ -2314,7 +2031,6 @@ mod tests {
 
     #[test]
     fn test_bundles_start_over_with_the_stage() {
-        // Reset on the same tick as the stages they annotate.
         let mut totals = LeaderTotals::default();
         totals.add(
             at(842, 400_000),
@@ -2330,8 +2046,6 @@ mod tests {
 
     #[test]
     fn test_leader_totals_add_the_whole_epoch() {
-        // A stage that fires for a few slots every few hours has nothing to say about
-        // the last five minutes.
         let mut totals = LeaderTotals::default();
         totals.add(
             at(842, 10),
@@ -2354,8 +2068,6 @@ mod tests {
 
         assert_eq!(totals.verify.received, 170);
         assert_eq!(totals.executed.attempted, 65);
-        // The quiet sample in the middle neither cleared anything nor aged the
-        // first one out, which is what a window would have done to it.
         assert_eq!(totals.executed.succeeded, 65);
     }
 
@@ -2380,8 +2092,6 @@ mod tests {
         assert_eq!(totals.epoch, Some(843));
         assert_eq!(totals.verify.received, 11);
         assert_eq!(totals.executed.attempted, 4);
-        // And the span starts again with it, rather than reporting the new
-        // epoch as covered from wherever the last one began.
         assert_eq!(totals.span(at(843, 3)).counted_slots, 1);
     }
 
@@ -2419,7 +2129,6 @@ mod tests {
 
     #[test]
     fn test_leader_stages_carry_their_epoch() {
-        // The two leader stages are published against the epoch they ran in.
         let harness = fixture();
         let mut meters = harness.meters();
         meters.tpu.epoch_now = Some(at(842, 216_000));
@@ -2443,8 +2152,6 @@ mod tests {
 
     #[test]
     fn test_leader_stages_wait_for_an_epoch() {
-        // A total with no epoch against it cannot be labelled, and one drawn
-        // under a heading it was not counted for is worse than none at all.
         let harness = fixture();
         let mut meters = harness.meters();
         assert!(meters.tpu.epoch_now.is_none());
@@ -2461,8 +2168,6 @@ mod tests {
 
     #[test]
     fn test_epoch_position_comes_from_the_working_bank() {
-        // The working bank, not the root: the counters are reported as the work
-        // happens.
         let harness = fixture();
         let mut meters = harness.meters();
         let bank = harness.advance_to(64);
@@ -2476,8 +2181,6 @@ mod tests {
 
     #[test]
     fn test_no_xdp_is_published_where_the_validator_reported_none() {
-        // The key is sent as null so the panel can tell a validator that
-        // reported no config apart from one whose config has not arrived yet.
         let harness = fixture();
         let mut meters = harness.meters();
         meters
@@ -2490,8 +2193,6 @@ mod tests {
 
     #[test]
     fn test_a_reported_xdp_config_reaches_the_wire_whole() {
-        // Tags and fields alike, which is what makes this point different from
-        // every other one the tap reads.
         let harness = fixture();
         let mut meters = harness.meters();
         let mut point = DataPoint::new("xdp-network-config");
@@ -2506,8 +2207,6 @@ mod tests {
         let published = harness.published_key("summary", "xdp").unwrap();
         assert!(published.contains(r#""zero_copy":true"#), "{published}");
         assert!(published.contains(r#""driver":"ice""#), "{published}");
-        // Unwrapped on the way through: the point stores a string field with
-        // the line protocol's quotes still round it.
         assert!(
             published.contains(r#""model":"Ethernet Controller E810-C for QSFP""#),
             "{published}"
@@ -2516,8 +2215,6 @@ mod tests {
 
     #[test]
     fn test_the_path_card_stays_once_a_port_has_ever_been_used() {
-        // The same reading twice: every windowed figure is nought while the cumulative offer
-        // stands.
         let harness = fixture();
         let mut meters = harness.meters();
         let used = quic_tap(40);
@@ -2552,12 +2249,10 @@ mod tests {
         meters.collect_waterfall(&vote(0), &vote(3));
         assert!(listed(), "the first connection lists it");
 
-        // Three arrived during epoch one, so its boundary keeps the port.
         meters.tpu.epoch_now = Some(at(2, 100));
         meters.collect_waterfall(&vote(3), &vote(3));
         assert!(listed(), "the epoch had connections");
 
-        // None during epoch two.
         meters.tpu.epoch_now = Some(at(3, 100));
         meters.collect_waterfall(&vote(3), &vote(3));
         assert!(!listed(), "an epoch passed with none");
@@ -2567,8 +2262,6 @@ mod tests {
 
     #[test]
     fn test_no_path_card_before_any_offer() {
-        // Also what a validator logging below `solana=info` looks like: the tap sees
-        // nothing.
         let harness = fixture();
         let mut meters = harness.meters();
         meters.collect_waterfall(&TapCounters::default(), &TapCounters::default());
@@ -2579,18 +2272,15 @@ mod tests {
 
     #[test]
     fn test_an_advertised_tpu_bound_elsewhere_is_said_to_be() {
-        // A relayer or proxy overwrites the advertised address, so the socket join
-        // finds no port here and the listener reports next to nothing.
+        // Behind a relayer the socket join finds no TPU port here.
         let harness = fixture();
         let mut meters = harness.meters();
-        // The table has been read and holds no TPU port.
         meters.sockets.sampled = true;
         let used = quic_tap(1);
         meters.collect_waterfall(&used, &used);
         let published = harness.published_key("summary", "quic_paths").unwrap();
         assert!(published.contains(r#""tpu_offhost":true"#), "{published}");
 
-        // Found among this host's own sockets, and the claim is dropped.
         meters.sockets.kernel_drops.insert("tpu", 0);
         meters.collect_waterfall(&used, &used);
         let published = harness.published_key("summary", "quic_paths").unwrap();
@@ -2613,8 +2303,7 @@ mod tests {
 
     #[test]
     fn test_an_unread_socket_table_does_not_say_tpu_moved() {
-        // The socket meter waits for a viewer, so the table can be empty because
-        // it has never been read, which says nothing about where the port is.
+        // The socket meter waits for a viewer, so an empty table may never have been read.
         let harness = fixture();
         let mut meters = harness.meters();
         let used = quic_tap(1);
@@ -2626,8 +2315,6 @@ mod tests {
 
     #[test]
     fn test_the_waterfall_window_forgets_what_falls_out_of_it() {
-        // Otherwise the busiest five minutes the validator ever had would stay
-        // on the page for the life of the process.
         let harness = fixture();
         let mut meters = harness.meters();
 
@@ -2643,7 +2330,6 @@ mod tests {
 
         assert_eq!(meters.tpu.waterfall_window.len(), WATERFALL_WINDOW);
         let published = harness.published_key("summary", "waterfall").unwrap();
-        // Ten a sample across the window, not across every sample ever taken.
         let expected = (WATERFALL_WINDOW as u64).saturating_mul(10);
         assert!(
             published.contains(&format!(r#""received":{expected}"#)),
@@ -2654,7 +2340,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_the_threads_are_published_from_the_second_tick() {
-        // The first reading is the baseline; the panel wants a difference.
         let harness = fixture();
         let _viewer = harness.publisher.subscribe();
         let mut meters = harness.meters();
@@ -2672,8 +2357,6 @@ mod tests {
 
     #[test]
     fn test_a_tick_always_publishes_the_clock() {
-        // The heartbeat. Everything else can report nothing; the clock says the feed
-        // is alive.
         let harness = fixture();
         let mut meters = harness.meters();
         meters.tick();
@@ -2711,7 +2394,6 @@ mod tests {
 
     #[test]
     fn test_throughput_needs_two_samples_with_a_slot_between_them() {
-        // Rates are differences, so the first tick can only establish a baseline.
         let harness = fixture();
         let mut meters = harness.meters();
 
@@ -2721,8 +2403,6 @@ mod tests {
             "a rate was reported from one reading"
         );
 
-        // Slow enough that one slot does not look like a catch-up burst. Sleeping
-        // longer only lowers the rate, so a loaded machine cannot flake this.
         sleep(Duration::from_millis(250));
         harness.advance_to(1);
         meters.tick();
@@ -2739,8 +2419,8 @@ mod tests {
 
     #[test]
     fn test_failures_are_summed_as_banks_freeze() {
-        // The error counter resets per bank. Differenced like the total, it read
-        // nought whenever a bank froze with fewer failures than the one before.
+        // The error counter resets per bank; differenced, it read nought whenever a bank had fewer
+        // failures than the last.
         let harness = fixture();
         let mut meters = harness.meters();
 
@@ -2768,7 +2448,6 @@ mod tests {
 
     #[test]
     fn test_a_replayed_burst_is_not_reported_as_throughput() {
-        // One catch-up sample pins the chart's scale for as long as it stays in view.
         let harness = fixture();
         let mut meters = harness.meters();
 
@@ -2787,7 +2466,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_the_proc_walks_wait_for_a_viewer() {
-        // Two files per thread every second, with nobody to show them to.
         let harness = fixture();
         let mut meters = harness.meters();
         meters.tick();
@@ -2800,7 +2478,6 @@ mod tests {
             "the thread walk ran with nobody watching"
         );
 
-        // Holding a receiver is what counts as a viewer.
         let _viewer = harness.publisher.subscribe();
         meters.tick();
         sleep(Duration::from_millis(20));

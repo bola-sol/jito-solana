@@ -18,7 +18,6 @@ use {
     },
 };
 
-/// The validator's boot phase, shared with the binary that advances it.
 pub type StartProgress = Arc<RwLock<ValidatorStartProgress>>;
 
 #[derive(Clone)]
@@ -29,12 +28,9 @@ pub struct DashboardContext {
     pub blockstore: Arc<Blockstore>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub vote_account: Pubkey,
-    /// The last finalization certificate votor validated. Empty until
-    /// Alpenglow consensus is live.
+    /// Empty until Alpenglow consensus is live.
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
-    /// Where the accounts database keeps its storage files, for the host panel.
     pub account_paths: Vec<PathBuf>,
-    /// Where snapshot archives are written and how often. `None` in tests.
     pub snapshot_config: Option<SnapshotConfig>,
 }
 
@@ -47,8 +43,7 @@ impl DashboardContext {
         cluster_name(self.bank_forks.read().unwrap().root_bank().cluster_type())
     }
 
-    /// The highest slot the cluster has finalized as far as this node can tell: votor's last
-    /// certificate under Alpenglow, the blockstore's latest optimistic slot before it.
+    /// Votor's last certificate under Alpenglow, the blockstore's latest optimistic slot before it.
     pub fn cluster_tip(&self) -> Option<Slot> {
         let migration_status = self.bank_forks.read().unwrap().migration_status();
         if migration_status.is_alpenglow_enabled() {

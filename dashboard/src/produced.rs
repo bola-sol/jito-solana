@@ -8,99 +8,65 @@ use {
     solana_clock::Slot,
 };
 
-/// What the bundle stage landed in a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Bundles {
     pub sanitized: u64,
     pub executed: u64,
 }
 
-/// The banking stage's time in one of our slots, by stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Execution {
-    /// The workers' reports inside the slot, summed: thread time, not wall
-    /// time.
+    /// Thread time, not wall time.
     pub non_vote: StageTimes,
     pub workers: u64,
-    /// The longest single batch any worker executed, in microseconds.
     pub longest_batch: u64,
-    /// The vote worker's report. Absent under alpenglow.
     pub votes: Option<StageTimes>,
-    /// The window the reports were summed over, first shred to last.
     pub window_millis: u64,
 }
 
-/// What one produced block looked like. `transactions` and `non_vote_transactions` are differences
-/// against the parent; the rest are the bank's own.
+/// `transactions` and `non_vote_transactions` are differences against the parent; the rest are the
+/// bank's own.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProducedBlock {
     pub slot: Slot,
-    /// When the blockstore recorded the slot's first shred, in milliseconds: for our own block,
-    /// when it started.
     pub slot_time_millis: Option<u64>,
     pub blockhash: String,
-    /// Time from the previous slot, when the blockstore recorded one.
     pub duration_nanos: Option<u64>,
 
-    /// Transactions in this block. Differenced against the parent.
     pub transactions: u64,
-    /// Of those, the ones that were not votes. Differenced against the parent.
     pub non_vote_transactions: u64,
-    /// Transactions that landed but returned an error. The bank's own counter,
-    /// reset for each bank, so this is already per block.
     pub failed_transactions: u64,
-    /// Entries in the block. The bank's own counter.
     pub entries: u64,
 
-    /// Compute units the block consumed, and the protocol limit it was measured
-    /// against.
     pub block_cost: u64,
     pub block_cost_limit: u64,
-    /// The most compute any one account may be charged in a block, which is
-    /// what the costliest account is read against.
     pub account_cost_limit: u64,
 
-    /// Fees this block collected, in lamports, base and priority together: the
-    /// bank's `total_transaction_fee` adds the two despite its name.
+    /// Base and priority together: `total_transaction_fee` adds the two despite its name.
     pub total_fees: u64,
     pub priority_fees: u64,
-    /// Lamports paid into the jito tip accounts during this slot, as measured.
-    /// The page works our commission out from it; see [`crate::tips`].
     pub tips: Option<u64>,
-    /// Absent where no bundle stage reported the slot: a stock validator, or
-    /// one under BAM.
+    /// Absent on a stock validator or under BAM.
     pub bundles: Option<Bundles>,
-    /// Non-vote transactions by message version, read back from the
-    /// blockstore. Absent until the slot is full.
     pub versions: Option<TxVersions>,
-    /// Where the banking stage's time went. Absent until its reports are in.
     pub execution: Option<Execution>,
-    /// The reward certificate this block wrote. Absent until the walk has read
-    /// it back, and always under TowerBFT.
     pub certificate: Option<BlockCertificate>,
 }
 
-/// The reward certificate a block wrote, for the slot eight back.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BlockCertificate {
-    /// The slot it rewards.
     pub rewards: Slot,
-    /// That slot's leader.
     pub leader: Option<String>,
     pub leader_name: Option<String>,
     /// No fewer notarize votes than skip votes.
     pub notarized: bool,
     pub paid: u32,
     pub ranks: u32,
-    /// Share of the epoch's stake behind the paid ranks.
     pub stake_paid: f64,
     pub notar: u32,
     pub skip: u32,
-    /// Whether it carried this node's own vote.
     pub ours_in: bool,
-    /// Ranks the epoch's usual certificate pays. Absent early in the epoch.
     pub usual: Option<u32>,
-    /// The validators certificates usually pay that this one left out.
     pub left_out: Vec<CertificateValidator>,
 }
 
@@ -111,7 +77,6 @@ pub struct CertificateValidator {
     pub ip: Option<String>,
 }
 
-/// The most recent produced blocks, oldest first.
 #[derive(Debug)]
 pub struct ProducedRing {
     capacity: usize,
@@ -134,8 +99,7 @@ impl ProducedRing {
         &self.blocks
     }
 
-    /// Records a block, keeping the newest `capacity`. Returns false for a slot
-    /// already held: only the first sighting has the block's figures.
+    /// Returns false for a slot already held: only the first sighting has the block's figures.
     pub fn insert(&mut self, block: ProducedBlock) -> bool {
         if self.contains(block.slot) {
             return false;
@@ -149,8 +113,6 @@ impl ProducedRing {
         true
     }
 
-    /// Fills in the bundles of any block still without them, since the stage reports a slot after
-    /// it was captured. True if a block changed.
     pub fn fill_bundles(&mut self, landed: impl Fn(Slot) -> Option<Bundles>) -> bool {
         let mut changed = false;
         for block in &mut self.blocks {
@@ -168,8 +130,6 @@ impl ProducedRing {
         self.blocks.iter_mut().find(|block| block.slot == slot)
     }
 
-    /// Records the version tally of a block still without one. True if a
-    /// block changed.
     pub fn set_versions(&mut self, slot: Slot, versions: TxVersions) -> bool {
         match self.block_mut(slot) {
             Some(block) if block.versions.is_none() => {
@@ -180,8 +140,6 @@ impl ProducedRing {
         }
     }
 
-    /// Records the certificate of a block still without it. True if a block
-    /// changed.
     pub fn set_certificate(&mut self, slot: Slot, certificate: BlockCertificate) -> bool {
         match self.block_mut(slot) {
             Some(block) if block.certificate.is_none() => {
@@ -192,8 +150,6 @@ impl ProducedRing {
         }
     }
 
-    /// Records the execution time of a block still without it. True if a
-    /// block changed.
     pub fn set_execution(&mut self, slot: Slot, execution: Execution) -> bool {
         match self.block_mut(slot) {
             Some(block) if block.execution.is_none() => {
@@ -328,8 +284,7 @@ mod tests {
     fn test_slot_is_recorded_once() {
         let mut ring = ProducedRing::new(4);
         assert!(ring.insert(block(10)));
-        // The same bank is seen frozen on every tick until it is rooted. Only
-        // the first sighting holds the block's own figures.
+        // Only the first sighting of a frozen bank holds the block's own figures.
         assert!(!ring.insert(block(10)));
         assert_eq!(ring.blocks().len(), 1);
     }
@@ -359,7 +314,6 @@ mod tests {
         let mut ring = ProducedRing::new(2);
         ring.insert(block(5));
         ring.insert(block(9));
-        // Arrives late and is older than both, so it is the one dropped.
         ring.insert(block(7));
         let slots: Vec<Slot> = ring.blocks().iter().map(|block| block.slot).collect();
         assert_eq!(slots, vec![7, 9]);

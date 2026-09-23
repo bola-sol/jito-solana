@@ -26,8 +26,6 @@ const FOOTER_SPAN: u64 = 2 * DATA_SHREDS_PER_FEC_BLOCK as u64;
 /// rewards, when every validator misses votes.
 pub const BOUNDARY_SLOTS: Slot = 1_000;
 
-/// How finely unpaid slots are placed along the epoch for the marks on the
-/// epoch meter.
 pub const MISS_BINS: usize = 400;
 const LAST_BIN: usize = MISS_BINS - 1;
 
@@ -40,14 +38,11 @@ pub const THIN_MIN_CERTIFICATES: u64 = 100;
 /// regular, whose absence from one is the writer's doing.
 pub const REGULAR_PERCENT: u64 = 90;
 
-/// Vote timings held for slots whose certificate has not been read yet.
 const PENDING_VOTES: usize = 4096;
 
-/// How many of the leaders behind lost votes are named.
 const LOST_LEADERS: usize = 3;
 
-/// What the reward certificate for a slot said about this node's vote. The
-/// certificate for slot N can only be written by the leader of slot N+8.
+/// The certificate for slot N can only be written by the leader of slot N+8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reward {
@@ -61,59 +56,41 @@ pub enum Reward {
 pub struct Mark {
     pub slot: Slot,
     pub reward: Reward,
-    /// This node's rank in the map the certificate was read against.
     pub rank: usize,
-    /// Each rank's bit in the notar and skip certificates together. Empty
-    /// where there was no certificate.
+    /// Empty where there was no certificate.
     pub paid: Vec<bool>,
-    /// Ranks set in the notarization certificate, and in the skip certificate.
     pub notar: u32,
     pub skip: u32,
 }
 
-/// Slots this validator's vote was paid for in an epoch, against the most any
-/// validator's was, counted from `since_slot` where the walk began.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Participation {
     pub epoch: Epoch,
     pub since_slot: Slot,
     pub paid: u64,
-    /// Slots whose certificate paid anybody.
     pub rewarded: u64,
     pub cluster_max: u64,
     pub misses: Misses,
-    /// Unpaid slots per `MISS_BINS`th of the epoch.
     pub miss_bins: Vec<u32>,
-    /// The leaders whose certificates left the most lost votes out, most first.
     pub lost_leaders: Vec<LostLeader>,
-    /// Ranks in the epoch's certificates, one per admitted validator.
     pub ranks: u32,
-    /// A certificate paying fewer ranks than this is thin: a tenth under the
-    /// epoch's median certificate. Absent until `THIN_MIN_CERTIFICATES` are in.
+    /// Absent until `THIN_MIN_CERTIFICATES` are in.
     pub thin_below: Option<u32>,
 }
 
-/// Slots that paid others but not this validator, by where they fell. A slot
-/// in more than one place counts in the first.
+/// A slot in more than one place counts in the first.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Misses {
-    /// Within `BOUNDARY_SLOTS` of the epoch's first slot.
     pub boundary: u64,
-    /// One of this validator's leader slots.
     pub leader: u64,
-    /// While a snapshot archive was being written.
     pub snapshot: u64,
-    /// The certificate paid at least `THIN_SHORTFALL_PERCENT` fewer ranks than
-    /// the epoch's median certificate.
     pub thin: u64,
     /// This node finished replaying the slot after the certificate's writer
     /// had begun its own.
     pub late: u64,
-    /// None of the above: the vote was in time and the certificate full.
     pub lost: u64,
 }
 
-/// A leader whose certificates left this validator's vote out, and how often.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LostLeader {
     pub identity: String,
@@ -131,27 +108,22 @@ pub struct VoteSent {
     pub skip_us: Option<u64>,
 }
 
-/// One unpaid slot, as the list a viewer asks for carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissRecord {
     pub slot: Slot,
     pub place: Place,
     pub paid_ranks: u32,
-    /// The regulars the certificate left out beside this node, by rank.
     pub others: Vec<u32>,
     pub writer: Option<Pubkey>,
     pub vote: Option<VoteSent>,
 }
 
-/// What the collector knows about an unpaid slot beyond where it fell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MissDetail {
-    /// The leader of the slot the certificate was written in.
     pub writer: Option<Pubkey>,
     pub late: bool,
 }
 
-/// The slots a snapshot write spanned. Open where it is still being written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub from: Slot,
@@ -164,12 +136,10 @@ impl Span {
     }
 }
 
-/// The slot whose leader writes the certificate for `slot`.
 pub fn writer_slot(slot: Slot) -> Slot {
     slot.saturating_add(NUM_SLOTS_FOR_REWARD)
 }
 
-/// The slot the certificate written in `writer_slot` rewards.
 pub fn rewarded_slot(writer_slot: Slot) -> Option<Slot> {
     writer_slot.checked_sub(NUM_SLOTS_FOR_REWARD)
 }
@@ -185,47 +155,35 @@ pub enum Place {
     Lost,
 }
 
-/// One unpaid slot. A place settled when the slot was seen, else one decided
-/// against the epoch's certificates when read.
+/// A place settled when the slot was seen, else decided against the epoch's certificates when read.
 #[derive(Debug, Clone)]
 struct Miss {
     slot: Slot,
     fixed: Option<Place>,
-    /// Ranks the certificate paid.
     paid_ranks: u32,
-    /// Ranks it did not pay, this node's aside.
     unpaid: Vec<u32>,
     writer: Option<Pubkey>,
     late: bool,
     vote: Option<VoteSent>,
 }
 
-/// A certificate written in one of this node's leader slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Written {
     pub paid: u32,
     pub notar: u32,
     pub skip: u32,
-    /// Whether it carried this node's own vote.
     pub ours_in: bool,
-    /// The ranks it did not pay.
     pub unpaid: Vec<u32>,
 }
 
-/// What this node's certificates carried, and what every rank was left out of.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WrittenSummary {
-    /// Certificates this node wrote that paid anybody.
     pub certificates: u64,
-    /// Of those, the ones that left no regular out.
     pub carried_all: u64,
-    /// Per rank: this node's certificates that did not pay it.
     pub unpaid_by_rank: Vec<u64>,
-    /// Per rank: certificates from any writer that did not pay it.
     pub unpaid_everywhere: Vec<u64>,
 }
 
-/// Paid slots per rank over one epoch's marks.
 #[derive(Debug)]
 pub struct Tally {
     epoch: Epoch,
@@ -239,16 +197,10 @@ pub struct Tally {
     rewarded: u64,
     per_rank: Vec<u64>,
     misses: Vec<Miss>,
-    /// Index into `misses` by slot.
     by_slot: HashMap<Slot, usize>,
-    /// Certificates by how many ranks they paid, indexed by that count.
     paid_ranks: Vec<u32>,
-    /// Certificates each writer wrote that paid anybody.
     writer_certs: HashMap<Pubkey, u64>,
-    /// Votes sent for slots whose certificate has not been read yet.
     pending_votes: BTreeMap<Slot, VoteSent>,
-    /// Certificates written in this node's leader slots, by the slot each
-    /// rewards.
     ours: BTreeMap<Slot, Written>,
 }
 
@@ -282,8 +234,7 @@ impl Tally {
         self.epoch
     }
 
-    /// Counts a mark, placing an unpaid slot against `snapshots`, the writes
-    /// seen so far, and `detail`. A slot with no certificate counts for nobody.
+    /// A slot with no certificate counts for nobody.
     pub fn add(&mut self, mark: &Mark, snapshots: &[Span], detail: Option<MissDetail>) {
         let paid_ranks = mark.paid.iter().filter(|paid| **paid).count();
         match mark.reward {
@@ -389,13 +340,11 @@ impl Tally {
         }
     }
 
-    /// Certificates `writer` wrote that paid anybody, so far this epoch.
     pub fn writer_certificates(&self, writer: &Pubkey) -> u64 {
         self.writer_certs.get(writer).copied().unwrap_or(0)
     }
 
-    /// How many regulars `mark`'s certificate left out, against the
-    /// certificates read so far. `None` where there was no certificate.
+    /// `None` where there was no certificate.
     pub fn left_out(&self, mark: &Mark) -> Option<u32> {
         if matches!(mark.reward, Reward::NoCertificate) {
             return None;
@@ -410,12 +359,10 @@ impl Tally {
         Some(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    /// The certificate this node wrote for `slot`, where it has been read.
     pub fn written_for(&self, slot: Slot) -> Option<&Written> {
         self.ours.get(&slot)
     }
 
-    /// What this node's certificates carried, against the regulars as of now.
     pub fn written(&self) -> WrittenSummary {
         let regulars = self.regulars();
         let mut unpaid_by_rank = vec![0u64; self.per_rank.len()];
@@ -453,7 +400,6 @@ impl Tally {
         self.since_slot
     }
 
-    /// Slots whose certificate paid anybody.
     pub fn rewarded(&self) -> u64 {
         self.rewarded
     }
@@ -462,7 +408,6 @@ impl Tally {
         u32::try_from(self.per_rank.len()).unwrap_or(u32::MAX)
     }
 
-    /// Where a miss falls, against the certificates seen so far.
     fn place_of(&self, miss: &Miss, thin_below: Option<u32>) -> Place {
         let decided = if thin_below.is_some_and(|below| miss.paid_ranks < below) {
             Place::Thin
@@ -474,7 +419,6 @@ impl Tally {
         miss.fixed.unwrap_or(decided)
     }
 
-    /// The ranks paid in at least `REGULAR_PERCENT` of the certificates.
     pub fn regulars(&self) -> Vec<bool> {
         let floor = self.rewarded.saturating_mul(REGULAR_PERCENT);
         self.per_rank
@@ -483,7 +427,6 @@ impl Tally {
             .collect()
     }
 
-    /// Every unpaid slot, oldest first, placed as of now.
     pub fn records(&self) -> Vec<MissRecord> {
         let thin_below = self.thin_below();
         let regulars = self.regulars();
@@ -513,8 +456,7 @@ impl Tally {
             .collect()
     }
 
-    /// The median paid-rank count of the epoch's certificates. `None` until
-    /// `THIN_MIN_CERTIFICATES` are in.
+    /// `None` until `THIN_MIN_CERTIFICATES` are in.
     pub fn usual_paid(&self) -> Option<u32> {
         if self.rewarded < THIN_MIN_CERTIFICATES {
             return None;
@@ -530,7 +472,6 @@ impl Tally {
         None
     }
 
-    /// A tenth under the usual certificate, below which one is thin.
     fn thin_below(&self) -> Option<u32> {
         let median = u64::from(self.usual_paid()?);
         let shortfall = median
@@ -548,8 +489,7 @@ impl Tally {
         usize::try_from(bin).unwrap_or(LAST_BIN).min(LAST_BIN)
     }
 
-    /// The counts so far, the best rank's among them. `name` gives a lost
-    /// vote's leader a display name.
+    /// `name` gives a lost vote's leader a display name.
     pub fn participation(&self, name: impl Fn(&Pubkey) -> Option<String>) -> Participation {
         let thin_below = self.thin_below();
         let mut misses = Misses::default();
@@ -605,16 +545,12 @@ impl Tally {
 
 enum Block {
     Footer(Box<BlockFooterV1>),
-    /// At or below the root with no block.
     Missing,
-    /// Above the root and not full yet.
     Pending,
-    /// Full, but the footer could not be read.
     Opaque,
 }
 
-/// Reads the footers of `from..=to` for their reward certificates, returning a mark per
-/// certificate and the last slot read. Stops at the first slot still filling.
+/// Stops at the first slot still filling.
 pub fn walk(
     blockstore: &Blockstore,
     bank: &Bank,
@@ -661,8 +597,7 @@ pub fn walk(
     (read_to, marks)
 }
 
-/// This node's rank in the epoch stakes that cover `slot`, and how many ranks
-/// there are. `None` where it holds no stake there.
+/// `None` where it holds no stake there.
 fn rank_of(bank: &Bank, vote_account: &Pubkey, slot: Slot) -> Option<(usize, usize)> {
     let map = bank.get_rank_map(slot)?;
     let rank = map.get_rank_for_vote_pubkey(vote_account)?;
@@ -696,8 +631,7 @@ fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
         .map_or(Block::Opaque, |footer| Block::Footer(Box::new(footer)))
 }
 
-/// What a footer's reward certificates say about `rank`, with every rank's bit; neither
-/// certificate means nobody was paid. `None` where a bitmap could not be read.
+/// Neither certificate means nobody was paid. `None` where a bitmap could not be read.
 fn mark_of(
     notar: Option<&NotarRewardCertificate>,
     skip: Option<&SkipRewardCertificate>,
@@ -747,8 +681,7 @@ fn mark_of(
     })
 }
 
-/// The ranks set in any of the signer bitmaps, one flag per rank. `None` where a bitmap does not
-/// decode or uses the two-vector form.
+/// `None` where a bitmap does not decode or uses the two-vector form.
 fn union<'a>(bitmaps: impl Iterator<Item = &'a [u8]>, len: usize) -> Option<Vec<bool>> {
     let mut paid = vec![false; len];
     for bitmap in bitmaps {
@@ -766,7 +699,6 @@ fn union<'a>(bitmaps: impl Iterator<Item = &'a [u8]>, len: usize) -> Option<Vec<
 mod tests {
     use super::*;
 
-    /// A Base2 bitmap: version, bit count as little-endian `u16`, then the bits.
     fn bitmap(len: u16, set: &[usize]) -> Vec<u8> {
         let mut bits = vec![0u8; usize::from(len).div_ceil(8)];
         for &rank in set {
@@ -783,7 +715,6 @@ mod tests {
         (0..len).map(|rank| set.contains(&rank)).collect()
     }
 
-    /// A mark over four ranks, this node at rank nought.
     fn mark(slot: Slot, reward: Reward, paid: &[usize]) -> Mark {
         Mark {
             slot,
@@ -821,7 +752,6 @@ mod tests {
         assert!(mark.paid.is_empty());
     }
 
-    /// An epoch of 4,000 slots from slot 0, with leader slots at 2,000 to 2,003.
     fn tally() -> Tally {
         Tally::new(7, 100, 0, 4_000, vec![2_000, 2_001, 2_002, 2_003])
     }
@@ -838,7 +768,6 @@ mod tests {
         Some(MissDetail { writer, late })
     }
 
-    /// A mark over twenty ranks, the first `paid` of them set.
     fn wide(slot: Slot, reward: Reward, paid: usize) -> Mark {
         Mark {
             slot,
@@ -861,20 +790,17 @@ mod tests {
         tally.add(&wide(3_000, Reward::Paid, 10), &[], None);
         let written = tally.written();
         assert_eq!(written.certificates, 3);
-        // Ranks 18 and 19 are paid in seven of ten, so not regulars: the
-        // certificate that left only them out carried everyone who counts.
+        // Ranks 18 and 19 are paid in seven of ten, so not regulars.
         assert_eq!(written.carried_all, 2);
         assert_eq!(written.unpaid_by_rank[17], 1);
         assert_eq!(written.unpaid_by_rank[19], 2);
         assert_eq!(written.unpaid_by_rank[0], 0);
-        // Everywhere: thirty of the fill, then three of the four above.
         assert_eq!(written.unpaid_everywhere[19], 33);
         assert_eq!(written.unpaid_everywhere[0], 0);
     }
 
     #[test]
     fn test_a_certificate_we_wrote_is_kept_whole_by_the_slot_it_rewards() {
-        // No usual certificate until enough are in.
         assert_eq!(tally().usual_paid(), None);
         let mut tally = tally();
         fill(&mut tally, 100);
@@ -885,9 +811,7 @@ mod tests {
         assert_eq!(written.skip, 0);
         assert!(written.ours_in);
         assert_eq!(written.unpaid, [17, 18, 19]);
-        // Not ours: the writer slot is nobody's leader slot in this tally.
         assert!(tally.written_for(500).is_none());
-        // The usual certificate is the median, once enough are in.
         assert_eq!(tally.usual_paid(), Some(20));
     }
 
@@ -900,8 +824,7 @@ mod tests {
         assert_eq!(tally.left_out(&wide(502, Reward::NoCertificate, 0)), None);
     }
 
-    /// Enough certificates that a thin one can be told: seventy paying all
-    /// twenty ranks and thirty paying eighteen, so the median pays twenty.
+    /// Seventy paying all twenty ranks and thirty paying eighteen, so the median pays twenty.
     fn fill(tally: &mut Tally, from: Slot) {
         for (index, slot) in (from..from.saturating_add(THIN_MIN_CERTIFICATES)).enumerate() {
             let paid = if index < 70 { 20 } else { 18 };
@@ -990,8 +913,7 @@ mod tests {
     fn test_a_certificate_a_tenth_short_of_the_median_is_thin() {
         let mut tally = tally();
         fill(&mut tally, 1_000);
-        // The median pays twenty, so under eighteen is thin. Eighteen and
-        // nineteen are ordinary jitter and fall through to late and lost.
+        // Under eighteen is thin; eighteen and nineteen fall through to late and lost.
         tally.add(&wide(3_000, Reward::Unpaid, 17), &[], None);
         tally.add(&wide(3_001, Reward::Unpaid, 18), &[], detail(None, true));
         tally.add(&wide(3_002, Reward::Unpaid, 19), &[], None);
@@ -1033,8 +955,6 @@ mod tests {
     fn test_a_miss_counts_the_regulars_left_out_beside_us() {
         let mut tally = tally();
         fill(&mut tally, 1_000);
-        // Ranks 18 and 19 are paid in seventy of the hundred, under the
-        // regular share; ranks 1 to 17 in every one.
         let mut alone = wide(3_000, Reward::Unpaid, 20);
         alone.paid[0] = false;
         tally.add(&alone, &[], None);
@@ -1089,7 +1009,6 @@ mod tests {
         tally.add(&mark(3_000, Reward::Unpaid, &[1]), &[], None);
         tally.add(&mark(3_001, Reward::Unpaid, &[1]), &[], None);
         tally.note_vote(3_001, vote);
-        // A paid slot's vote is never asked for and is not kept.
         tally.note_vote(2_999, vote);
         let records = tally.records();
         assert_eq!(records[0].vote, Some(vote));
@@ -1113,7 +1032,6 @@ mod tests {
             &[],
             detail(Some(b), false),
         );
-        // A late vote is not lost, so its writer is not counted.
         tally.add(
             &mark(3_004, Reward::Unpaid, &[1]),
             &[],

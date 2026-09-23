@@ -41,32 +41,21 @@ use {
     },
 };
 
-/// How often the expensive samples (the full validator set, the program cache)
-/// are taken, regardless of the poll interval.
 const SLOW_TICK: Duration = Duration::from_secs(5);
 
-/// How often the retained slot overview is re-encoded while slots change. Only
-/// a connecting client reads it, and it is a few hundred kilobytes.
+/// Only a connecting client reads the overview, a few hundred kilobytes.
 const OVERVIEW_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Block footers read for certificates on one tick, so a restart catches up
-/// over a few ticks rather than stalling one.
 const CERT_SLOTS_PER_TICK: u64 = 64;
 
-/// In the bank's slot-duration unit, for a day of votes at one a slot.
 const NANOS_PER_DAY: u128 = 86_400_000_000_000;
 
-/// Completed-slot samples kept for the replay rate, and the least span they
-/// must cover before a rate is read from them.
 const REPLAY_RATE_WINDOW: Duration = Duration::from_secs(30);
 const REPLAY_RATE_MIN_SPAN: Duration = Duration::from_secs(5);
 
-/// Slots behind the root the running totals are kept for. A parent is a few
-/// slots back at most.
 const TOTALS_KEPT: u64 = 64;
 
-/// A bank's running totals, kept so its children can be differenced against
-/// it after it is pruned.
+/// Kept so a child can be differenced after its parent is pruned.
 #[derive(Debug, Clone, Copy)]
 struct Totals {
     transactions: u64,
@@ -74,77 +63,54 @@ struct Totals {
     tips: u64,
 }
 
-/// Slots to include in the strip and sidebar snapshot sent on connect.
 const SLOT_OVERVIEW_LEN: usize = 512;
 
-/// Recent slots kept in memory. Deeper than the overview a client is sent, so
-/// a slot arriving late can still be matched.
 const SLOT_HISTORY: usize = 4096;
 
-/// Distinct client versions reported before the tail is folded into one row.
 const MAX_VERSIONS_REPORTED: usize = 5;
 
-/// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
-/// Slots of the leader schedule published ahead of the tip: eight turns, of which the page shows
-/// two.
 const UPCOMING_SLOTS: u64 = 32;
 
-/// Produced blocks kept for the block panel, matched to the slot ring's own-slot retention.
 const PRODUCED_BLOCKS: usize = 500;
 
-/// How often a consume worker reports its timing.
 const WORKER_REPORT_MILLIS: u64 = 20;
 
-/// Slots after which a block still without its timing window is given up.
 const EXECUTION_WAIT_SLOTS: u64 = 64;
 
-/// Leader turns kept, with the TPU path's totals over each.
 const LEADER_TURNS: usize = 128;
 
-/// Slots of arrival times kept, about five minutes. In slots rather than time
-/// so the window does not thin out during a stall.
+/// In slots rather than time, so a stall does not thin the window.
 const SLOT_TIME_WINDOW_SLOTS: usize = 750;
 
-/// Span the slot strip's readout averages over. Short enough to follow the
-/// cluster, long enough that a single slow slot does not move it.
 const SLOT_READOUT_SPAN_MS: u64 = 60_000;
 
-/// How near the highest slot held replay must come before this validator is
-/// following the cluster rather than replaying towards it.
 const CAUGHT_UP_SLOT_DISTANCE: u64 = 4;
 
 /// Samples the window must hold before the distance is believed: a validator just loaded from a
 /// snapshot sits at zero distance before replaying anything.
 const CAUGHT_UP_MIN_SAMPLES: usize = 64;
 
-/// Slots skipped past when the marker is set, so that the interval straddling
-/// the transition — part replay burst, part cluster — is not measured.
+/// Skipped past the transition, whose interval is part replay burst and part cluster.
 const CAUGHT_UP_MARGIN_SLOTS: u64 = 4;
 
 /// Slots an epoch must have run before its own rate is believed; below this the cluster clock's
 /// whole-second steps are noisier than the sliding window.
 const EPOCH_RATE_MIN_ELAPSED_SLOTS: u64 = 4_000;
 
-/// The countdown follows its estimate once they differ by more than this fraction of the time left.
 const EPOCH_END_DRIFT_DIVISOR: u32 = 64;
 
-/// Slots timed in one tick. Bounds the blockstore lookups after a stall, when
-/// the cursor could otherwise be thousands of slots behind.
 const MAX_SLOTS_TIMED_PER_TICK: u64 = 512;
 
-/// Above this many slots replayed a second the validator is catching up, so throughput samples are
-/// discarded.
 pub(crate) const CATCH_UP_SLOTS_PER_SECOND: f64 = 20.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StakeSummary {
-    /// Stake delegated to this validator's vote account, in lamports.
+    /// In lamports.
     pub activated_stake: u64,
-    /// Total stake across all vote accounts, in lamports.
     pub total_stake: u64,
-    /// This validator's share of total stake, in `[0, 1]`.
+    /// In `[0, 1]`.
     pub share: f64,
 }
 
@@ -153,47 +119,33 @@ pub struct ValidatorCounts {
     /// Distinct staked identities this epoch, so a validator with several vote accounts counts
     /// once.
     pub total: usize,
-    /// Staked validators whose last vote is too far behind the chain tip.
     pub delinquent: usize,
     pub rpc_nodes: usize,
     pub non_delinquent_stake: u64,
     pub delinquent_stake: u64,
 }
 
-/// How the cluster's stake is spread across client versions.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct VersionShare {
-    /// Semver as gossip reports it, or `null` for peers reporting none.
     pub version: Option<String>,
     pub validators: usize,
     pub stake: u64,
-    /// True for the row the tail was folded into, which sorts beside a genuine
-    /// no-version group.
+    /// The folded tail, which sorts beside a genuine no-version group.
     pub other: bool,
 }
 
-/// Stake, version and address for the leaders on screen only, so the table is
-/// bounded by the page rather than the validator set.
+/// Only the leaders on screen, so the table is bounded by the page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Peer {
     pub identity: String,
-    /// Client version as gossip reports it, absent for a node not being heard
-    /// from.
     pub version: Option<String>,
-    /// The client, as the version crate names it: `Agave`, `JitoLabs`, `Firedancer`.
     pub client: Option<String>,
-    /// Active stake this epoch, in lamports. Zero for an unstaked node.
     pub stake: u64,
-    /// Host of the gossip address, without the port.
     pub ip: Option<String>,
-    /// Display name from on-chain validator info, held once per leader rather than
-    /// on every slot it leads.
     pub name: Option<String>,
-    /// The validator's on-chain icon URL, when it published one.
     pub icon: Option<String>,
 }
 
-/// What gossip says about a leader.
 #[derive(Default)]
 struct Heard {
     version: Option<String>,
@@ -201,29 +153,21 @@ struct Heard {
     ip: Option<String>,
 }
 
-/// The epoch's unpaid slots, as a viewer asks for them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct MissList {
     pub epoch: Epoch,
     pub since_slot: Slot,
     pub rewarded: u64,
     pub ranks: u32,
-    /// The writers the rows point into.
     pub writers: Vec<MissWriter>,
-    /// The validators the rows' `others` point into.
     pub validators: Vec<MissValidator>,
     /// Oldest first.
     pub rows: Vec<MissRow>,
-    /// What this node's own certificates carried.
     pub written: WrittenList,
 }
 
-/// The gossip table keyed by identity, built once a slow tick for the lists
-/// that look a validator up per rank.
 type Contacts<'a> = HashMap<Pubkey, &'a ContactInfo>;
 
-/// What the lists say of a validator beside its key: its name from the info
-/// cache, and its client, version and address from gossip.
 struct Described {
     name: Option<String>,
     client: Option<String>,
@@ -243,8 +187,6 @@ fn describe(key: &Pubkey, info: &ValidatorInfoCache, heard: &Contacts) -> Descri
     }
 }
 
-/// The miss list's two replies, serialised when the list is rebuilt rather
-/// than for each viewer that asks.
 pub struct MissReplies {
     pub misses: Arc<str>,
     pub written: Arc<str>,
@@ -265,8 +207,6 @@ impl Default for MissReplies {
     }
 }
 
-/// The value as JSON, or null where its `Serialize` impl fails, as
-/// [`crate::proto::encode`] does.
 fn json_or_null<T: Serialize>(value: &T) -> Arc<str> {
     match serde_json::to_string(value) {
         Ok(json) => Arc::from(json),
@@ -277,18 +217,14 @@ fn json_or_null<T: Serialize>(value: &T) -> Arc<str> {
     }
 }
 
-/// What this node's certificates carried, per validator, as a viewer asks for
-/// it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct WrittenList {
     /// Certificates from any writer that paid anybody, which `left_out_everywhere`
     /// is of.
     pub rewarded: u64,
-    /// Certificates this node wrote that paid anybody.
     pub certificates: u64,
     /// Of those, the ones that left no regular out.
     pub carried_all: u64,
-    /// One per rank that names a validator.
     pub rows: Vec<WrittenRow>,
 }
 
@@ -299,14 +235,10 @@ pub struct WrittenRow {
     pub client: Option<String>,
     pub version: Option<String>,
     pub ip: Option<String>,
-    /// This node's certificates that did not pay it.
     pub left_out_of_ours: u64,
-    /// Certificates from any writer that did not pay it, of the list's
-    /// `rewarded`.
     pub left_out_everywhere: u64,
 }
 
-/// A validator a certificate left out beside this node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MissValidator {
     pub identity: String,
@@ -314,7 +246,6 @@ pub struct MissValidator {
     pub ip: Option<String>,
 }
 
-/// A leader whose certificate left this node out, with what it wrote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MissWriter {
     pub identity: String,
@@ -322,35 +253,29 @@ pub struct MissWriter {
     pub client: Option<String>,
     pub version: Option<String>,
     pub ip: Option<String>,
-    /// Certificates it wrote this epoch that paid anybody.
     pub certificates: u64,
-    /// Of those, the ones that left this node out.
     pub misses: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MissRow {
     pub slot: Slot,
-    /// The slot's first shred, in unix milliseconds, where it was timed.
+    /// In unix milliseconds.
     pub time_millis: Option<u64>,
     pub place: certs::Place,
     pub paid_ranks: u32,
     /// Indices into `validators`: the regulars left out beside this node.
     pub others: Vec<u32>,
-    /// Index into `writers`.
     pub writer: Option<u32>,
     pub vote: Option<certs::VoteSent>,
 }
 
-/// A scheduled slot that has not happened yet. Leaner than [`SlotEntry`]: no
-/// level, block or duration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UpcomingSlot {
     pub slot: Slot,
     pub leader: String,
     pub leader_name: Option<String>,
     pub leader_icon: Option<String>,
-    /// True when this validator is the scheduled leader.
     pub mine: bool,
 }
 
@@ -360,18 +285,14 @@ pub struct EpochInfo {
     pub start_slot: Slot,
     pub end_slot: Slot,
     pub slots_in_epoch: u64,
-    /// Slots in this epoch where this validator is the leader.
     pub my_leader_slots: Vec<Slot>,
 
-    /// Every leader of this epoch, in the order they first take a turn. Sent once
-    /// rather than on every slot.
+    /// In order of first turn.
     pub leaders: Vec<String>,
     /// One index into `leaders` per run of `NUM_CONSECUTIVE_LEADER_SLOTS` slots from `start_slot`.
     /// Empty, never partial, until the schedule is derived.
     pub turns: Vec<u16>,
 
-    /// Consensus limits every block of this epoch is measured against. Here rather
-    /// than per slot because they only move at epoch boundaries.
     pub block_cost_limit: u64,
     pub account_cost_limit: u64,
 }
@@ -393,15 +314,13 @@ pub enum ReplayHealth {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VoteHealth {
-    /// This node is not the voting identity, so it has no votes of its own.
     NotVoting,
     NotStarted,
     Voting,
     Delinquent,
 }
 
-/// Which consensus the cluster runs. Alpenglow carries votes outside blocks,
-/// so several figures have no meaning under it and the page drops them.
+/// Alpenglow votes outside blocks, so several figures mean nothing under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Consensus {
@@ -415,7 +334,6 @@ pub enum Consensus {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoteCost {
     Fees {
-        /// Lamports a day of votes costs, at one vote a slot.
         per_day: u64,
     },
     Ticket {
@@ -436,20 +354,17 @@ pub struct VoteCredits {
     pub cluster_max: Option<u64>,
 }
 
-/// Whether this vote account holds a seat in the admitted set, the validators
-/// whose votes count under alpenglow.
+/// Whether this vote account holds a seat in alpenglow's admitted set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Admission {
     pub seat: bool,
-    /// Absent until the next epoch's stakes are known.
     pub next_seat: Option<bool>,
     /// Lamports the vote account is short of the ticket for the epoch after
     /// the next, absent where it covers it or cannot be read.
     pub ticket_short: Option<u64>,
 }
 
-/// Read off the bank's rank maps, which hold the admitted set of each epoch
-/// whose stakes are known. Nothing before alpenglow.
+/// From the rank maps, which hold each epoch's admitted set. `None` before alpenglow.
 fn admission(bank: &Bank, vote_account: &Pubkey) -> Option<Admission> {
     if !bank.is_alpenglow() {
         return None;
@@ -523,8 +438,7 @@ struct Debounces {
 pub struct Collector {
     ctx: DashboardContext,
     publisher: Arc<Publisher>,
-    /// Supplied by the service rather than the context, since the boot
-    /// thread reports progress long before a context can be built.
+    /// From the service, since the boot thread reports before a context exists.
     startup_progress: StartProgress,
 
     debounces: Debounces,
@@ -532,36 +446,20 @@ pub struct Collector {
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
     /// The boot thread's publisher, handed over so the phases it recorded survive.
     startup: Arc<Mutex<StartupPublisher>>,
-    /// For what replay spent on each slot, asked by slot as the bank freezes.
     metrics_tap: Arc<MetricsTap>,
 
-    /// Highest slot for which leaders have been resolved, so the schedule is
-    /// only walked forwards.
     leaders_resolved_to: Slot,
-    /// Highest slot already swept for validator-info writes.
     info_scanned_to: Slot,
     /// Tip at the moment the collector started. Slots below it were never
     /// watched, so they are neither tracked nor counted as skipped.
     first_observed_slot: Option<Slot>,
-    /// The completed slot at each tick of the last half minute, for the
-    /// replay rate.
     completed_window: VecDeque<(Instant, Slot)>,
-    /// Detail for blocks this validator produced, captured as they froze.
     produced: ProducedRing,
-    /// Our blocks whose entries have not been read back yet.
     versions_pending: BTreeSet<Slot>,
-    /// Our blocks whose banking stage reports have not been summed yet.
     execution_pending: BTreeSet<Slot>,
-    /// The same slots packed to a schedule row's columns and kept far deeper.
-    /// Shared with the server, which answers range queries out of it.
     history: Arc<RwLock<SlotHistory>>,
-    /// This epoch and the one before it, shared with the server; only the current one is published.
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    /// The epoch, identity and schedule-known flag the epoch message was last
-    /// built for; any of them changing rebuilds it.
     epoch_published: Option<(Epoch, Pubkey, bool)>,
-    /// This validator's leader slots in the root's epoch, walked by the skip rate as the root
-    /// passes each. Rebuilt when the root crosses an epoch and on an identity change.
     skip_leader_slots: Vec<Slot>,
     skip_epoch: Option<(Epoch, Pubkey)>,
     skip_next_index: usize,
@@ -572,84 +470,51 @@ pub struct Collector {
     /// The slot the certificate walk started at and the last it has read. Marks before the start
     /// are dropped, since an unwalked slot looks like one before alpenglow.
     certs_walk: Option<(Slot, Slot)>,
-    /// Shared with the server, rebuilt on the slow tier.
     misses: Arc<RwLock<MissReplies>>,
-    /// Paid slots per rank in the epoch the walk is in.
     certs_tally: Option<certs::Tally>,
-    /// The slots each finished snapshot write spanned since the tally's epoch began.
     snapshot_spans: Vec<certs::Span>,
-    /// Highest slot examined for a shred timestamp, whether or not it had one.
-    /// Skipped slots never do, so this advances past them independently.
+    /// Advances past skipped slots, which never carry a timestamp.
     slot_timed_to: Option<Slot>,
-    /// The last slot that did carry a timestamp, and that timestamp in
-    /// milliseconds. The next slot's duration is measured from here.
     last_shred_time: Option<(Slot, u64)>,
-    /// `(slot, arrival)` pairs spanning the averaging window, oldest first.
-    /// Bounded by [`SLOT_TIME_WINDOW_SLOTS`].
     slot_time_window: VecDeque<(Slot, u64)>,
-    /// First slot whose timing describes the cluster rather than a replay
-    /// burst. Set once, never cleared. See [`Collector::mark_caught_up`].
     caught_up_at: Option<Slot>,
-    /// Whether replay was seen trailing the tip before the marker was set, which
-    /// decides whether there is anything to discard.
     replayed_behind: bool,
     /// Whether a tip ahead of replay has been seen since startup, and whether replay has since
     /// drawn level with it. The first tip read after a restart is stale.
     trailed_cluster: bool,
     caught_cluster: bool,
-    /// The epoch end being counted down to, held so the readout does not chase its
-    /// own estimate. See [`EPOCH_END_DRIFT_DIVISOR`].
+    /// Held so the readout does not chase its own estimate.
     epoch_end: Option<(Epoch, SystemTime)>,
     last_vote_advance: Instant,
-    /// Whether this process is the identity allowed to vote with the configured
-    /// vote account. False on a backup identity.
+    /// False on a backup identity.
     voting: bool,
     last_slow_tick: Instant,
-    /// Viewers attached as of the last tick, kept only so that pausing and
-    /// resuming are logged once rather than on every tick.
     subscribers: usize,
-    /// The most credits any staked validator has earned this epoch, as of the
-    /// last walk of the vote accounts.
     cluster_max_credits: Option<(Epoch, u64)>,
 
-    /// Reads what each slot paid in jito tips. `None` where no tip payment
-    /// program is configured, which is every plain agave validator.
     tips: Option<TipMeter>,
-    /// Frozen banks as replay reports them. `None` reads bank forks instead,
-    /// which misses banks pruned between ticks.
+    /// `None` reads bank forks instead, which misses banks pruned between ticks.
     frozen_banks: Option<BankNotificationReceiver>,
     totals: BTreeMap<Slot, Totals>,
-    /// Our own commission on tips, sent to the page so it can work out what our
-    /// blocks earned. Never applied to another validator's turn.
+    /// Never applied to another validator's turn.
     commission_bps: Option<u16>,
-    /// The meter's last reported residual, so a change is logged once rather
-    /// than every slow tick.
     tips_residual: Option<u64>,
-    /// Leader turns as the schedule resolves them, and the reading the next
-    /// difference is taken from.
     turns: TurnTracker,
     turns_scanned_to: Slot,
     turn_reference: TapCounters,
     turn_drained: Option<u64>,
     leader_turns: VecDeque<LeaderTurn>,
-    /// Whether a slot has changed since the overview was last encoded, and when
-    /// that was.
     overview_dirty: bool,
     overview_retained_at: Instant,
-    /// The archive being staged, the most replay fell behind while it was, and
-    /// the slot replay was at when the staging was first seen.
     snapshot_writing: Option<(Writing, u64, Slot)>,
     snapshot_last: Option<Written>,
 }
 
-/// The handles the service holds and the collector reads or writes through.
-/// The server reads most of them too, which is why they live on the service.
 pub struct CollectorShared {
     pub publisher: Arc<Publisher>,
     pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
     pub history: Arc<RwLock<SlotHistory>>,
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    /// The epoch's unpaid slots, answered by the server on request.
     pub misses: Arc<RwLock<MissReplies>>,
     pub startup_progress: StartProgress,
     pub startup: Arc<Mutex<StartupPublisher>>,
@@ -737,8 +602,6 @@ impl Collector {
         }
     }
 
-    /// Publishes the values fixed for the lifetime of the process, and the
-    /// client, which the slow tier keeps following.
     pub fn publish_static(&mut self) {
         let version = solana_version::Version::this_build();
         self.publisher
@@ -768,8 +631,6 @@ impl Collector {
                 },
             );
         }
-        // Fixed once the node has joined, and the first thing to check when a
-        // validator will not gossip.
         self.publisher.publish(
             TOPIC_SUMMARY,
             "shred_version",
@@ -780,8 +641,7 @@ impl Collector {
     pub fn tick(&mut self) {
         let now = Instant::now();
 
-        // One acquisition for the whole tick, held only long enough to clone the
-        // handles out: bank forks is the lock replay holds to advance.
+        // Held only to clone the handles out: replay takes this lock to advance.
         let (root_bank, working_bank, highest_slot, mut frozen) = {
             let bank_forks = self.ctx.bank_forks.read().unwrap();
             (
@@ -794,8 +654,6 @@ impl Collector {
         // Slot order, for the tip meter's running total. Everything else is a
         // difference against a parent and would be right in any order.
         frozen.sort_by_key(|(slot, _)| *slot);
-        // The highest slot this validator has replayed, as opposed to the
-        // highest it holds a bank for.
         let completed = frozen
             .iter()
             .map(|(slot, _)| *slot)
@@ -842,8 +700,6 @@ impl Collector {
             self.subscribers = subscribers;
         }
 
-        // `last_slow_tick` only moves when the tier runs, so the first tick after
-        // someone connects is already due.
         if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
             self.collect_validator_info(&frozen);
@@ -854,8 +710,6 @@ impl Collector {
             self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
-            // Ahead of the peer table, which covers the leaders of both the
-            // slots already sent and the ones about to be.
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
@@ -896,8 +750,6 @@ impl Collector {
             .publish(&self.publisher, TOPIC_SUMMARY, "client", client);
     }
 
-    /// Logs what the last sweep says the tip readings missed, once per change: a check on our
-    /// arithmetic rather than a figure for the page.
     fn report_tip_residual(&mut self) {
         let residual = self.tips.as_ref().and_then(TipMeter::residual);
         if residual == self.tips_residual {
@@ -912,7 +764,6 @@ impl Collector {
         }
     }
 
-    /// The newest archives on disk: two directory listings, so on the slow tier.
     fn collect_snapshots(&mut self) {
         let mut snapshots = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
         let writing = snapshots.as_ref().and_then(|snapshots| snapshots.writing);
@@ -943,8 +794,6 @@ impl Collector {
             .snapshots
             .publish(&self.publisher, TOPIC_SUMMARY, "snapshots", snapshots);
     }
-
-    // ---- slot positions -------------------------------------------------
 
     fn collect_slot_positions(&mut self, root_bank: &Bank, highest_slot: Slot, completed: Slot) {
         let commitment = self.ctx.block_commitment_cache.read().unwrap();
@@ -992,8 +841,6 @@ impl Collector {
         self.observe_slot_duration(root_bank, completed);
     }
 
-    /// Publishes both slot durations: the configured one the strip's bars are drawn against, and
-    /// the measured one it reads out.
     fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
         let now = Instant::now();
         if completed > self.last_completed_slot {
@@ -1008,8 +855,6 @@ impl Collector {
             self.completed_window.pop_front();
         }
 
-        // Constant between epoch boundaries, which is what makes it usable as
-        // the scale the bars are drawn against.
         let ns_per_slot = root_bank.ns_per_slot_at_slot(completed) as u64;
         self.debounces.slot_duration_nanos.publish(
             &self.publisher,
@@ -1026,11 +871,8 @@ impl Collector {
         );
     }
 
-    /// Times each newly arrived slot from the blockstore's record of when its first
-    /// shred landed, rather than from a 200ms poll that could be half a slot out.
+    /// Timed from the blockstore's first-shred record rather than a 200ms poll.
     fn collect_slot_durations(&mut self, up_to: Slot) {
-        // Nothing before the collector started was watched, so the first tick
-        // establishes a baseline rather than walking the whole ledger.
         let from = match self.slot_timed_to {
             None => up_to,
             Some(timed_to) => timed_to.saturating_add(1),
@@ -1050,7 +892,6 @@ impl Collector {
                 .last_shred_time
                 .filter(|(previous_slot, _)| slot > *previous_slot)
                 .map(|(_, previous_arrival)| arrived.saturating_sub(previous_arrival));
-            // Reported as the slot fills, which is before replay can freeze it.
             let shreds = self.metrics_tap.shred_fill(slot).map(arrival);
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.time_millis = Some(arrived);
@@ -1064,8 +905,6 @@ impl Collector {
                 changed.push(entry);
             }
 
-            // The slot's own wall clock, kept by the packed history; the entries above
-            // carry only the difference between slots.
             self.history.write().unwrap().record_time(slot, arrived);
             self.last_shred_time = Some((slot, arrived));
             self.slot_time_window.push_back((slot, arrived));
@@ -1081,8 +920,7 @@ impl Collector {
         }
     }
 
-    /// Records, once, the slot from which timings describe the cluster rather
-    /// than a replay burst. Never cleared: falling behind later is real.
+    /// Never cleared: falling behind later is real.
     fn mark_caught_up(&mut self, highest_slot: Slot, completed: Slot) {
         if self.caught_up_at.is_some() {
             return;
@@ -1098,8 +936,6 @@ impl Collector {
         let from = completed.saturating_add(CAUGHT_UP_MARGIN_SLOTS);
         self.caught_up_at = Some(from);
         if self.replayed_behind {
-            // Everything held was measured while trailing the tip, so it goes and the readout is
-            // blank until the window refills.
             self.slot_time_window.retain(|(slot, _)| *slot >= from);
         }
         log::info!("dashboard: caught up with the cluster, timing slots from {from}");
@@ -1112,15 +948,13 @@ impl Collector {
         }
     }
 
-    /// Mean milliseconds per slot over the last minute, in nanoseconds.
     fn windowed_slot_nanos(&self) -> Option<u64> {
         windowed_mean_nanos(&self.slot_time_window, SLOT_READOUT_SPAN_MS)
     }
 
     fn collect_leaders(&mut self, root_bank: &Bank, highest_slot: Slot) {
         let me = self.ctx.identity();
-        // The ring starts at the current tip. Filling it with earlier slots would
-        // report every one as skipped, since no bank for them will appear.
+        // Slots before the tip at start would all read as skipped.
         let from = match self.first_observed_slot {
             None => {
                 self.first_observed_slot = Some(highest_slot);
@@ -1137,13 +971,9 @@ impl Collector {
                 .leader_schedule_cache
                 .slot_leader_at(slot, Some(root_bank))
             else {
-                // The schedule for this epoch is not known yet; stop here and
-                // pick up where we left off next tick.
                 self.leaders_resolved_to = slot;
                 return;
             };
-            // Only whether it is ours. The leader comes off the epoch's turn array in the
-            // browser.
             if let Some(entry) = self.slots.set_mine(slot, leader.id == me) {
                 self.publish_slot(&entry);
             }
@@ -1167,8 +997,8 @@ impl Collector {
         );
     }
 
-    /// Groups our slots into turns as their leaders resolve, and once the cluster has passed a turn
-    /// credits it with the difference in the tap's totals since the previous reading.
+    /// Once the cluster passes a turn, credits it with the change in the tap's totals since the
+    /// previous reading.
     fn collect_turns(&mut self, completed: Slot) {
         let from = self
             .turns_scanned_to
@@ -1218,8 +1048,6 @@ impl Collector {
             .publish(TOPIC_SUMMARY, "produced_turns", &self.leader_turns);
     }
 
-    /// Publishes who leads the slots past the highest held. Returns the leaders
-    /// published, for the peer table.
     fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<Pubkey> {
         let me = self.ctx.identity();
         let first = highest_slot.saturating_add(1);
@@ -1252,16 +1080,12 @@ impl Collector {
         leaders
     }
 
-    /// Publishes stake, client version and address for the leaders on screen only, sorted by
-    /// identity so the debounce has a stable value.
     fn collect_peer_table(
         &mut self,
         bank: &Bank,
         mut leaders: HashSet<Pubkey>,
         peers: &[(ContactInfo, u64)],
     ) {
-        // The leaders of the window a client holds, from the schedule: a leader takes
-        // four slots at a time, so a quarter as many lookups as slots.
         let highest = self.last_completed_slot;
         let first = highest.saturating_sub(SLOT_OVERVIEW_LEN as u64);
         let stride = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
@@ -1384,13 +1208,12 @@ impl Collector {
                     tips: self.tips.as_ref().map_or(0, |meter| meter.total(bank)),
                 },
             );
-            // Read once, at a frozen bank's first sighting, for every block: the cost
-            // tracker and fees go with the bank when it is dropped after rooting.
+            // Read at a bank's first sighting: the cost tracker and fees go with the bank once it
+            // is rooted.
             let fresh = self
                 .slots
                 .get(slot)
                 .is_none_or(|entry| entry.block.is_none());
-            // Once per slot, and only with a parent to difference against.
             let tips = if fresh {
                 self.tips.as_mut().and_then(|meter| {
                     let before_tips = before
@@ -1408,8 +1231,8 @@ impl Collector {
                 .then(|| self.metrics_tap.replayed(slot))
                 .flatten();
             let replay = replayed.map(|times| times.serial());
-            // From the slot's first shred, on the blockstore's clock. The entry has
-            // it once the timing walk has passed; before that, the blockstore does.
+            // On the blockstore's clock: from the entry once timed, from the blockstore before
+            // that.
             let replayed_millis = replayed.and_then(|times| {
                 let first = self
                     .slots
@@ -1418,7 +1241,6 @@ impl Collector {
                     .or_else(|| self.first_shred_time(slot))?;
                 Some(times.observed_millis.saturating_sub(first))
             });
-            // Also here, for a slot frozen before the timing walk reached it.
             let shreds = fresh
                 .then(|| self.metrics_tap.shred_fill(slot).map(arrival))
                 .flatten();
@@ -1426,8 +1248,6 @@ impl Collector {
                 .filter(|_| fresh)
                 .map(|(total, non_vote)| block_detail(bank, total, non_vote, tips, replay));
 
-            // Our own blocks carry a blockhash and a start time on top of that,
-            // which the block panel shows and nothing else needs.
             if let Some(detail) = &detail
                 && mine
             {
@@ -1465,15 +1285,13 @@ impl Collector {
                 .promote(confirmed, SlotLevel::OptimisticallyConfirmed),
         );
 
-        // Anything still unstarted below the root will never be produced.
         changed.extend(self.slots.mark_skipped_below(root));
         self.totals = self.totals.split_off(&root.saturating_sub(TOTALS_KEPT));
 
         for entry in &changed {
             self.publish_slot(entry);
         }
-        // The bundle stage reports a slot a moment after its bank freezes, so a
-        // block captured without its bundles is filled in on a later tick.
+        // The bundle stage reports a slot after its bank freezes.
         let tap = &self.metrics_tap;
         let filled = self
             .produced
@@ -1486,8 +1304,6 @@ impl Collector {
         }
     }
 
-    /// Tallies the versions in each waiting block once the blockstore holds
-    /// the whole slot. True if a block changed.
     fn fill_versions(&mut self) -> bool {
         let blockstore = &self.ctx.blockstore;
         let floor = blockstore.lowest_slot();
@@ -1511,8 +1327,6 @@ impl Collector {
         changed
     }
 
-    /// Sums the banking stage's reports over each waiting block's window, first
-    /// shred to last, once the last report can have arrived.
     fn fill_execution(&mut self) -> bool {
         let now = unix_millis();
         let mut changed = false;
@@ -1549,7 +1363,6 @@ impl Collector {
         changed
     }
 
-    /// Adds what only the block panel reads for our own blocks: the blockhash and start time.
     fn capture_block(&self, slot: Slot, bank: &Bank, detail: &BlockDetail) -> ProducedBlock {
         ProducedBlock {
             slot,
@@ -1573,8 +1386,6 @@ impl Collector {
         }
     }
 
-    /// Reads the block footers since the last tick, marks the slots their certificates speak of,
-    /// and tallies the epoch's paid slots per rank. Alpenglow only.
     fn collect_vote_certs(&mut self, root_bank: &Bank) {
         if !root_bank.is_alpenglow() || self.last_completed_slot == 0 {
             return;
@@ -1621,7 +1432,6 @@ impl Collector {
                 self.snapshot_spans
                     .retain(|span| span.to.is_none_or(|to| to >= start));
             }
-            // For every mark: the writer's certificates are counted paid or not.
             let detail = Some(self.miss_detail(root_bank, mark.slot));
             let left_out = self.certs_tally.as_mut().and_then(|tally| {
                 tally.add(&mark, &spans, detail);
@@ -1649,8 +1459,6 @@ impl Collector {
         }
     }
 
-    /// Rebuilds the list a viewer asks for from the tally, naming each writer and left-out
-    /// validator once. Ranks resolve through the epoch's rank map.
     fn collect_miss_list(&self, bank: &Bank, heard: &Contacts) {
         let Some(tally) = &self.certs_tally else {
             return;
@@ -1764,8 +1572,6 @@ impl Collector {
         *self.misses.write().unwrap() = replies;
     }
 
-    /// Adds the reward certificate each of our blocks wrote, once the walk has
-    /// read it back. True if a block changed.
     fn fill_certificates(&mut self, bank: &Bank, heard: &Contacts) -> bool {
         let Some(tally) = &self.certs_tally else {
             return false;
@@ -1858,8 +1664,8 @@ impl Collector {
         changed
     }
 
-    /// A tally for `epoch` from `since_slot`. An unknown leader schedule is
-    /// taken as no leader slots; it is known for every slot the root has passed.
+    /// An unknown leader schedule counts as no leader slots; it is known for every slot the root
+    /// has passed.
     fn new_tally(&self, bank: &Bank, epoch: Epoch, since_slot: Slot) -> certs::Tally {
         let schedule = bank.epoch_schedule();
         certs::Tally::new(
@@ -1898,7 +1704,6 @@ impl Collector {
         certs::MissDetail { writer, late }
     }
 
-    /// The finished snapshot writes, and the one in progress as an open span.
     fn snapshot_spans(&self) -> impl Iterator<Item = certs::Span> + '_ {
         self.snapshot_spans.iter().copied().chain(
             self.snapshot_writing
@@ -1906,8 +1711,7 @@ impl Collector {
         )
     }
 
-    /// Sends one changed slot to live clients and keeps it in the packed history. Here because no
-    /// single moment finishes an entry.
+    /// Here because no single moment finishes an entry.
     fn publish_slot(&mut self, entry: &SlotEntry) {
         self.history.write().unwrap().record(entry);
         self.publisher
@@ -1915,8 +1719,6 @@ impl Collector {
         self.overview_dirty = true;
     }
 
-    /// Refreshes the snapshot a newly connected client receives, without
-    /// broadcasting it to clients that are already following the live updates.
     fn retain_slot_overview(&self) {
         self.publisher.retain_only(
             TOPIC_SLOT,
@@ -1924,8 +1726,6 @@ impl Collector {
             &self.slots.overview(SLOT_OVERVIEW_LEN),
         );
     }
-
-    // ---- identity, vote account, stake ----------------------------------
 
     fn collect_identity_and_vote(&mut self, bank: &Bank, cluster_tip: Option<Slot>) {
         let identity = self.ctx.identity();
@@ -1991,7 +1791,6 @@ impl Collector {
             None => (0, None, None),
         };
 
-        // Both off the vote account, so both absent where it is not found.
         let epoch = bank.epoch();
         let bls_key =
             mine.map(|(_, account)| account.vote_state_view().bls_pubkey_compressed().is_some());
@@ -2019,8 +1818,6 @@ impl Collector {
             vote_credits,
         );
 
-        // Published only while this process is the voter; otherwise it is another
-        // node's progress.
         let last_vote = if voting { voter_vote } else { None };
 
         self.debounces.vote_commission.publish(
@@ -2067,11 +1864,8 @@ impl Collector {
         );
     }
 
-    // ---- epoch ----------------------------------------------------------
-
     fn collect_epoch(&mut self, bank: &Bank) {
-        // Blocks, not slots. A skipped slot advances one and not the other, so
-        // the gap between the two is how much the cluster has dropped.
+        // Blocks, not slots: the gap between the two is how many slots the cluster skipped.
         self.debounces.block_height.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -2086,14 +1880,9 @@ impl Collector {
         let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
         let end_slot = start_slot.saturating_add(slots_in_epoch.saturating_sub(1));
 
-        // The countdown is published separately below. It changes constantly, and
-        // this message carries every leader slot in the epoch.
-
-        // Built when the epoch turns, not at every poll. See `epoch_published`.
         let me = self.ctx.identity();
         if self.epoch_published != Some((epoch, me, true)) {
-            // An unknown schedule is published as no leader slots. The panel
-            // counts them, and a count is better absent-as-zero than withheld.
+            // An unknown schedule is published as no leader slots.
             let my_leader_slots = self.leader_slots_in_epoch(bank, epoch).unwrap_or_default();
             let (leaders, turns) = self.epoch_turns(epoch, slots_in_epoch);
             let known = !turns.is_empty();
@@ -2136,8 +1925,7 @@ impl Collector {
         self.collect_epoch_countdown(bank, epoch, start_slot, end_slot);
     }
 
-    /// Publishes the epoch's time left as a duration, which needs no agreement between the two
-    /// clocks. Rounded to the second so the debounce has something to suppress.
+    /// Rounded to the second so the debounce has something to suppress.
     fn collect_epoch_countdown(
         &mut self,
         bank: &Bank,
@@ -2145,8 +1933,8 @@ impl Collector {
         start_slot: Slot,
         end_slot: Slot,
     ) {
-        // The same slot the progress bar uses. Nothing has frozen just after
-        // startup, and a completed slot of zero would put the end years out.
+        // Nothing has frozen just after startup, and a completed slot of zero would put the end
+        // years out.
         let completed = self.last_completed_slot.max(bank.slot());
         let remaining_slots = end_slot.saturating_sub(completed);
         let ahead = Duration::from_nanos(
@@ -2161,8 +1949,8 @@ impl Collector {
             .epoch_end
             .filter(|(held_epoch, _)| *held_epoch == epoch)
             .map(|(_, end)| end);
-        // Measured against what is left, so the countdown is as steady an hour
-        // from the boundary as it is six hours out.
+        // Proportional to what is left, so the countdown is as steady near the boundary as far from
+        // it.
         let allowance = held
             .and_then(|end| end.duration_since(now).ok())
             .unwrap_or_default()
@@ -2193,8 +1981,6 @@ impl Collector {
         )
     }
 
-    /// What the page needs to name the leaders of a past epoch, with `my_leader_slots` left empty.
-    /// `None` where the schedule is no longer cached.
     fn epoch_record(&self, bank: &Bank, epoch: Epoch) -> Option<EpochInfo> {
         let schedule = bank.epoch_schedule();
         let start_slot = schedule.get_first_slot_in_epoch(epoch);
@@ -2221,7 +2007,6 @@ impl Collector {
         })
     }
 
-    /// The epoch's leader schedule as a leader table and one index per turn.
     /// Empty, never partial, if the length is not whole turns.
     fn epoch_turns(&self, epoch: Epoch, slots_in_epoch: u64) -> (Vec<String>, Vec<u16>) {
         let Some(schedule) = self
@@ -2240,8 +2025,6 @@ impl Collector {
             let index = match seen.get(&leader.id) {
                 Some(index) => *index,
                 None => {
-                    // More than sixty-five thousand distinct leaders cannot be indexed by this
-                    // array; mainnet has about thirteen hundred.
                     let Ok(index) = u16::try_from(leaders.len()) else {
                         return (Vec::new(), Vec::new());
                     };
@@ -2265,8 +2048,7 @@ impl Collector {
         (leaders, turns)
     }
 
-    /// This validator's leader slots in `epoch`, ascending. `None` means the
-    /// schedule is not known yet, which is not an empty list.
+    /// `None` means the schedule is not known yet, which is not an empty list.
     fn leader_slots_in_epoch(&self, bank: &Bank, epoch: Epoch) -> Option<Vec<Slot>> {
         let epoch_schedule = bank.epoch_schedule();
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
@@ -2288,14 +2070,10 @@ impl Collector {
             })
     }
 
-    // ---- peers ----------------------------------------------------------
-
-    /// Counts the cluster: who holds stake, who is behind, and what they run.
     fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
 
-        // The best credits this epoch, for the stat that reads ours against it.
         let epoch = bank.epoch();
         self.cluster_max_credits = vote_accounts
             .values()
@@ -2304,8 +2082,7 @@ impl Collector {
             .max()
             .map(|max| (epoch, max));
 
-        // Gossip reports a client version; vote accounts report stake. A
-        // validator can appear in one and not the other, so both are walked.
+        // A validator can be in gossip or the vote accounts without the other, so both are walked.
         let versions: HashMap<Pubkey, String> = peers
             .iter()
             .map(|(contact_info, _)| (*contact_info.pubkey(), contact_info.version().to_string()))
@@ -2354,8 +2131,7 @@ impl Collector {
         );
     }
 
-    /// Display name and icon URL from on-chain validator info. The icon is a
-    /// third-party URL the client fetches itself.
+    /// The icon is a third-party URL the client fetches itself.
     fn peer_display(&self, identity: &Pubkey) -> (Option<String>, Option<String>) {
         match self.info_cache.read().unwrap().get(identity) {
             None => (None, None),
@@ -2363,8 +2139,6 @@ impl Collector {
         }
     }
 
-    /// Picks up validator names written since the last sweep, from each newly
-    /// frozen bank's own slot.
     fn collect_validator_info(&mut self, frozen: &[(Slot, Arc<Bank>)]) {
         let mut found = Vec::new();
         for (slot, bank) in frozen {
@@ -2384,10 +2158,7 @@ impl Collector {
         }
     }
 
-    // ---- health, skip rate ----------------------------------------------
-
-    /// Stamps, once, the moment replay draws level with a cluster tip it was seen trailing. On the
-    /// fast path, since the health figures only run with a viewer.
+    /// On the fast path, since the health figures only run with a viewer.
     fn mark_caught_cluster(&mut self, cluster_tip: Option<Slot>) {
         if self.caught_cluster {
             return;
@@ -2403,8 +2174,6 @@ impl Collector {
             return;
         }
         self.caught_cluster = true;
-        // Wall clock rather than an offset, since the collector is built after
-        // boot and the page has the uptime to take it from.
         self.publisher.publish(
             TOPIC_SUMMARY,
             "caught_up_time_nanos",
@@ -2418,8 +2187,6 @@ impl Collector {
             self.last_completed_slot,
             self.voting,
             self.debounces.vote_slot.last().copied().flatten(),
-            // Still the vote's own distance, which is what the delinquency rules are
-            // about.
             self.debounces
                 .vote_slot
                 .last()
@@ -2431,15 +2198,14 @@ impl Collector {
         self.debounces
             .health
             .publish(&self.publisher, TOPIC_SUMMARY, "health", health);
-        // To a tenth, so an in-step node rarely republishes.
         let rate = replay_rate(&self.completed_window).map(|rate| (rate * 10.0).round() / 10.0);
         self.debounces
             .replay_rate
             .publish(&self.publisher, TOPIC_SUMMARY, "replay_rate", rate);
     }
 
-    /// Skip rate across this validator's leader slots for the epoch, from the blockstore as `solana
-    /// block-production` reads it. Each slot is checked once, as the root passes it.
+    /// On the same basis as `solana block-production`, each slot checked once as the root passes
+    /// it.
     fn collect_skip_rate(&mut self, root_bank: &Bank) {
         // The root's epoch, not the working bank's: they differ for half a minute
         // after a rollover.
@@ -2499,7 +2265,6 @@ impl Collector {
     }
 }
 
-/// Completed slots a second across the window, once it spans the minimum.
 fn replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
     let (oldest_at, oldest) = window.front()?;
     let (newest_at, newest) = window.back()?;
@@ -2510,7 +2275,6 @@ fn replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
     Some(newest.saturating_sub(*oldest) as f64 / span.as_secs_f64())
 }
 
-/// What voting costs on `bank`, under whichever consensus it runs.
 fn vote_cost(bank: &Bank) -> VoteCost {
     if bank.is_alpenglow() {
         let minimum = bank.minimum_vote_account_balance_for_vat();
@@ -2528,15 +2292,13 @@ fn vote_cost(bank: &Bank) -> VoteCost {
     }
 }
 
-/// Credits a vote account earned in `epoch`, nought where it has none yet.
 fn epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch: Epoch) -> u64 {
     view.epoch_credits_iter()
         .find(|item| item.epoch() == epoch)
         .map_or(0, |item| item.credits().saturating_sub(item.prev_credits()))
 }
 
-/// How settled a frozen slot is, tested most settled first because the thresholds cross while the
-/// commitment cache lags the root at startup.
+/// Most settled first: the thresholds cross while the commitment cache lags the root at startup.
 fn level_for(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLevel {
     if slot <= finalized {
         SlotLevel::Finalized
@@ -2549,27 +2311,22 @@ fn level_for(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLe
     }
 }
 
-/// Who holds stake and who is behind, keyed by identity: several staked vote accounts are one
-/// validator.
+/// Keyed by identity: several staked vote accounts are one validator.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct StakeTally {
-    /// Stake per identity, summed across that identity's vote accounts.
     staked: HashMap<Pubkey, u64>,
     delinquent: HashSet<Pubkey>,
     delinquent_stake: u64,
     non_delinquent_stake: u64,
 }
 
-/// Folds vote accounts into [`StakeTally`]. Takes the fields rather than the
-/// accounts so it can be tested without a bank.
 fn tally_stake(
     accounts: impl Iterator<Item = (Pubkey, u64, Option<Slot>)>,
     tip: Slot,
 ) -> StakeTally {
     let mut tally = StakeTally::default();
     for (identity, stake, last_vote) in accounts {
-        // The bank holds every vote account ever created, most with no stake. A
-        // validator is one with stake this epoch.
+        // The bank holds every vote account ever created; a validator is one with stake this epoch.
         if stake == 0 {
             continue;
         }
@@ -2588,19 +2345,14 @@ fn tally_stake(
     tally
 }
 
-/// A vote further behind than this is reported as delinquent on the status card; looser than the
-/// cluster's threshold, since a brief lag on our own node is normal.
+/// Looser than the cluster's threshold, since a brief lag on our own node is normal.
 const VOTE_BEHIND_LIMIT: u64 = 150;
 
-/// How long replay may go without completing a slot before it reads as stalled.
 const REPLAY_STALL_AFTER: Duration = Duration::from_secs(12);
 
-/// How long the last vote may stand still before the node reads as delinquent
-/// however close to the tip that vote was.
 const VOTE_STALL_AFTER: Duration = Duration::from_secs(60);
 
-/// This validator's own replay and vote health. The two durations sit at
-/// either end of the argument list because swapping them compiles.
+/// The two durations sit at either end of the argument list because swapping them compiles.
 fn health_of(
     since_completed: Duration,
     completed_slot: Slot,
@@ -2622,7 +2374,6 @@ fn health_of(
     let vote = if !voting {
         VoteHealth::NotVoting
     } else {
-        // A vote can be delinquent two ways: far behind, or not moving at all.
         match (vote_slot, behind) {
             (None, _) => VoteHealth::NotStarted,
             (Some(_), Some(behind)) if behind > VOTE_BEHIND_LIMIT => VoteHealth::Delinquent,
@@ -2634,8 +2385,7 @@ fn health_of(
     Health { replay, vote }
 }
 
-/// Stake by client version, counted over staked identities so the two cards
-/// add up. A staked identity gossip cannot see has no version.
+/// Counted over staked identities so the two cards add up.
 fn version_shares(
     staked: &HashMap<Pubkey, u64>,
     versions: &HashMap<Pubkey, String>,
@@ -2657,16 +2407,13 @@ fn version_shares(
             other: false,
         })
         .collect();
-    // Stake first: a version running on a crowd of unstaked nodes matters far
-    // less than one carrying a slice of the vote.
     shares.sort_by(|a, b| {
         b.stake
             .cmp(&a.stake)
             .then_with(|| b.validators.cmp(&a.validators))
     });
 
-    // Version strings arrive over gossip, so the tail is folded into one row to
-    // keep the message a fixed size.
+    // Folded to keep the message a fixed size.
     if shares.len() > MAX_VERSIONS_REPORTED {
         let tail = shares.split_off(MAX_VERSIONS_REPORTED);
         shares.push(VersionShare {
@@ -2679,12 +2426,9 @@ fn version_shares(
     shares
 }
 
-/// Mean slot time over the newest `span_ms` of arrival times, in nanoseconds;
-/// `u64::MAX` reads the whole window.
+/// In nanoseconds; `u64::MAX` reads the whole window.
 fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u64> {
     let (last_slot, last_arrival) = window.back().copied()?;
-    // The oldest sample inside the span. A span holding only the newest is
-    // rejected below for spanning no slots.
     let (first_slot, first_arrival) = window
         .iter()
         .rev()
@@ -2696,8 +2440,8 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
         .filter(|slots| *slots > 0)?;
     let millis = last_arrival.checked_sub(first_arrival)?;
 
-    // Repair delivers shreds for many old slots at once, so their arrival times
-    // bunch up. That is the download, not the cluster.
+    // Repair delivers old slots' shreds at once, so their bunched arrivals are the download, not
+    // the cluster.
     let per_second = slots as f64 / (millis as f64 / 1_000.0).max(f64::MIN_POSITIVE);
     if per_second > CATCH_UP_SLOTS_PER_SECOND {
         return None;
@@ -2707,8 +2451,8 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
     Some(nanos as u64)
 }
 
-/// Reads a frozen bank's own figures for one block. The error and entry counters are per bank, so
-/// only `transactions` and `non_vote` come differenced from the caller.
+/// The error and entry counters are per bank, so only `transactions` and `non_vote` come
+/// differenced.
 fn block_detail(
     bank: &Bank,
     transactions: u64,
@@ -2741,7 +2485,6 @@ fn block_detail(
     }
 }
 
-/// What goes on the wire from the stage's record: the slot is the block's own.
 fn landed(bundles: BundleLanding) -> Bundles {
     Bundles {
         sanitized: bundles.sanitized,
@@ -2749,8 +2492,6 @@ fn landed(bundles: BundleLanding) -> Bundles {
     }
 }
 
-/// What goes on the wire from the banking stage's reports. Nothing where
-/// neither worker kind reported.
 fn execution(
     workers: Option<WorkerSum>,
     votes: Option<StageTimes>,
@@ -2769,7 +2510,6 @@ fn execution(
     })
 }
 
-/// What goes on the wire from a fill record: the slot is the entry's own.
 fn arrival(fill: ShredFill) -> ShredArrival {
     ShredArrival {
         count: fill.shreds,
@@ -2784,15 +2524,12 @@ fn best_slot_nanos(window: Option<u64>, clock: Option<u64>, configured: u64) -> 
     window.or(clock).unwrap_or(configured)
 }
 
-/// The epoch's own slot rate from the cluster clock. `None` until enough slots
-/// have run for the clock's whole seconds not to matter.
+/// `None` until enough slots have run for the clock's whole seconds not to matter.
 fn epoch_anchored_nanos(clock: &Clock, start_slot: Slot, completed: Slot) -> Option<u64> {
     let slots = completed.saturating_sub(start_slot);
     if slots < EPOCH_RATE_MIN_ELAPSED_SLOTS {
         return None;
     }
-    // A cluster whose clock has not advanced past the epoch's first slot says
-    // nothing about the rate, and a negative span says the two disagree.
     let elapsed = clock
         .unix_timestamp
         .checked_sub(clock.epoch_start_timestamp)?;
@@ -2800,8 +2537,6 @@ fn epoch_anchored_nanos(clock: &Clock, start_slot: Slot, completed: Slot) -> Opt
     elapsed.checked_mul(1_000_000_000)?.checked_div(slots)
 }
 
-/// The epoch end to count down to: the held answer unless the estimate has
-/// moved more than `allowance`. See [`EPOCH_END_DRIFT_DIVISOR`].
 fn steady_epoch_end(
     held: Option<SystemTime>,
     estimate: SystemTime,
@@ -2810,7 +2545,6 @@ fn steady_epoch_end(
     let Some(held) = held else {
         return estimate;
     };
-    // Either order, whichever way the estimate moved.
     let drift = held
         .duration_since(estimate)
         .or_else(|_| estimate.duration_since(held))
@@ -2818,8 +2552,7 @@ fn steady_epoch_end(
     if drift > allowance { estimate } else { held }
 }
 
-/// Folds a gossip version string to its release. A cluster mid-upgrade reports
-/// `4.2.0`, `4.2.0-rc.0` and `4.2.0-rc.1`, which are one release.
+/// A cluster mid-upgrade reports `4.2.0`, `4.2.0-rc.0` and `4.2.0-rc.1`, which are one release.
 fn release_of(version: &str) -> &str {
     match version.find(['-', '+']) {
         Some(at) => &version[..at],
@@ -2852,16 +2585,12 @@ mod tests {
         solana_keypair::Keypair,
     };
 
-    /// The arrival window as the collector holds it.
     fn window(samples: &[(Slot, u64)]) -> VecDeque<(Slot, u64)> {
         samples.iter().copied().collect()
     }
 
-    // ---- slot levels ----------------------------------------------------
-
     #[test]
     fn test_level_reads_the_thresholds_most_settled_first() {
-        // root 100, confirmed 110, finalized 90 — the ordinary arrangement.
         assert_eq!(level_for(80, 100, 110, 90), SlotLevel::Finalized);
         assert_eq!(level_for(95, 100, 110, 90), SlotLevel::Rooted);
         assert_eq!(
@@ -2880,7 +2609,6 @@ mod tests {
 
     #[test]
     fn test_the_boundaries_are_inclusive() {
-        // A slot exactly at a threshold has reached it.
         assert_eq!(level_for(90, 100, 110, 90), SlotLevel::Finalized);
         assert_eq!(level_for(100, 100, 110, 90), SlotLevel::Rooted);
         assert_eq!(
@@ -2888,8 +2616,6 @@ mod tests {
             SlotLevel::OptimisticallyConfirmed
         );
     }
-
-    // ---- stake tally ----------------------------------------------------
 
     fn identity(seed: u8) -> Pubkey {
         Pubkey::new_from_array([seed; 32])
@@ -2899,8 +2625,6 @@ mod tests {
 
     #[test]
     fn test_unstaked_vote_accounts_are_not_counted() {
-        // The bank keeps every vote account ever created, tens of thousands with no
-        // stake.
         let tally = tally_stake(
             [(identity(1), 0, Some(TIP)), (identity(2), 100, Some(TIP))].into_iter(),
             TIP,
@@ -2921,8 +2645,8 @@ mod tests {
 
     #[test]
     fn test_active_validators_cannot_go_negative() {
-        // Counted per vote account, an identity with two delinquent accounts
-        // gave total 1 and delinquent 2, and the page renders the difference.
+        // Counted per vote account, an identity with two delinquent accounts read total 1,
+        // delinquent 2.
         let tally = tally_stake(
             [(identity(1), 100, Some(0)), (identity(1), 100, Some(0))].into_iter(),
             TIP,
@@ -2973,12 +2697,9 @@ mod tests {
         assert_eq!(tally.delinquent_stake, 30);
     }
 
-    // ---- epoch schedule ---------------------------------------------------
-
     #[test]
     fn test_the_turn_array_names_the_leader_the_schedule_names() {
-        // Every slot must resolve through the two arrays to the key the schedule
-        // gives it. An off-by-one in the stride names the wrong validator throughout.
+        // An off-by-one in the stride would name the wrong validator throughout.
         let harness = fixture();
         let collector = harness.collector();
         let bank = harness.working_bank();
@@ -2993,8 +2714,6 @@ mod tests {
         let stride = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
         assert_eq!((turns.len() as u64).saturating_mul(stride), slots_in_epoch);
 
-        // Walked by turn rather than by slot, which keeps a runtime division the lint
-        // would reject out of it.
         for (turn, index) in turns.iter().enumerate().take(16) {
             let slot = start.saturating_add((turn as u64).saturating_mul(stride));
             let expected = harness
@@ -3012,8 +2731,7 @@ mod tests {
 
     #[test]
     fn test_an_epoch_with_no_derived_schedule_carries_no_turns() {
-        // Empty, never partial. A short array is indistinguishable from a short
-        // epoch, so a schedule that cannot be read has to say nothing at all.
+        // A short array is indistinguishable from a short epoch.
         let harness = fixture();
         let collector = harness.collector();
         let bank = harness.working_bank();
@@ -3026,8 +2744,6 @@ mod tests {
 
     #[test]
     fn test_mismatched_stride_publishes_no_schedule() {
-        // Asking for the real epoch against the wrong length is the same failure as
-        // the schedule's repeat drifting from the constant.
         let harness = fixture();
         let collector = harness.collector();
         let bank = harness.working_bank();
@@ -3040,7 +2756,6 @@ mod tests {
 
     #[test]
     fn test_the_epoch_before_this_one_is_kept_rather_than_sent() {
-        // Half a megabyte, wanted only by a page that has read back past a boundary.
         let harness = fixture();
         let mut collector = harness.collector();
         collector.tick();
@@ -3052,15 +2767,11 @@ mod tests {
             held.iter().any(|record| record.epoch == epoch),
             "the current epoch is always among them"
         );
-        // The previous one only where its schedule is still cached, which for a
-        // fixture starting at slot nought it is not. Absent, not wrong.
         assert!(held.iter().all(|record| record.epoch <= epoch));
     }
 
     #[test]
     fn test_a_kept_past_epoch_carries_no_leader_slots_of_ours() {
-        // They feed the countdown and the list for the epoch being led now.
-        // Twenty kilobytes of slot numbers nothing asks a past epoch for.
         let harness = fixture();
         let collector = harness.collector();
         let bank = harness.working_bank();
@@ -3074,8 +2785,6 @@ mod tests {
 
     #[test]
     fn test_the_epoch_message_is_built_once_and_not_at_every_poll() {
-        // A hundred thousand turns on mainnet; rebuilt at the poll rate it is two
-        // hundred kilobytes five times a second.
         let harness = fixture();
         let mut collector = harness.collector();
         collector.tick();
@@ -3089,8 +2798,6 @@ mod tests {
 
     #[test]
     fn test_swapped_identity_rebuilds_the_epoch() {
-        // A validator that boots on a dummy identity and swaps had the dummy's empty leader slots
-        // latched for the epoch.
         let harness = fixture();
         let mut collector = harness.collector();
         collector.tick();
@@ -3112,14 +2819,10 @@ mod tests {
 
     #[test]
     fn test_the_skip_rate_starts_again_for_a_swapped_identity() {
-        // Same latch, same reason. The slot list it walks belongs to one
-        // validator, and after a swap it belongs to somebody else.
         let harness = fixture();
         let mut collector = harness.collector();
         collector.tick();
 
-        // Called directly: the skip rate rides the slow tier, and this is about the
-        // latch.
         let stranger = Pubkey::new_unique();
         collector.skip_epoch = Some((0, stranger));
         collector.skip_next_index = 99;
@@ -3130,8 +2833,7 @@ mod tests {
             Some((0, stranger)),
             "the latch must not still belong to the identity that has gone"
         );
-        // Not nought: the reset is followed by the walk over every passed leader slot.
-        // Compared against a collector meeting the epoch fresh rather than a constant.
+        // Not nought: the reset is followed by a walk over every passed leader slot.
         let restarted = {
             let mut control = harness.collector();
             control.collect_skip_rate(&harness.working_bank());
@@ -3143,15 +2845,12 @@ mod tests {
         );
     }
 
-    // ---- the vote account -----------------------------------------------
-
     #[test]
     fn test_the_vote_account_reports_its_bls_key_and_credits() {
         let harness = fixture();
         harness.advance_to(8);
         harness.collector().tick();
 
-        // A boolean, either way: null would mean the account was not found.
         let bls = harness.published_key("summary", "bls_key").unwrap();
         assert!(
             bls.contains(r#""value":true"#) || bls.contains(r#""value":false"#),
@@ -3160,12 +2859,9 @@ mod tests {
         let credits = harness.published_key("summary", "vote_credits").unwrap();
         assert!(credits.contains(r#""credits":0"#), "{credits}");
         assert!(credits.contains(r#""cluster_max":null"#), "{credits}");
-        // No admitted set before alpenglow, which the fixture is not on.
         let admission = harness.published_key("summary", "admission").unwrap();
         assert!(admission.contains(r#""value":null"#), "{admission}");
 
-        // The slow walk fills the cluster's best in, which for the fixture's
-        // one staked validator is our own figure.
         let mut collector = harness.collector();
         collector.collect_peers(&harness.working_bank(), &[]);
         collector.tick();
@@ -3185,7 +2881,6 @@ mod tests {
             0,
             10,
         ));
-        // Replay trails the cluster while the write is on.
         harness.advance_to(64);
         harness.set_cluster_tip(100);
         collector.tick();
@@ -3197,13 +2892,11 @@ mod tests {
                 .map(|(_, behind, _)| *behind),
             Some(100 - completed)
         );
-        // While it writes, the span is open from where replay was.
         assert_eq!(
             collector.snapshot_spans().collect::<Vec<_>>(),
             vec![certs::Span { from: 10, to: None }]
         );
 
-        // No config in the fixture, so the next read sees no staging file.
         collector.collect_snapshots();
         let written = collector.snapshot_last.as_ref().expect("the write ended");
         assert_eq!(written.slot, 300);
@@ -3219,8 +2912,6 @@ mod tests {
         );
     }
 
-    // ---- what this build is ---------------------------------------------
-
     #[test]
     fn test_the_node_reports_the_client_it_gossips_beside_its_version() {
         let harness = fixture();
@@ -3233,24 +2924,19 @@ mod tests {
             .client()
             .to_string();
 
-        // Asserting a name would only assert which fork the tests ran from. What
-        // can break is the header disagreeing with what peers see in gossip.
+        // Asserting a name would only assert which fork ran the tests.
         let published = harness.published_key("summary", "client").unwrap();
         assert!(
             published.contains(&format!(r#""value":"{client}""#)),
             "published {published}, which does not carry the client {client}"
         );
 
-        // And the reason it is published at all: the version it sits beside
-        // does not carry it, which is why every fork's header read the same.
         let version = harness.published_key("summary", "version").unwrap();
         assert!(
             !version.contains(&client),
             "{version} already names the client, so publishing it apart is dead weight"
         );
     }
-
-    // ---- version shares -------------------------------------------------
 
     fn staked(entries: &[(u8, u64)]) -> HashMap<Pubkey, u64> {
         entries
@@ -3268,8 +2954,6 @@ mod tests {
 
     #[test]
     fn test_prerelease_tags_fold_into_one_release_row() {
-        // A cluster mid-upgrade reports 4.2.0, 4.2.0-rc.0 and 4.2.0-rc.1.
-        // Counted apart they understate how much stake has actually moved.
         let shares = version_shares(
             &staked(&[(1, 10), (2, 10), (3, 10)]),
             &gossiped(&[(1, "4.2.0"), (2, "4.2.0-rc.0"), (3, "4.2.0-rc.1")]),
@@ -3282,8 +2966,6 @@ mod tests {
 
     #[test]
     fn test_rows_are_ordered_by_stake_not_by_node_count() {
-        // The whole point of the panel: a version on a crowd of lightly staked
-        // nodes matters less than one carrying a slice of the vote.
         let shares = version_shares(
             &staked(&[(1, 1_000), (2, 1), (3, 1), (4, 1)]),
             &gossiped(&[(1, "4.2.0"), (2, "4.1.0"), (3, "4.1.0"), (4, "4.1.0")]),
@@ -3295,8 +2977,6 @@ mod tests {
 
     #[test]
     fn test_an_unstaked_gossip_node_is_not_counted() {
-        // The counts are read beside the validator card, which counts staked
-        // identities. Counting gossip peers here summed past that total.
         let shares = version_shares(&staked(&[]), &gossiped(&[(1, "4.2.0")]));
         assert!(shares.is_empty());
     }
@@ -3304,7 +2984,6 @@ mod tests {
     #[test]
     fn test_the_counts_sum_to_the_staked_validator_total() {
         let staked = staked(&[(1, 10), (2, 10), (3, 10)]);
-        // Two unstaked peers gossip a version alongside them.
         let shares = version_shares(
             &staked,
             &gossiped(&[(1, "4.2.0"), (2, "4.3.0"), (7, "4.3.0"), (8, "4.3.0")]),
@@ -3327,8 +3006,6 @@ mod tests {
 
     #[test]
     fn test_the_tail_folds_into_one_flagged_row() {
-        // Version strings arrive over gossip, so the number of distinct values
-        // is not ours to bound; the message has to stay a fixed size.
         let peers: Vec<(u8, String)> = (1..=9).map(|seed| (seed, format!("4.{seed}.0"))).collect();
         let versions = gossiped(
             &peers
@@ -3336,8 +3013,6 @@ mod tests {
                 .map(|(seed, version)| (*seed, version.as_str()))
                 .collect::<Vec<_>>(),
         );
-        // Distinct stakes, so which rows survive the fold does not come down to
-        // the order a hash map happened to iterate in.
         let stakes: Vec<(u8, u64)> = (1..=9).map(|seed| (seed, u64::from(seed))).collect();
         let shares = version_shares(&staked(&stakes), &versions);
 
@@ -3350,8 +3025,6 @@ mod tests {
             "only the tail row is flagged"
         );
     }
-
-    // ---- health ---------------------------------------------------------
 
     const FRESH: Duration = Duration::from_secs(1);
 
@@ -3369,14 +3042,12 @@ mod tests {
 
     #[test]
     fn test_replay_has_not_started_before_the_first_slot() {
-        // Slot zero means nothing has completed yet, which is not a stall.
         assert_eq!(
             health_of(FRESH, 0, true, None, None, FRESH).replay,
             ReplayHealth::NotStarted
         );
     }
 
-    /// The integer a summary key was published with, if it carried one.
     fn published_number(harness: &Fixture, key: &str) -> Option<u64> {
         let message = harness.published_key("summary", key)?;
         let after = message.rsplit_once(r#""value":"#)?.1;
@@ -3386,8 +3057,7 @@ mod tests {
 
     #[test]
     fn test_the_cluster_distance_is_measured_against_the_cluster() {
-        // The figure this replaced was replay against our own vote, which reads
-        // nought however far back the node is.
+        // Replay against our own vote reads nought however far back the node is.
         let harness = fixture();
         harness.advance_to(64);
         harness.set_cluster_tip(10_000);
@@ -3403,8 +3073,7 @@ mod tests {
 
     #[test]
     fn test_a_node_the_cluster_has_not_outrun_is_not_behind() {
-        // Saturating rather than negative. Being ahead of the last certificate
-        // seen is ordinary, and is not a distance.
+        // Being ahead of the last certificate seen is ordinary, not a distance.
         let harness = fixture();
         harness.advance_to(64);
         harness.set_cluster_tip(1);
@@ -3433,7 +3102,6 @@ mod tests {
 
     #[test]
     fn test_under_tower_the_vote_cost_is_a_day_of_fees() {
-        // The fixture runs TowerBFT, so the ticket branch has no test here.
         let harness = fixture();
         harness.collector().tick();
         let bank = harness.working_bank();
@@ -3464,8 +3132,6 @@ mod tests {
 
     #[test]
     fn test_a_validator_on_its_backup_identity_is_not_voting() {
-        // The vote account is voted from wherever the voting identity runs, so its
-        // last vote looks healthy.
         assert_eq!(
             health_of(FRESH, 100, false, Some(99), Some(1), FRESH).vote,
             VoteHealth::NotVoting
@@ -3474,8 +3140,6 @@ mod tests {
 
     #[test]
     fn test_not_voting_outranks_every_other_reading() {
-        // Including the two that would otherwise call it delinquent: a node that is
-        // not the voter has no votes to be late with.
         assert_eq!(
             health_of(
                 FRESH,
@@ -3496,8 +3160,6 @@ mod tests {
 
     #[test]
     fn test_replay_is_reported_whether_or_not_this_node_votes() {
-        // A backup still replays, and an operator watching a failover wants to
-        // know it is keeping up before handing the identity back.
         assert_eq!(
             health_of(FRESH, 100, false, None, None, FRESH).replay,
             ReplayHealth::Running
@@ -3542,7 +3204,6 @@ mod tests {
         );
     }
 
-    /// `count` samples `slot_ms` apart from `from`, newest last.
     fn steady_window(from: (Slot, u64), count: u64, slot_ms: u64) -> VecDeque<(Slot, u64)> {
         let (slot, arrival) = from;
         (0..count)
@@ -3557,24 +3218,18 @@ mod tests {
 
     #[test]
     fn test_a_full_window_averages_the_whole_of_it() {
-        // Five minutes of slots at 420ms, read whole, as the epoch countdown
-        // will read them.
         let samples = steady_window((100, 1_000), SLOT_TIME_WINDOW_SLOTS as u64, 420);
         assert_eq!(windowed_mean_nanos(&samples, u64::MAX), Some(420_000_000));
     }
 
     #[test]
     fn test_a_full_window_of_replay_is_still_rejected() {
-        // Widening the window made the catch-up guard less twitchy, which is
-        // the point, but it must not have made it blind.
         let samples = steady_window((100, 1_000), SLOT_TIME_WINDOW_SLOTS as u64, 10);
         assert_eq!(windowed_mean_nanos(&samples, u64::MAX), None);
     }
 
     #[test]
     fn test_the_readout_span_ignores_samples_older_than_itself() {
-        // Five minutes at 400ms, then a minute at 500ms. Read whole the slowdown is
-        // diluted; read over the readout's span it is the whole answer.
         let mut samples = steady_window((100, 1_000), SLOT_TIME_WINDOW_SLOTS as u64, 400);
         let (last_slot, last_arrival) = *samples.back().unwrap();
         samples.extend(steady_window(
@@ -3592,9 +3247,6 @@ mod tests {
         assert!(windowed_mean_nanos(&samples, u64::MAX).unwrap() < 420_000_000);
     }
 
-    // ---- upcoming leaders -----------------------------------------------
-
-    /// The slot numbers of the published upcoming list, in order.
     fn upcoming_slots(harness: &crate::fixture::Fixture) -> Vec<u64> {
         let published = harness
             .published_key("slot", "upcoming")
@@ -3632,7 +3284,6 @@ mod tests {
 
     #[test]
     fn test_upcoming_marks_our_own_slots() {
-        // The fixture stakes this validator alone, so it leads every slot.
         let harness = fixture();
         harness.advance_to(8);
         let mut collector = harness.collector();
@@ -3646,8 +3297,6 @@ mod tests {
         );
     }
 
-    // ---- epoch countdown ------------------------------------------------
-
     fn at(seconds: u64) -> SystemTime {
         UNIX_EPOCH
             .checked_add(Duration::from_secs(seconds))
@@ -3656,7 +3305,6 @@ mod tests {
 
     const ALLOWANCE: Duration = Duration::from_secs(60);
 
-    /// A clock `elapsed` seconds into its epoch.
     fn clock_at(elapsed: i64) -> Clock {
         Clock {
             epoch_start_timestamp: 1_700_000_000,
@@ -3667,15 +3315,13 @@ mod tests {
 
     #[test]
     fn test_epoch_rate_is_elapsed_time_over_slots() {
-        // Six hours across sixty thousand slots is 360ms a slot.
         let nanos = epoch_anchored_nanos(&clock_at(21_600), 100, 60_100);
         assert_eq!(nanos, Some(360_000_000));
     }
 
     #[test]
     fn test_the_measured_rate_outranks_a_clamped_clock() {
-        // Testnet at 190ms slots: the clock sits on its clamp and advances 500ms
-        // a slot whatever the cluster does.
+        // Testnet at 190ms slots: the clock sits on its clamp, advancing 500ms a slot.
         assert_eq!(
             best_slot_nanos(Some(190_000_000), Some(500_000_000), 400_000_000),
             190_000_000
@@ -3696,7 +3342,6 @@ mod tests {
 
     #[test]
     fn test_a_clock_that_has_not_moved_yields_no_rate() {
-        // Nothing to divide, and a negative span means the two disagree.
         assert_eq!(epoch_anchored_nanos(&clock_at(0), 100, 60_100), None);
         assert_eq!(epoch_anchored_nanos(&clock_at(-10), 100, 60_100), None);
     }
@@ -3708,8 +3353,6 @@ mod tests {
 
     #[test]
     fn test_small_drift_does_not_move_the_countdown() {
-        // Half a minute either way, on a figure hours out. Following this is
-        // what made the readout restless while telling nobody anything.
         let held = at(10_000);
         for estimate in [at(10_030), at(9_970)] {
             assert_eq!(steady_epoch_end(Some(held), estimate, ALLOWANCE), held);
@@ -3728,16 +3371,12 @@ mod tests {
 
     #[test]
     fn test_drift_exactly_at_the_allowance_is_still_held() {
-        // The boundary belongs to the quiet side: a countdown that steps for a
-        // difference this small is a countdown that steps constantly.
         let held = at(10_000);
         assert_eq!(steady_epoch_end(Some(held), at(10_060), ALLOWANCE), held);
     }
 
     #[test]
     fn test_the_allowance_scales_with_what_is_left() {
-        // A fixed sixty seconds is a seventh of a millisecond of slot time across a
-        // fresh epoch, which every sample turnover clears.
         let six_hours = Duration::from_secs(21_600);
         let allowance = six_hours.checked_div(EPOCH_END_DRIFT_DIVISOR).unwrap();
         assert!(allowance > Duration::from_secs(300), "{allowance:?}");
@@ -3747,9 +3386,6 @@ mod tests {
         assert!(allowance < Duration::from_secs(60), "{allowance:?}");
     }
 
-    // ---- catching up ----------------------------------------------------
-
-    /// A collector holding `count` samples ending at `last`, 400ms apart.
     fn collector_following(last: Slot, count: u64) -> Collector {
         let mut collector = fixture().collector();
         let first = last.saturating_sub(count.saturating_sub(1));
@@ -3770,7 +3406,6 @@ mod tests {
     #[test]
     fn test_the_marker_waits_for_replay_to_reach_the_tip() {
         let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
-        // Replaying, and still a thousand slots behind what it holds.
         collector.mark_caught_up(300_001_000, 300_000_000);
         assert_eq!(collector.caught_up_at, None);
     }
@@ -3778,7 +3413,6 @@ mod tests {
     #[test]
     fn test_catching_up_discards_everything_measured_while_behind() {
         let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
-        // Trailing the tip by a thousand slots, then level.
         collector.mark_caught_up(300_001_000, 300_000_000);
         collector.mark_caught_up(300_000_002, 300_000_000);
 
@@ -3794,7 +3428,6 @@ mod tests {
 
     #[test]
     fn test_starting_level_keeps_the_samples_it_already_has() {
-        // A restart that never trailed the tip has measured nothing but the cluster.
         let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
         collector.mark_caught_up(300_000_000, 300_000_000);
 
@@ -3808,8 +3441,6 @@ mod tests {
 
     #[test]
     fn test_the_collector_keeps_the_phases_the_boot_thread_timed() {
-        // The collector used to publish `running` from a fresh publisher of its own, with no
-        // phases.
         let harness = fixture();
         let shared = Arc::new(Mutex::new(StartupPublisher::default()));
         shared.lock().unwrap().publish(
@@ -3839,7 +3470,7 @@ mod tests {
     #[test]
     fn test_stale_tip_is_not_caught_up() {
         // The blockstore keeps optimistic slots from before a restart, so the first tip read is
-        // below where replay started; that stamped catch-up at nought on a node still behind.
+        // stale.
         let harness = fixture();
         harness.advance_to(64);
         let mut collector = harness.collector();
@@ -3859,7 +3490,6 @@ mod tests {
         harness.advance_to(64);
         let mut collector = harness.collector();
 
-        // Behind: a tip ahead of replay is seen, and nothing is stamped.
         harness.set_cluster_tip(100);
         collector.tick();
         assert!(
@@ -3868,7 +3498,6 @@ mod tests {
                 .is_none()
         );
 
-        // Level with it.
         harness.advance_to(101);
         collector.tick();
         assert!(
@@ -3880,8 +3509,6 @@ mod tests {
 
     #[test]
     fn test_marker_is_set_once() {
-        // Re-testing the rate continuously and clearing the window fed back on
-        // itself: a shorter window trips more easily.
         let mut collector = collector_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
         collector.mark_caught_up(300_000_000, 300_000_000);
         let marked = collector.caught_up_at;
@@ -3899,14 +3526,12 @@ mod tests {
 
     #[test]
     fn test_mean_spans_the_ends_of_the_window() {
-        // Ten slots over four seconds is 400ms each, however the middle fell.
         let samples = window(&[(100, 1_000), (105, 3_100), (110, 5_000)]);
         assert_eq!(windowed_mean_nanos(&samples, u64::MAX), Some(400_000_000));
     }
 
     #[test]
     fn test_one_slow_slot_barely_moves_the_mean() {
-        // 150 slots at 400ms with a single two-second slot among them.
         let steady = 150_u64 * 400;
         assert_eq!(
             windowed_mean_nanos(&window(&[(0, 0), (150, steady + 1_600)]), u64::MAX),
@@ -3942,8 +3567,6 @@ mod tests {
 
     #[test]
     fn test_folding_leaves_strings_that_are_not_semver_alone() {
-        // Gossip is not obliged to send semver, and a version that cannot be
-        // parsed is better reported verbatim than dropped.
         assert_eq!(release_of(""), "");
         assert_eq!(release_of("unknown"), "unknown");
         assert_eq!(release_of("-leading"), "");
@@ -3957,7 +3580,6 @@ mod tests {
         let (sender, receiver) = crossbeam_channel::unbounded();
         collector.frozen_banks = Some(receiver);
 
-        // Nothing reported, so nothing read: bank forks is not consulted.
         collector.tick();
         assert!(
             !harness
@@ -3986,7 +3608,6 @@ mod tests {
 
     #[test]
     fn test_the_overview_is_encoded_once_a_second() {
-        // The first tick encodes at once; a change inside the interval waits.
         let harness = fixture();
         let mut collector = harness.collector();
         harness.advance_to(8);

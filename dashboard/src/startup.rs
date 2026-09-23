@@ -26,18 +26,14 @@ use {
 pub const KEY_STARTUP_PROGRESS: &str = "startup_progress";
 pub const KEY_GOSSIP_STAKE: &str = "gossip_stake";
 
-/// The handles the validator sends before its supermajority wait.
 pub type GossipReadyReceiver = Receiver<GossipReady>;
 
-/// The wait as this node sees it: every staked validator, and whether gossip
-/// holds it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GossipStake {
     pub slot: Slot,
     pub shred_version: u16,
     pub total: u64,
     pub seen: u64,
-    /// Stake descending.
     pub validators: Vec<GossipValidator>,
 }
 
@@ -46,14 +42,13 @@ pub struct GossipValidator {
     pub identity: String,
     pub name: Option<String>,
     pub icon: Option<String>,
-    /// As gossip reports it. `None` for a node gossip does not hold.
     pub version: Option<String>,
     pub stake: u64,
     pub seen: bool,
 }
 
-/// Walks the bank's staked identities against gossip as the validator's own wait does: seen is a
-/// TVU peer with a fresh contact, and this node counts as seen.
+/// Seen is a TVU peer with a fresh contact, as the validator's own wait counts it, and this node
+/// counts as seen.
 pub fn gossip_stake(
     cluster_info: &ClusterInfo,
     bank: &Bank,
@@ -118,24 +113,17 @@ pub fn gossip_stake(
     }
 }
 
-/// What the client is sent about the boot sequence.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StartupProgress {
-    /// Machine-readable phase name, e.g. `"loading_ledger"`.
     pub phase: String,
     pub detail: Option<String>,
     pub running: bool,
-    /// How far ledger replay has got, from 0 to 1, measured from where it
-    /// began.
+    /// From 0 to 1, measured from where replay began.
     pub fraction: Option<f64>,
-    /// Share of the cluster's stake seen in gossip while waiting for a
-    /// supermajority, from 0 to 1. A whole percent, truncated by the validator.
+    /// From 0 to 1, a whole percent truncated by the validator.
     pub stake_percent: Option<f64>,
-    /// The same wait as the validator counted it, in lamports, a few seconds behind. Only during
-    /// the wait, once a point has arrived.
     pub stake_in_gossip: Option<StakeInGossip>,
-    /// How long the validator has been in this phase, and how long each phase
-    /// before it took, since most phases cannot say how far along they are.
+    /// Since most phases cannot say how far along they are.
     pub phase_elapsed_nanos: u64,
     pub phases_taken: Vec<PhaseTiming>,
 }
@@ -146,7 +134,6 @@ pub struct PhaseTiming {
     pub elapsed_nanos: u64,
 }
 
-/// Gossip's clock: milliseconds since the epoch.
 fn unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -159,26 +146,20 @@ fn unix_millis() -> u64 {
 pub struct StartupPublisher {
     debounce: Debounced<StartupProgress>,
     gossip: Debounced<Option<GossipStake>>,
-    /// The first replay slot seen. Replay starts from a snapshot rather than
-    /// from zero, so `slot / max_slot` would sit near 100% throughout.
+    /// Replay starts from a snapshot, so `slot / max_slot` would sit near 100% throughout.
     replay_origin: Option<Slot>,
-    /// The phase being timed and when it began. The validator says which
-    /// phase it is in and nothing about when it got there.
+    /// The validator reports its phase but not when it got there.
     current: Option<(String, Instant)>,
-    /// How long each finished phase took. Accumulated if a phase comes round
-    /// again, which `loading_ledger` does.
+    /// Accumulated if a phase comes round again, as `loading_ledger` does.
     taken: Vec<PhaseTiming>,
 }
 
 impl StartupPublisher {
-    /// The wait's validator list, or `None` once the wait is over.
     pub fn publish_gossip(&mut self, publisher: &Publisher, stake: Option<GossipStake>) {
         self.gossip
             .publish(publisher, TOPIC_SUMMARY, KEY_GOSSIP_STAKE, stake);
     }
 
-    /// `stake_in_gossip` is the tap's latest count, and rides along only while
-    /// the phase is the wait it describes.
     pub fn publish(
         &mut self,
         publisher: &Publisher,
@@ -204,13 +185,11 @@ impl StartupPublisher {
             .publish(publisher, TOPIC_SUMMARY, KEY_STARTUP_PROGRESS, progress);
     }
 
-    /// Time in the current phase, rounded down to whole seconds so that the
-    /// debounce does not send four messages a second for the length of a boot.
+    /// Whole seconds, so the debounce does not send four messages a second.
     fn elapsed(&mut self, phase: &str, now: Instant) -> u64 {
         match &mut self.current {
             Some((current, since)) if current == phase => whole_seconds(now, *since),
             other => {
-                // A phase ending: keep what it took before starting the next.
                 if let Some((finished, since)) = other.take() {
                     let elapsed_nanos = now.duration_since(since).as_nanos() as u64;
                     match self
@@ -248,7 +227,6 @@ impl StartupPublisher {
     }
 }
 
-/// What a phase reports about itself, as far as it reports anything.
 struct Phase {
     name: &'static str,
     detail: Option<String>,
@@ -298,7 +276,6 @@ fn describe(progress: ValidatorStartProgress) -> Phase {
     }
 }
 
-/// A duration in whole seconds, as nanoseconds.
 fn whole_seconds(now: Instant, since: Instant) -> u64 {
     Duration::from_secs(now.duration_since(since).as_secs()).as_nanos() as u64
 }
@@ -314,7 +291,6 @@ mod tests {
     #[test]
     fn test_fraction_is_measured_from_the_first_slot_seen() {
         let mut publisher = StartupPublisher::default();
-        // Replay resumes from a snapshot at slot 1000 and is heading for 2000.
         assert_eq!(publisher.fraction(Some((1000, 2000))), Some(0.0));
         assert_eq!(publisher.fraction(Some((1500, 2000))), Some(0.5));
         assert_eq!(publisher.fraction(Some((2000, 2000))), Some(1.0));
@@ -330,9 +306,7 @@ mod tests {
     fn test_fraction_never_exceeds_one_or_runs_backwards() {
         let mut publisher = StartupPublisher::default();
         assert_eq!(publisher.fraction(Some((1000, 1100))), Some(0.0));
-        // Overshooting the target must not report more than complete.
         assert_eq!(publisher.fraction(Some((1200, 1100))), Some(1.0));
-        // Nor may a slot below the origin produce a negative fraction.
         assert_eq!(publisher.fraction(Some((900, 1100))), Some(0.0));
     }
 
@@ -429,8 +403,6 @@ mod tests {
 
     #[test]
     fn test_the_stake_count_rides_only_on_the_wait() {
-        // The tap holds the last count for the life of the process; once the
-        // validator is running it describes nothing on screen.
         let seen = Some(StakeInGossip {
             online: 3,
             offline: 7,
@@ -458,7 +430,6 @@ mod tests {
 
     #[test]
     fn test_every_phase_is_named_and_only_running_runs() {
-        // Every phase has a name and running is the only running one.
         let phases = [
             ValidatorStartProgress::Initializing,
             ValidatorStartProgress::SearchingForRpcService,

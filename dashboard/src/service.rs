@@ -31,47 +31,28 @@ use {
     tokio::{net::TcpListener, runtime::Builder},
 };
 
-/// Worker threads the dashboard's runtime is allowed, in the same process as
-/// replay and banking. Two is generous for socket writes.
+/// Shares the process with replay and banking; two is generous for socket writes.
 const RUNTIME_THREADS: usize = 2;
 
-/// How often the boot thread samples the startup phase. Phases last seconds at
-/// least.
 const BOOT_POLL: Duration = Duration::from_millis(250);
 
-/// How often the collector samples. Five times a second is fast enough that a
-/// slot never passes between two samples, which the slot ring depends on.
+/// Fast enough that a slot never passes between two samples, which the slot ring depends on.
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 pub struct DashboardService {
     exit: Arc<AtomicBool>,
-    /// Stops the boot thread once the collector has taken over reporting.
     attached: Arc<AtomicBool>,
     publisher: Arc<Publisher>,
-    /// Retained from `start` and handed to the collector at `attach`.
     startup_progress: StartProgress,
-    /// When the dashboard came up, which is as near to when the process did as
-    /// anything reports. For the uptime readout.
     started: SystemTime,
-    /// Counters lifted from the measurements the validator submits about
-    /// itself, watched from `start` so the boot sequence is counted too.
+    /// Watched from `start` so the boot sequence is counted too.
     metrics_tap: Arc<MetricsTap>,
-    /// Times the boot phases from `start` and is handed to the collector at
-    /// `attach`, so the record survives the handover.
     startup: Arc<std::sync::Mutex<StartupPublisher>>,
-    /// The jito tip settings, retained from `start` until the collector exists.
     tip_payment_program_id: Option<Pubkey>,
     commission_bps: Option<u16>,
-    /// The packed slot history, allocated here since the server answers range queries before the
-    /// collector starts.
     history: Arc<RwLock<SlotHistory>>,
-    /// Validator names and icons, shared with the server, which answers a
-    /// request for the whole table out of it.
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
-    /// This epoch and the one before it, shared with the server, which answers
-    /// a query for either out of it.
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    /// The epoch's unpaid slots, shared with the server the same way.
     misses: Arc<RwLock<MissReplies>>,
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
@@ -96,17 +77,11 @@ impl DashboardService {
             "startup_time_nanos",
             &system_time_nanos(started),
         );
-        // Installed with the service rather than the collector, so points submitted
-        // during the boot sequence are counted too.
         let metrics_tap = MetricsTap::install();
         let history = Arc::new(RwLock::new(SlotHistory::new(PACKED_SLOTS)));
-        // Here for the same reason: the server answers a request out of it and starts
-        // first.
+        // The server answers requests out of it and starts first.
         let info_cache = Arc::new(RwLock::new(ValidatorInfoCache::default()));
-        // This epoch and the one before it, for pages reading back across the
-        // boundary.
         let epochs: Arc<RwLock<Vec<EpochInfo>>> = Arc::new(RwLock::new(Vec::new()));
-        // The epoch's unpaid slots, answered on request.
         let misses = Arc::new(RwLock::new(MissReplies::default()));
         let attached = Arc::new(AtomicBool::new(false));
         let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
@@ -179,8 +154,6 @@ impl DashboardService {
                                     "dashboard: read validator info before the wait, {found} \
                                      accounts, {loaded} cached"
                                 );
-                                // The header's own name, which otherwise waits for
-                                // the collector.
                                 let identity = cluster_info.id();
                                 let (name, icon) = info_cache
                                     .read()
@@ -237,8 +210,6 @@ impl DashboardService {
         })
     }
 
-    /// Starts the collector against the assembled validator, publishing through the boot thread's
-    /// [`StartupPublisher`].
     pub fn attach(
         &mut self,
         context: DashboardContext,
@@ -246,8 +217,6 @@ impl DashboardService {
     ) -> io::Result<()> {
         let info_cache = self.info_cache.clone();
 
-        // Validator names are read once, off the collector's thread; `scan_all` logs whether the
-        // index lets it find any.
         self.info_loader = Some({
             let context = context.clone();
             let info_cache = info_cache.clone();
@@ -294,8 +263,6 @@ impl DashboardService {
             let startup_progress = self.startup_progress.clone();
             let startup = self.startup.clone();
             let metrics_tap = self.metrics_tap.clone();
-            // Derived once here rather than per tick. Absent on a validator
-            // with no tip payment program, and then no tips are read at all.
             let tips = self.tip_payment_program_id.as_ref().map(TipMeter::new);
             let commission_bps = self.commission_bps;
             thread::Builder::new()

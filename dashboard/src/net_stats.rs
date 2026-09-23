@@ -3,7 +3,6 @@
 
 use std::io;
 
-/// Cumulative bytes across the host's non-loopback interfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetCounters {
     pub received: u64,
@@ -24,8 +23,7 @@ pub fn read() -> io::Result<NetCounters> {
     ))
 }
 
-/// Sums every interface except loopback. Receive counters come first on each
-/// line and transmit counters start at the ninth field.
+/// Transmit counters start at the ninth field.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse(contents: &str) -> Option<NetCounters> {
     let mut totals = NetCounters {
@@ -86,7 +84,6 @@ Inter-|   Receive                                                |  Transmit
     #[test]
     fn test_malformed_row_does_not_poison_the_total() {
         let text = format!("{SAMPLE}  eth2: garbage\n");
-        // The row parses to zeros rather than being counted as real traffic.
         assert_eq!(parse(&text).unwrap().received, 5500);
     }
 }

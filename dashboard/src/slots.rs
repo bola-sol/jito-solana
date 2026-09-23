@@ -7,22 +7,14 @@ use {
     std::collections::{BTreeMap, btree_map::Entry},
 };
 
-/// How far a slot has progressed through consensus, ordered from least to most
-/// settled. The frontend colours slots by this value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlotLevel {
-    /// Not yet replayed, or still being received.
     Incomplete,
-    /// Replayed and frozen by this validator.
     Completed,
-    /// Frozen, and a supermajority of stake has voted for it.
     OptimisticallyConfirmed,
-    /// This validator considers it final.
     Rooted,
-    /// Rooted, and the cluster considers it final.
     Finalized,
-    /// The leader did not produce a block, or it was not received in time.
     Skipped,
 }
 
@@ -30,73 +22,41 @@ pub enum SlotLevel {
 pub struct SlotEntry {
     pub slot: Slot,
     pub level: SlotLevel,
-    /// True when this validator was the scheduled leader, whose identity arrives separately in the
-    /// turn array.
     pub mine: bool,
-    /// What replay found in the block. `None` until the slot freezes, and for
-    /// a slot that was skipped or never replayed.
     pub block: Option<BlockDetail>,
-    /// Wall-clock time from the previous slot completing, in nanoseconds, measured from shred
-    /// arrival so it exists without a block.
+    /// In nanoseconds, from shred arrival, so it exists without a block.
     pub duration_nanos: Option<u64>,
-    /// When the slot's first shred arrived, in milliseconds. Stamps a turn on the
-    /// schedule page; the packed history keeps the same figure for older slots.
     pub time_millis: Option<u64>,
-    /// How the block's shreds arrived. `None` for a slot that never filled.
     pub shreds: Option<ShredArrival>,
-    /// Milliseconds from the slot's first shred to replay finishing it. `None`
-    /// for a bank this validator built, which replay never timed.
+    /// `None` for a bank this validator built, which replay never timed.
     pub replayed_millis: Option<u64>,
-    /// Whether this node's vote was paid for the slot. `None` until the reward
-    /// certificate has been seen, and always under TowerBFT.
+    /// `None` until the reward certificate is seen, and always under TowerBFT.
     pub reward: Option<Reward>,
-    /// Regulars the slot's reward certificate left out, counted against the
-    /// certificates read by then. `None` with `reward`.
     pub left_out: Option<u16>,
 }
 
-/// How a block's shreds arrived. Outside [`BlockDetail`] because a slot fills
-/// before it freezes, and a dead slot fills without ever freezing.
+/// Apart from the block because a slot fills before it freezes, and a dead slot never freezes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ShredArrival {
-    /// Data shreds in the block.
     pub count: u64,
-    /// Of those, the ones this validator had to ask for. Nought is the block
-    /// arriving whole over turbine.
     pub repaired: u64,
-    /// Milliseconds from the first shred to the last.
     pub full_millis: u64,
 }
 
-/// What one block contained, read off its bank as it froze. Every field is
-/// per block; the caller differences the cumulative counters first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlockDetail {
-    /// Transactions in this block. Differenced against the parent.
     pub transactions: u64,
-    /// Of those, the ones that were not votes. Differenced against the parent.
     pub non_vote_transactions: u64,
-    /// Transactions that landed but returned an error. The bank's own counter,
-    /// reset for each bank, so this is already per block.
+    /// The bank's own counter, reset per bank, so already per block.
     pub failed_transactions: u64,
-    /// Entries in the block. The bank's own counter.
     pub entries: u64,
-    /// Compute units the block consumed, and the protocol limit it was measured
-    /// against.
     pub block_cost: u64,
     pub block_cost_limit: u64,
-    /// The most compute any one account may be charged in a block. From the bank,
-    /// since it is a consensus limit that moves with feature activation.
     pub account_cost_limit: u64,
-    /// Fees this block collected, in lamports, base and priority together: the
-    /// bank's `total_transaction_fee` adds the two despite its name.
+    /// Base and priority together: `total_transaction_fee` adds the two despite its name.
     pub total_fees: u64,
     pub priority_fees: u64,
-    /// Lamports paid into the jito tip accounts during this slot, before any cut. `None` where no
-    /// tip program is configured or the parent was pruned.
     pub tips: Option<u64>,
-    /// Wall time replay's own thread spent on this slot, in microseconds. `None` where no replay
-    /// point was seen, as for a bank this validator built.
     pub replay_micros: Option<u64>,
 }
 
@@ -117,12 +77,8 @@ impl SlotEntry {
     }
 }
 
-/// This validator's own leader slots held back from pruning, within the
-/// ring's capacity. Sixty-four is what the sidebar rail needs.
 const OWN_SLOTS_KEPT: usize = 64;
 
-/// A bounded, slot-keyed history. Slots more than `capacity` behind the highest
-/// one seen are dropped, except for this validator's own.
 pub struct SlotRing {
     entries: BTreeMap<Slot, SlotEntry>,
     capacity: usize,
@@ -142,14 +98,11 @@ impl SlotRing {
         self.entries.get(&slot)
     }
 
-    /// The most recent `count` slots, oldest first.
     pub fn recent(&self, count: usize) -> Vec<SlotEntry> {
         let skip = self.entries.len().saturating_sub(count);
         self.entries.values().skip(skip).cloned().collect()
     }
 
-    /// What a newly connected client is sent: the most recent `count` slots, preceded by this
-    /// validator's own from further back.
     pub fn overview(&self, count: usize) -> Vec<SlotEntry> {
         let recent = self.recent(count);
         let floor = recent.first().map_or(Slot::MAX, |entry| entry.slot);
@@ -163,8 +116,7 @@ impl SlotRing {
         overview
     }
 
-    /// Applies `update` to the entry for `slot`, creating it if needed, and
-    /// returns the entry if anything changed, so idle polling produces no traffic.
+    /// Returns the entry only if something changed, so idle polling sends nothing.
     pub fn update(&mut self, slot: Slot, update: impl FnOnce(&mut SlotEntry)) -> Option<SlotEntry> {
         let before = self.entries.get(&slot).cloned();
         let entry = match self.entries.entry(slot) {
@@ -193,8 +145,7 @@ impl SlotRing {
         if self.entries.len() <= self.capacity {
             return;
         }
-        // Split by ownership rather than skipping ours oldest-first, which would
-        // delete newer slots to make room. The map is ordered by slot.
+        // Split by ownership: skipping ours oldest first would delete newer slots to make room.
         let mut own = Vec::new();
         let mut rest = Vec::new();
         for (&slot, entry) in &self.entries {
@@ -215,8 +166,6 @@ impl SlotRing {
         }
     }
 
-    /// Raises every replayed slot at or below `up_to` to `level`, since bank forks drops banks once
-    /// rooted.
     pub fn promote(&mut self, up_to: Slot, level: SlotLevel) -> Vec<SlotEntry> {
         let candidates: Vec<Slot> = self
             .entries
@@ -235,8 +184,6 @@ impl SlotRing {
             .collect()
     }
 
-    /// Marks every unstarted slot below `up_to` as skipped, once replay has moved
-    /// past them.
     pub fn mark_skipped_below(&mut self, up_to: Slot) -> Vec<SlotEntry> {
         let stale: Vec<Slot> = self
             .entries
@@ -250,8 +197,6 @@ impl SlotRing {
             .collect()
     }
 
-    /// Records that this validator leads `slot`, the only thing about a leader a
-    /// slot still carries.
     pub fn set_mine(&mut self, slot: Slot, mine: bool) -> Option<SlotEntry> {
         self.update(slot, |entry| entry.mine = mine)
     }
@@ -270,15 +215,11 @@ mod tests {
 
     #[test]
     fn test_marking_the_same_slot_ours_twice_reports_no_change() {
-        // The schedule is walked every tick, so a slot is labelled repeatedly and must publish only
-        // once.
         let mut ring = SlotRing::new(16);
         assert!(ring.set_mine(7, true).is_some());
         assert!(ring.set_mine(7, true).is_none());
     }
 
-    /// The two slot snapshots are the largest messages the server sends, and the websocket ceiling
-    /// is sized from them.
     #[test]
     fn test_the_largest_slot_snapshots_fit_the_message_ceiling() {
         // Worst case throughout: a full ring, every counter at its ceiling. The 512
@@ -325,7 +266,6 @@ mod tests {
         );
     }
 
-    /// Every slot this validator led, oldest first.
     fn ours(ring: &SlotRing) -> Vec<Slot> {
         ring.entries
             .values()
@@ -336,7 +276,6 @@ mod tests {
 
     #[test]
     fn test_our_own_slots_outlive_the_window() {
-        // Without this a reconnecting client's own-slots view comes back empty.
         let mut ring = SlotRing::new(8);
         for slot in 1..=4 {
             ring.update(slot, |entry| entry.mine = true);
@@ -349,7 +288,6 @@ mod tests {
 
     #[test]
     fn test_own_retention_is_bounded() {
-        // Saturating: the workspace denies `arithmetic_side_effects`.
         let led = (OWN_SLOTS_KEPT as Slot).saturating_add(100);
         let mut ring = SlotRing::new(8);
         for slot in 1..=led {
@@ -360,7 +298,6 @@ mod tests {
         }
         let kept = ours(&ring);
         assert_eq!(kept.len(), OWN_SLOTS_KEPT);
-        // The newest of ours, not the first we ever led.
         assert_eq!(kept.last(), Some(&led));
         assert_eq!(kept.first(), Some(&101));
     }
@@ -396,14 +333,12 @@ mod tests {
             ring.capacity
         );
 
-        // The fixed point itself: pruning again has nothing left to do.
         ring.prune();
         assert_eq!(ring.entries.len(), settled);
     }
 
     #[test]
     fn test_overview_carries_own_slots_before_the_window() {
-        // The overview carries our own slots from before the window.
         let mut ring = SlotRing::new(512);
         for slot in [1, 2] {
             ring.update(slot, |entry| entry.mine = true);

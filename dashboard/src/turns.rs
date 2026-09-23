@@ -11,33 +11,28 @@ use {
     std::collections::VecDeque,
 };
 
-/// One leader turn on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LeaderTurn {
     pub first: Slot,
     pub last: Slot,
-    /// Blocks frozen for the turn's slots.
     pub produced: u64,
-    /// When the totals were read, in unix milliseconds.
+    /// In unix milliseconds.
     pub drained_millis: u64,
-    /// The previous turn's reading. `None` for the first turn seen.
+    /// `None` for the first turn seen.
     pub since_millis: Option<u64>,
     pub quic: QuicPort,
     pub verify: VerifyTotals,
     pub executed: ExecutedTotals,
 }
 
-/// Groups resolved leader slots into turns.
 #[derive(Debug, Default)]
 pub struct TurnTracker {
-    /// The turn being extended.
     open: Option<(Slot, Slot)>,
-    /// Turns a later one closed, oldest first.
     closed: VecDeque<(Slot, Slot)>,
 }
 
 impl TurnTracker {
-    /// Takes one resolved slot, in slot order.
+    /// In slot order.
     pub fn observe(&mut self, slot: Slot, mine: bool) {
         if !mine {
             return;
@@ -54,7 +49,6 @@ impl TurnTracker {
         }
     }
 
-    /// Turns whose last slot `completed` has passed, oldest first.
     pub fn ended(&mut self, completed: Slot) -> Vec<(Slot, Slot)> {
         let mut ended = Vec::new();
         while let Some(&(first, last)) = self.closed.front() {
@@ -127,7 +121,6 @@ mod tests {
 
     #[test]
     fn test_a_skipped_middle_slot_still_splits_by_schedule_not_blocks() {
-        // Grouping follows the schedule, not the blocks produced.
         let mut tracker = TurnTracker::default();
         told(
             &mut tracker,

@@ -8,26 +8,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Kernel receive counters for every socket bound to one port, summed: turbine
-/// binds several with `SO_REUSEPORT`, and only the total means anything.
+/// Summed over every socket on the port: turbine binds several with `SO_REUSEPORT`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PortCounters {
-    /// Datagrams discarded since the sockets were opened, overwhelmingly
-    /// because the receive buffer was full when one arrived.
     pub drops: u64,
-    /// Bytes sitting unread. A gauge, and the leading indicator: a queue that
-    /// stays deep is a reader falling behind.
+    /// A gauge and the leading indicator: a queue that stays deep is a reader falling behind.
     pub queued: u64,
 }
 
 pub type PortMap = HashMap<u16, PortCounters>;
 
-/// A cumulative per-port counter over a trailing window, so a startup burst
-/// ages out.
 #[derive(Debug)]
 pub struct PortWindow {
     span: Duration,
-    /// Oldest first, each entry one tick's cumulative totals per port.
     samples: VecDeque<(Instant, HashMap<u16, u64>)>,
 }
 
@@ -39,8 +32,6 @@ impl PortWindow {
         }
     }
 
-    /// Records a tick and forgets what has fallen out, keeping the newest sample at least a span
-    /// old so the window never under-reports.
     pub fn push(&mut self, now: Instant, totals: HashMap<u16, u64>) {
         self.samples.push_back((now, totals));
         while let Some((next, _)) = self.samples.get(1) {
@@ -51,7 +42,6 @@ impl PortWindow {
         }
     }
 
-    /// Time the window actually covers, short until it has filled.
     pub fn covers(&self, now: Instant) -> Duration {
         self.samples
             .front()
@@ -59,8 +49,6 @@ impl PortWindow {
             .unwrap_or_default()
     }
 
-    /// How far `port`'s counter has climbed since the start of the window. Zero
-    /// for a socket bound after the window started.
     pub fn since(&self, port: u16, current: u64) -> u64 {
         self.samples
             .front()
@@ -72,8 +60,7 @@ impl PortWindow {
     }
 }
 
-/// Reads both address families and merges them by port. `/proc/net/udp6` is
-/// absent on a kernel without IPv6, so either file alone is enough.
+/// `/proc/net/udp6` is absent on a kernel without IPv6.
 #[cfg(target_os = "linux")]
 pub fn read() -> io::Result<PortMap> {
     let mut ports = PortMap::new();
@@ -87,8 +74,6 @@ pub fn read() -> io::Result<PortMap> {
         }
     }
 
-    // A validator always holds UDP sockets, so understanding no rows at all
-    // means the files were unreadable or are not in the format expected.
     if rows == 0 {
         return Err(last_err.unwrap_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "unrecognised /proc/net/udp")
@@ -105,7 +90,6 @@ pub fn read() -> io::Result<PortMap> {
     ))
 }
 
-/// Accumulates one `/proc/net/udp`-format table into `ports`, returning the rows understood.
 /// `drops` is the thirteenth column, so an appended column is ignored.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
@@ -129,8 +113,6 @@ fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
         let Ok(drops) = drops.parse::<u64>() else {
             continue;
         };
-        // `tx_queue:rx_queue`. Only the receive side says whether this validator
-        // is keeping up with what arrives.
         let queued = queues
             .rsplit_once(':')
             .and_then(|(_, rx)| u64::from_str_radix(rx, 16).ok())
@@ -193,7 +175,6 @@ mod tests {
         let mut ports = PortMap::new();
         assert_eq!(parse_into(V4, &mut ports), 3);
         assert_eq!(parse_into(V6, &mut ports), 1);
-        // The wider v6 address must not shift which column is read.
         assert_eq!(ports[&8001].drops, 47);
         assert_eq!(ports[&8001].queued, 832);
     }
@@ -212,7 +193,6 @@ mod tests {
         assert_eq!(ports.len(), 2);
     }
 
-    /// One tick's totals for a single port.
     fn totals(port: u16, drops: u64) -> HashMap<u16, u64> {
         HashMap::from([(port, drops)])
     }
@@ -222,7 +202,6 @@ mod tests {
         let base = Instant::now();
         let mut window = PortWindow::new(Duration::from_secs(60));
 
-        // A hundred dropped at startup, then nothing for two minutes.
         window.push(base, totals(8001, 0));
         window.push(base + Duration::from_secs(1), totals(8001, 100));
         assert_eq!(window.since(8001, 100), 100);
@@ -230,7 +209,6 @@ mod tests {
         for second in 2..=120 {
             window.push(base + Duration::from_secs(second), totals(8001, 100));
         }
-        // The total still says a hundred; the window says the validator is fine.
         assert_eq!(window.since(8001, 100), 0);
     }
 
@@ -243,7 +221,6 @@ mod tests {
         }
         let covered = window.covers(base + Duration::from_secs(120));
         assert!(covered >= Duration::from_secs(60), "covered {covered:?}");
-        // Never wildly more, or a burst would linger well past its minute.
         assert!(covered <= Duration::from_secs(61), "covered {covered:?}");
     }
 
@@ -262,8 +239,6 @@ mod tests {
 
     #[test]
     fn test_port_with_no_baseline_in_the_window_reports_no_drops() {
-        // Rather than the cumulative total, which would show a socket bound
-        // mid-window as having dropped everything it ever dropped.
         let base = Instant::now();
         let mut window = PortWindow::new(Duration::from_secs(60));
         window.push(base, totals(8001, 0));
@@ -280,8 +255,8 @@ mod tests {
 
     #[test]
     fn test_row_missing_its_trailing_columns_is_skipped() {
-        // Truncated after `inode`, as a kernel predating the drops column prints it.
-        // Reading the last field would report the inode as drops.
+        // As a kernel predating the drops column prints it; reading the last field would report the
+        // inode.
         let text = "  308: 00000000:1F41 00000000:0000 07 00000000:00000100 00:00000000 00000000 \
                     0 0 22359\n";
         assert_eq!(parse(text).len(), 0);

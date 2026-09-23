@@ -12,16 +12,12 @@ use {
     std::collections::HashMap,
 };
 
-/// Marker key present as the first entry of a `ValidatorInfo` config account.
 const VALIDATOR_INFO_PROGRAM: Pubkey =
     Pubkey::from_str_const("Va1idator1nfo111111111111111111111111111111");
 
-/// Upper bound on a valid `ValidatorInfo` account, used to skip oversized
-/// config accounts without deserializing them.
 const MAX_VALIDATOR_INFO_LEN: usize = 576 + 1 + (32 + 1) * 2;
 
-/// The two fields the dashboard renders. The account also carries a website,
-/// description and keybase name, which nothing displays.
+/// The account also carries a website, description and keybase name, which nothing displays.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct ValidatorInfo {
     pub name: Option<String>,
@@ -29,10 +25,8 @@ pub struct ValidatorInfo {
     pub icon_url: Option<String>,
 }
 
-/// What every validator that published anything calls itself.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Displays {
-    /// Base58 identities. `names[i]` and `icons[i]` belong to `keys[i]`.
     pub keys: Vec<String>,
     pub names: Vec<Option<String>>,
     pub icons: Vec<Option<String>>,
@@ -48,7 +42,6 @@ impl ValidatorInfoCache {
         self.by_identity.get(identity)
     }
 
-    /// Everything the cache holds, as three arrays sharing an index.
     pub fn displays(&self) -> Displays {
         let mut keys = Vec::with_capacity(self.by_identity.len());
         let mut names = Vec::with_capacity(self.by_identity.len());
@@ -72,7 +65,6 @@ impl ValidatorInfoCache {
         self.by_identity.is_empty()
     }
 
-    /// Inserts an entry, returning true if it was new or changed.
     pub fn insert(&mut self, identity: Pubkey, info: ValidatorInfo) -> bool {
         if self.by_identity.get(&identity) == Some(&info) {
             return false;
@@ -81,8 +73,7 @@ impl ValidatorInfoCache {
         true
     }
 
-    /// Merges the result of [`scan_all`], returning how many entries changed.
-    /// Kept separate from the scan so the lock is only held for the merge.
+    /// Separate from the scan so the lock is held only for the merge.
     pub fn merge(&mut self, entries: Vec<(Pubkey, ValidatorInfo)>) -> usize {
         entries
             .into_iter()
@@ -91,8 +82,6 @@ impl ValidatorInfoCache {
     }
 }
 
-/// Validator info written in `bank`'s own slot, which needs no index. Returned rather than merged
-/// so a caller sweeping several banks locks the cache once.
 pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     bank.get_program_accounts_modified_since_parent(&solana_sdk_ids::config::id())
         .into_iter()
@@ -100,8 +89,7 @@ pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
         .collect()
 }
 
-/// Walks every config account and returns the validator info it finds. Minutes
-/// on a real cluster: run on a background thread with no lock held across it.
+/// Minutes on a real cluster: run off-thread with no lock held.
 pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     let config_id = solana_sdk_ids::config::id();
 
@@ -143,8 +131,6 @@ pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
         .collect()
 }
 
-/// The identity and its advertised info from a config account's raw data, or
-/// `None` for other config accounts and malformed data.
 fn parse(data: &[u8]) -> Option<(Pubkey, ValidatorInfo)> {
     if data.len() > MAX_VALIDATOR_INFO_LEN {
         return None;
@@ -157,7 +143,6 @@ fn parse(data: &[u8]) -> Option<(Pubkey, ValidatorInfo)> {
     }
     let identity = keys.keys.get(1)?.0;
 
-    // The config payload is a bincode string whose contents are JSON.
     let json = bincode::deserialize::<String>(get_config_data(data).ok()?).ok()?;
     let info = serde_json::from_str::<ValidatorInfo>(&json).ok()?;
     Some((identity, info))
@@ -177,8 +162,6 @@ mod tests {
         data
     }
 
-    /// A validator-info account as it sits on chain, owned by the config
-    /// program and signed for by `identity`.
     fn info_account(identity: Pubkey, json: &str) -> AccountSharedData {
         AccountSharedData::from(Account {
             lamports: 1,
@@ -194,7 +177,6 @@ mod tests {
 
     #[test]
     fn test_the_slot_sweep_finds_info_written_in_that_slot() {
-        // The cheap path, run every few seconds against each newly frozen bank.
         let harness = fixture();
         let identity = Pubkey::new_unique();
         let bank = harness.advance_with(
@@ -213,8 +195,6 @@ mod tests {
 
     #[test]
     fn test_the_slot_sweep_ignores_slots_that_wrote_nothing() {
-        // Almost every slot: config accounts are written perhaps once a day across
-        // the cluster.
         let harness = fixture();
         harness.advance_with(
             1,
@@ -233,7 +213,6 @@ mod tests {
 
     #[test]
     fn test_the_full_scan_finds_info_from_an_earlier_slot() {
-        // The startup read; the fixture's bank carries the config program in its index.
         let harness = fixture();
         let identity = Pubkey::new_unique();
         harness.advance_with(
@@ -252,8 +231,6 @@ mod tests {
 
     #[test]
     fn test_merging_reports_only_what_changed() {
-        // The count drives a debug line, but the filter behind it is what stops
-        // an unchanged name republishing every slot that mentions it.
         let mut cache = ValidatorInfoCache::default();
         assert!(cache.is_empty());
 

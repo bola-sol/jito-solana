@@ -4,8 +4,7 @@
 
 use {serde::Serialize, solana_pubkey::Pubkey, solana_runtime::bank::Bank};
 
-/// The tip payment program's eight accounts, by seed. Derived from the program
-/// id because it differs between clusters.
+/// Derived from the program id, which differs between clusters.
 const TIP_ACCOUNT_SEEDS: [&[u8]; 8] = [
     b"TIP_ACCOUNT_0",
     b"TIP_ACCOUNT_1",
@@ -17,39 +16,26 @@ const TIP_ACCOUNT_SEEDS: [&[u8]; 8] = [
     b"TIP_ACCOUNT_7",
 ];
 
-/// How many of them there are, for the caller that reports the count.
 pub const TIP_ACCOUNTS: usize = TIP_ACCOUNT_SEEDS.len();
 
-/// What jito takes before anything reaches a distribution account, in basis
-/// points. One stated approximation applied to every leader.
+/// In basis points; one approximation applied to every leader.
 pub const JITO_CUT_BPS: u16 = 600;
 
-/// The rates a page derives the two drawn figures from. Sent rather than
-/// applied so what is stored stays what was measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TipRates {
-    /// [`JITO_CUT_BPS`], carried rather than duplicated in the client.
     pub jito_cut_bps: u16,
-    /// This validator's own commission, where configured. `None` leaves the page
-    /// claiming nothing about what a turn earned.
     pub commission_bps: Option<u16>,
 }
 
-/// Reads what each slot paid in tips, keeping a floor, since the accounts never empty, and a
-/// running total to check the sweep against. Slots must arrive in order.
 pub struct TipMeter {
     accounts: [Pubkey; TIP_ACCOUNTS],
-    /// The lowest total the accounts have been seen to hold. It starts high and converges at the
-    /// first crank, so the first turn after a restart reads low.
+    /// Starts high and converges at the first crank, so the first turn after a restart reads low.
     floor: u64,
-    /// Credited to the current receiver since the last sweep.
     attributed: u64,
-    /// What the last sweep says was missed. See [`TipMeter::residual`].
     residual: Option<u64>,
 }
 
 impl TipMeter {
-    /// Derives the eight accounts from the tip payment program.
     pub fn new(program_id: &Pubkey) -> Self {
         Self {
             accounts: TIP_ACCOUNT_SEEDS
@@ -60,20 +46,15 @@ impl TipMeter {
         }
     }
 
-    /// The addresses being watched, for logging them once at startup so an
-    /// operator can check them against an explorer.
     pub fn accounts(&self) -> &[Pubkey] {
         &self.accounts
     }
 
-    /// What the last sweep says was paid before the crank and counted nowhere; near nought means
-    /// the readings were complete. `None` before a sweep.
     pub fn residual(&self) -> Option<u64> {
         self.residual
     }
 
-    /// What `bank` paid in tips, differenced against `before`, its parent's
-    /// total. The caller keeps that, since the parent may be pruned by now.
+    /// The caller keeps the parent's total, since the parent may be pruned by now.
     pub fn measure(&mut self, bank: &Bank, before: u64) -> u64 {
         let now = self.total(bank);
         self.floor = self.floor.min(now);
@@ -93,7 +74,6 @@ impl TipMeter {
         paid
     }
 
-    /// What the tip accounts hold in `bank`.
     pub fn total(&self, bank: &Bank) -> u64 {
         self.accounts
             .iter()
@@ -121,8 +101,6 @@ mod tests {
 
     #[test]
     fn test_a_different_cluster_derives_different_accounts() {
-        // The program id is a flag and differs between clusters, which is why
-        // these are derived rather than written down as Firedancer's are.
         let one = TipMeter::new(&Pubkey::new_unique());
         let other = TipMeter::new(&Pubkey::new_unique());
         assert_ne!(one.accounts(), other.accounts());

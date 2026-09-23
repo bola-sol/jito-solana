@@ -46,8 +46,7 @@ use {
     tempfile::TempDir,
 };
 
-/// Lamports staked to the fixture's validator. Any non-zero amount will do; a
-/// vote account with no stake is skipped by every count.
+/// A vote account with no stake is skipped by every count.
 const VALIDATOR_STAKE: u64 = 1_000_000;
 
 const MINT: u64 = 1_000_000_000;
@@ -56,24 +55,17 @@ pub struct Fixture {
     pub ctx: DashboardContext,
     pub publisher: Arc<Publisher>,
     pub bank_forks: Arc<RwLock<BankForks>>,
-    /// This validator's identity, which is also the staked leader.
     pub identity: Pubkey,
     pub vote_account: Pubkey,
-    /// Funds the transactions a test sends.
     mint: Keypair,
-    /// The packed history the collector fills, exposed so a test can read back
-    /// what a tick recorded without going through the server.
     pub history: Arc<RwLock<SlotHistory>>,
-    /// This epoch and the one before it, as the collector leaves them.
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    /// Held, not used. Dropping it deletes the directory the blockstore has
-    /// open, and the failures that follow look like blockstore bugs.
+    /// Held: dropping it deletes the directory the blockstore has open.
     _ledger: TempDir,
 }
 
 impl Fixture {
-    /// Puts the cluster ahead of this validator. Before Alpenglow the tip is the
-    /// blockstore's latest optimistic slot, so that is what is written.
+    /// Before Alpenglow the tip is the blockstore's latest optimistic slot.
     pub fn set_cluster_tip(&self, slot: Slot) {
         let hash = self.working_bank().last_blockhash();
         self.ctx
@@ -82,19 +74,15 @@ impl Fixture {
             .unwrap();
     }
 
-    /// The bank at the tip.
     pub fn working_bank(&self) -> Arc<Bank> {
         self.bank_forks.read().unwrap().working_bank()
     }
 
-    /// Freezes the tip and builds a frozen child at `slot`, led by this validator.
-    /// Slot zero alone exercises almost nothing.
     pub fn advance_to(&self, slot: Slot) -> Arc<Bank> {
         self.advance_with(slot, &[])
     }
 
-    /// As [`Self::advance_to`], with `accounts` written in the new slot before it
-    /// freezes, since a bank asserts against stores afterwards.
+    /// Written before the freeze, since a bank asserts against stores afterwards.
     pub fn advance_with(&self, slot: Slot, accounts: &[(Pubkey, AccountSharedData)]) -> Arc<Bank> {
         let parent = self.working_bank();
         if !parent.is_frozen() {
@@ -116,8 +104,7 @@ impl Fixture {
         self.bank_forks.read().unwrap().get(slot).unwrap()
     }
 
-    /// As [`Self::advance_to`], with `failures` transactions that execute and
-    /// fail in the new slot: transfers of more than the mint holds.
+    /// Transfers of more than the mint holds.
     pub fn advance_with_failures(&self, slot: Slot, failures: usize) -> Arc<Bank> {
         let parent = self.working_bank();
         if !parent.is_frozen() {
@@ -145,8 +132,6 @@ impl Fixture {
         self.bank_forks.read().unwrap().get(slot).unwrap()
     }
 
-    /// Every retained message a client connecting now would receive, as JSON
-    /// text. Tests assert against this rather than reaching into the collector.
     pub fn published(&self) -> Vec<String> {
         self.publisher
             .snapshot()
@@ -155,7 +140,6 @@ impl Fixture {
             .collect()
     }
 
-    /// The retained message for one key, if it has been published.
     pub fn published_key(&self, topic: &str, key: &str) -> Option<String> {
         let needle = format!(r#""topic":"{topic}","key":"{key}""#);
         self.published()
@@ -163,14 +147,12 @@ impl Fixture {
             .find(|message| message.contains(&needle))
     }
 
-    /// A collector over this fixture, ready to tick.
     pub fn collector(&self) -> Collector {
         self.collector_with_startup(Arc::new(std::sync::Mutex::new(
             crate::startup::StartupPublisher::default(),
         )))
     }
 
-    /// A collector handed a boot publisher that has already timed some phases.
     pub fn collector_with_startup(
         &self,
         startup: Arc<std::sync::Mutex<crate::startup::StartupPublisher>>,
@@ -185,12 +167,9 @@ impl Fixture {
             startup,
             metrics_tap: Arc::new(MetricsTap::default()),
         };
-        // No tip program in the fixture; a meter over it would read nought for every
-        // slot.
         Collector::new(self.ctx.clone(), shared, None, None, None)
     }
 
-    /// The once-a-second readings over this fixture, ready to tick.
     pub fn meters(&self) -> Meters {
         // A tap of its own rather than the process-wide one, which would carry
         // whatever the rest of the suite measured.
@@ -204,8 +183,6 @@ impl Fixture {
     }
 }
 
-/// Startup progress for a validator that has finished starting, which is what
-/// both threads report against for all but the boot sequence itself.
 fn running() -> StartProgress {
     Arc::new(RwLock::new(ValidatorStartProgress::Running))
 }
@@ -266,7 +243,6 @@ pub fn fixture() -> Fixture {
             leader_schedule_cache,
             vote_account,
             highest_finalized: Arc::new(RwLock::new(None)),
-            // Nothing in the tests reads the host panel.
             account_paths: Vec::new(),
             snapshot_config: None,
         },
@@ -287,8 +263,6 @@ mod tests {
 
     #[test]
     fn test_the_fixture_builds_a_validator_with_stake() {
-        // Proves the dependency and feature wiring before any real test leans on it:
-        // a genesis with no stake makes every collector take its empty path.
         let harness = fixture();
         let bank = harness.working_bank();
         assert_eq!(bank.slot(), 0);
@@ -313,8 +287,6 @@ mod tests {
 
     #[test]
     fn test_a_tick_publishes_what_a_client_needs_to_render() {
-        // The end-to-end shape. Asserts the keys are present rather than their
-        // values; what this catches is a collector wired to publish nothing.
         let harness = fixture();
         harness.advance_to(1);
 
@@ -348,8 +320,7 @@ mod tests {
 
     #[test]
     fn test_the_cluster_wide_tier_waits_for_a_viewer() {
-        // The expensive sampling is skipped while nobody is connected. Easy to break
-        // by moving a collector into the wrong tier, and invisible if it is.
+        // Easy to break by moving a collector into the wrong tier, and invisible if it is.
         let harness = fixture();
         harness.advance_to(1);
         let mut collector = harness.collector();
@@ -362,7 +333,6 @@ mod tests {
             "the cluster walk ran with nobody watching"
         );
 
-        // Holding a receiver is what counts as a viewer.
         let _viewer = harness.publisher.subscribe();
         collector.tick();
         assert!(

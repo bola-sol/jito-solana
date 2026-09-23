@@ -9,7 +9,6 @@ use {
     },
 };
 
-/// Non-vote transactions in one block, by message version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct TxVersions {
     pub legacy: u64,
@@ -17,7 +16,6 @@ pub struct TxVersions {
     pub v1: u64,
 }
 
-/// Tallies `transactions` by version, simple votes left out.
 pub fn tally<'a>(transactions: impl IntoIterator<Item = &'a VersionedTransaction>) -> TxVersions {
     let mut versions = TxVersions::default();
     for transaction in transactions {

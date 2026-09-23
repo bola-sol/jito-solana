@@ -14,8 +14,7 @@ use {
     },
 };
 
-/// Bytes in a disk sector as `/proc/diskstats` counts them: always 512,
-/// whatever the device's own sector size.
+/// Always 512, whatever the device's own sector size.
 const SECTOR_BYTES: u64 = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,7 +22,6 @@ pub struct LoadAverage {
     pub one: f64,
     pub five: f64,
     pub fifteen: f64,
-    /// Threads on a run queue right now, and threads in total.
     pub running: u64,
     pub threads: u64,
 }
@@ -31,48 +29,39 @@ pub struct LoadAverage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Memory {
     pub total: u64,
-    /// What the kernel believes can be handed out without swapping, which is
-    /// not the same as free: most of the page cache is included in it.
+    /// Not free: it includes most of the page cache.
     pub available: u64,
-    /// Page cache and buffers, the part of "used" the kernel will give back.
     pub reclaimable: u64,
-    /// Untouched memory. What is spoken for is `total - free - reclaimable`;
-    /// `available` is larger than `free` by most of the page cache.
+    /// What is spoken for is `total - free - reclaimable`.
     pub free: u64,
     pub swap_total: u64,
     pub swap_free: u64,
 }
 
-/// Cumulative ticks for every core together, straight out of the `cpu` line of
-/// `/proc/stat`. Guest time is already inside `user` and `nice`.
+/// Guest time is already inside `user` and `nice`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CpuCounters {
     pub user: u64,
     pub nice: u64,
     pub system: u64,
     pub idle: u64,
-    /// Idle with a disk request outstanding: not busy, but not free either.
+    /// Not busy, but not free either.
     pub iowait: u64,
     pub irq: u64,
     pub softirq: u64,
-    /// Time a hypervisor gave to someone else. Always nought on bare metal.
     pub steal: u64,
 }
 
-/// One interval's ticks as shares of it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct CpuUse {
-    /// Everything but idle and iowait.
     pub busy: f64,
     pub user: f64,
-    /// The kernel, including interrupt handling.
     pub system: f64,
     pub iowait: f64,
     pub steal: f64,
 }
 
 impl CpuCounters {
-    /// This sample less the one before, or `None` if a counter went backwards.
     pub fn since(&self, previous: &Self) -> Option<Self> {
         Some(Self {
             user: self.user.checked_sub(previous.user)?,
@@ -118,7 +107,6 @@ impl CpuCounters {
     }
 }
 
-/// Cumulative counters for one block device, straight out of `/proc/diskstats`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DiskCounters {
     pub reads: u64,
@@ -127,14 +115,12 @@ pub struct DiskCounters {
     pub writes: u64,
     pub write_sectors: u64,
     pub write_ms: u64,
-    /// Milliseconds the device had at least one request in flight, which is what
-    /// `iostat` turns into `%util`. A duty cycle, not a level.
+    /// What `iostat` turns into `%util`: a duty cycle, not a level.
     pub busy_ms: u64,
 }
 
 impl DiskCounters {
-    /// This sample less the one before, or `None` if a counter went backwards, as
-    /// it does when a device is re-added.
+    /// `None` if a counter went backwards, as when a device is re-added.
     pub fn since(&self, previous: &Self) -> Option<Self> {
         Some(Self {
             reads: self.reads.checked_sub(previous.reads)?,
@@ -159,8 +145,7 @@ impl DiskCounters {
         self.reads.saturating_add(self.writes)
     }
 
-    /// Mean milliseconds a request spent queued and serviced. `None` where the
-    /// device did nothing, since nought would read as fast.
+    /// `None` where the device did nothing, since nought would read as fast.
     pub fn wait_ms(&self) -> Option<f64> {
         let operations = self.operations();
         if operations == 0 {
@@ -170,8 +155,7 @@ impl DiskCounters {
         Some(waited as f64 / operations as f64)
     }
 
-    /// Share of the interval the device had work in flight, clamped because the
-    /// kernel accumulates `busy_ms` on its own clock.
+    /// Clamped because the kernel accumulates `busy_ms` on its own clock.
     pub fn busy(&self, interval_ms: f64) -> Option<f64> {
         if interval_ms <= 0.0 {
             return None;
@@ -180,24 +164,18 @@ impl DiskCounters {
     }
 }
 
-/// How full one filesystem is. A level, read as it stands rather than diffed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Filesystem {
     pub total: u64,
-    /// Bytes a process without privileges may still write, which is what an
-    /// operator has left. Root's reserve is deliberately not counted.
+    /// Root's reserve is deliberately not counted.
     pub available: u64,
 }
 
-/// Everything read in one pass.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostSnapshot {
     pub load: LoadAverage,
-    /// Absent where `/proc/stat` could not be read, so only that tile goes.
     pub cpu: Option<CpuCounters>,
     pub memory: Memory,
-    /// Keyed by the kernel's device name, before partitions are folded into
-    /// their parent disk.
     pub disks: BTreeMap<String, DiskCounters>,
 }
 
@@ -227,7 +205,6 @@ pub fn read() -> io::Result<HostSnapshot> {
     ))
 }
 
-/// How full the filesystem holding `path` is.
 #[cfg(target_os = "linux")]
 pub fn filesystem(path: &Path) -> io::Result<Filesystem> {
     let c_path = CString::new(path.as_os_str().as_bytes())
@@ -255,7 +232,6 @@ pub fn filesystem(_path: &Path) -> io::Result<Filesystem> {
     ))
 }
 
-/// The validator process's resident memory, in bytes.
 #[cfg(target_os = "linux")]
 pub fn process_resident() -> io::Result<u64> {
     let status = std::fs::read_to_string("/proc/self/status")?;
@@ -270,7 +246,6 @@ pub fn process_resident() -> io::Result<u64> {
     ))
 }
 
-/// `VmRSS:    123456 kB`, one line of the status file.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_resident(status: &str) -> Option<u64> {
     let line = status
@@ -280,8 +255,7 @@ fn parse_resident(status: &str) -> Option<u64> {
     Some(kib.saturating_mul(1024))
 }
 
-/// Which filesystem `path` is on, for grouping: four accounts directories
-/// under one mount are one filesystem, not four.
+/// Four accounts directories under one mount are one filesystem, not four.
 #[cfg(target_os = "linux")]
 pub fn filesystem_id(path: &Path) -> io::Result<u64> {
     use std::os::linux::fs::MetadataExt;
@@ -296,8 +270,7 @@ pub fn filesystem_id(_path: &Path) -> io::Result<u64> {
     ))
 }
 
-/// The block device behind `path` as `/proc/diskstats` names it, a partition folded up to its
-/// disk since they share a queue. `None` where there is no block device, as on tmpfs.
+/// A partition is folded up to its disk, since they share a queue.
 #[cfg(target_os = "linux")]
 pub fn device_for(path: &Path) -> io::Result<Option<String>> {
     use std::os::linux::fs::MetadataExt;
@@ -339,7 +312,6 @@ fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-/// `0.52 0.58 0.59 2/1847 12345`
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_load(contents: &str) -> Option<LoadAverage> {
     let mut fields = contents.split_whitespace();
@@ -388,7 +360,6 @@ fn parse_stat(contents: &str) -> Option<CpuCounters> {
     })
 }
 
-/// `MemTotal:       395264000 kB`, one key per line, values in kibibytes.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_memory(contents: &str) -> Option<Memory> {
     let mut memory = Memory::default();
@@ -561,7 +532,6 @@ ctxt 6789
 
     #[test]
     fn test_no_ticks_is_no_reading() {
-        // Nought of nothing would read as a wholly idle machine.
         assert_eq!(CpuCounters::default().shares(), None);
     }
 
@@ -598,8 +568,7 @@ ctxt 6789
 
     #[test]
     fn test_does_not_mistake_swap_cached_for_the_page_cache() {
-        // `SwapCached` sits directly under `Cached` and is a different figure.
-        // A prefix match here would add it to the reclaimable total.
+        // `SwapCached` sits under `Cached`; a prefix match would add it to the reclaimable total.
         let memory =
             parse_memory("MemTotal: 1024 kB\nCached: 512 kB\nSwapCached: 256 kB\nBuffers: 0 kB\n")
                 .unwrap();
@@ -647,8 +616,6 @@ ctxt 6789
 
     #[test]
     fn test_keeps_partitions_separate_here_and_folds_them_later() {
-        // Both are read; `device_for` is what decides a path on `nvme0n1p1` is
-        // reported against `nvme0n1`.
         let disks = parse_diskstats(DISKSTATS);
         assert!(disks.contains_key("nvme0n1"));
         assert!(disks.contains_key("nvme0n1p1"));
@@ -716,7 +683,6 @@ ctxt 6789
 
     #[test]
     fn test_has_no_wait_to_report_where_the_device_did_nothing() {
-        // Nought here would read as an idle device being infinitely fast.
         assert_eq!(DiskCounters::default().wait_ms(), None);
     }
 
@@ -731,7 +697,6 @@ ctxt 6789
 
     #[test]
     fn test_busy_is_clamped_to_the_interval() {
-        // Clamps busy where the kernel clock runs past the interval.
         let delta = DiskCounters {
             busy_ms: 1004,
             ..DiskCounters::default()

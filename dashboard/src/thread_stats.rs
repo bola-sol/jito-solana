@@ -10,30 +10,24 @@ use {
     },
 };
 
-/// A thread's scheduler counters, cumulative since it started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadReading {
     pub tid: u64,
-    /// The name the thread gave itself, as the kernel keeps it: fifteen bytes.
+    /// Fifteen bytes, as the kernel keeps it.
     pub name: String,
     pub on_cpu_nanos: u64,
     pub waiting_nanos: u64,
 }
 
-/// One group of threads' second, as shares of it, mean per thread.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ThreadGroup {
-    /// The pool's name with its trailing number stripped. Empty on the folded
-    /// row.
     pub name: String,
     pub count: usize,
-    /// The union of cores the group's threads may run on, where every thread is held to fewer than
-    /// the machine has. `None` where any thread is free to roam.
+    /// The union where every thread is held to fewer cores than the machine has; `None` where any
+    /// may roam.
     pub cores: Option<String>,
-    /// Share of the second on a core, and runnable but waiting for one.
     pub on_cpu: f64,
     pub waiting: f64,
-    /// True for the one row every group not shown is folded into.
     pub other: bool,
 }
 
@@ -77,8 +71,6 @@ pub fn read() -> io::Result<Vec<ThreadReading>> {
     ))
 }
 
-/// The cores a thread may run on, from its status file. `None` where it
-/// cannot be read, which includes a thread that has just exited.
 #[cfg(target_os = "linux")]
 pub fn cores_allowed(tid: u64) -> Option<String> {
     let status = std::fs::read_to_string(format!("/proc/self/task/{tid}/status")).ok()?;
@@ -100,7 +92,6 @@ fn parse_schedstat(contents: &str) -> Option<(u64, u64)> {
     Some((on_cpu, waiting))
 }
 
-/// `Cpus_allowed_list:\t0-23`, one line among the status file's.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_cpus_allowed(status: &str) -> Option<String> {
     status
@@ -110,12 +101,10 @@ fn parse_cpus_allowed(status: &str) -> Option<String> {
         .filter(|list| !list.is_empty())
 }
 
-/// How many cores a list names: `0-3,8` is five.
 pub fn cores_in(list: &str) -> usize {
     parse_cores(list).len()
 }
 
-/// The cores a list names, as the kernel writes it: `0-3,8`.
 fn parse_cores(list: &str) -> BTreeSet<usize> {
     list.split(',')
         .flat_map(|part| match part.trim().split_once('-') {
@@ -153,12 +142,10 @@ fn format_cores(cores: &BTreeSet<usize>) -> String {
         .join(",")
 }
 
-/// A pool's threads share a name and differ by a trailing number.
 pub fn group_key(name: &str) -> &str {
     name.trim_end_matches(|c: char| c.is_ascii_digit())
 }
 
-/// Sums in the making, before they are turned into shares.
 #[derive(Default)]
 struct GroupSum {
     count: usize,
@@ -169,8 +156,7 @@ struct GroupSum {
     cores: Option<Option<BTreeSet<usize>>>,
 }
 
-/// Each group's second, from two readings of every thread. A thread with no earlier reading, or
-/// whose id was reused under another name, is left out.
+/// A thread with no earlier reading, or whose id was reused under another name, is left out.
 pub fn group_shares(
     previous: &HashMap<u64, ThreadReading>,
     current: &[ThreadReading],
@@ -222,8 +208,7 @@ pub fn group_shares(
         .collect()
 }
 
-/// Nanoseconds across `count` threads as a mean share of `span`. Clamped:
-/// the two clocks are read apart, so a busy thread can read a hair over.
+/// Clamped: the two clocks are read apart, so a busy thread can read a hair over.
 fn share(nanos: u64, count: usize, span: f64) -> f64 {
     if count == 0 || span <= 0.0 {
         return 0.0;
@@ -231,7 +216,6 @@ fn share(nanos: u64, count: usize, span: f64) -> f64 {
     (nanos as f64 / (count as f64 * span)).min(1.0)
 }
 
-/// The `top` groups by mean share over the window, in that order, and the rest folded into one row.
 /// Ranked on the window so rows do not reorder every tick.
 pub fn select_rows(
     mut groups: Vec<ThreadGroup>,
@@ -263,8 +247,7 @@ pub fn select_rows(
     groups
 }
 
-/// A share across several groups, weighted by how many threads each has, so
-/// the folded row is still a mean per thread.
+/// Weighted by thread count, so the folded row is still a mean per thread.
 fn mean_of(groups: &[ThreadGroup], count: usize, value: impl Fn(&ThreadGroup) -> f64) -> f64 {
     if count == 0 {
         return 0.0;
@@ -276,7 +259,6 @@ fn mean_of(groups: &[ThreadGroup], count: usize, value: impl Fn(&ThreadGroup) ->
     weighted / count as f64
 }
 
-/// Each group's mean share over the ticks it appeared in.
 pub fn window_means<'a>(
     recent: impl IntoIterator<Item = &'a Vec<(String, f64)>>,
 ) -> HashMap<String, f64> {
@@ -352,8 +334,6 @@ mod tests {
 
     #[test]
     fn test_a_pool_is_named_without_its_trailing_number() {
-        // What the unified scheduler names its handlers, and what PoH names
-        // its one thread.
         assert_eq!(group_key("solScHandleV07"), "solScHandleV");
         assert_eq!(group_key("solPohTickProd"), "solPohTickProd");
         assert_eq!(group_key("solSigVerify3"), "solSigVerify");
@@ -381,7 +361,6 @@ mod tests {
 
     #[test]
     fn test_a_thread_with_no_earlier_reading_is_left_out() {
-        // Its counters run from its start, not from the last tick.
         let before = by_tid(&[reading(10, "solGossip", 0, 0)]);
         let now = [
             reading(10, "solGossip", SECOND / 10, 0),
@@ -394,7 +373,6 @@ mod tests {
 
     #[test]
     fn test_reused_thread_id_is_not_differenced() {
-        // A reused thread id is not differenced against its predecessor.
         let before = by_tid(&[reading(10, "solOldThread", SECOND, 0)]);
         let now = [reading(10, "solNewThread", SECOND / 10, 0)];
         assert!(group_shares(&before, &now, &HashMap::new(), SECOND).is_empty());
@@ -402,7 +380,6 @@ mod tests {
 
     #[test]
     fn test_a_share_cannot_exceed_the_second() {
-        // The two clocks are read apart, so a busy thread can read a hair over.
         let before = by_tid(&[reading(1, "solPohTickProd", 0, 0)]);
         let now = [reading(1, "solPohTickProd", SECOND + 1_000, 0)];
         let groups = group_shares(&before, &now, &HashMap::new(), SECOND);
@@ -411,7 +388,6 @@ mod tests {
 
     #[test]
     fn test_pinning_needs_the_whole_group() {
-        // Pinning is reported only where the whole group shares it.
         let before = by_tid(&[
             reading(1, "solPohTickProd", 0, 0),
             reading(10, "solScHandleV00", 0, 0),
@@ -475,8 +451,8 @@ mod tests {
 
     #[test]
     fn test_rows_are_top_groups_plus_the_rest() {
-        // Ranked on the window: gossip is quiet this second but was busy all
-        // minute, so it keeps its row above the handler that just spiked.
+        // Gossip is quiet this second but busy all minute, so it keeps its row above the handler
+        // that just spiked.
         let groups = vec![
             group("solPohTickProd", 1, 0.94),
             group("solGossip", 6, 0.01),
@@ -524,7 +500,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_this_process_reports_its_own_threads() {
-        // The test binary has at least the thread running this test.
         let threads = read().unwrap();
         assert!(!threads.is_empty());
         assert!(threads.iter().all(|thread| !thread.name.is_empty()));

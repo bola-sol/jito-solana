@@ -15,28 +15,21 @@ use {
     tokio::sync::broadcast,
 };
 
-/// Ceiling on a websocket message in either direction, soketto having one
-/// limit per connection. The largest server message is under half of it.
+/// soketto has one limit per connection; the largest server message is under half of it.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
 
-/// Messages buffered per client before it counts as too slow and is dropped.
 const BROADCAST_CAPACITY: usize = 8192;
 
 /// JSON this long or longer also travels deflated to a client that offered the subprotocol; below
 /// it the saving does not pay for the framing.
 pub const DEFLATE_FROM: usize = 512;
 
-/// The websocket subprotocol a client offers to be sent deflated frames.
 pub const DEFLATE_PROTOCOL: &str = "deflate";
 
-/// How often the bytes published per key are logged, at debug level.
 const TRAFFIC_REPORT: Duration = Duration::from_secs(60);
 
-/// Keys named in a traffic report, heaviest first.
 const TRAFFIC_TOP: usize = 8;
 
-/// The topics a client can receive. Here because they are part of the wire
-/// format.
 pub const TOPIC_SUMMARY: &str = "summary";
 pub const TOPIC_EPOCH: &str = "epoch";
 pub const TOPIC_SLOT: &str = "slot";
@@ -51,34 +44,27 @@ struct Envelope<'a, T> {
     value: T,
 }
 
-/// A request sent by a client. Unknown fields are ignored, so a client may send
-/// arguments alongside these once a request exists that takes any.
+/// Unknown fields are ignored, so arguments can be added later.
 #[derive(Deserialize)]
 pub struct Request {
     pub topic: String,
     pub key: String,
     #[serde(default)]
     pub id: Option<u64>,
-    /// Whatever the request carries, left unparsed: each request knows the shape
-    /// of its own parameters.
     #[serde(default)]
     pub params: serde_json::Value,
 }
 
-/// A serialized, ready-to-send message. Serialization happens once, on the
-/// publishing thread, and the resulting bytes are shared by every client.
+/// Serialized once, on the publishing thread, and shared by every client.
 #[derive(Clone)]
 pub struct Message {
     text: Arc<str>,
-    /// The same JSON deflated, made the first time a client that takes it is
-    /// sent the message and shared by every copy. None when too short to gain.
+    /// Made the first time a client that takes it is sent the message, and shared by every copy.
     deflated: Arc<OnceLock<Option<Box<[u8]>>>>,
-    /// The retained key this carries a newer value of, so an older value still
-    /// queued for a slow client can be dropped in its favour.
+    /// So an older value still queued for a slow client can be dropped in its favour.
     supersedes: Option<(&'static str, &'static str)>,
 }
 
-/// What goes on the wire to one client.
 pub enum Frame<'a> {
     Text(&'a str),
     Binary(&'a [u8]),
@@ -108,8 +94,6 @@ impl Message {
         &self.text
     }
 
-    /// The frame a client is sent: deflated when it offered to take that and
-    /// the message is long enough.
     pub fn frame(&self, deflate: bool) -> Frame<'_> {
         match deflate.then(|| self.deflated()).flatten() {
             Some(bytes) => Frame::Binary(bytes),
@@ -117,7 +101,6 @@ impl Message {
         }
     }
 
-    /// Bytes on the wire to a client, given whether it takes deflated frames.
     pub fn wire_len(&self, deflate: bool) -> usize {
         match deflate.then(|| self.deflated()).flatten() {
             Some(bytes) => bytes.len(),
@@ -130,7 +113,6 @@ impl Message {
     }
 }
 
-/// The JSON, as the string it is; the deflated form is a cache of it.
 impl std::ops::Deref for Message {
     type Target = str;
 
@@ -145,8 +127,7 @@ impl std::fmt::Display for Message {
     }
 }
 
-/// zlib-wrapped deflate, the format a browser's `DecompressionStream`
-/// reads as "deflate".
+/// zlib-wrapped, the format a browser's `DecompressionStream` reads as "deflate".
 fn deflate(bytes: &[u8]) -> Option<Vec<u8>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(bytes).ok()?;
@@ -180,8 +161,7 @@ pub fn encode_with_id<T: Serialize>(topic: &str, key: &str, id: Option<u64>, val
         id,
         value,
     };
-    // The only failure is a `Serialize` impl that errors. Falling back to null
-    // keeps a bug in one topic from taking the feed down.
+    // Falling back to null keeps a bug in one topic from taking the feed down.
     match serde_json::to_string(&envelope) {
         Ok(json) => Message::new(json),
         Err(err) => {
@@ -193,8 +173,6 @@ pub fn encode_with_id<T: Serialize>(topic: &str, key: &str, id: Option<u64>, val
     }
 }
 
-/// The envelope [`encode_with_id`] writes, around a value serialised already,
-/// so a reply every viewer may ask for is encoded once.
 pub fn encode_json_with_id(topic: &str, key: &str, id: Option<u64>, value: &str) -> Message {
     let topic = serde_json::Value::from(topic);
     let key = serde_json::Value::from(key);
@@ -204,14 +182,12 @@ pub fn encode_json_with_id(topic: &str, key: &str, id: Option<u64>, value: &str)
     ))
 }
 
-/// What one key has been sent since the last traffic report.
 #[derive(Clone, Copy, Default)]
 struct Volume {
     messages: usize,
     bytes: usize,
 }
 
-/// Bytes published per key, as a client taking deflated frames receives them.
 struct Traffic {
     since: Instant,
     by_key: BTreeMap<(&'static str, String), Volume>,
@@ -225,7 +201,6 @@ impl Traffic {
         }
     }
 
-    /// The report's one line: the total, then the heaviest keys.
     fn describe(self) -> String {
         let seconds = self.since.elapsed().as_secs();
         let total = self
@@ -261,8 +236,6 @@ fn bytes_text(bytes: usize) -> String {
     }
 }
 
-/// Fans messages out to connected clients and remembers the latest value of
-/// every retained key so new connections can be caught up in one shot.
 pub struct Publisher {
     retained: Mutex<BTreeMap<(&'static str, &'static str), Message>>,
     sender: broadcast::Sender<Message>,
@@ -285,7 +258,6 @@ impl Publisher {
         }
     }
 
-    /// Publish a value that should be replayed to clients connecting later.
     pub fn publish<T: Serialize>(&self, topic: &'static str, key: &'static str, value: &T) {
         let mut message = encode(topic, key, value);
         message.supersedes = Some((topic, key));
@@ -298,8 +270,7 @@ impl Publisher {
         let _ = self.sender.send(message);
     }
 
-    /// Publish a point-in-time event. Not replayed to future connections, so
-    /// not encoded at all while nobody is connected.
+    /// Not encoded at all while nobody is connected.
     pub fn publish_ephemeral<T: Serialize>(&self, topic: &'static str, key: &str, value: &T) {
         if self.sender.receiver_count() == 0 {
             return;
@@ -309,8 +280,7 @@ impl Publisher {
         let _ = self.sender.send(message);
     }
 
-    /// Counts a message toward the minute's traffic and logs the minute once it
-    /// is up. Only while this module's log is at debug.
+    /// Only while this module's log is at debug.
     fn note(&self, topic: &'static str, key: &str, message: &Message) {
         if !log::log_enabled!(log::Level::Debug) {
             return;
@@ -327,14 +297,12 @@ impl Publisher {
         log::debug!("dashboard: {}", report.describe());
     }
 
-    /// Updates what a future connection receives without sending anything now,
-    /// for bulk snapshots whose incremental changes go out separately.
+    /// For bulk snapshots whose incremental changes go out separately.
     pub fn retain_only<T: Serialize>(&self, topic: &'static str, key: &'static str, value: &T) {
         let message = encode(topic, key, value);
         self.retained.lock().unwrap().insert((topic, key), message);
     }
 
-    /// Everything a freshly connected client needs to render a full view.
     pub fn snapshot(&self) -> Vec<Message> {
         self.retained.lock().unwrap().values().cloned().collect()
     }
@@ -343,14 +311,11 @@ impl Publisher {
         self.sender.subscribe()
     }
 
-    /// Websocket clients currently attached, so collection that only exists to be
-    /// looked at can be skipped when nobody is.
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
     }
 }
 
-/// The last published value of a key, so collectors publish only on change.
 pub struct Debounced<T> {
     last: Option<T>,
 }
@@ -362,7 +327,6 @@ impl<T> Default for Debounced<T> {
 }
 
 impl<T> Debounced<T> {
-    /// The value most recently published, if any.
     pub fn last(&self) -> Option<&T> {
         self.last.as_ref()
     }
@@ -388,8 +352,6 @@ impl<T: Serialize + PartialEq> Debounced<T> {
 mod tests {
     use super::*;
 
-    /// A value whose `Serialize` impl fails, standing in for a bug in one
-    /// topic's payload.
     struct Unserializable;
 
     impl Serialize for Unserializable {
@@ -400,7 +362,6 @@ mod tests {
 
     #[test]
     fn test_unencodable_payload_keeps_the_feed_up() {
-        // One broken topic costs that topic and nothing else.
         let message = encode("summary", "broken", &Unserializable);
         assert_eq!(
             message.text(),
@@ -429,8 +390,7 @@ mod tests {
 
     #[test]
     fn test_a_debounce_remembers_what_it_last_sent() {
-        // The collector reads this back to notice a vote that has moved, so it
-        // has to hold the published value rather than merely a hash of it.
+        // The collector compares against it, so it holds the value, not a hash.
         let publisher = Publisher::new();
         let mut debounced: Debounced<u64> = Debounced::default();
         assert_eq!(debounced.last(), None);
@@ -516,7 +476,6 @@ mod tests {
         assert!(long.text().len() >= DEFLATE_FROM);
         assert!(matches!(long.frame(true), Frame::Binary(_)));
         assert!(long.wire_len(true) < long.wire_len(false));
-        // A client that did not offer the subprotocol gets the text either way.
         assert!(matches!(long.frame(false), Frame::Text(_)));
 
         let short = encode("summary", "root_slot", &7u64);
@@ -532,7 +491,6 @@ mod tests {
         assert!(matches!(message.frame(false), Frame::Text(_)));
         assert!(message.deflated.get().is_none());
         assert!(matches!(copy.frame(true), Frame::Binary(_)));
-        // Made once, for every copy.
         assert!(message.deflated.get().is_some());
     }
 
@@ -583,8 +541,6 @@ mod tests {
         }
         let kept = coalesce(burst);
         let sent: Vec<&str> = kept.iter().map(Message::text).collect();
-        // Every ephemeral message, in order; the older root slot gone, the
-        // newer in its own place.
         assert_eq!(
             sent,
             [

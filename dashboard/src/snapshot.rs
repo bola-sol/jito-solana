@@ -19,23 +19,18 @@ use {
 /// A staging file older than this is a leftover from a crash, not a write.
 const STALE_WRITE: Duration = Duration::from_secs(60);
 
-/// One archive: the slot it holds and when the file was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Archive {
     pub slot: Slot,
-    /// Milliseconds since the epoch. `None` where the file could not be read.
     pub written_millis: Option<u64>,
 }
 
-/// An archive being staged: its slot, and when the staging began.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Writing {
     pub slot: Slot,
     pub since_millis: u64,
 }
 
-/// The last archive the collector saw written, and how far replay fell
-/// behind the cluster while it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Written {
     pub slot: Slot,
@@ -43,22 +38,18 @@ pub struct Written {
     pub fell_behind_slots: u64,
 }
 
-/// The newest full archive, the newest incremental on top of it, and the
-/// block-height intervals new ones arrive at. A `None` interval is disabled.
+/// A `None` interval is disabled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Snapshots {
     pub full: Option<Archive>,
     pub incremental: Option<Archive>,
     pub full_interval: Option<u64>,
     pub incremental_interval: Option<u64>,
-    /// The archive being staged now, if one is. Kind unknown: both kinds
-    /// stage under the same name.
+    /// Kind unknown: both kinds stage under the same name.
     pub writing: Option<Writing>,
-    /// Filled by the collector, which sees a write begin and end.
     pub last_written: Option<Written>,
 }
 
-/// `None` where the validator generates no snapshots.
 pub fn read(config: &SnapshotConfig) -> Option<Snapshots> {
     if !config.should_generate_snapshots() {
         return None;
@@ -98,8 +89,7 @@ fn millis(time: SystemTime) -> Option<u64> {
     u64::try_from(time.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()
 }
 
-/// The archive being staged in `dirs`, newest slot first. Its directory dates the start, and a file
-/// untouched for a minute is a leftover.
+/// Its directory dates the start, and a file untouched for a minute is a leftover.
 fn writing_in(dirs: &[&Path]) -> Option<Writing> {
     let now = SystemTime::now();
     let mut seen: HashSet<&Path> = HashSet::new();
@@ -254,7 +244,6 @@ mod tests {
 
     #[test]
     fn test_a_node_that_generates_none_reads_as_nothing() {
-        // The archive it booted from is still on disk, and only gets older.
         let dir = TempDir::new().unwrap();
         touch(&dir, &format!("snapshot-100-{HASH}.tar.zst"));
         assert_eq!(read(&config(&dir, SnapshotUsage::LoadOnly)), None);

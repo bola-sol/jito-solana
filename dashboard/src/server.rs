@@ -218,11 +218,8 @@ async fn refuse(
     // makes the kernel send RST, which discards the response we just wrote.
     let mut consumed = vec![0u8; head_len];
     socket.read_exact(&mut consumed).await?;
-    socket
-        .write_all(&response(status, "text/plain; charset=utf-8", body, false))
-        .await?;
-    socket.flush().await?;
-    socket.shutdown().await?;
+    let reply = response(status, "text/plain; charset=utf-8", body, false);
+    write_and_close(&mut socket, &reply).await?;
     Ok(())
 }
 
@@ -371,11 +368,19 @@ async fn serve_http(mut socket: TcpStream, head: &str) -> io::Result<()> {
         }
     };
 
-    socket.write_all(&response).await?;
-    socket.flush().await?;
-    // Shut the write half down explicitly so the peer sees a clean FIN after
-    // the whole body, instead of whatever dropping the socket produces.
-    socket.shutdown().await
+    write_and_close(&mut socket, &response).await
+}
+
+/// Writes a whole response and shuts the write half down, so the peer sees a
+/// clean FIN after the body. Bounded: a reader that stops reading holds a slot.
+async fn write_and_close(socket: &mut TcpStream, response: &[u8]) -> io::Result<()> {
+    timeout(WRITE_TIMEOUT, async {
+        socket.write_all(response).await?;
+        socket.flush().await?;
+        socket.shutdown().await
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "http response"))?
 }
 
 fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
@@ -464,28 +469,33 @@ async fn serve_websocket(
     let mut server = Server::new(socket.compat());
     // Only a protocol the server lists is reported back from the request.
     server.add_protocol(DEFLATE_PROTOCOL);
-    // The request borrows the server, so the key is copied out and the borrow
-    // dropped before the response goes back over that same server.
-    let (key, deflate) = {
+    // The key is copied out so the request's borrow ends before the response
+    // goes back. Bounded like the peek: a head cut off at its limit leaves
+    // soketto waiting for the rest.
+    let (key, deflate) = timeout(REQUEST_TIMEOUT, async {
         let request = server.receive_request().await?;
         let deflate = request
             .protocols()
             .any(|protocol| protocol == DEFLATE_PROTOCOL);
-        (request.key(), deflate)
-    };
+        Ok::<_, soketto::handshake::Error>((request.key(), deflate))
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket request"))??;
 
-    if path != WEBSOCKET_PATH {
-        server
-            .send_response(&server::Response::Reject { status_code: 404 })
-            .await?;
-        return Ok(());
-    }
-    server
-        .send_response(&server::Response::Accept {
+    let response = if path == WEBSOCKET_PATH {
+        server::Response::Accept {
             key,
             protocol: deflate.then_some(DEFLATE_PROTOCOL),
-        })
-        .await?;
+        }
+    } else {
+        server::Response::Reject { status_code: 404 }
+    };
+    timeout(WRITE_TIMEOUT, server.send_response(&response))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket response"))??;
+    if path != WEBSOCKET_PATH {
+        return Ok(());
+    }
 
     // Subscribing before taking the snapshot means a value that changes between
     // the two arrives as an update instead of going missing.

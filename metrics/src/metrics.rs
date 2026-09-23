@@ -418,12 +418,8 @@ pub type DataPointObserver = Box<dyn Fn(&DataPoint) + Send + Sync>;
 
 static OBSERVER: std::sync::OnceLock<DataPointObserver> = std::sync::OnceLock::new();
 
-/// Installs a hook that sees every point submitted, whether or not a metrics
-/// host is configured. Returns false if one is already installed.
-///
-/// The observer runs on the submitting thread, which is a validator thread, so
-/// it must be cheap, must not block, and must not panic: the validator's panic
-/// hook exits the process before anything could catch it.
+/// Installs a hook that sees every point, on the submitting thread; returns
+/// false if one is set. It must be cheap and must not block or panic.
 pub fn set_datapoint_observer(observer: DataPointObserver) -> bool {
     OBSERVER.set(observer).is_ok()
 }

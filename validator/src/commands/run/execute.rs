@@ -1166,9 +1166,8 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
-    // Started before the bootstrap below, which is where the RPC search and the
-    // snapshot download happen, so the page is up through the slowest part of
-    // a cold start. The collector attaches once the validator exists.
+    // Started before the bootstrap below, so the page is up through the RPC
+    // search and snapshot download. The collector attaches later.
     let mut dashboard_service = match dashboard_config {
         None => None,
         Some(dashboard_config) => {

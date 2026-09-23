@@ -54,6 +54,10 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 /// generous enough that several tabs never notice it.
 const MAX_WEBSOCKET_CLIENTS: usize = 64;
 
+/// Pause after a failed accept. Out of descriptors, `accept` fails at once
+/// until one is freed, so retrying straight away spins and floods the log.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
 /// Connections served at once, websockets included. A ceiling, not a
 /// throttle: every request in flight holds a copy of its answer.
 const MAX_CONNECTIONS: usize = 256;
@@ -111,6 +115,7 @@ pub async fn serve(
             Ok(accepted) => accepted,
             Err(err) => {
                 log::warn!("dashboard: accept failed: {err}");
+                sleep(ACCEPT_BACKOFF).await;
                 continue;
             }
         };

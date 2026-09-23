@@ -30,7 +30,7 @@ export function WrittenSection(): ReactElement {
 
   const live = useRef(true);
   const load = useCallback(() => {
-    store.request<WrittenList>("summary", "written", {}).then(
+    store.request("summary.written", {}).then(
       (got) => {
         if (!live.current) return;
         setList(got);

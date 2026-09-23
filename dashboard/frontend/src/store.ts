@@ -2,17 +2,29 @@
  *  per animation frame. */
 
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
+import type { SlotRange } from "./slotHistory";
 import type {
   Displays,
   EpochInfo,
   Envelope,
+  MissList,
   NetworkSample,
   Peer,
   Published,
   SlotEntry,
   ThreadsSample,
   TpsSample,
+  WrittenList,
 } from "./types";
+
+/** Each request the server answers, as `topic.key`, with its parameters and reply. */
+export interface Requests {
+  "slot.range": { params: { first_slot: number; count: number }; reply: SlotRange };
+  "epoch.query": { params: { epoch: number }; reply: EpochInfo | null };
+  "summary.displays": { params: Record<string, never>; reply: Displays };
+  "summary.misses": { params: Record<string, never>; reply: MissList };
+  "summary.written": { params: Record<string, never>; reply: WrittenList };
+}
 
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
 const MAX_SLOTS = 512;
@@ -138,13 +150,17 @@ export class Store {
 
   /** Asks the validator for something too large or too rarely read to push.
    *  Rejects rather than queues without a connection. */
-  request<T>(topic: string, key: string, params: unknown): Promise<T> {
+  request<R extends keyof Requests>(
+    route: R,
+    params: Requests[R]["params"],
+  ): Promise<Requests[R]["reply"]> {
     const sender = this.sender;
     if (sender === null) return Promise.reject(new Error("not connected"));
 
+    const [topic, key] = route.split(".");
     const id = this.nextRequestId;
     this.nextRequestId += 1;
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<Requests[R]["reply"]>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
       try {
         sender(JSON.stringify({ topic, key, id, params }));
@@ -162,7 +178,7 @@ export class Store {
   /** Fetches an epoch's schedule, once. Only the current one is pushed. */
   async loadEpoch(epoch: number): Promise<void> {
     if (this.epochs.has(epoch)) return;
-    const record = await this.request<EpochInfo | null>("epoch", "query", { epoch });
+    const record = await this.request("epoch.query", { epoch });
     // Held even when nothing came back, so an epoch the validator has no
     // schedule for is asked about once rather than on every search.
     this.epochs.set(epoch, record ?? null);
@@ -211,7 +227,7 @@ export class Store {
   /** Fetches the cluster's names and icons, once per session. */
   async loadDisplays(): Promise<void> {
     if (this.displays.size > 0) return;
-    const table = await this.request<Displays>("summary", "displays", {});
+    const table = await this.request("summary.displays", {});
     const next = new Map<string, { name: string | null; icon: string | null }>();
     table.keys.forEach((key, index) => {
       next.set(key, { name: table.names[index] ?? null, icon: table.icons[index] ?? null });

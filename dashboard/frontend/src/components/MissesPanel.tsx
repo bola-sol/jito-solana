@@ -35,7 +35,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const live = useRef(true);
   const load = useCallback(() => {
     setLoading(true);
-    store.request<MissList>("summary", "misses", {}).then(
+    store.request("summary.misses", {}).then(
       (got) => {
         if (!live.current) return;
         setList(got);

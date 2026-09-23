@@ -13,7 +13,7 @@ import {
   type Turn,
   type TurnSlot,
 } from "../schedule";
-import { entriesOf, type SlotRange } from "../slotHistory";
+import { entriesOf } from "../slotHistory";
 import type { Store } from "../store";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
@@ -42,7 +42,7 @@ async function fetchSpan(
   epoch: EpochInfo | undefined,
   identity: string | undefined,
 ): Promise<SlotEntry[]> {
-  const range = await store.request<SlotRange>("slot", "range", { first_slot: first, count });
+  const range = await store.request("slot.range", { first_slot: first, count });
   return entriesOf(range, epoch, identity);
 }
 

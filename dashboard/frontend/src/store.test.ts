@@ -326,10 +326,10 @@ describe("slots", () => {
     store.setSender((frame) => sent.push(frame));
     store.setConnection("open");
 
-    const reply = store.request<{ rows: number[] }>("slot", "range", { first_slot: 4 });
-    const frame = JSON.parse(sent[0]) as { id: number; topic: string; params: unknown };
-    expect(frame.topic).toBe("slot");
-    expect(frame.params).toEqual({ first_slot: 4 });
+    const reply = store.request("slot.range", { first_slot: 4, count: 2 });
+    const frame = JSON.parse(sent[0]) as { id: number; topic: string; key: string; params: unknown };
+    expect([frame.topic, frame.key]).toEqual(["slot", "range"]);
+    expect(frame.params).toEqual({ first_slot: 4, count: 2 });
 
     store.apply({ topic: "slot", key: "range", id: frame.id, value: { rows: [1, 2] } });
     expect(await reply).toEqual({ rows: [1, 2] });
@@ -352,14 +352,14 @@ describe("slots", () => {
     store.setSender(() => {});
     store.setConnection("open");
 
-    const reply = store.request("slot", "range", {});
+    const reply = store.request("summary.misses", {});
     store.setConnection("closed");
     await expect(reply).rejects.toThrow("connection lost");
   });
 
   it("refuses a request made with no connection rather than queueing it", async () => {
     const store = new Store();
-    await expect(store.request("slot", "range", {})).rejects.toThrow("not connected");
+    await expect(store.request("summary.misses", {})).rejects.toThrow("not connected");
   });
 
   it("bounds how many of our own slots it keeps", () => {

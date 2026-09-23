@@ -9,7 +9,7 @@ use {
     std::{
         collections::BTreeMap,
         io::Write,
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, OnceLock},
         time::{Duration, Instant},
     },
     tokio::sync::broadcast,
@@ -71,9 +71,9 @@ pub struct Request {
 #[derive(Clone)]
 pub struct Message {
     text: Arc<str>,
-    /// The same JSON deflated, kept when the message is long enough to be
-    /// worth it.
-    deflated: Option<Arc<[u8]>>,
+    /// The same JSON deflated, made the first time a client that takes it is
+    /// sent the message and shared by every copy. None when too short to gain.
+    deflated: Arc<OnceLock<Option<Box<[u8]>>>>,
     /// The retained key this carries a newer value of, so an older value still
     /// queued for a slow client can be dropped in its favour.
     supersedes: Option<(&'static str, &'static str)>,
@@ -87,16 +87,22 @@ pub enum Frame<'a> {
 
 impl Message {
     fn new(json: String) -> Self {
-        let deflated = if json.len() >= DEFLATE_FROM {
-            deflate(json.as_bytes()).map(Arc::from)
-        } else {
-            None
-        };
         Self {
             text: Arc::from(json.as_str()),
-            deflated,
+            deflated: Arc::default(),
             supersedes: None,
         }
+    }
+
+    fn deflated(&self) -> Option<&[u8]> {
+        self.deflated
+            .get_or_init(|| {
+                (self.text.len() >= DEFLATE_FROM)
+                    .then(|| deflate(self.text.as_bytes()))
+                    .flatten()
+                    .map(Vec::into_boxed_slice)
+            })
+            .as_deref()
     }
 
     pub fn text(&self) -> &str {
@@ -106,17 +112,17 @@ impl Message {
     /// The frame a client is sent: deflated when it offered to take that and
     /// the message is long enough.
     pub fn frame(&self, deflate: bool) -> Frame<'_> {
-        match &self.deflated {
-            Some(bytes) if deflate => Frame::Binary(bytes),
-            _ => Frame::Text(&self.text),
+        match deflate.then(|| self.deflated()).flatten() {
+            Some(bytes) => Frame::Binary(bytes),
+            None => Frame::Text(&self.text),
         }
     }
 
     /// Bytes on the wire to a client, given whether it takes deflated frames.
     pub fn wire_len(&self, deflate: bool) -> usize {
-        match &self.deflated {
-            Some(bytes) if deflate => bytes.len(),
-            _ => self.text.len(),
+        match deflate.then(|| self.deflated()).flatten() {
+            Some(bytes) => bytes.len(),
+            None => self.text.len(),
         }
     }
 
@@ -294,8 +300,12 @@ impl Publisher {
         let _ = self.sender.send(message);
     }
 
-    /// Publish a point-in-time event. Not replayed to future connections.
+    /// Publish a point-in-time event. Not replayed to future connections, so
+    /// not encoded at all while nobody is connected.
     pub fn publish_ephemeral<T: Serialize>(&self, topic: &'static str, key: &str, value: &T) {
+        if self.sender.receiver_count() == 0 {
+            return;
+        }
         let message = encode(topic, key, value);
         self.note(topic, key, &message);
         let _ = self.sender.send(message);
@@ -514,6 +524,36 @@ mod tests {
         let short = encode("summary", "root_slot", &7u64);
         assert!(matches!(short.frame(true), Frame::Text(_)));
         assert_eq!(short.wire_len(true), short.text().len());
+    }
+
+    #[test]
+    fn test_a_message_is_deflated_only_once_a_client_takes_it() {
+        let message = encode("summary", "host", &vec![7u64; 400]);
+        let copy = message.clone();
+        assert!(message.deflated.get().is_none());
+        assert!(matches!(message.frame(false), Frame::Text(_)));
+        assert!(message.deflated.get().is_none());
+        assert!(matches!(copy.frame(true), Frame::Binary(_)));
+        // Made once, for every copy.
+        assert!(message.deflated.get().is_some());
+    }
+
+    #[test]
+    fn test_an_event_with_nobody_listening_is_dropped_unencoded() {
+        struct Untouched;
+        impl Serialize for Untouched {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                panic!("encoded with nobody listening");
+            }
+        }
+        let publisher = Publisher::new();
+        publisher.publish_ephemeral("slot", "update", &Untouched);
+        let mut receiver = publisher.subscribe();
+        publisher.publish_ephemeral("slot", "update", &1u64);
+        assert_eq!(
+            receiver.try_recv().unwrap().text(),
+            r#"{"topic":"slot","key":"update","value":1}"#
+        );
     }
 
     #[test]

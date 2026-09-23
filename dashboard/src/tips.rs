@@ -24,32 +24,6 @@ pub const TIP_ACCOUNTS: usize = TIP_ACCOUNT_SEEDS.len();
 /// points. One stated approximation applied to every leader.
 pub const JITO_CUT_BPS: u16 = 600;
 
-/// Basis points in the whole.
-const BPS_WHOLE: u128 = 10_000;
-
-/// `amount` scaled by `bps`, in `u128` so the multiply cannot saturate at any
-/// lamport figure a `u64` can hold.
-fn scale(amount: u64, bps: u16) -> u64 {
-    let scaled = u128::from(amount)
-        .saturating_mul(u128::from(bps))
-        .checked_div(BPS_WHOLE)
-        .unwrap_or(0);
-    u64::try_from(scaled).unwrap_or(u64::MAX)
-}
-
-/// What reaches a distribution account from what was paid into the tip
-/// accounts. A validator's and its stakers' together; the split depends on a
-/// commission this cannot see.
-pub fn jito_share(paid: u64) -> u64 {
-    paid.saturating_sub(scale(paid, JITO_CUT_BPS))
-}
-
-/// A validator's own cut of what reached the distribution account, for its
-/// own slots where the commission is known. An estimate.
-pub fn our_share(paid: u64, commission_bps: u16) -> u64 {
-    scale(jito_share(paid), commission_bps)
-}
-
 /// The rates a page derives the two drawn figures from. Sent rather than
 /// applied so what is stored stays what was measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -156,36 +130,5 @@ mod tests {
         let one = TipMeter::new(&Pubkey::new_unique());
         let other = TipMeter::new(&Pubkey::new_unique());
         assert_ne!(one.accounts(), other.accounts());
-    }
-
-    #[test]
-    fn test_jito_takes_six_per_cent_before_anyone_else_is_paid() {
-        assert_eq!(jito_share(1_400_000_000), 1_316_000_000);
-        // Nought in, nought out, rather than a division guarded at every call
-        // site.
-        assert_eq!(jito_share(0), 0);
-    }
-
-    #[test]
-    fn test_our_share_is_the_commission_of_what_reached_the_account() {
-        // A tenth of what survives jito's cut, not of what was paid. The wrong one
-        // overstates by six per cent, small enough to look right.
-        assert_eq!(our_share(1_400_000_000, 1_000), 131_600_000);
-        assert_eq!(our_share(1_400_000_000, 10_000), 1_316_000_000);
-        assert_eq!(our_share(1_400_000_000, 0), 0);
-    }
-
-    #[test]
-    fn test_the_shares_hold_where_a_u64_multiply_would_not() {
-        // Overflows a u64 several times over; scaled through u128 it is exactly six
-        // per cent.
-        assert_eq!(
-            jito_share(10_000_000_000_000_000_000),
-            9_400_000_000_000_000_000
-        );
-        assert_eq!(
-            our_share(10_000_000_000_000_000_000, 10_000),
-            9_400_000_000_000_000_000
-        );
     }
 }

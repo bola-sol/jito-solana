@@ -10,8 +10,7 @@ import type { TipRates } from "./types";
 /** Basis points in the whole. */
 const BPS_WHOLE = 10_000;
 
-/** `amount` scaled by `bps`, floored to match the validator's integer
- *  arithmetic. */
+/** `amount` scaled by `bps`, floored to whole lamports. */
 function scale(amount: number, bps: number): number {
   return Math.floor((amount * bps) / BPS_WHOLE);
 }

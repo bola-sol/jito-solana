@@ -18,9 +18,7 @@ describe("jitoShare", () => {
     expect(jitoShare(0, rates())).toBe(0);
   });
 
-  it("matches the validator's integer arithmetic rather than rounding up", () => {
-    // Floored on both sides, so the same lamports do not read one way on the
-    // page and another in a log line.
+  it("floors to whole lamports rather than rounding up", () => {
     expect(jitoShare(1_001, rates())).toBe(1_001 - 60);
   });
 });

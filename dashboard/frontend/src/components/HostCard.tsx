@@ -29,8 +29,7 @@ import type { DeviceLoad, FilesystemUsage, ThreadsSample } from "../types";
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
 
-/** The machine underneath the validator, from /proc and statvfs. A bar means
- *  a container that can fill; load and device saturation get none. */
+/** A bar means a container that can fill; load and device saturation get none. */
 export function HostCard(): ReactElement | null {
   const store = useStore();
   const host = store.get("summary", "host");
@@ -44,7 +43,6 @@ export function HostCard(): ReactElement | null {
   const serverTime = store.get("summary", "server_time_nanos");
   const writing = snapshotWriting(snapshots, serverTime === undefined ? undefined : serverTime / 1e6);
   const top = busiest(threadRows(samples));
-  // The filesystem the validator cannot run without, or the fullest.
   const ledger =
     host.filesystems.find((filesystem) => filesystem.name === "ledger") ??
     [...host.filesystems].sort((a, b) => fullness(b) - fullness(a))[0];
@@ -153,7 +151,6 @@ export function HostCard(): ReactElement | null {
           </div>
         </div>
 
-        {/* Absent where the machine has no swap, rather than a permanent nought. */}
         {host.swap && (
           <div className="host-figure">
             <div className="host-label">
@@ -207,7 +204,6 @@ export function HostCard(): ReactElement | null {
               writing={writing !== null && device.device === host.snapshot_device}
             />
           ))}
-          {/* The write in progress, or what the last one cost. */}
           {writing && <div className="host-sub host-snapshot tone-warn">{writing}</div>}
           {!writing && snapshots?.last_written && (
             <div className="host-sub host-snapshot host-faint">
@@ -223,7 +219,6 @@ export function HostCard(): ReactElement | null {
   );
 }
 
-/** A filesystem, which is a container, so it gets a bar. */
 function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
   const share = fullness(filesystem);
   const tone = fullnessTone(share);
@@ -243,8 +238,7 @@ function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
   );
 }
 
-/** A device, which is not a container, so no bar. Its name is toned while a
- *  snapshot is being written to it; the line under the rows says so. */
+/** Its name is toned while a snapshot is being written to it. */
 function Device({ device, writing }: { device: DeviceLoad; writing: boolean }) {
   return (
     <div className="host-device">
@@ -269,8 +263,6 @@ function share(part: number, whole: number): string {
   return `${Math.min(100, (part / whole) * 100)}%`;
 }
 
-/** The validator's threads over the last minute, folded like the caches
- *  card's sections: on a phone by default, else as the viewer left it. */
 function Threads({ samples }: { samples: ThreadsSample[] }) {
   const narrow = useNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => readThreadsCollapsed() ?? narrow);
@@ -349,7 +341,6 @@ function Threads({ samples }: { samples: ThreadsSample[] }) {
   );
 }
 
-/** One thread, or a pool of them, with its minute of bars. */
 function ThreadLine({ row }: { row: ThreadRow }) {
   const onCpu = onCpuTone(row);
   return (
@@ -363,8 +354,7 @@ function ThreadLine({ row }: { row: ThreadRow }) {
     >
       <span className="host-dev">
         <b>{row.label}</b>
-        {/* The count and the pinned cores here as well as in their columns,
-            shown only where the columns are not: a phone. */}
+        {/* Shown only where their columns are not: a phone. */}
         <span className="host-countline host-faint"> {count(row.count)}</span>
         {row.cores !== null && (
           <span className="host-pinline host-pin">, {pinnedLabel(row.cores)}</span>
@@ -388,8 +378,6 @@ const BAR_STEP = 6;
 const BAR_WIDTH = 5;
 const SPARK_HEIGHT = 16;
 
-/** A minute of one row's on-cpu share, one bar a second, right-aligned while
- *  the window fills. */
 function Spark({ row }: { row: ThreadRow }) {
   const offset = THREADS_WINDOW - row.series.length;
   return (

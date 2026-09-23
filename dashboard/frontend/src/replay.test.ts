@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { cpuRows, parts, serialRows, verifyRows } from "./replay";
 import type { ReplayWindow } from "./types";
 
-/** A window shaped like a real mainnet one, to be overridden a field at a time. */
 function window(over: Partial<ReplayWindow> = {}): ReplayWindow {
   return {
     slots: 200,
@@ -35,7 +34,6 @@ const rowOf = (rows: ReturnType<typeof serialRows>, key: string) =>
 
 describe("serialRows", () => {
   it("draws the three spans against their own sum", () => {
-    // They are disjoint spans measured one after another, so they partition.
     const rows = serialRows(window());
     const total = rows.reduce((sum, row) => sum + row.share, 0);
     expect(total).toBeCloseTo(1, 10);
@@ -50,15 +48,12 @@ describe("serialRows", () => {
 
 describe("verifyRows", () => {
   it("is drawn against the three added, not against the window they ran in", () => {
-    // The verify jobs overlap and span threads, so they are drawn against their own sum, not
-    // `confirming`.
     const rows = verifyRows(window());
     expect(rows.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(1, 10);
     expect(rowOf(rows, "poh").share).toBeGreaterThan(rowOf(rows, "signatures").share);
   });
 
   it("would exceed the window it happened in", () => {
-    // The reason the section is labelled relative.
     const w = window();
     expect(w.poh_verify + w.tx_verify + w.dispatch).toBeGreaterThan(w.confirming);
   });
@@ -66,15 +61,12 @@ describe("verifyRows", () => {
 
 describe("cpuRows", () => {
   it("partitions the six phases", () => {
-    // Sequential within a thread, so they add up and their total is what one
-    // slot costs the machine.
     const rows = cpuRows(window());
     expect(rows.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(1, 10);
     expect(rowOf(rows, "execute").share).toBeGreaterThan(0.7);
   });
 
   it("leaves the nested figures out of the phases entirely", () => {
-    // Already counted inside `execute` and `program_cache`, so a segment would draw them twice.
     const keys = cpuRows(window()).map((row) => row.key);
     expect(keys).not.toContain("bytecode");
     expect(keys).not.toContain("serialising");

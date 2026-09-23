@@ -15,7 +15,6 @@ describe("direction", () => {
   });
 
   it("does not let one noisy second move the arrow", () => {
-    // Throughput jitters by more than this each second, and the figure shows the spike anyway.
     const jitter = [...Array(59).fill(100), 115];
     expect(direction(jitter)!.trend).toBe("flat");
     expect(direction(jitter)!.current).toBe(115);
@@ -29,8 +28,6 @@ describe("direction", () => {
   });
 
   it("still fires on a single second large enough to be an event", () => {
-    // A doubling is not jitter. Damped to a tenth it still clears the floor,
-    // and it should: something changed.
     expect(direction([...Array(59).fill(100), 300])!.trend).toBe("up");
   });
 
@@ -49,8 +46,6 @@ describe("direction", () => {
 
 describe("sharedPeak", () => {
   it("is the highest reading either direction took", () => {
-    // One scale for both directions, or ten kilobytes would fill its band as ten megabytes fills
-    // the other.
     expect(sharedPeak([1 * MB, 2 * MB], [7 * MB, 3 * MB])).toBe(7 * MB);
   });
 
@@ -104,7 +99,6 @@ describe("the XDP line", () => {
   });
 
   it("leaves out what the validator could not look up", () => {
-    // The lookup returns "unknown" where it failed, which is left out rather than printed.
     expect(xdpDetail(config({ model: "unknown" }))).toEqual(["ice"]);
     expect(xdpDetail(config({ driver: "unknown", model: "unknown" }))).toEqual([]);
   });
@@ -114,8 +108,6 @@ describe("the XDP line", () => {
   });
 
   it("keeps a card whose name merely contains the word", () => {
-    // Only an exact "unknown" is the failure marker. A real model name is not
-    // dropped for containing it.
     expect(xdpDetail(config({ model: "Unknown Devices Inc 40G" }))).toContain(
       "Unknown Devices Inc 40G",
     );
@@ -138,7 +130,6 @@ describe("the XDP tooltip", () => {
   });
 
   it("capitalises the kernel where there is no vendor to lead", () => {
-    // Otherwise a lowercase word opens the second sentence and reads as a typo.
     expect(xdpTooltip(config({ vendor: "unknown" }))).toBe(`${SAID} Kernel 6.8.0-45-generic.`);
   });
 

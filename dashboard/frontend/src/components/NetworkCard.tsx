@@ -17,27 +17,20 @@ import { Card, chartY, Explain } from "./primitives";
 const WIDTH = 300;
 const HEIGHT = 38;
 
-/** A direction with no history yet: the live rate stands for the minute, so
- *  the figure is right from the first second. */
+/** The live rate stands for the minute, so the figure is right from the first second. */
 function steady(rate: number): Direction {
   return { current: rate, average: rate, delta: 0, trend: "flat" };
 }
 
-/** Whole-host interface throughput, one scale across both directions.
- *  Renders nothing where the counters could not be read. */
 export function NetworkCard(): ReactElement | null {
   const store = useStore();
   const rates = store.get("summary", "network");
   // Null where the validator was given no XDP config, since the point is only submitted where it
   // was.
   const xdp = store.get("summary", "xdp");
-  // Absent until a sender has reported, and never on a validator whose log
-  // level keeps it from submitting points at all.
   const split = store.get("summary", "network_egress");
-  // Absent until the retransmit stage has reported.
   const turbine = store.get("summary", "turbine");
-  // Drawn behind live on the validator's clock, so the newest point sits past
-  // the right edge and the line is continuous across it.
+  // Drawn behind live on the validator's clock, so the newest point sits past the right edge.
   const edge = useChartEdge();
   if (!rates) return null;
 
@@ -86,19 +79,14 @@ export function NetworkCard(): ReactElement | null {
   );
 }
 
-/** What the validator could name about the card. "unknown" is left out
- *  rather than printed. */
 export function xdpDetail(xdp: XdpConfig): string[] {
   return [xdp.driver, xdp.model].filter((part) => named(part));
 }
 
-/** Whether the validator resolved this, rather than saying it could not. */
 function named(part: string): boolean {
   return part !== "" && part !== "unknown";
 }
 
-/** The tooltip: what the line is, then the vendor and kernel where known; a failed `uname` reports
- *  "unknown" plus the error. */
 export function xdpTooltip(xdp: XdpConfig): string {
   const sentence = "How this validator's XDP transmit path is set up.";
   const parts = [];
@@ -111,8 +99,7 @@ export function xdpTooltip(xdp: XdpConfig): string {
   return `${sentence} ${aside.charAt(0).toUpperCase()}${aside.slice(1)}.`;
 }
 
-/** How the transmit path is set up, untoned since copy mode may be intended. Only the drops are
- *  toned: a full channel is the path failing. */
+/** Untoned, since copy mode may be intended; only the drops are toned. */
 function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   const detail = xdpDetail(xdp);
   const mode = xdp.zero_copy ? "zero-copy" : "copy";
@@ -139,8 +126,7 @@ function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   );
 }
 
-/** Shreds by the turbine layer they arrived from. The layer follows stake:
- *  a small validator hears most of its shreds two hops from the leader. */
+/** The layer follows stake: a small validator hears most of its shreds two hops from the leader. */
 function Intake({ turbine }: { turbine: Turbine }) {
   const shares = layerShares(turbine);
   if (!shares) return null;
@@ -170,8 +156,7 @@ function Intake({ turbine }: { turbine: Turbine }) {
   );
 }
 
-/** How much of egress two senders account for. The rest is hatched as
- *  unattributed: the shred path over XDP counts no bytes. */
+/** The shred path over XDP counts no bytes, so the rest is hatched as unattributed. */
 function Split({ total, split }: { total: number; split: EgressSplit }) {
   const shares = egressShares(total, split);
   const whole = Math.max(total, shares.measured, 1);
@@ -212,8 +197,6 @@ function Split({ total, split }: { total: number; split: EgressSplit }) {
   );
 }
 
-/** One direction: now, the last minute's shape, and the average, all in the
- *  unit the current reading calls for. */
 function Row({
   label,
   kind,

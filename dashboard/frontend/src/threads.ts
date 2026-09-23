@@ -1,9 +1,6 @@
-/** The validator's threads over the last minute, as the host card draws
- *  them: one sample a second into rows with a minute of bars each. */
 
 import type { ThreadsSample } from "./types";
 
-/** Samples the card draws, one a second. */
 export const THREADS_WINDOW = 60;
 
 /** The one thread whose healthy state is a whole core: PoH, toned when it
@@ -13,16 +10,14 @@ export const POH_LOW = 0.9;
 
 export interface ThreadRow {
   name: string;
-  /** What the row is called: a pool carries a star, the folded row a phrase. */
   label: string;
   count: number;
   cores: string | null;
   other: boolean;
   poh: boolean;
-  /** On-cpu share per second, oldest first; null where the group had no row that second. */
+  /** Null where the group had no row that second. */
   series: (number | null)[];
   now: number;
-  /** The minute's worst second of waiting. */
   waiting: number;
 }
 
@@ -30,7 +25,6 @@ function sameRow(a: { name: string; other: boolean }, b: { name: string; other: 
   return a.other ? b.other : !b.other && a.name === b.name;
 }
 
-/** The rows the last sample names, each with its minute read back through the samples before it. */
 export function threadRows(samples: ThreadsSample[]): ThreadRow[] {
   const recent = samples.slice(-THREADS_WINDOW);
   const last = recent[recent.length - 1];
@@ -54,12 +48,11 @@ export function threadRows(samples: ThreadsSample[]): ThreadRow[] {
   });
 }
 
-/** The row kept when the group is folded: the busiest, which the validator lists first. */
+/** The busiest, which the validator lists first. */
 export function busiest(rows: ThreadRow[]): ThreadRow | undefined {
   return rows.find((row) => !row.other);
 }
 
-/** On cpu is untoned, except for PoH, where low is the bad reading. */
 export function onCpuTone(row: ThreadRow): "warn" | null {
   return row.poh && row.now < POH_LOW ? "warn" : null;
 }
@@ -70,7 +63,6 @@ export function pinnedLabel(cores: string | null): string {
   return /[-,]/.test(cores) ? `cores ${cores}` : `core ${cores}`;
 }
 
-/** Whether one second's bar is toned: only PoH's, and only when it lost its core. */
 export function barLow(row: ThreadRow, share: number): boolean {
   return row.poh && share < POH_LOW;
 }

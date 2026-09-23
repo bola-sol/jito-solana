@@ -22,8 +22,6 @@ describe("edgeShift", () => {
   });
 
   it("keeps the left edge readable when the bubble cannot fit at all", () => {
-    // A bubble wider than the window should not be slid so far that its start
-    // is off-screen, which is what correcting the right edge alone would do.
     const shift = edgeShift(0, 2000, 300);
     expect(0 + shift).toBeLessThanOrEqual(12);
   });
@@ -40,8 +38,6 @@ describe("shouldFlipAbove", () => {
   });
 
   it("flips up rather than lengthening the page", () => {
-    // The Socket Ingest footnote: a trigger near the foot of the page, whose
-    // bubble hung past the bottom and raised a scrollbar.
     expect(shouldFlipAbove(960, 80, 870, VIEWPORT_HEIGHT)).toBe(true);
   });
 

@@ -53,7 +53,6 @@ describe("cached formatters", () => {
   });
 
   it("keep one formatter per digit count rather than one for all", () => {
-    // The cache is keyed by digits, so an earlier precision does not stick.
     expect(decimal(1.23456, 0)).toBe("1");
     expect(decimal(1.23456, 4)).toBe(
       (1.23456).toLocaleString(undefined, {
@@ -81,7 +80,6 @@ describe("duration", () => {
   });
 
   it("refuses a negative rather than rendering a wrapped figure", () => {
-    // Countdowns are derived from a slot estimate that can overshoot.
     expect(duration(-1)).toBe("—");
   });
 });
@@ -136,7 +134,6 @@ describe("shortKey", () => {
   });
 
   it("leaves a key that is already short enough alone", () => {
-    // Eliding here would make it longer, not shorter.
     expect(shortKey("abcdefghij")).toBe("abcdefghij");
   });
 });
@@ -164,15 +161,11 @@ describe("solCompact", () => {
 
 describe("buildLabel", () => {
   it("names the client ahead of the version", () => {
-    // The whole point: two builds carrying the same number are told apart by
-    // the half in front of it.
     expect(buildLabel("Agave", "4.3.0-beta.0")).toBe("Agave v4.3.0-beta.0");
     expect(buildLabel("JitoLabs", "4.2.1")).toBe("JitoLabs v4.2.1");
   });
 
   it("shows whichever half it has", () => {
-    // A server older than the client field publishes only the version, and it
-    // should read as it always did rather than falling blank.
     expect(buildLabel(undefined, "4.2.1")).toBe("v4.2.1");
     expect(buildLabel("Agave", undefined)).toBe("Agave");
   });
@@ -189,8 +182,6 @@ describe("micros", () => {
   });
 
   it("keeps one decimal at every size, so a column lines up", () => {
-    // These sit together and span three orders of magnitude; varying the
-    // precision by size is what stops a column of numbers being readable.
     expect(micros(414498)).toBe("414.5 ms");
     expect(micros(1)).toBe("0.0 ms");
   });
@@ -226,15 +217,12 @@ describe("blockStamp", () => {
   });
 
   it("stops at seconds, unlike the detail panel's stamp", () => {
-    // The row version. Milliseconds are what let two blocks two hundred apart
-    // be told apart in the detail, and what stop a column of these lining up.
     const at = Date.UTC(2026, 7, 22, 9, 29, 57, 626);
     expect(blockStamp(at)).not.toMatch(/\.626/);
     expect(blockTime(at)).toMatch(/\.626$/);
   });
 
   it("names the zone it is being read in", () => {
-    // The browser's abbreviation or an offset; either way the reader is told which clock this is.
     const stamp = blockStamp(Date.UTC(2026, 7, 22, 9, 29, 57));
     expect(stamp).toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(stamp.split(" ").length).toBeGreaterThan(2);

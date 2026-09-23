@@ -9,8 +9,6 @@ describe("readRoute", () => {
   });
 
   it("falls back to the overview rather than showing nothing", () => {
-    // A hash is anyone's to type, and a blank page is a worse answer than the
-    // page they started on.
     expect(readRoute("")).toEqual(HOME);
     expect(readRoute("#")).toEqual(HOME);
     expect(readRoute("#/nonsense")).toEqual(HOME);
@@ -19,7 +17,6 @@ describe("readRoute", () => {
   it("reads an open block on the slot page", () => {
     expect(readRoute("#/slots/5539826")).toEqual({ ...HOME, page: "slots", slot: 5_539_826 });
     expect(readRoute("#/slots/abc").slot).toBeNull();
-    // A slot only means something on the slot page.
     expect(readRoute("#/schedule/5539826").slot).toBeNull();
   });
 
@@ -31,7 +28,6 @@ describe("readRoute", () => {
       ours: true,
     });
     expect(readRoute("#/schedule?ours").ours).toBe(true);
-    // The slot page searches too, but has no ours filter.
     expect(readRoute("#/slots?q=826&ours")).toEqual({ ...HOME, page: "slots", query: "826" });
     expect(readRoute("#/slots/5539826?q=826").slot).toBe(5_539_826);
     expect(readRoute("#/?q=x").query).toBe("");

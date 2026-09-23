@@ -4,8 +4,6 @@ import { cpuRows, parts, serialRows, verifyRows, type ReplayPart, type ReplayRow
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
 
-/** What replay spends its time on over the last few hundred slots: its own thread, and worker time
- *  in cores. Absent where the validator logs below info. */
 export function ReplayCard(): ReactElement | null {
   const store = useStore();
   const replay = store.get("summary", "replay");
@@ -87,8 +85,6 @@ export function ReplayCard(): ReactElement | null {
         explain="CPU time across the worker threads. The phases partition, so they add up to what one slot costs."
       />
 
-      {/* The figures inside a phase are said in a sentence, since a segment would draw them twice.
-          */}
       <p className="replay-parts">
         Inside running programs: <Part part={inside.bytecode} />, <Part part={inside.serialising} />,{" "}
         <Part part={inside.deserialising} />. Of program loading,{" "}
@@ -99,8 +95,6 @@ export function ReplayCard(): ReactElement | null {
   );
 }
 
-/** One of the four figures across the head of the section: the value, then
- *  what it is, with an explanation of how it was measured. */
 function Figure({
   label,
   value,
@@ -120,7 +114,6 @@ function Figure({
   );
 }
 
-/** One section: a bar cut into its phases, and the legend that names them. */
 function Section({
   title,
   total,
@@ -130,7 +123,6 @@ function Section({
 }: {
   title: string;
   total: string;
-  /** Segments held apart, for figures that do not partition a whole. */
   broken?: boolean;
   rows: ReplayRow[];
   explain: string;
@@ -171,7 +163,6 @@ function Section({
   );
 }
 
-/** One nested figure, named in the sentence under the card. */
 function Part({ part, verb }: { part: ReplayPart; verb?: string }) {
   return (
     <>

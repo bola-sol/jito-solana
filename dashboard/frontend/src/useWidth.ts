@@ -1,7 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
 
-/** How wide an element is in pixels, for the matrix whose dots must stay
- *  square. Null until measured. */
 export function useWidth(ref: RefObject<Element | null>): number | null {
   const [width, setWidth] = useState<number | null>(null);
 

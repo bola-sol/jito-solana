@@ -45,8 +45,6 @@ describe("bootTimes", () => {
   });
 
   it("gives no line to a phase that never happened", () => {
-    // A boot with a ledger on disk downloads nothing, and the entry is simply
-    // absent rather than present at nought.
     const times = bootTimes(running([["processing_ledger", 89]]), UPTIME, NOW, undefined);
     expect(times?.phases.map((phase) => phase.label)).toEqual(["ledger replay"]);
   });

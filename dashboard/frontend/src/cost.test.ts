@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { recurrence } from "./cost";
 import type { SlotCost } from "./types";
 
-/** One produced block's costs, to be overridden a field at a time. */
 function cost(over: Partial<SlotCost> = {}): SlotCost {
   return {
     slot: 1,
@@ -52,8 +51,6 @@ describe("recurrence", () => {
   });
 
   it("says nothing when the block named no account", () => {
-    // A block that took no transactions has no costliest account, and an empty
-    // key would otherwise match every other such block.
     expect(recurrence([cost({ costliest_account: "" })], "")).toBeNull();
   });
 });

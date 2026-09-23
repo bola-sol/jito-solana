@@ -30,8 +30,6 @@ import type { EpochSpan, ExecutedStage, QuicPaths, QuicPort, VerifyStage } from 
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
 
-/** Everything that happens to a transaction before the scheduler, present once a QUIC port has
- *  taken a connection. `Elsewhere` where the TPU is off-host. */
 export function TpuPathCard(): ReactElement | null {
   const store = useStore();
   const paths = store.get("summary", "quic_paths");
@@ -44,8 +42,6 @@ export function TpuPathCard(): ReactElement | null {
 
   if (!paths) return null;
 
-  // The two stages below the listener, absent rather than nought where
-  // nothing happened.
   const stages = (
     <EpochStages
       span={span ?? null}
@@ -146,8 +142,6 @@ export function TpuPathCard(): ReactElement | null {
   );
 }
 
-/** The two epoch stages in the summary line: what verify was given and what
- *  the workers ran, where either has reported. */
 function Stages({
   verify,
   executed,
@@ -181,8 +175,6 @@ function Stages({
   );
 }
 
-/** The two stages counted over the epoch, bracketed under one caption.
- *  Nothing where neither has reported. */
 function EpochStages({
   span,
   sections,
@@ -196,8 +188,6 @@ function EpochStages({
     <div className="path-epoch">
       <div className="path-span">
         <Explain text="Counted over the epoch rather than the window, since these stages run only while this validator is leader. Counted from part way in means a restart during the epoch.">
-          {/* Named even if the span is missing, since an epoch total under no heading reads as
-              windowed. */}
           {span ? epochSpanLabel(span) : "This epoch"}
         </Explain>
       </div>
@@ -209,13 +199,10 @@ function EpochStages({
   );
 }
 
-/** Every port but the one the sections above were drawn from. */
 function others(paths: QuicPaths): QuicPort[] {
   return paths.ports.filter((port) => port.name !== "tpu");
 }
 
-/** The card where the advertised TPU is off-host, behind a relayer or proxy: ports fold to a line
- *  each and the headline is dropped. */
 function Elsewhere({
   paths,
   stages,
@@ -229,8 +216,7 @@ function Elsewhere({
   verify: VerifyStage | null | undefined;
   executed: ExecutedStage | null | undefined;
 }) {
-  // Summed across the ports rather than taken from the TPU port, which is not
-  // the subject here. What is live on this host is mostly vote connections.
+  // Summed across the ports: what is live on this host is mostly vote connections.
   const live = paths.ports.reduce(
     (total, port) => ({
       open: total.open + port.open,
@@ -274,7 +260,6 @@ function Elsewhere({
   );
 }
 
-/** The folded port rows, and the one place that remembers which are open. */
 function PortList({
   ports,
   open,
@@ -304,7 +289,6 @@ function PortList({
   );
 }
 
-/** One stage: a bar, what came out of it, and the losses beside it. */
 export function Section({ section }: { section: PathSection }): ReactElement {
   const narrow = useNarrow();
   const [expanded, setExpanded] = useState(false);
@@ -323,7 +307,6 @@ export function Section({ section }: { section: PathSection }): ReactElement {
           <span className="path-section-title">{section.title}</span>
         </Explain>
         <span className="path-section-note">{section.note}</span>
-        {/* What went in and came out, the section in one line. */}
         <span className="path-section-flow">
           {count(section.total)} in, {count(section.through.count)}{" "}
           {section.through.label}
@@ -386,7 +369,6 @@ export function Section({ section }: { section: PathSection }): ReactElement {
   );
 }
 
-/** One loss in the legend, keyed to its segment by colour. */
 function Loss({ loss, rank }: { loss: PathLoss; rank: number | null }) {
   return (
     <div className={`path-loss${rank === null ? " is-detail" : ""}`}>
@@ -402,8 +384,6 @@ function Loss({ loss, rank }: { loss: PathLoss; rank: number | null }) {
   );
 }
 
-/** One QUIC port folded to a line, unfolding to the TPU port's two sections. It holds a button
- *  rather than being one, since the explanation is one. */
 function OtherPort({
   port,
   open,

@@ -10,8 +10,7 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     assetsDir: "assets",
-    // One bundle keeps the embedded asset table small and avoids a waterfall of
-    // requests on a validator that may be serving this over a slow link.
+    // One bundle keeps the embedded asset table small and avoids a waterfall of requests.
     rollupOptions: {
       output: {
         manualChunks: undefined,
@@ -19,7 +18,6 @@ export default defineConfig({
     },
   },
   server: {
-    // `npm run dev` against a validator running the dashboard elsewhere.
     proxy: {
       "/websocket": {
         target: "ws://127.0.0.1:10999",

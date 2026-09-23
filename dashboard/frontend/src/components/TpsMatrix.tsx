@@ -15,11 +15,8 @@ import type { TpsSample } from "../types";
 import { useChartEdge, windowed } from "../useNow";
 import { useWidth } from "../useWidth";
 
-/** The three series, bottom of the column upwards. */
 const SERIES = ["vote", "failed", "success"] as const;
 
-/** A minute of throughput as a grid of dots lit from the bottom, one column per sample, one path
- *  per colour. */
 export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }): ReactElement {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
@@ -70,7 +67,6 @@ function Grid({
   columns.forEach((sample, index) => {
     const live = index === columns.length - 1;
     const x = index * pitch + pitch / 2 - dot / 2;
-    // A column with nothing behind it is drawn unlit, so a fresh validator reads as a grid filling.
     const lit = sample
       ? columnRows([sample.vote, sample.non_vote_failed, sample.non_vote_success], ceiling, rows)
       : [0, 0, 0];
@@ -92,7 +88,6 @@ function Grid({
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img">
-      {/* Unlit first, so nothing is drawn over a lit dot. */}
       {["off", ...SERIES, ...SERIES.map((series) => `${series}-live`)].map((key) => {
         const squares = paths.get(key);
         return squares ? <path key={key} className={`matrix-${key}`} d={squares.join("")} /> : null;

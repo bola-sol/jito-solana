@@ -46,7 +46,6 @@
   --path-5: #445032;
   --path-6: #343d26;
 
-  /* A slot's levels, in the order a slot passes through them. */
   --level-incomplete: #343d26;
   --level-completed: var(--sky);
   --level-optimistically_confirmed: var(--lavender);
@@ -84,7 +83,6 @@
   --flow: #7a9459;
   --stake: #9fb385;
 
-  /* Stepped the other way against a light panel. */
   --path-1: #55742f;
   --path-2: #7a9459;
   --path-3: #9fb385;
@@ -136,7 +134,6 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* Held to a reading width and centred past it. */
 .main {
   display: flex;
   flex-direction: column;
@@ -148,7 +145,6 @@ body {
 
 /* ---- header ---- */
 
-/* Who this is, in one line, and the five figures under it. */
 .header {
   display: flex;
   flex-direction: column;
@@ -248,7 +244,6 @@ body {
   opacity: 1;
 }
 
-/* The five figures, each a value and then what it is, read along a line. */
 .figures {
   display: flex;
   gap: 8px 26px;
@@ -271,13 +266,11 @@ body {
   color: var(--text);
 }
 
-/* A toned figure carries the tone on its value too. */
 .figure.tone-warn b,
 .figure.tone-bad b {
   color: inherit;
 }
 
-/* The bubble takes a column for the boot rows. */
 .figure-detail .explain-bubble {
   display: flex;
   flex-direction: column;
@@ -365,7 +358,6 @@ body {
   border-color: var(--text-faint);
 }
 
-/* Lit while the balances are hidden, so the state shows at a glance. */
 .balances-toggle[aria-pressed="true"] {
   color: var(--text);
   border-color: var(--text-faint);
@@ -389,7 +381,6 @@ body {
   background: var(--bad);
 }
 
-/* Delivering, but late. */
 .connection.is-behind {
   color: var(--warn);
 }
@@ -408,7 +399,7 @@ body {
 
 /* ---- verdict ---- */
 
-/* One sentence on what the validator is doing. The only serif on the page. */
+/* The only serif on the page. */
 .verdict {
   display: flex;
   align-items: baseline;
@@ -450,7 +441,6 @@ body {
   color: var(--text-dim);
 }
 
-/* A figure and its unit stay together. */
 .verdict-sub b {
   font-family: var(--mono);
   font-weight: 500;
@@ -513,7 +503,6 @@ body {
   }
 }
 
-/* Always the first row of the card, never a cell in the body's own layout. */
 .card-head {
   display: flex;
   align-items: baseline;
@@ -521,7 +510,6 @@ body {
   gap: 12px;
 }
 
-/* What the card covers, beside its name: a window, a scope, a count. */
 .card-aside {
   font-size: 12px;
   color: var(--text-dim);
@@ -578,7 +566,6 @@ body {
   align-content: start;
 }
 
-/* Stacked stats need explicit spacing; on their own they sit flush. */
 .epoch-body {
   display: flex;
   flex-direction: column;
@@ -620,7 +607,6 @@ body {
 .tone-bad {
   color: var(--bad);
 }
-/* Deliberate rather than broken, but worth noticing, such as a validator on its backup identity. */
 .tone-warn {
   color: var(--warn);
 }
@@ -643,8 +629,6 @@ body {
   transition: width 0.4s ease;
 }
 
-/* Marks along the meter, taller than it: the epoch card's leader turns and
-   unrewarded votes. The fill keeps its own corners once nothing clips it. */
 .meter.has-marks {
   position: relative;
   overflow: visible;
@@ -750,7 +734,6 @@ body {
   color: var(--text-faint);
 }
 
-/* One leader a line, with its count. */
 .misses-leaders .explain-bubble {
   display: flex;
   flex-direction: column;
@@ -759,7 +742,6 @@ body {
   font-weight: 400;
 }
 
-/* A figure that opens something under the cards. */
 .stat-trigger {
   background: none;
   border: 0;
@@ -827,7 +809,6 @@ body {
   color: var(--text-dim);
 }
 
-/* Eight rows deep, then it scrolls, the head staying put. */
 .misses-table {
   display: flex;
   flex-direction: column;
@@ -846,7 +827,6 @@ body {
   color: var(--text);
 }
 
-/* Two lines held open on a desktop, three on a phone. */
 .misses-hint {
   min-height: 2.8em;
   font-size: 12px;
@@ -854,7 +834,6 @@ body {
   color: var(--text-faint);
 }
 
-/* Eight columns: the writer takes what the fixed ones leave. */
 .misses-row {
   display: grid;
   grid-template-columns: 8.5em 12.5em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 15.5em;
@@ -914,7 +893,6 @@ body {
   text-overflow: ellipsis;
 }
 
-/* Inline, so the build follows the key on the same line. */
 .misses-key {
   display: inline-block;
   vertical-align: baseline;
@@ -926,7 +904,6 @@ body {
   color: var(--text-faint);
 }
 
-/* Opens the row's list of who else was left out. */
 .misses-open {
   padding: 0;
   border: 0;
@@ -938,7 +915,6 @@ body {
   text-underline-offset: 2px;
 }
 
-/* One validator a chip, wrapping under the row. */
 .misses-out-list {
   display: flex;
   flex-wrap: wrap;
@@ -972,8 +948,6 @@ body {
 }
 
 @media (max-width: 700px) {
-  /* Four lines a miss: slot and time, the writer, place and ranks, then
-     who else was left out and our vote. The IP is on the writer's key. */
   .misses-row {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
@@ -997,7 +971,6 @@ body {
     min-height: 4.2em;
   }
 
-  /* A validator a line. */
   .misses-out {
     width: 100%;
   }
@@ -1042,7 +1015,6 @@ body {
   flex-direction: column;
 }
 
-/* Pushed to the foot of the card, under the figures it restates. */
 .stake-share {
   margin-top: auto;
   padding-top: 16px;
@@ -1104,8 +1076,7 @@ body {
   color: var(--bad);
 }
 
-/* The staked total this validator is one of, set beside the active count in
-   the same figure rather than under it, so the two read as a fraction. */
+/* The staked total set beside the active count, so the two read as a fraction. */
 /* On its own line, so the fraction never breaks mid-figure. */
 .stat-of {
   display: block;
@@ -1116,7 +1087,6 @@ body {
 
 /* ---- slot strip ---- */
 
-/* A section of the page, with the positions under the bars as its axis. */
 .slot-strip {
   margin-top: 8px;
   padding-top: 14px;
@@ -1146,7 +1116,6 @@ body {
   color: var(--text);
 }
 
-/* The positions, most settled first, with the distance from Processed. */
 .slot-axis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
@@ -1180,8 +1149,6 @@ body {
   position: relative;
 }
 
-/* Marks the tallest bar on screen, so the heights read as durations rather
-   than as an unlabelled quantity. */
 .peak-line {
   position: absolute;
   left: 0;
@@ -1197,7 +1164,6 @@ body {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-faint);
-  /* Punches through whichever bar it lands over. */
   background: var(--bg);
   padding: 0 4px;
 }
@@ -1225,15 +1191,13 @@ body {
   box-shadow: inset 0 3px 0 var(--ours);
 }
 
-/* The strip is one tab stop; the arrows move within it. */
 .slot-bars:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
   border-radius: 2px;
 }
 
-/* The bar the pointer or the arrow keys are on. A leader slot keeps its lane
-   when pointed at. */
+/* A leader slot keeps its lane when pointed at. */
 .slot-bar.is-active {
   background: color-mix(in srgb, var(--text-faint) 35%, transparent);
 }
@@ -1398,8 +1362,6 @@ body {
   }
 }
 
-/* The strip is held still while the pointer or the keyboard is on it, so say
-   so. */
 .slot-bars:hover .peak-line,
 .slot-bars:focus-within .peak-line {
   border-top-style: solid;
@@ -1452,7 +1414,6 @@ body {
   border-radius: 6px;
   background: var(--panel-raised);
   color: var(--text);
-  /* One size whatever the trigger's is. */
   font-family: var(--sans);
   font-size: 12px;
   font-weight: 400;
@@ -1462,7 +1423,6 @@ body {
   pointer-events: none;
 }
 
-/* Reachable, for the bubbles that hold something to copy. */
 .explain-bubble.is-interactive {
   pointer-events: auto;
 }
@@ -1562,8 +1522,7 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent);
 }
 
-/* Pushed to the right edge so the timings line up down the list and can be
-   read as a column, which is how a boot that stalled somewhere gets spotted. */
+/* Pushed right so the timings read as a column, which is how a stalled boot gets spotted. */
 .startup-elapsed {
   margin-left: auto;
   font-family: var(--mono);
@@ -1580,8 +1539,6 @@ body {
   margin-top: 10px;
 }
 
-/* The bar means a different thing under each of the two phases that has one —
-   slots replayed, or stake seen — so it is labelled rather than left bare. */
 .startup-measure-label {
   font-size: 11px;
   color: var(--text-faint);
@@ -1592,7 +1549,6 @@ body {
   color: var(--text-dim);
 }
 
-/* The bar with the share the wait ends at marked on it. */
 .startup-meter {
   position: relative;
 }
@@ -1876,8 +1832,6 @@ body {
 
 /* ---- transactions ---- */
 
-/* Readout beside the matrix, the way an instrument reads: the numbers are what
-   is true now, the grid is how it got here. */
 .transactions-body {
   display: grid;
   grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
@@ -1892,7 +1846,6 @@ body {
   min-width: 0;
 }
 
-/* Under the figure rather than over it, as every figure on the page. */
 .tps-total-label {
   font-size: 12px;
   color: var(--text-dim);
@@ -1926,7 +1879,6 @@ body {
   gap: 10px;
 }
 
-/* The peak is not one of the series, so it is ruled off from them. */
 .tps-row.is-peak {
   padding-top: 8px;
   border-top: 1px solid var(--border);
@@ -1948,7 +1900,6 @@ body {
   flex: none;
 }
 
-/* The figure is the key, carrying its series' colour. */
 .tps-swatch.is-vote {
   background: var(--vote);
 }
@@ -2009,8 +1960,6 @@ body {
   fill: var(--good);
 }
 
-/* The newest column, a shade up, so the leading edge reads without a marker of
-   its own. */
 .matrix-vote-live {
   fill: color-mix(in srgb, var(--vote) 60%, var(--text));
 }
@@ -2025,8 +1974,6 @@ body {
 
 /* ---- host network ---- */
 
-/* A row per direction, stacked rather than side by side, so each gets its own
-   line of the last minute. The scale is shared across both: see NetworkCard. */
 .network-body {
   display: flex;
   flex-direction: column;
@@ -2128,7 +2075,6 @@ body {
   font-style: normal;
 }
 
-/* In on sky, out on apricot, each a line over a wash of its own hue. */
 .net-swatch.is-ingress,
 .net-line.is-ingress {
   background: var(--sky);
@@ -2217,7 +2163,6 @@ body {
   border-radius: 2px;
 }
 
-/* The two senders in the line colours above, since this divides the out line. */
 .net-split .is-gossip {
   background: var(--sky);
 }
@@ -2288,7 +2233,6 @@ body {
   color: var(--text);
 }
 
-/* The turbine layers: four parts of one bar on the ramp, then the shares. */
 .net-turbine-body {
   grid-column: 2;
   display: flex;
@@ -2333,7 +2277,6 @@ body {
 
 /* ---- produced blocks ---- */
 
-/* Scrolls with the page rather than in a window of its own. */
 .slot-details {
   display: flex;
   flex-direction: column;
@@ -2390,8 +2333,6 @@ body {
   cursor: default;
 }
 
-/* Three summary rows read as one head: ruled faintly between, and set off
-   from the first block below. */
 .produced-averages:has(+ .produced-averages) {
   border-bottom-color: color-mix(in srgb, var(--border) 50%, transparent);
 }
@@ -2455,7 +2396,6 @@ body {
   color: var(--text);
 }
 
-/* Slot and stamp, sharing the row's one flexible cell. */
 .produced-id {
   display: flex;
   align-items: baseline;
@@ -2533,8 +2473,6 @@ body {
   color: var(--text-faint);
 }
 
-/* A leader turn's head, opening the TPU path over its turn. A finished turn's blocks sit in from
-   its edge. */
 .turn {
   margin-top: 8px;
 }
@@ -2601,7 +2539,6 @@ body {
   background: var(--bg);
 }
 
-/* Where the list steps into the previous epoch: a rule across it with the label on it. */
 .produced-epoch {
   display: flex;
   align-items: center;
@@ -2681,8 +2618,6 @@ body {
   font-weight: 600;
 }
 
-/* The two figures worth reading at a glance, kept out of the sections so they
-   are not two rows among forty. */
 .path-headline {
   display: flex;
   gap: 26px;
@@ -2763,8 +2698,6 @@ body {
   white-space: nowrap;
 }
 
-/* What the section was given and what came out of it, which is the whole
-   section in one line for anyone not reading the rest of it. */
 .path-section-flow {
   margin-left: auto;
   font-family: var(--mono);
@@ -2832,7 +2765,6 @@ body {
   background: var(--path-6);
 }
 
-/* Two columns, one below the breakpoint where two would ellipsise the labels. */
 .path-legend {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2956,8 +2888,6 @@ body {
   margin-top: 4px;
 }
 
-/* Hover raises the row, as in the caches panel. Folded by default, since most ports have nothing to
-   say. */
 .path-port-head {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
@@ -3017,7 +2947,6 @@ body {
   gap: 18px;
 }
 
-/* Four figures, two or three columns on a narrow screen and one row on a wide one. */
 .replay-figures {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
@@ -3064,7 +2993,6 @@ body {
   white-space: nowrap;
 }
 
-/* One bar per section, cut into its phases. */
 .replay-bar {
   display: flex;
   height: 8px;
@@ -3093,7 +3021,6 @@ body {
   border-radius: 2px;
 }
 
-/* A grid, so the phases line up in columns for comparison at every width. */
 .replay-legend {
   display: grid;
   /* Never more than three across, so six phases always come out as three, two or one per row. */
@@ -3159,7 +3086,6 @@ body {
   color: var(--text-faint);
 }
 
-/* The figures inside a phase, said in a sentence since a segment would draw them twice. */
 .replay-parts {
   margin: 0;
   padding-top: 12px;
@@ -3171,8 +3097,7 @@ body {
 
 /* ---- what a block cost ---- */
 
-/* The expanded body of a slot row, led by the block's compute; the scheduler's counters sit behind
-   a control. Labels are the dashboard's own 12px sentence case. */
+/* Labels are the dashboard's own 12px sentence case. */
 
 .sx-lead {
   display: flex;
@@ -3217,7 +3142,6 @@ body {
   flex-wrap: wrap;
 }
 
-/* Value first, label under it, as `.stat`. */
 .sx-stat {
   display: flex;
   flex-direction: column;
@@ -3309,8 +3233,6 @@ body {
   border: 1px solid var(--border);
 }
 
-/* Where the banking stage's time went: the workers' stages in the part colours, the vote worker in
-   sky where it ran. */
 .sx-exec {
   display: flex;
   flex-direction: column;
@@ -3410,7 +3332,6 @@ body {
   font-weight: 500;
 }
 
-/* The scheduler, shrunk to one line. */
 .sx-sched {
   display: flex;
   flex-direction: column;
@@ -3675,8 +3596,6 @@ body {
     gap: 16px;
   }
 
-  /* The four counts share a row and the fee values take half the width each below; each keeps its
-     label. */
   .sx-stats {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3764,8 +3683,6 @@ body {
   }
 }
 
-/* Inline with the sentence around it, so it reads as part of the text rather
-   than as a control dropped into it. */
 .cost-again-slot {
   display: inline;
   color: inherit;
@@ -3785,7 +3702,6 @@ body {
     gap: 18px;
   }
 
-  /* The in-and-out figure takes a line of its own rather than clipping. */
   .path-section-head {
     flex-wrap: wrap;
   }
@@ -3807,8 +3723,6 @@ body {
   flex-direction: column;
 }
 
-/* Load, processor time, memory and swap across the top, sized by what is there since swap can be
-   absent. */
 .host-top {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -3846,7 +3760,6 @@ body {
   color: var(--text-faint);
 }
 
-/* The snapshot line under the device rows. */
 .host-snapshot {
   margin-top: 6px;
 }
@@ -3898,7 +3811,6 @@ body {
   color: var(--text-faint);
 }
 
-/* A filesystem is a container that can fill, so it gets a fill bar. */
 .host-capacity {
   display: grid;
   grid-template-columns: minmax(0, 15em) minmax(80px, 1fr) 3.4em 7em;
@@ -4008,8 +3920,6 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* One thread or pool: name, count and cores, a minute of bars, then two figures, shaped like a
-   device row. */
 .host-thread {
   display: grid;
   /* The bars are capped: uncapped they ran to the card's edge with fifteen
@@ -4039,8 +3949,6 @@ body {
   color: var(--text-dim);
 }
 
-/* The count and the pinned cores on the name line: phone only, where their
-   columns go. */
 .host-countline,
 .host-pinline {
   display: none;
@@ -4056,14 +3964,11 @@ body {
   fill: var(--path-3);
 }
 
-/* Only PoH's bars are toned, and only for a second it lost its core. */
 .host-spark rect.is-low {
   fill: var(--warn);
 }
 
 @media (max-width: 700px) {
-  /* Two lines: the name and the two figures, then the bars across the whole
-     width. The count and the cores move onto the name line. */
   .host-thread {
     grid-template-columns: minmax(0, 1fr) 4.4em 5.6em;
     grid-template-areas: "name now wait" "spark spark spark";
@@ -4149,7 +4054,6 @@ body {
   white-space: nowrap;
 }
 
-/* The rate at a glance for a folded section, in the rate's own tone. */
 .cache-dot {
   width: 7px;
   height: 7px;
@@ -4219,8 +4123,6 @@ body {
   gap: 16px 22px;
 }
 
-/* Names a group of figures in an open section, since reads, writes and disk count different things.
-   */
 .cache-section-title {
   font-size: 13px;
   color: var(--text);
@@ -4396,7 +4298,6 @@ body {
   line-height: 1.25;
 }
 
-/* Always occupied, so the rows do not change height as shares come and go. */
 .ingest-share {
   /* Matched to the line-height, not merely close to it: an empty line a
      fraction shorter than a filled one leaves the rows a pixel out of step. */
@@ -4415,7 +4316,6 @@ body {
   color: var(--text-dim);
 }
 
-/* Dimmer than the window figure: the total is context, the window the live signal. */
 .ingest-total {
   color: var(--text-faint);
 }
@@ -4432,7 +4332,6 @@ body {
     display: none;
   }
 
-  /* Both are two-column grids above this width. */
   .transactions-body,
   .validators-body {
     grid-template-columns: 1fr;
@@ -4463,7 +4362,6 @@ body {
     line-height: 1.4;
   }
 
-  /* Both on one line here, so they need something between them. */
   .net-meta b {
     display: inline;
   }
@@ -4488,8 +4386,6 @@ body {
     line-height: 1.5;
   }
 
-  /* The split stacks the same way as the rows above it: label and the measured
-     figure on one line, the bar and its legend across the full width below. */
   .net-split {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px 12px;
@@ -4554,8 +4450,6 @@ body {
 
 /* ---- folding sections ---- */
 
-/* The sections under the cards, each summed up in a line for while it is
-   folded. */
 .fold {
   margin-top: 12px;
   padding-top: 12px;
@@ -4631,7 +4525,6 @@ body {
   min-height: 0;
 }
 
-/* Scrolls what has been produced, newest first, like the slot list down the side. */
 .schedule-list {
   display: flex;
   flex-direction: column;
@@ -4639,8 +4532,6 @@ body {
   gap: var(--gap);
   min-height: 0;
   overflow-y: auto;
-  /* As in the slot list: on a long list the bar is a sliver, and the way back
-     is the button that appears when it is needed. */
   scrollbar-width: none;
 }
 
@@ -4719,7 +4610,6 @@ body {
   outline-offset: -1px;
 }
 
-/* A turn is a row under a rule, the leader down the left. */
 .schedule-group {
   display: grid;
   grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
@@ -4728,7 +4618,6 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* Our own turn carries a rule down its edge in the brightest tone. */
 .schedule-group.is-ours {
   border-left: 2px solid var(--ours);
   padding-left: 12px;
@@ -4855,7 +4744,6 @@ body {
   color: var(--ours);
 }
 
-/* One of our slots, on the schedule and in the sidebar. */
 .slot-link {
   color: inherit;
   text-decoration: underline;
@@ -4954,7 +4842,6 @@ body {
   height: 100%;
 }
 
-/* Waiting in apricot, then replay in green. */
 .schedule-tl-track .is-wait {
   background: var(--apricot);
 }
@@ -4974,7 +4861,6 @@ body {
     gap: 8px;
   }
 
-  /* The leader sits above the slots here, so the three lines go across. */
   .schedule-leader-meta {
     flex-direction: row;
     flex-wrap: wrap;
@@ -4982,8 +4868,6 @@ body {
   }
 }
 
-/* The supermajority wait per validator: columns against the line, and the
-   two lists. */
 .gs-body {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1fr);
@@ -5181,7 +5065,6 @@ body {
   color: var(--text-dim);
 }
 
-/* The phone's arrangement. */
 .gs-bars {
   background: var(--panel-raised);
   border-radius: 6px;
@@ -5343,7 +5226,6 @@ body {
   color: var(--text-faint);
 }
 
-/* Its share of ours as a bar, its share everywhere as a mark on it. */
 .written-gap {
   position: relative;
   height: 6px;

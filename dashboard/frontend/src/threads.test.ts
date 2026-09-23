@@ -23,8 +23,6 @@ describe("threadRows", () => {
   });
 
   it("takes the rows from the last sample and leaves a gap where a group had none", () => {
-    // The validator picks the rows on the minute's mean, so membership is
-    // steady, but a group can still enter partway through the window.
     const samples = [
       sample(1, [group("solGossip")]),
       sample(2, [group("solGossip"), group("solRepairSvc", { on_cpu: 0.5 })]),

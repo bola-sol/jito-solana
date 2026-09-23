@@ -1,24 +1,17 @@
-/** Lighting the transaction matrix: how many rows each series takes in a
- *  column. */
 
 import type { Tps, TpsSample } from "./types";
 
-/** How much history the matrix shows. Matches the network card's window. */
 export const MATRIX_WINDOW_SECONDS = 60;
 
-/** Rows in a full-height matrix, and in the shorter one a phone gets. */
 export const ROWS_TALL = 11;
 export const ROWS_SHORT = 8;
 
-/** How far above the window's peak the top of the scale sits. Fixed, so the
- *  silhouette does not rescale as spikes come and go. */
+/** Fixed, so the silhouette does not rescale as spikes come and go. */
 export const CEILING_HEADROOM = 1.1;
 
-/** The narrowest a column may be before samples start being dropped. */
 export const MIN_PITCH = 13;
 
-/** Seconds the readout averages: at least six leader turns on a cluster with
- *  200 ms slots, where one second can fall wholly on an empty turn. */
+/** At least six leader turns at 200 ms slots, where one second can fall wholly on an empty turn. */
 export const READOUT_SECONDS = 5;
 
 /** How many rows each series lights, bottom to top, stacked; any series with something in it lights
@@ -59,7 +52,6 @@ export function columnRows(values: number[], ceiling: number, rows: number): num
   return lit;
 }
 
-/** Columns at this width, never more than the window holds. */
 export function slotsFor(width: number): number {
   return Math.max(1, Math.min(MATRIX_WINDOW_SECONDS, Math.floor(width / MIN_PITCH)));
 }
@@ -91,7 +83,6 @@ export function columnsFor<T, C>(
   });
 }
 
-/** The readout: the mean of the newest samples rather than the last one. */
 export function readoutMean(samples: TpsSample[], seconds = READOUT_SECONDS): Tps | undefined {
   const recent = samples.slice(-seconds);
   if (recent.length === 0) return undefined;
@@ -105,13 +96,10 @@ export function readoutMean(samples: TpsSample[], seconds = READOUT_SECONDS): Tp
   };
 }
 
-/** The second a sample belongs to, on the clock. */
 export function sampleSecond(sample: TpsSample): number {
   return Math.floor(sample.timestamp_nanos / 1e9);
 }
 
-/** One column for several seconds: the mean of each series, stamped as the
- *  newest. */
 export function meanSample(bucket: [TpsSample, ...TpsSample[]]): TpsSample {
   const newest = bucket[bucket.length - 1];
   const mean = (of: (sample: TpsSample) => number): number =>
@@ -127,14 +115,11 @@ export function meanSample(bucket: [TpsSample, ...TpsSample[]]): TpsSample {
 }
 
 export interface Geometry {
-  /** Horizontal space one column gets, dot and gap together. */
   pitch: number;
   rowHeight: number;
-  /** Side of the square. */
   dot: number;
 }
 
-/** Where the dots go, in pixels: square, with a gap on both axes. */
 export function geometry(width: number, height: number, columns: number, rows: number): Geometry {
   const pitch = columns > 0 ? width / columns : width;
   const rowHeight = rows > 0 ? height / rows : height;
@@ -142,7 +127,6 @@ export function geometry(width: number, height: number, columns: number, rows: n
   return { pitch, rowHeight, dot };
 }
 
-/** The scale the columns are drawn against. Never nought. */
 export function ceilingFor(peak: number): number {
   return Math.max(1, peak * CEILING_HEADROOM);
 }

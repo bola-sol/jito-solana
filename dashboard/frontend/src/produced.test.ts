@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { blockSummary, certificateVerdict, earnedOf, sortBlocks } from "./produced";
 import type { BlockCertificate, ProducedBlock, TipRates } from "./types";
 
-/** A produced block, to be overridden a field at a time. */
 function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
   return {
     slot: 1,
@@ -102,7 +101,6 @@ describe("blockSummary", () => {
     ]);
     expect(blocks).toBe(2);
     expect(mean.transactions).toBe(1500);
-    // Half of each block's base fees, nothing else to earn.
     expect(mean.earned).toBe(75);
     expect(mean.filled).toBeCloseTo(0.5, 10);
   });
@@ -132,14 +130,12 @@ describe("blockSummary", () => {
     );
     const { worst } = blockSummary(blocks);
     expect(worst.transactions).toBe(1100);
-    // 11 base fees, 5 burned.
     expect(worst.earned).toBe(6);
     expect(worst.filled).toBeCloseTo(0.09, 10);
     expect(worst.durationMillis).toBe(490);
   });
 
   it("averages the blocks' own percentages, not the totals", () => {
-    // The head of a column of percentages is the mean of what is under it, not a ratio of totals.
     const { mean } = blockSummary([
       block({ block_cost: 10, block_cost_limit: 100 }),
       block({ block_cost: 10, block_cost_limit: 10 }),
@@ -148,8 +144,6 @@ describe("blockSummary", () => {
   });
 
   it("leaves out a block with no figure rather than counting it as nought", () => {
-    // One slot never timed, and one with no cost limit read. Counted as noughts
-    // they would drag both averages down and describe blocks that never were.
     const summary = blockSummary([
       block({ duration_nanos: 400e6, block_cost: 50, block_cost_limit: 100 }),
       block({ duration_nanos: null, block_cost: 0, block_cost_limit: 0 }),

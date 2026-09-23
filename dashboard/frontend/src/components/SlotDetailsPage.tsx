@@ -41,8 +41,6 @@ import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
 import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
 
-/** Every block this validator produced since the dashboard started. The open block and the search
- *  live in the route, so both can be linked to. */
 export function SlotDetailsPage({
   slot: open,
   query,
@@ -58,8 +56,6 @@ export function SlotDetailsPage({
   const blocks = store.get("summary", "produced_blocks");
   const waterfalls = store.get("summary", "slot_waterfalls");
   const costs = store.get("summary", "slot_costs");
-  // Absent on a validator with no tip payment program, and then no tip figure
-  // is drawn at all.
   const rates = store.get("summary", "tip_rates");
   const turns = store.get("summary", "produced_turns");
   const [openTurn, setOpenTurn] = useState<number | null>(null);
@@ -76,8 +72,7 @@ export function SlotDetailsPage({
   );
   const turnBySlot = useMemo(() => turnOf(turns ?? []), [turns]);
 
-  // A block reached by link is brought into view once, when its row exists;
-  // a row opened by a click is already on screen and stays where it is.
+  // Brought into view once, when reached by link; a row opened by a click stays where it is.
   const scrolledTo = useRef<number | null>(null);
   useEffect(() => {
     if (open === null || scrolledTo.current === open) return;
@@ -98,9 +93,7 @@ export function SlotDetailsPage({
     );
   }
 
-  // Newest first: a validator wants its last block, not its oldest.
   const ordered = sort ? sortBlocks(blocks, sort.key, sort.dir, rates) : [...blocks].reverse();
-  // Commas dropped, since the page shows every slot with them.
   const needle = query.replace(/,/g, "").trim();
   const listed = needle ? ordered.filter((block) => String(block.slot).includes(needle)) : ordered;
   const toggle = (key: SortKey) => {
@@ -109,13 +102,10 @@ export function SlotDetailsPage({
     setSort(sort?.key === key ? { key, dir: sort.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
   };
 
-  // Dividers only in the newest-first order, where an epoch boundary is one
-  // place, and only when the blocks held span more than one epoch.
+  // Dividers only newest first, and only when the blocks held span more than one epoch.
   const epoch = store.get("epoch", "new");
   const numbered = listed.map((block) => ({ block, epoch: epochOf(epoch, block.slot) }));
   const divided = !sort && new Set(numbered.map((entry) => entry.epoch)).size > 1;
-  // The turn a listed block belongs to, in the natural order only: the
-  // divider sits above the turn's newest block.
   const turnAt = (index: number): LeaderTurn | undefined =>
     sort ? undefined : turnBySlot.get(numbered[index]?.block.slot ?? -1);
 
@@ -170,7 +160,6 @@ export function SlotDetailsPage({
         })}
       </div>
       <div className="card-footnote">
-        {/* A link to a block that has fallen off the list, or was never ours. */}
         {open !== null && !blocks.some((block) => block.slot === open) && (
           <>Slot {count(open)} is not among the blocks held. </>
         )}
@@ -183,8 +172,6 @@ export function SlotDetailsPage({
   );
 }
 
-/** A turn's divider above its newest block, with the TPU path over the turn
- *  behind a control. Only in the natural order, as the epoch dividers are. */
 function TurnDivider({
   turn,
   blocks,
@@ -205,7 +192,6 @@ function TurnDivider({
     .reduce((sum, block) => sum + block.transactions, 0);
   return (
     <div className={`turn${open ? " is-open" : ""}`}>
-      {/* The whole row opens it, as a block row does. */}
       <button type="button" className="turn-head" onClick={onToggle} aria-expanded={open}>
         <span className="turn-name">Turn</span>
         <span className="turn-span">
@@ -227,8 +213,7 @@ function TurnDivider({
   );
 }
 
-/** An average that sorts its column. Module-level: a component made inside the
-    row is a new type each render, so the buttons remounted under every click. */
+/** Module-level: a component made inside the row remounted under every click. */
 function SortButton({
   column,
   className,
@@ -265,8 +250,6 @@ const SORT_WORD: Record<SortKey, string> = {
   duration: "duration",
 };
 
-/** The mean, median and poor tail of each column over the blocks held, at the
- *  head of the columns. The mean row's figures sort their column. */
 function SummaryRows({
   blocks,
   rates,
@@ -363,8 +346,6 @@ const solFigure = (value: number | null) =>
     </>
   );
 
-/** One produced block: the row that names it, and what it held once opened,
- *  led by its compute. */
 function BlockRow({
   block,
   epoch,
@@ -376,13 +357,10 @@ function BlockRow({
   onToggle,
 }: {
   block: ProducedBlock;
-  /** The epoch the slot fell in, or null before the epoch message has arrived. */
   epoch: number | null;
   waterfall: SlotWaterfall | undefined;
   cost: SlotCost | undefined;
-  /** Every produced block's cost, for reading this one against the rest. */
   costs: SlotCost[];
-  /** Absent where no tip program is configured, and then no tip figure shows. */
   rates: TipRates | undefined;
   open: boolean;
   onToggle: () => void;
@@ -401,10 +379,8 @@ function BlockRow({
         </span>
         <span className="produced-txns">{count(block.transactions)} txns</span>
         <span className="produced-fill">{percent(filled, 1)} full</span>
-        {/* What the block earned us; the detail below has the parts. */}
         <span className="produced-fees" title={earnedTitle(earned)}>
           {sol(earned.total, 5)}
-          {/* Dropped on the narrowest screens; the detail below states the unit anyway. */}
           <span className="produced-fees-unit"> SOL</span>
         </span>
         <span className="produced-ms">
@@ -422,8 +398,6 @@ function BlockRow({
           {cost && <BlockFigures cost={cost} />}
           {block.certificate && <BlockCertificateStrip certificate={block.certificate} />}
 
-          {/* The block's identity together; the slot stays in the row above to name it while shut.
-              */}
           <div className="produced-foot">
             <Copyable
               text={String(block.slot)}
@@ -441,13 +415,11 @@ function BlockRow({
   );
 }
 
-/** The parts behind the row's earnings figure. */
 function earnedTitle(earned: Earned): string {
   const tips = earned.tips === null ? "" : ` and ${sol(earned.tips, 6)} SOL our tips`;
   return `${sol(earned.base, 6)} SOL base fees after the burn, ${sol(earned.priority, 6)} SOL priority${tips}.`;
 }
 
-/** A label over a figure, which is most of what this body is made of. */
 function Stat({
   label,
   value,
@@ -458,7 +430,6 @@ function Stat({
   label: string;
   value: string;
   warn?: boolean;
-  /** Hover text, where the figure is derived and the derivation is worth a look. */
   title?: string;
   className?: string;
 }) {
@@ -470,8 +441,6 @@ function Stat({
   );
 }
 
-/** The reward certificate this block wrote, as a strip: the votes it paid
- *  for the slot eight back, and who certificates usually pay that it left out. */
 function BlockCertificateStrip({ certificate }: { certificate: BlockCertificate }) {
   const verdict = certificateVerdict(certificate);
   const leader = certificate.leader_name ?? shortKey(certificate.leader, 6, 5);
@@ -526,7 +495,6 @@ function BlockCertificateStrip({ certificate }: { certificate: BlockCertificate 
   );
 }
 
-/** What the block cost, and what the rest of the limit did. */
 function BlockCompute({
   block,
   cost,
@@ -576,7 +544,6 @@ function BlockCompute({
             className="sx-fee"
           />
           <Stat label="priority fees, SOL" value={sol(block.priority_fees, 6)} className="sx-fee" />
-          {/* Our share, with the total on the hover; drawn only where the tips were measured. */}
           {rates && block.tips != null && (
             <Stat
               label="our tips, SOL"
@@ -585,8 +552,7 @@ function BlockCompute({
               title={`${sol(jitoShare(block.tips, rates), 6)} SOL reached the distribution account, of ${sol(block.tips, 6)} paid. Derived from the configured rates, not measured.`}
             />
           )}
-          {/* Beside the tips, which is what they paid. Absent where no bundle
-              stage reported the slot: a stock validator, or one under BAM. */}
+          {/* Absent on a stock validator or under BAM. */}
           {block.bundles && (
             <Stat
               label="bundles"
@@ -640,8 +606,6 @@ function CapacityBar({ cap }: { cap: Capacity }) {
   );
 }
 
-/** The account that took the most of the block, as a share of its own
- *  ceiling and of the block. */
 function BlockAccount({
   block,
   cost,
@@ -701,8 +665,6 @@ function BlockAccount({
   );
 }
 
-/** What the scheduler did with this slot: one line, and a drawer of the
- *  counters grouped by stage. Named for whichever scheduler built it. */
 function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
   const view = schedulerView(waterfall);
   const [breakdown, setBreakdown] = useState(false);
@@ -761,7 +723,6 @@ function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
   );
 }
 
-/** The counters themselves, grouped by the stage that dropped them. */
 function Breakdown({ view }: { view: SchedulerView }) {
   return (
     <div className="sx-drawer">
@@ -822,7 +783,6 @@ function Breakdown({ view }: { view: SchedulerView }) {
   );
 }
 
-/** One counter: a bar of its share of the group, or no bar at nought. */
 function CounterRow({
   row,
   share,
@@ -855,8 +815,6 @@ function CounterRow({
   );
 }
 
-/** Where the banking stage's time went, in the compute headline's shape. Thread time, so it can
- *  read longer than the slot. */
 function ExecutionTime({ execution }: { execution: Execution }) {
   const view = executionView(execution);
   return (
@@ -916,7 +874,6 @@ function ExecutionTime({ execution }: { execution: Execution }) {
   );
 }
 
-/** What the cost tracker saw of the block beyond its costliest account. */
 function BlockFigures({ cost }: { cost: SlotCost }) {
   return (
     <div className="sx-keep">

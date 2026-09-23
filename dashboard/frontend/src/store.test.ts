@@ -83,7 +83,6 @@ describe("clock offset", () => {
     store.apply(envelope("summary", "server_time_nanos", 7_000 * 1e6));
     expect(store.getFeedLag()).toBe(1_150);
 
-    // A new connection starts its baseline over.
     store.setConnection("closed");
     expect(store.getFeedLag()).toBeNull();
   });
@@ -119,7 +118,6 @@ describe("slots", () => {
     store.apply(envelope("slot", "update", slot(3)));
     expect(store.getSlots().map((entry) => entry.slot)).toEqual([1, 2, 3]);
 
-    // A second overview is a resynchronisation, not an addition.
     store.apply(envelope("slot", "overview", [slot(9)]));
     expect(store.getSlots().map((entry) => entry.slot)).toEqual([9]);
   });
@@ -146,13 +144,10 @@ describe("slots", () => {
     const slots = store.getSlots();
     expect(slots).toHaveLength(512);
     expect(slots[slots.length - 1].slot).toBe(600);
-    // The oldest went, not the newest.
     expect(slots[0].slot).toBe(89);
   });
 
   it("keeps our own leader slots long after the window has passed them", () => {
-    // A validator leads about four slots in eight hundred, so a window of five hundred rarely holds
-    // its own.
     const store = new Store();
     for (const number of [1, 2, 3, 4]) {
       store.apply(envelope("slot", "update", { ...slot(number), mine: true }));
@@ -165,7 +160,6 @@ describe("slots", () => {
   });
 
   it("names a leader in an epoch the page was never sent, once it is fetched", async () => {
-    // Reading back through history crosses into the previous epoch about a quarter of the time.
     const store = new Store();
     const sent: string[] = [];
     store.setSender((frame) => sent.push(frame));
@@ -207,14 +201,11 @@ describe("slots", () => {
     await loading;
 
     expect(store.leaderOf(104, false).key).toBe("BEFORE");
-    // The current epoch still answers for its own slots, and first.
     expect(store.leaderOf(204, false).key).toBe("NOW");
     expect(store.getLeaderRevision()).toBeGreaterThan(before);
   });
 
   it("asks about an epoch it has no schedule for only once", async () => {
-    // A validator that has not been up long has nothing for it, and every
-    // search would otherwise ask again.
     const store = new Store();
     const sent: string[] = [];
     store.setSender((frame) => sent.push(frame));
@@ -230,8 +221,6 @@ describe("slots", () => {
   });
 
   it("names a leader the peer table does not reach, once the table is fetched", async () => {
-    // The peer table covers only the held window, so a turn further back is named from the display
-    // table.
     const store = new Store();
     const sent: string[] = [];
     store.setSender((frame) => sent.push(frame));
@@ -289,8 +278,6 @@ describe("slots", () => {
   });
 
   it("names a slot of ours from what the validator says about itself", () => {
-    // Our own slots outlive both the peer table's window and the turn array's epoch, so they are
-    // named from what the validator says of itself.
     const store = new Store();
     store.apply(envelope("summary", "identity_key", "OURKEY"));
     store.apply(envelope("summary", "identity_name", "Lantern"));
@@ -330,8 +317,6 @@ describe("slots", () => {
       }),
     );
     expect(store.leaderOf(104, false).key).toBe("THEIRKEY");
-    // And a slot outside the epoch the page holds still names nobody, which is
-    // the honest answer rather than a confident wrong one.
     expect(store.leaderOf(99, false).key).toBeNull();
   });
 
@@ -363,8 +348,6 @@ describe("slots", () => {
   });
 
   it("fails the requests in flight when the connection goes", async () => {
-    // Both paths that give up on a socket set the connection state, so pending requests are
-    // rejected here.
     const store = new Store();
     store.setSender(() => {});
     store.setConnection("open");
@@ -375,8 +358,6 @@ describe("slots", () => {
   });
 
   it("refuses a request made with no connection rather than queueing it", async () => {
-    // Answered after the next reconnect, it would arrive against a page that
-    // has moved on.
     const store = new Store();
     await expect(store.request("slot", "range", {})).rejects.toThrow("not connected");
   });
@@ -391,7 +372,6 @@ describe("slots", () => {
     }
     const ours = store.getSlots().filter((entry) => entry.mine);
     expect(ours).toHaveLength(64);
-    // The newest sixty-four of ours, not the first sixty-four we ever saw.
     expect(ours[ours.length - 1].slot).toBe(200);
     expect(ours[0].slot).toBe(137);
   });
@@ -421,8 +401,6 @@ describe("tps samples", () => {
   });
 
   it("keeps the series strictly increasing across the history overlap", () => {
-    // The retained history and the live samples overlap by design, so a sample
-    // that repeats one already held must not be appended again.
     const store = new Store();
     store.apply(envelope("summary", "tps_history", [sample(1), sample(2), sample(3)]));
     store.apply(envelope("summary", "tps_sample", sample(2)));
@@ -445,7 +423,6 @@ describe("isReady", () => {
   });
 
   it("does not wait for a validator that is still booting", () => {
-    // A booting validator has no slots or identity yet, so the splash stops waiting.
     const store = new Store();
     store.apply(envelope("summary", "startup_progress", { running: false }));
     expect(store.isReady()).toBe(true);

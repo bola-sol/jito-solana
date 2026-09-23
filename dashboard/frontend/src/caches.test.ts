@@ -10,7 +10,6 @@ import {
 } from "./caches";
 import type { AccountsCache, ProgramCache } from "./types";
 
-/** A mainnet-shaped program cache minute, to be overridden a field at a time. */
 function programs(over: Partial<ProgramCache> = {}): ProgramCache {
   return {
     looked_up: 2_245_551,
@@ -58,8 +57,6 @@ describe("rateTone", () => {
   });
 
   it("colours the middle band rather than leaving it plain", () => {
-    // The band used to be untoned, which was survivable while the figure was
-    // always on screen. Folded, the dot is all that is left of it.
     expect(rateTone(0.95)).toBe("warn");
   });
 
@@ -72,7 +69,6 @@ describe("servedFromMemory", () => {
   it("counts every read, not just the ones that got past the write cache", () => {
     const { loads, rate } = servedFromMemory(accounts());
     expect(loads).toBe(4_393_390);
-    // 98.66% as the panel prints it.
     expect(rate).toBeCloseTo(0.9866, 4);
   });
 
@@ -100,8 +96,7 @@ describe("programGloss", () => {
   });
 
   it("names the limit rather than a fill it has not measured", () => {
-    // Peak entries is written only when an eviction runs. On a validator that
-    // has never evicted, "0/512" would claim an empty cache.
+    // On a validator that has never evicted, "0/512" would claim an empty cache.
     expect(programGloss(programs({ peak_entries: null }))).toContain("512 entry limit");
   });
 });
@@ -123,8 +118,6 @@ describe("accountsGloss", () => {
   });
 
   it("leads with the two a narrow screen will keep", () => {
-    // Only the first two survive below 700px, so they have to be the two worth
-    // keeping rather than whichever happened to be written first.
     expect(accountsGloss(accounts()).slice(0, 2)).toEqual([
       "4,393,390 reads",
       "58,891 from disk",
@@ -177,8 +170,6 @@ describe("which sections are open", () => {
   });
 
   it("survives storage being refused", () => {
-    // Private browsing and some embedded webviews throw on storage access rather than returning
-    // null.
     vi.stubGlobal("window", {
       get localStorage(): Storage {
         throw new Error("denied");

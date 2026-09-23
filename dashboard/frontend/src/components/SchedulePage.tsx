@@ -26,24 +26,15 @@ import { ScrollTop } from "./ScrollTop";
 import { SlotLink } from "./SlotLink";
 import { WrittenSection } from "./WrittenSection";
 
-/** What each leader's turn at producing contained, newest first, each turn
- *  drawn whole from its first slot. */
-/** Slots asked for each time the reader wants more: a few screenfuls, since
- *  the list is not virtualised. */
 const OLDER_SPAN = 512;
 
-/** Turns drawn at once: about fifty DOM elements each, and a thousand is
- *  thirty milliseconds of layout per scroll. Deeper is reached by search. */
+/** About fifty DOM elements each; a thousand is thirty milliseconds of layout per scroll. */
 const MAX_TURNS = 1000;
 
-/** Slots reached back through when somebody searches: everything the
- *  validator retains, about five megabytes over twenty-five requests. */
 const DEPTH_SLOTS = 100_000;
 
-/** Slots per request, the most the validator will answer at once. */
 const DEPTH_SPAN = 4096;
 
-/** One span of the packed history, as entries. */
 async function fetchSpan(
   store: Store,
   first: number,
@@ -55,8 +46,7 @@ async function fetchSpan(
   return entriesOf(range, epoch, identity);
 }
 
-/** Everything retained below `newest`, oldest first. An empty span is older
- *  than the validator has kept, and so is everything below it. */
+/** An empty span is older than the validator has kept, and so is everything below it. */
 async function fetchDepth(
   store: Store,
   newest: number,
@@ -75,7 +65,6 @@ async function fetchDepth(
   return spans.flat();
 }
 
-/** The filter lives in the route, so a search can be linked to. */
 export function SchedulePage({
   query,
   ours: oursOnly,
@@ -92,8 +81,6 @@ export function SchedulePage({
   const peers = store.get("peers", "all");
   const epoch = store.get("epoch", "new");
   const identity = store.get("summary", "identity_key");
-  // Absent on a validator with no tip payment program, and then the tips column
-  // shows nothing for anybody rather than a column of noughts.
   const rates = store.get("summary", "tip_rates");
   const live = store.getSlots();
 
@@ -101,8 +88,7 @@ export function SchedulePage({
   // are pushed, the rest are in the packed history.
   const searching = query.trim().length > 0 || oursOnly;
 
-  // Everything the validator holds, fetched on the first search and kept
-  // apart from the live list so `turnsOf` over it runs once.
+  // Kept apart from the live list so `turnsOf` over it runs once.
   const [deep, setDeep] = useState<SlotEntry[] | null>(null);
   const [deepLoading, setDeepLoading] = useState(false);
   // Moves whenever a leader could newly resolve, so the memo below re-runs.
@@ -166,13 +152,9 @@ export function SchedulePage({
       // clamped at nought for a cluster young enough that it could go below.
       const first = Math.max(0, Math.floor((earliest - OLDER_SPAN) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
       const fetched = await fetchSpan(store, first, earliest - first, epoch, identity);
-      // Nothing came back for any of it, so there is nothing older to ask for
-      // and the control stops offering.
       if (fetched.length === 0) setExhausted(true);
       else setOlder((held) => [...fetched, ...held]);
     } catch {
-      // A refused or lost request leaves the page as it was. The control stays,
-      // so trying again is a click rather than a reload.
     } finally {
       setLoading(false);
     }
@@ -183,8 +165,6 @@ export function SchedulePage({
     [peers],
   );
 
-  // Its slots do not change as the chain moves, so this survives every arrival that rebuilds the
-  // list.
   const deepTurns = useMemo(
     () => (deep === null ? [] : turnsOf(deep, (slot, mine) => store.leaderOf(slot, mine))),
     // The peer table is left out: it changes every few seconds and would
@@ -197,8 +177,6 @@ export function SchedulePage({
     const near = turnsOf(slots, (slot, mine) => store.leaderOf(slot, mine)).filter(wanted);
     if (!searching || deep === null) return near;
 
-    // The list's turns first, then older matches not already among them; the depth overlaps the
-    // live window.
     const seen = new Set(near.map(turnKey));
     const far = deepTurns.filter((turn) => !seen.has(turnKey(turn)) && wanted(turn));
     return [...near, ...far].sort(
@@ -208,11 +186,8 @@ export function SchedulePage({
     // page. Affordable here because the cap bounds it.
   }, [store, slots, deep, deepTurns, searching, query, oursOnly]);
 
-  // Newest first, so the cap drops the tail, and a search that matches more says so.
   const turns = matched.slice(0, MAX_TURNS);
   const beyondCap = matched.length - turns.length;
-  // Counted in slots because that is what a span is asked for in. The live
-  // window is part of the total: it is drawn from the same list.
   const atCeiling = slots.length >= MAX_TURNS * SLOTS_PER_TURN;
 
   return (
@@ -287,8 +262,6 @@ export function SchedulePage({
   );
 }
 
-/** One leader's turn, memoised on its slot entries so a settled turn is
- *  skipped. */
 const TurnCard = memo(
   function TurnCard({
     turn,
@@ -355,7 +328,6 @@ const TurnCard = memo(
     ),
 );
 
-/** Leader, name and key, with what is known about the validator behind them. */
 function TurnLeader({
   turn,
   peer,
@@ -368,7 +340,6 @@ function TurnLeader({
   // Missing rather than zero when the table has not caught up with a leader
   // that has only just come into view.
   const share = peer && totalStake ? peer.stake / totalStake : null;
-  // Slots are newest first, so the turn's own first slot is the last one.
   const began = turn.slots[turn.slots.length - 1]?.entry?.time_millis ?? null;
 
   return (
@@ -388,8 +359,6 @@ function TurnLeader({
       {/* Both always drawn, empty or not, so a turn does not grow a line when the stamp or the peer
           table lands. */}
       <span className="schedule-leader-when">{began === null ? "" : blockStamp(began)}</span>
-      {/* Three lines, each drawn empty until the peer table reaches the
-          leader, for the same reason as the stamp above. */}
       <div className="schedule-leader-meta">
         <span className="schedule-version">
           {peer?.version ? buildLabel(peer.client ?? undefined, peer.version) : ""}
@@ -410,8 +379,6 @@ function TurnLeader({
   );
 }
 
-/** First shred to full, then to replayed, on a fixed track. Replay's own
- *  thread time is on the hover. */
 function Timeline({ entry }: { entry: SlotEntry | null }) {
   const timeline = timelineOf(entry);
   if (!timeline) {
@@ -446,7 +413,6 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
   );
 }
 
-/** One slot, empty until it has been produced. */
 function SlotRow({
   slot,
   rates,
@@ -508,7 +474,6 @@ const MARKS: Record<Reward, [glyph: string, tone: string]> = {
   no_certificate: ["○", "is-none"],
 };
 
-/** What the certificate written in the slot left out. */
 function CertificateCell({ certificate }: { certificate: Certificate }) {
   const [text, tone] = certificateText(certificate);
   return (
@@ -518,7 +483,6 @@ function CertificateCell({ certificate }: { certificate: Certificate }) {
   );
 }
 
-/** Under alpenglow, whether this node's vote was paid for the slot. */
 function VoteMark({ reward }: { reward: Reward | null }) {
   const [glyph, tone] = reward === null ? ["–", "is-unknown"] : MARKS[reward];
   return (

@@ -11,69 +11,48 @@ export type SlotLevel =
 export interface SlotEntry {
   slot: number;
   level: SlotLevel;
-  /** True when this validator was the scheduled leader. The leader itself is
-   *  resolved with `store.leaderOf`. */
   mine: boolean;
-  /** What replay found in the block. Null for a slot with no block. */
   block: BlockDetail | null;
   duration_nanos: number | null;
-  /** When the slot's first shred arrived, in milliseconds. Null for a slot never timed. */
   time_millis: number | null;
-  /** How the block's shreds arrived. Null for a slot that never filled. */
   shreds: ShredArrival | null;
-  /** Milliseconds from the slot's first shred to replay finishing it. Null for
-   *  a bank this validator built. */
+  /** Null for a bank this validator built. */
   replayed_millis: number | null;
-  /** Whether this node's vote was paid for the slot. Null until the reward
-   *  certificate has been seen, and always under TowerBFT. */
+  /** Null until the reward certificate has been seen, and always under TowerBFT. */
   reward: Reward | null;
-  /** Validators the slot's reward certificate left out, of those certificates
-   *  usually pay, counted when it was read. Null with `reward`. */
   left_out: number | null;
 }
 
-/** The reward certificate's verdict; no_certificate means the leader eight
- *  slots on produced no block, so nobody was paid. */
+/** `no_certificate`: the leader eight slots on produced no block, so nobody was paid. */
 export type Reward = "paid" | "unpaid" | "no_certificate";
 
-/** How a block's shreds arrived. Outside `BlockDetail` because a slot fills
- *  before it freezes. */
 export interface ShredArrival {
-  /** Data shreds in the block. */
   count: number;
-  /** Of those, the ones this validator had to ask for. Nought is the block arriving whole over turbine. */
+  /** Nought is the block arriving whole over turbine. */
   repaired: number;
-  /** Milliseconds from the first shred to the last. */
   full_millis: number;
 }
 
-/** Where this validator's shreds came from over the last five minutes. Null
- *  while none have arrived. */
 export interface Shreds {
   received: number;
   repaired: number;
   repair_rate: number;
 }
 
-/** How often an account replay needed was already in memory, over the last
- *  minute. Null while nothing has been read. */
 export interface AccountsCache {
-  /** The read cache's own lookups and hit rate, covering only reads past the
-   *  write cache. Not the card's headline. */
+  /** Covers only reads past the write cache; not the card's headline. */
   read: number;
   hit_rate: number;
   evictions: number;
   cache_bytes: number;
   cache_entries: number;
-  /** Where reads were answered from, in accounts. `from_storage` is the only
-   *  one that touches a file. */
+  /** In accounts; only `from_storage` touches a file. */
   from_write_cache: number;
   from_read_cache: number;
   from_storage: number;
-  /** The write side, which does have a byte figure. */
   stored_accounts: number;
   stored_bytes: number;
-  /** What the window actually spans, for turning totals into rates. */
+  /** What the window spans, for turning totals into rates. */
   window_seconds: number;
   disk: AccountsDisk | null;
 }
@@ -81,13 +60,11 @@ export interface AccountsCache {
 export interface AccountsDisk {
   used: number;
   allocated: number;
-  /** Dead account data still on disk, which is what shrink reclaims. */
+  /** What shrink reclaims. */
   fragmented: number;
   storages: number;
 }
 
-/** How often replay found a program already compiled, over the last minute.
- *  Null while nothing has been looked up. */
 export interface ProgramCache {
   looked_up: number;
   hits: number;
@@ -101,14 +78,11 @@ export interface ProgramCache {
   one_hit_wonders: number;
   prunes_orphan: number;
   prunes_environment: number;
-  /** The most entries loaded at any eviction in the window. Null until one
-   *  has run. */
   peak_entries: number | null;
   entry_limit: number;
 }
 
-/** What every validator that published anything calls itself: three arrays
- *  sharing an index. Fetched on demand. */
+/** Three arrays sharing an index, fetched on demand. */
 export interface Displays {
   keys: string[];
   names: (string | null)[];
@@ -118,18 +92,14 @@ export interface Displays {
 export interface Peer {
   identity: string;
   version: string | null;
-  /** The client, as the version crate names it: `Agave`, `JitoLabs`, `Firedancer`. */
   client: string | null;
   stake: number;
   ip: string | null;
-  /** Display name from the validator's on-chain info, if it published one. */
   name: string | null;
-  /** Icon URL from the same place. */
   icon: string | null;
 }
 
-/** A scheduled slot that has not happened yet. Published on the slow tier;
- *  filter against the completed slot before rendering. */
+/** Published on the slow tier; filter against the completed slot before rendering. */
 export interface UpcomingSlot {
   slot: number;
   leader: string;
@@ -138,14 +108,12 @@ export interface UpcomingSlot {
   mine: boolean;
 }
 
-/** The rates that turn a measured tip figure into the two drawn. Absent
- *  without a tip payment program; `commission_bps` absent without the flag. */
+/** Absent without a tip payment program; `commission_bps` absent without the flag. */
 export interface TipRates {
   jito_cut_bps: number;
   commission_bps: number | null;
 }
 
-/** What one block contained, as the collector read it off the frozen bank. */
 export interface BlockDetail {
   transactions: number;
   non_vote_transactions: number;
@@ -153,15 +121,12 @@ export interface BlockDetail {
   entries: number;
   block_cost: number;
   block_cost_limit: number;
-  /** The most compute any one account may be charged in a block. */
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
-  /** Lamports paid into the jito tip accounts during this slot, as measured; shares are derived in
-   *  `tips.ts`. `null` where unmeasured. */
+  /** Shares are derived in `tips.ts`; `null` where unmeasured. */
   tips: number | null;
-  /** Wall time replay's own thread spent on this slot, in microseconds. Null
-   *  for a block this validator built. */
+  /** In microseconds. Null for a block this validator built. */
   replay_micros: number | null;
 }
 
@@ -180,7 +145,7 @@ export interface TpsSample extends Tps {
 export interface StakeSummary {
   activated_stake: number;
   total_stake: number;
-  /** This validator's share of total stake, in [0, 1]. */
+  /** In [0, 1]. */
   share: number;
 }
 
@@ -193,11 +158,9 @@ export interface ValidatorCounts {
 }
 
 export interface VersionShare {
-  /** Null for peers reporting no version, and for the folded tail. */
   version: string | null;
   validators: number;
   stake: number;
-  /** True only for the row the tail was folded into. */
   other: boolean;
 }
 
@@ -208,13 +171,11 @@ export interface EpochInfo {
   slots_in_epoch: number;
   my_leader_slots: number[];
 
-  /** Every leader of this epoch, in the order they first take a turn. */
   leaders: string[];
   /** One index into `leaders` per turn of four slots, `leaders[turns[(slot - start_slot) / 4]]`.
    *  Empty where the schedule could not be derived. */
   turns: number[];
 
-  /** Consensus limits every block of this epoch is measured against. */
   block_cost_limit: number;
   account_cost_limit: number;
 }
@@ -228,8 +189,7 @@ export interface NetworkSample extends Network {
   timestamp_nanos: number;
 }
 
-/** The share of egress two senders account for, in bytes per second. Null
- *  until a sender has reported. */
+/** In bytes per second; null until a sender has reported. */
 export interface EgressSplit {
   gossip_per_second: number | null;
   repair_per_second: number | null;
@@ -241,11 +201,8 @@ export interface IngestPath {
   drops_recent: number;
   drops_total: number;
   queued_bytes: number;
-  /** Packets the port delivered over the same window as the drops. Null for
-   *  a port nothing counts in datagrams. */
   received_recent: number | null;
   received_total: number | null;
-  /** Whether the port speaks QUIC, which decides which card draws it. */
   quic: boolean;
 }
 
@@ -260,47 +217,30 @@ export interface ProducedBlock {
   entries: number;
   block_cost: number;
   block_cost_limit: number;
-  /** The most compute any one account may be charged in a block. */
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
-  /** Lamports paid into the jito tip accounts during this slot, as measured.
-   *  `null` where unmeasured, nought where nobody tipped. */
+  /** `null` where unmeasured, nought where nobody tipped. */
   tips: number | null;
-  /** Bundles the stage sanitised and executed into the block. `null` where no
-   *  bundle stage reported the slot. */
   bundles: { sanitized: number; executed: number } | null;
-  /** Non-vote transactions by message version, read back from the
-   *  blockstore once the slot is full. `null` until then. */
   versions: TxVersions | null;
-  /** Where the banking stage's time went, from its own reports. `null`
-   *  until the last report for the slot can have arrived. */
   execution: Execution | null;
-  /** The reward certificate this block wrote. `null` until the walk has
-   *  read it back, and always under TowerBFT. */
   certificate: BlockCertificate | null;
 }
 
-/** The reward certificate a block wrote, for the slot eight back. */
 export interface BlockCertificate {
-  /** The slot it rewards. */
   rewards: number;
-  /** That slot's leader. */
   leader: string | null;
   leader_name: string | null;
   /** No fewer notarize votes than skip votes. */
   notarized: boolean;
   paid: number;
   ranks: number;
-  /** Share of the epoch's stake behind the paid ranks. */
   stake_paid: number;
   notar: number;
   skip: number;
-  /** Whether it carried this node's own vote. */
   ours_in: boolean;
-  /** Ranks the epoch's usual certificate pays. Null early in the epoch. */
   usual: number | null;
-  /** The validators certificates usually pay that this one left out. */
   left_out: CertificateValidator[];
 }
 
@@ -316,7 +256,6 @@ export interface TxVersions {
   v1: number;
 }
 
-/** The banking stage's time by stage, in microseconds. */
 export interface StageTimes {
   cost_model: number;
   load_execute: number;
@@ -327,35 +266,27 @@ export interface StageTimes {
 }
 
 export interface Execution {
-  /** The consume workers' reports inside the slot, summed across them:
-   *  thread time, not wall time. */
+  /** Thread time, not wall time. */
   non_vote: StageTimes;
   workers: number;
-  /** The longest single batch any worker executed, in microseconds. */
   longest_batch: number;
-  /** The vote worker's report. `null` under alpenglow. */
   votes: StageTimes | null;
-  /** First shred to last, in milliseconds. */
   window_millis: number;
 }
 
-/** One leader turn, consecutive leader slots, with the TPU path's totals
- *  differenced at its end: everything since the previous turn drained. */
+/** The TPU path's totals are differenced at its end: everything since the previous turn drained. */
 export interface LeaderTurn {
   first: number;
   last: number;
-  /** Blocks this validator froze for the turn's slots. */
   produced: number;
   drained_millis: number;
-  /** When the previous turn drained. `null` for the first turn seen. */
   since_millis: number | null;
   quic: QuicPort;
   verify: VerifyStage;
   executed: ExecutedStage;
 }
 
-/** Which of the process's schedulers built a slot. BAM counts what arrived
- *  in batches. */
+/** BAM counts what arrived in batches. */
 export type SchedulerSource = "scheduler" | "bam";
 
 /** Where the transactions handed to the banking stage went, over the window. `received` equals
@@ -363,12 +294,9 @@ export type SchedulerSource = "scheduler" | "bam";
 export interface Waterfall {
   received: number;
 
-  /** Which scheduler these counts came from. Sent per slot, absent on the
-   *  live card. */
   source?: SchedulerSource;
 
-  /** Lost at the door, before being queued. On a BAM slot `not_held` counts
-   *  batches sent past their deadline instead. */
+  /** On a BAM slot `not_held` counts batches sent past their deadline instead. */
   not_held: number;
   check_queue_full: number;
   unparsable: number;
@@ -382,7 +310,6 @@ export interface Waterfall {
 
   buffered: number;
 
-  /** Lost from the queue, having already been buffered. */
   queue_full: number;
   nonce_evicted: number;
   cleared: number;
@@ -397,10 +324,8 @@ export interface Waterfall {
   retried: number;
 }
 
-/** One QUIC listener's account of the traffic offered to it: connections, streams, then what went
- *  on to verification. `open` and `active_streams` are levels. */
+/** `open` and `active_streams` are levels. */
 export interface QuicPort {
-  /** Matches the socket row of the same name on the ingest list. */
   name: string;
 
   offered: number;
@@ -409,7 +334,6 @@ export interface QuicPort {
   refused_full: number;
   handshake_timeout: number;
   handshake_error: number;
-  /** Cleared the handshake and the rate limiters' second look. A checkpoint. */
   handshook: number;
   /** Refused a place in the connection table, under four overlapping
    *  counters. Never summed; `refusedTable` in `tpuPath.ts` reconciles them. */
@@ -435,33 +359,24 @@ export interface QuicPort {
   open: number;
   active_streams: number;
 
-  /** Datagrams the kernel discarded on this port over the same span. Null
-   *  where the port was not found among the bound sockets. */
   kernel_drops: number | null;
 }
 
 export interface QuicPaths {
-  /** What the counts above actually span, which is short until it has filled. */
   window_seconds: number;
   ports: QuicPort[];
-  /** Whether the advertised TPU address is a socket on this host; false behind a relayer or
-   *  block-assembly proxy. */
   tpu_offhost: boolean;
 }
 
-/** What the two per-epoch sections of the TPU path card cover, in slots.
- *  `counted_slots` short of `elapsed_slots` is a restart part way through. */
+/** `counted_slots` short of `elapsed_slots` is a restart part way through. */
 export interface EpochSpan {
   epoch: number;
-  /** Slots of this epoch that have happened. */
   elapsed_slots: number;
-  /** Slots of this epoch the totals were actually summed over. */
   counted_slots: number;
   slots_in_epoch: number;
 }
 
-/** Bundles the block engine sent this epoch, counted on arrival, so an upper bound on the executed
- *  share. Absent without a block engine and under BAM. */
+/** Counted on arrival, so an upper bound on the executed share. */
 export interface BundleStage {
   received: number;
   packets: number;
@@ -484,8 +399,7 @@ export interface ExecutedStage {
   processed: number;
   succeeded: number;
 
-  /** Why a transaction the workers took up never reached the block. Only the
-   *  terminal reasons; retries and instruction errors are drawn elsewhere. */
+  /** Terminal reasons only; retries and instruction errors are drawn elsewhere. */
   too_many_locks: number;
   account_missing: number;
   fee_payer_broke: number;
@@ -499,26 +413,18 @@ export interface ExecutedStage {
   program_restricted: number;
 }
 
-/** One leader slot's waterfall, joined to the produced block by slot since either can arrive first.
- *  */
 export interface SlotWaterfall extends Waterfall {
   slot: number;
 }
 
-/** Where every core's time went over the last second, as shares of it. */
 export interface CpuUse {
-  /** Everything but idle and iowait. */
   busy: number;
   user: number;
-  /** The kernel, including interrupt handling. */
   system: number;
-  /** Idle with a disk request outstanding. */
   iowait: number;
-  /** Taken by a hypervisor. Nought on bare metal. */
   steal: number;
 }
 
-/** The machine the validator runs on, sampled once a second from /proc. */
 export interface Host {
   cores: number;
   load_one: number;
@@ -526,52 +432,37 @@ export interface Host {
   load_fifteen: number;
   threads: number;
   running: number;
-  /** Absent where the validator could not read `/proc/stat`. */
   cpu: CpuUse | null;
 
   memory_total: number;
   memory_available: number;
-  /** Page cache and buffers: used, but handed back the moment it is wanted. */
+  /** Used, but handed back the moment it is wanted. */
   memory_reclaimable: number;
   memory_free: number;
-  /** Absent where the machine has no swap configured at all. */
   swap: { total: number; used: number } | null;
-  /** The validator process's resident memory, and the same an hour ago.
-   *  Null where unreadable, and before an hour has been watched. */
   process_resident: number | null;
   process_resident_hour_ago: number | null;
-  /** The device the snapshot archives are written to, as the device rows
-   *  name it. Null where there is no block device under them. */
   snapshot_device: string | null;
 
   filesystems: FilesystemUsage[];
   devices: DeviceLoad[];
 }
 
-/** One group of the validator's threads over one second, mean per thread.
- *  `count` says how many stand behind the row. */
 export interface ThreadGroup {
-  /** Empty on the folded row. */
   name: string;
   count: number;
-  /** The cores the threads may run on, where every thread is held to fewer than the machine has. */
   cores: string | null;
-  /** Share of the second on a core, and runnable but waiting for one. */
   on_cpu: number;
   waiting: number;
-  /** True for the one row every group not shown is folded into. */
   other: boolean;
 }
 
-/** Where the threads spent one second: the busiest groups by their minute's mean, and the rest. */
 export interface ThreadsSample {
   timestamp_nanos: number;
-  /** Threads in the process, every group included. */
   threads: number;
   groups: ThreadGroup[];
 }
 
-/** How full one filesystem is. A level, so nothing here is a rate. */
 export interface FilesystemUsage {
   name: string;
   path: string;
@@ -579,26 +470,20 @@ export interface FilesystemUsage {
   available: number;
 }
 
-/** How hard one block device was worked over the last second. */
 export interface DeviceLoad {
   device: string;
-  /** Every role whose path is on this device. Two mounts on one disk share a
-   *  queue, so they share a row. */
   roles: string[];
-  /** Share of the sample the device had a request in flight, in `[0, 1]`. Not
-   *  a fill: a device can sit at 1 with the filesystem nearly empty. */
+  /** Not a fill: a device can sit at 1 with the filesystem nearly empty. */
   busy: number;
-  /** Mean milliseconds a request waited, null where none did. */
   wait_ms: number | null;
   operations_per_second: number;
   read_per_second: number;
   write_per_second: number;
 }
 
-/** What replay did with the last few hundred slots, in microseconds, as means per slot bar the two
- *  peaks. `fetch`, `confirming` and `completing` are disjoint; the verify figures overlap. */
+/** Means per slot bar the two peaks. `fetch`, `confirming` and `completing` are disjoint; the
+ *  verify figures overlap. */
 export interface ReplayWindow {
-  /** Slots behind the figures, which is short until the window has filled. */
   slots: number;
   transactions: number;
 
@@ -626,14 +511,10 @@ export interface ReplayWindow {
   cpu_peak: number;
 }
 
-/** What one block this validator produced cost and which account took the
- *  most of it. Sent as its own list and joined by slot. */
 export interface SlotCost {
   slot: number;
-  /** Pubkey of the account that consumed the most compute in this block. */
   costliest_account: string;
   costliest_cost: number;
-  /** The block's total as the cost tracker counted it. */
   block_cost: number;
   accounts: number;
   /** Accounts within five percent of the per-account ceiling. */
@@ -647,11 +528,8 @@ export interface IngestSummary {
   paths: IngestPath[];
 }
 
-/** How the XDP transmit path is set up, absent where the validator was given
- *  no config. A configuration, not a measurement. */
 export interface XdpConfig {
-  /** Whether the socket bound with zero-copy. The bind fails rather than
-   *  falls back, so true is trustworthy. */
+  /** The bind fails rather than falls back, so true is trustworthy. */
   zero_copy: boolean;
   driver: string;
   /** Both of these read "unknown" where the PCI database could not be read. */
@@ -664,15 +542,10 @@ export interface StartupProgress {
   phase: string;
   detail: string | null;
   running: boolean;
-  /** Ledger replay progress from 0 to 1, on the phases that can measure it. */
   fraction: number | null;
-  /** Share of stake visible in gossip during the supermajority wait, as a
-   *  whole percent. Null in every other phase. */
+  /** A whole percent. Null outside the supermajority wait. */
   stake_percent: number | null;
-  /** The same wait in lamports, from the point the validator submits every
-   *  tenth check. Null until the first point, and outside the wait. */
   stake_in_gossip: StakeInGossip | null;
-  /** How long the current phase has run, and what each finished phase took. */
   phase_elapsed_nanos: number;
   phases_taken: PhaseTiming[];
 }
@@ -682,21 +555,17 @@ export interface PhaseTiming {
   elapsed_nanos: number;
 }
 
-/** Stake the validator could see in gossip when it last counted, in lamports. */
 export interface StakeInGossip {
   online: number;
   offline: number;
   total: number;
 }
 
-/** The supermajority wait per validator, from the snapshot's stake and gossip.
- *  Null outside the wait. */
 export interface GossipStake {
   slot: number;
   shred_version: number;
   total: number;
   seen: number;
-  /** Stake descending. */
   validators: GossipValidator[];
 }
 
@@ -704,7 +573,6 @@ export interface GossipValidator {
   identity: string;
   name: string | null;
   icon: string | null;
-  /** As gossip reports it; null for a node gossip does not hold. */
   version: string | null;
   stake: number;
   seen: boolean;
@@ -715,7 +583,7 @@ export interface Health {
   vote: "not_voting" | "not_started" | "voting" | "delinquent";
 }
 
-/** Which consensus the cluster runs. Under alpenglow votes are not transactions. */
+/** Under alpenglow votes are not transactions. */
 export type Consensus = "tower" | "alpenglow";
 
 export interface SkipRate {
@@ -723,23 +591,18 @@ export interface SkipRate {
   rate: number | null;
 }
 
-/** One snapshot archive on disk: the slot it holds and when it was written,
- *  null where the file could not be read. */
 export interface SnapshotArchive {
   slot: number;
   written_millis: number | null;
 }
 
-/** The newest full archive, the newest incremental on top of it, and the
- *  block-height intervals new ones arrive at. A null interval is disabled. */
+/** A null interval is disabled. */
 export interface Snapshots {
   full: SnapshotArchive | null;
   incremental: SnapshotArchive | null;
   full_interval: number | null;
   incremental_interval: number | null;
-  /** The archive being staged now, if one is. */
   writing: SnapshotWriting | null;
-  /** The last write the validator saw end. */
   last_written: SnapshotWritten | null;
 }
 
@@ -748,16 +611,12 @@ export interface SnapshotWriting {
   since_millis: number;
 }
 
-/** What the last write cost: how long, and how far replay fell behind the
- *  cluster while it ran. */
 export interface SnapshotWritten {
   slot: number;
   took_millis: number;
   fell_behind_slots: number;
 }
 
-/** Shreds by the turbine layer they arrived from, and shreds the retransmit
- *  stage dropped when the XDP channel was full, over the last five minutes. */
 export interface Turbine {
   window_seconds: number;
   root: number;
@@ -766,18 +625,14 @@ export interface Turbine {
   layer_3: number;
   xdp_dropped: number;
   xdp_dropped_total: number;
-  /** Which path retransmit last reported on. Null before its first report. */
   xdp: boolean | null;
 }
 
-/** What voting costs: fees from the identity per vote under TowerBFT, the admission ticket from the
- *  vote account each epoch under alpenglow. */
 export type VoteCost =
   | { kind: "fees"; per_day: number }
   | { kind: "ticket"; lamports: number; minimum: number };
 
-/** This validator's vote credits in the epoch, against the most any staked validator has earned.
- *  Under alpenglow the field holds lamports of reward. */
+/** Under alpenglow the field holds lamports of reward. */
 export interface VoteCredits {
   epoch: number;
   credits: number;
@@ -785,24 +640,17 @@ export interface VoteCredits {
   cluster_max: number | null;
 }
 
-/** Slots this validator's vote was paid for this epoch, against the most any validator's was, from
- *  `since_slot`. Alpenglow only. */
 export interface VoteParticipation {
   epoch: number;
   since_slot: number;
   paid: number;
-  /** Slots whose certificate paid anybody. */
   rewarded: number;
   cluster_max: number;
   misses: Misses;
-  /** Unpaid slots per four-hundredth of the epoch. */
   miss_bins: number[];
-  /** The leaders whose certificates left the most lost votes out, most first. */
   lost_leaders: LostLeader[];
-  /** Ranks in the epoch's certificates, one per admitted validator. */
   ranks: number;
-  /** A certificate paying fewer ranks than this is thin: a tenth under the
-   *  epoch's median certificate. Null until a hundred certificates are in. */
+  /** A tenth under the epoch's median certificate; null until a hundred are in. */
   thin_below: number | null;
 }
 
@@ -812,21 +660,16 @@ export interface LostLeader {
   count: number;
 }
 
-/** Whether this vote account holds a seat in the admitted set, the
- *  validators whose votes count under alpenglow. Null before alpenglow. */
 export interface Admission {
   seat: boolean;
-  /** Null until the next epoch's stakes are known. */
   next_seat: boolean | null;
-  /** Lamports short of the ticket for the epoch after the next; null where
-   *  the vote account covers it. */
   ticket_short: number | null;
 }
 
 export type MissPlace = "boundary" | "leader" | "snapshot" | "thin" | "late" | "lost";
 
-/** Votor's timeline for a slot, in microseconds from when it began tracking it. The first shred is
- *  reported only for a leader window's first slot; the rest anchor on the parent becoming ready. */
+/** Microseconds from votor's start on the slot; the first shred is reported only for a leader
+ *  window's first slot. */
 export interface VoteSent {
   first_shred_us: number | null;
   parent_ready_us: number | null;
@@ -834,20 +677,16 @@ export interface VoteSent {
   skip_us: number | null;
 }
 
-/** A leader whose certificate left this node out, with what it wrote. */
 export interface MissWriter {
   identity: string;
   name: string | null;
   client: string | null;
   version: string | null;
   ip: string | null;
-  /** Certificates it wrote this epoch that paid anybody. */
   certificates: number;
-  /** Of those, the ones that left this node out. */
   misses: number;
 }
 
-/** A validator a certificate left out beside this node. */
 export interface MissValidator {
   identity: string;
   name: string | null;
@@ -859,14 +698,11 @@ export interface MissRow {
   time_millis: number | null;
   place: MissPlace;
   paid_ranks: number;
-  /** Indices into the list's validators: the regulars left out beside this node. */
   others: number[];
-  /** Index into the list's writers. */
   writer: number | null;
   vote: VoteSent | null;
 }
 
-/** The epoch's unpaid slots, asked for when the list is opened. */
 export interface MissList {
   epoch: number;
   since_slot: number;
@@ -874,21 +710,14 @@ export interface MissList {
   ranks: number;
   writers: MissWriter[];
   validators: MissValidator[];
-  /** Oldest first. */
   rows: MissRow[];
-  /** What this node's own certificates carried. */
   written: WrittenList;
 }
 
-/** What this node's certificates carried, per validator. */
 export interface WrittenList {
-  /** Certificates from any writer that paid anybody, which `left_out_everywhere` is of. */
   rewarded: number;
-  /** Certificates this node wrote that paid anybody. */
   certificates: number;
-  /** Of those, the ones that left out nobody certificates usually pay. */
   carried_all: number;
-  /** One per validator with a rank this epoch. */
   rows: WrittenRow[];
 }
 
@@ -898,31 +727,20 @@ export interface WrittenRow {
   client: string | null;
   version: string | null;
   ip: string | null;
-  /** This node's certificates that did not pay it. */
   left_out_of_ours: number;
-  /** Certificates from any writer that did not pay it, of the list's `rewarded`. */
   left_out_everywhere: number;
 }
 
-/** Slots that paid others but not this validator, by where they fell. A
- *  slot in more than one place counts in the first. */
+/** A slot in more than one place counts in the first. */
 export interface Misses {
-  /** In the epoch's first thousand slots. */
   boundary: number;
-  /** One of this validator's leader slots. */
   leader: number;
-  /** While a snapshot archive was being written. */
   snapshot: number;
-  /** The certificate paid fewer ranks than the lowest tenth of the epoch's. */
   thin: number;
-  /** This node finished replaying the slot after the certificate's writer
-   *  had begun its own. */
   late: number;
-  /** None of the above: the vote was in time and the certificate full. */
   lost: number;
 }
 
-/** The envelope every message arrives in. */
 export interface Envelope {
   topic: string;
   key: string;
@@ -930,8 +748,7 @@ export interface Envelope {
   value: unknown;
 }
 
-/** Every retained key a page reads, by topic, with the value it carries.
- *  `Store.get` is typed by it. */
+/** `Store.get` is typed by it; a key missing here cannot be read. */
 export interface Published {
   summary: {
     version: string;
@@ -956,8 +773,6 @@ export interface Published {
     next_leader_slot: number | null;
     vote_slot: number | null;
     behind_cluster: number | null;
-    /** Completed slots a second over the last half minute; null until the
-     *  window spans five seconds. */
     replay_rate: number | null;
     identity_balance: number;
     vote_balance: number;

@@ -1,12 +1,8 @@
-/** Removes the boot splash from index.html once the store has something to
- *  show. */
 
 import type { Store } from "./store";
 
-/** Long enough that a fast local load still reads as a transition, not a flash. */
 const MIN_VISIBLE_MS = 650;
 
-/** Past this the dashboard is more useful than the splash, however empty. */
 const MAX_VISIBLE_MS = 6000;
 
 /** Must match the #splash transition duration in index.html. */

@@ -1,18 +1,12 @@
-/** The Status card's snapshot line: the newest archive, its age and the full
- *  it sits on, with the next ones due on the hover. */
 
 import { count, duration } from "./format";
 import type { Snapshots, SnapshotWritten } from "./types";
 
 export interface SnapshotLine {
-  /** What follows the word "snapshot". */
   detail: string;
-  /** One sentence naming when the next archives are due, where the intervals
-   *  and the slot rate are known. */
   title: string | undefined;
 }
 
-/** An age in one unit, the largest that fits: `40s`, `16m`, `2h`, `3d`. */
 export function agoLabel(millis: number): string {
   const seconds = Math.floor(millis / 1000);
   if (seconds < 60) return `${seconds}s ago`;
@@ -23,14 +17,12 @@ export function agoLabel(millis: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-/** Blocks until the next multiple of `interval` above `height`, which is
- *  where the validator takes the next one. */
+/** Where the validator takes the next one. */
 export function blocksUntil(height: number, interval: number): number {
   return interval - (height % interval);
 }
 
-/** Null where no archive is on disk. Ages are read against the validator's
- *  clock, which arrives every second. */
+/** Ages are read against the validator's clock, which arrives every second. */
 export function snapshotLine(
   snapshots: Snapshots,
   nowMillis: number | undefined,
@@ -64,7 +56,6 @@ function nextDue(
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }
 
-/** The write under way, as the machine section words it. Null where none is. */
 export function snapshotWriting(
   snapshots: Snapshots | null | undefined,
   nowMillis: number | undefined,
@@ -76,7 +67,6 @@ export function snapshotWriting(
   return `writing snapshot ${count(writing.slot)}${soFar}`;
 }
 
-/** What the last write cost. */
 export function snapshotWritten(written: SnapshotWritten): string {
   const behind =
     written.fell_behind_slots > 0

@@ -6,8 +6,6 @@ import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 
-/** One sentence on what the validator is doing, and one on what is coming.
- *  While the validator boots, the boot sequence stands in for both. */
 export function Verdict(): ReactElement {
   const store = useStore();
   const startup = store.get("summary", "startup_progress");
@@ -44,7 +42,6 @@ export function Verdict(): ReactElement {
   );
 }
 
-/** The catch-up clause while replay trails the cluster; nothing in step. */
 function CatchUp() {
   const store = useStore();
   const clause = catchUpClause(
@@ -56,7 +53,6 @@ function CatchUp() {
   return <>{clause} </>;
 }
 
-/** When this validator next leads, from its slot and the measured slot rate. */
 function Leader() {
   const store = useStore();
   const slot = store.get("summary", "completed_slot");
@@ -75,7 +71,6 @@ function Leader() {
   );
 }
 
-/** Blocks this validator was scheduled for and did not produce, this epoch. */
 function Skips() {
   const skip = useStore().get("summary", "skip_rate");
   if (!skip || skip.rate === null) return null;
@@ -87,7 +82,6 @@ function Skips() {
   );
 }
 
-/** Shreds that had to be asked for rather than arriving over turbine. */
 function Repair() {
   const shreds = useStore().get("summary", "shreds");
   if (!shreds) return null;
@@ -104,7 +98,6 @@ function Repair() {
   );
 }
 
-/** The newest archive's age, with the slots and what is due next behind it. */
 function Snapshot() {
   const store = useStore();
   const snapshots = store.get("summary", "snapshots");

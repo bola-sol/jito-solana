@@ -15,7 +15,6 @@ import {
 } from "./tpuPath";
 import type { EpochSpan, ExecutedStage, QuicPort } from "./types";
 
-/** A port with nothing happening on it, to be overridden a field at a time. */
 function quiet(over: Partial<QuicPort> = {}): QuicPort {
   return {
     name: "tpu",
@@ -49,7 +48,6 @@ function quiet(over: Partial<QuicPort> = {}): QuicPort {
   };
 }
 
-/** A busy mainnet-shaped five minutes, with the gates accounting for the offer. */
 const BUSY = quiet({
   offered: 18_420,
   shed_all: 2_140,
@@ -89,7 +87,6 @@ describe("doorSection", () => {
   });
 
   it("lists the losses largest first rather than in the order they happen", () => {
-    // The bar keeps the order a connection meets the gates; the list ranks them by what they cost.
     expect(keys(doorSection(BUSY, null).losses)).toEqual([
       "door_shed_address",
       "door_shed_all",
@@ -101,15 +98,11 @@ describe("doorSection", () => {
   });
 
   it("leaves out the gates that did not fire and counts them instead", () => {
-    // A counter at nought is worth knowing and a row of nought is not worth
-    // the height. The figure keeps the statement.
     const section = doorSection(
       quiet({ offered: 10, admitted_unstaked: 8, shed_all: 2, handshook: 8 }),
       null,
     );
     expect(keys(section.losses)).toEqual(["door_shed_all"]);
-    // Five gates and the four names a refusal is counted under. The two
-    // unaccounted rows are derived, so they are not counters and not tallied.
     expect(section.zeros).toBe(9);
   });
 
@@ -124,8 +117,6 @@ describe("doorSection", () => {
   });
 
   it("keeps the kernel's datagrams out of the bar and out of the shares", () => {
-    // Datagrams the kernel dropped never became connection attempts, so they are no share of this
-    // section.
     const section = doorSection(BUSY, 512);
     expect(section.aside?.count).toBe(512);
     expect(section.aside?.unit).toBe("datagrams");
@@ -133,13 +124,11 @@ describe("doorSection", () => {
   });
 
   it("has no such line where the port was never found among the sockets", () => {
-    // Absent is not nought: behind a port forward the advertised port is not the one bound.
     expect(doorSection(BUSY, null).aside).toBeNull();
   });
 });
 
 describe("the connections nothing accounted for", () => {
-  // A vote port offered 317 connections and admitted 18, with every counted gate at nought.
   const VOTE = { offered: 317, admitted_staked: 18 };
 
   it("puts them before the handshake where few connections reached one", () => {
@@ -150,7 +139,6 @@ describe("the connections nothing accounted for", () => {
   });
 
   it("puts them after it where they all reached one", () => {
-    // The same 299, but these completed a handshake before admission control dropped them.
     const section = doorSection(quiet({ ...VOTE, handshook: 317 }), null);
     const loss = section.losses.find((l) => l.key === "door_unaccounted_post");
     expect(loss?.count).toBe(299);
@@ -159,8 +147,6 @@ describe("the connections nothing accounted for", () => {
   });
 
   it("says nothing where the listener accounted for everything", () => {
-    // Neither row on a clean port, rather than two rows of nought. The pair
-    // exists to measure a silence and there is no silence to measure.
     const shown = keys(doorSection(BUSY, null).losses);
     expect(shown).not.toContain("door_unaccounted_pre");
     expect(shown).not.toContain("door_unaccounted_post");
@@ -192,7 +178,6 @@ describe("refusedTable", () => {
   });
 
   it("adds the three that are mutually exclusive with each other", () => {
-    // Different match arms of the listener, so no connection reaches two.
     const q = quiet({
       add_failed_staked: 3,
       add_failed_unstaked: 9,
@@ -284,7 +269,6 @@ describe("verifySection", () => {
   });
 
   it("keeps the evicted batches out of the bar, being a different unit", () => {
-    // A batch's transaction count is not reported, so it can be neither added nor subtracted.
     const section = verifySection({ ...stage, evicted_batches: 3 });
     expect(section.aside?.count).toBe(3);
     expect(section.aside?.unit).toContain("batches");
@@ -319,8 +303,6 @@ describe("executedSection", () => {
   });
 
   it("keeps the load reasons out of the losses and out of the bar", () => {
-    // They roll up into the row above them rather than sitting beside it, so
-    // drawing them in the bar would count the same transactions twice.
     const section = executedSection(
       stage({
         attempted: 1000,
@@ -351,8 +333,6 @@ describe("executedSection", () => {
   });
 
   it("notes the bundles on the heading without making them a share of the bar", () => {
-    // The bundles' transactions are already in the figures beside them, so they are an aside, not a
-    // segment.
     const section = executedSection(
       stage({ attempted: 1000, processed: 900, succeeded: 850 }),
       { received: 1284, packets: 4617 },
@@ -367,7 +347,6 @@ describe("executedSection", () => {
   });
 
   it("says nothing at all where no bundle arrived", () => {
-    // Absent, not nought, where no bundle stage reports.
     const section = executedSection(
       stage({ attempted: 1000, processed: 900, succeeded: 850 }),
       null,
@@ -391,7 +370,6 @@ describe("the headline", () => {
   });
 
   it("is absent on a port nothing has used", () => {
-    // Not nought. A port nobody has tried is not a port refusing everyone.
     expect(admittedShare(quiet())).toBeNull();
   });
 
@@ -415,7 +393,6 @@ describe("picking a port out of the list", () => {
 
 describe("ordering the folded ports", () => {
   it("puts the busiest first, whichever port that turns out to be", () => {
-    // Behind a relayer the vote port carries all the traffic, so it sorts above the quiet TPU port.
     const ports = [
       quiet({ name: "tpu", offered: 1 }),
       quiet({ name: "tpu forwards", offered: 1 }),
@@ -453,8 +430,6 @@ describe("ordering the folded ports", () => {
 
 describe("each section is drawn against its own total", () => {
   it("does not measure one stage against another's denominator", () => {
-    // Measured either side of the fetch stage's buffering, so verify may receive more than the
-    // listener handed on.
     const listener = listenerSection(quiet({ handed_on: 900 }));
     const verify = verifySection({
       received: 1000,
@@ -490,16 +465,12 @@ describe("the span the per-epoch sections are counted over", () => {
   });
 
   it("does not caveat an epoch that was only missed by the tick that noticed it", () => {
-    // The totals start over a second or two after the epoch turns, so a shortfall only shows when
-    // real.
     expect(epochSpanLabel(span({ counted_slots: 263_995 }))).toBe(
       "Epoch 842, 61% elapsed",
     );
   });
 
   it("names the epoch and nothing else where the schedule gives no length", () => {
-    // Nought slots in an epoch is not a state the chain reaches, but it is one
-    // a division would turn into an infinity printed as a percentage.
     expect(epochSpanLabel(span({ slots_in_epoch: 0 }))).toBe("Epoch 842");
   });
 });

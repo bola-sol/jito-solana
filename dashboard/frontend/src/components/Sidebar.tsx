@@ -7,11 +7,8 @@ import { useStore } from "../useStore";
 import { Logo } from "./Logo";
 import { SlotLink } from "./SlotLink";
 
-/** Rows in the live slot list: everything the client holds. */
 const ROWS = 512;
 
-/** The live slot list, with a filter down to this validator's own leader
- *  slots. The filter is local to the sidebar. */
 export function Sidebar({
   collapsed,
   onToggle,
@@ -21,7 +18,6 @@ export function Sidebar({
 }): ReactElement {
   const store = useStore();
   const [ownOnly, setOwnOnly] = useState(false);
-  // Newest first, so the live edge of the list is the top of it.
   const rows = useRef<HTMLDivElement>(null);
   const all = store.getSlots();
   const slots = (ownOnly ? all.filter((entry) => entry.mine) : all)
@@ -81,7 +77,6 @@ export function Sidebar({
   );
 }
 
-/** Points the way the list will move: back in when collapsed, away when open. */
 function Chevron({ collapsed }: { collapsed: boolean }) {
   return (
     <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">

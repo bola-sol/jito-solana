@@ -1,5 +1,4 @@
-/** Keeps a websocket to the validator open, reconnecting with backoff. The
- *  server sends a full snapshot on connect, so nothing needs catching up. */
+/** The server sends a full snapshot on connect, so nothing needs catching up. */
 
 import type { Store } from "./store";
 import type { Envelope } from "./types";
@@ -13,24 +12,19 @@ const MAX_RETRY_MS = 10_000;
  *  the validator's clock arrives every second. Eight seconds rides out a mobile handover. */
 const SILENCE_LIMIT_MS = 8_000;
 
-/** How often the silence is checked. */
 const WATCHDOG_INTERVAL_MS = 2_000;
 
-/** The subprotocol that asks for long messages as deflated binary frames, offered where the browser
- *  can inflate them. */
 const DEFLATE_PROTOCOL = "deflate";
 
 function canInflate(): boolean {
   return typeof DecompressionStream === "function";
 }
 
-/** The JSON a deflated frame holds. */
 async function inflate(bytes: ArrayBuffer): Promise<string> {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
   return new Response(stream).text();
 }
 
-/** Whether a decoded frame has the envelope's shape. */
 function isEnvelope(value: unknown): value is Envelope {
   return (
     typeof value === "object" &&
@@ -61,8 +55,7 @@ export function connect(store: Store): () => void {
     watchdog = null;
   };
 
-  /** Gives up on a quiet socket and starts another. Not left to `onclose`,
-   *  which an unreachable peer may never deliver. */
+  /** Not left to `onclose`, which an unreachable peer may never deliver. */
   const abandon = () => {
     stopWatchdog();
     const dead = socket;
@@ -75,7 +68,6 @@ export function connect(store: Store): () => void {
       try {
         dead.close();
       } catch {
-        // Already gone. Nothing here depends on it closing cleanly.
       }
     }
     store.setConnection("closed");

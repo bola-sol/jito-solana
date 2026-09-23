@@ -11,7 +11,6 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const committed = join(root, "dist");
 const rebuilt = join(root, ".dist-verify");
 
-/** Every file under `dir`, keyed by its path with a sha256 of its contents. */
 function hashTree(dir) {
   const files = new Map();
   const visit = (current) => {

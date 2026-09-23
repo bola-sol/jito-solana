@@ -1,5 +1,3 @@
-/** The tab's title: the base, then the validator and its cluster, so an
- *  operator watching several can tell the tabs apart. */
 
 /** Kept in step with index.html so the tab reads the same before the first
  *  snapshot arrives as it does after. */

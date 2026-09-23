@@ -1,14 +1,11 @@
 import { useEffect, useState, type ReactNode, type ReactElement } from "react";
 
-/** Text that copies itself when clicked. A button, truncated with an
- *  ellipsis; the confirmation is drawn over the value so nothing reflows. */
 export function Copyable({
   text,
   label,
   className,
 }: {
   text: string;
-  /** What to show, when that differs from what to copy. */
   label?: ReactNode;
   className?: string;
 }): ReactElement {
@@ -56,7 +53,6 @@ async function writeToClipboard(text: string): Promise<boolean> {
 
   const staging = document.createElement("textarea");
   staging.value = text;
-  // Kept out of view and out of the tab order while it is briefly focused.
   staging.setAttribute("readonly", "");
   staging.style.position = "fixed";
   staging.style.top = "-1000px";

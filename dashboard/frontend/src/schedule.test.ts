@@ -27,8 +27,6 @@ function held(slot: number): SlotEntry {
   };
 }
 
-/** A resolver standing in for the store's, naming leaders from a table since the slot carries none.
- *  */
 function resolver(
   leaders: Record<number, LeaderRef> = {},
   fallback: LeaderRef = { key: "alice", name: null, icon: null },
@@ -38,8 +36,6 @@ function resolver(
 
 describe("turnsOf", () => {
   it("draws a turn whole from its first slot alone", () => {
-    // The other three share a leader by definition, so they are rows waiting to
-    // be filled. Growing the card as each arrives would move everything below.
     const [turn] = turnsOf([held(100)], resolver());
     expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102, 101, 100]);
     expect(turn.slots.map((slot) => slot.entry !== null)).toEqual([false, false, false, true]);
@@ -52,7 +48,6 @@ describe("turnsOf", () => {
   });
 
   it("splits a leader drawn twice in a row into two turns", () => {
-    // Eight consecutive slots are two turns, so every card is the same height.
     const slots = [96, 97, 98, 99, 100, 101, 102, 103].map((slot) => held(slot));
     const turns = turnsOf(slots, resolver());
     expect(turns.map((turn) => turn.slots.length)).toEqual([4, 4]);
@@ -65,15 +60,11 @@ describe("turnsOf", () => {
   });
 
   it("invents no rows for slots older than the window", () => {
-    // A turn the list begins part way through keeps the slots there are. The
-    // missing ones happened before anything was watching, not after.
     const [turn] = turnsOf([held(102), held(103)], resolver());
     expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102]);
   });
 
   it("asks for the leader once per turn, at the turn's own first slot", () => {
-    // All four share a leader by definition, so a turn is one lookup. Asking
-    // per slot would be four answers that can only ever agree.
     const asked: number[] = [];
     const [turn] = turnsOf([held(101), held(102)], (slot) => {
       asked.push(slot);
@@ -142,8 +133,6 @@ describe("matchesQuery", () => {
 
 describe("turnKey", () => {
   it("names a turn by its own first slot, not its position", () => {
-    // Turns arrive above and fall off below constantly; a name that moved with
-    // them would identify nothing.
     const [turn] = turnsOf([held(100), held(101)], resolver());
     expect(turnKey(turn)).toBe("turn:100");
   });

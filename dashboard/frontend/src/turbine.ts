@@ -1,5 +1,3 @@
-/** Where this validator's shreds come from in the turbine tree, and what
- *  the XDP path dropped. */
 
 import { count } from "./format";
 import type { Turbine } from "./types";
@@ -10,7 +8,6 @@ export interface LayerShare {
   share: number;
 }
 
-/** Each layer's share of the shreds received. Null where none arrived. */
 export function layerShares(turbine: Turbine): LayerShare[] | null {
   const total = turbine.root + turbine.layer_1 + turbine.layer_2 + turbine.layer_3;
   if (total <= 0) return null;
@@ -22,7 +19,7 @@ export function layerShares(turbine: Turbine): LayerShare[] | null {
   ];
 }
 
-/** The XDP line's drops clause. Nought is the healthy reading. */
+/** Nought is the healthy reading. */
 export function dropsLabel(dropped: number): string {
   return dropped > 0 ? `${count(dropped)} shreds dropped, channel full` : "no shreds dropped";
 }

@@ -8,8 +8,6 @@ import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { Card } from "./primitives";
 
-/** The supermajority wait per validator: who the snapshot stakes, and who
- *  gossip has seen. Only while the wait lasts. */
 export function GossipStakeCard(): ReactElement | null {
   const store = useStore();
   const startup = store.get("summary", "startup_progress");
@@ -51,7 +49,6 @@ export function GossipStakeCard(): ReactElement | null {
   );
 }
 
-/** Two columns against the line the wait ends at. */
 function Columns({ stake }: { stake: GossipStake }) {
   const seen = stake.total > 0 ? stake.seen / stake.total : 0;
   const { seen: seenRows, unseen } = groupsOf(stake);
@@ -86,7 +83,6 @@ function Columns({ stake }: { stake: GossipStake }) {
   );
 }
 
-/** The phone's version of the columns: two bars, the line as a tick. */
 function Bars({ stake }: { stake: GossipStake }) {
   const seen = stake.total > 0 ? stake.seen / stake.total : 0;
   return (

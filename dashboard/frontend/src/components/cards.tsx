@@ -63,8 +63,6 @@ export function EpochCard({
   );
 }
 
-/** Vote performance this epoch against the best any validator has: credits under TowerBFT, paid
- *  certificate slots under alpenglow. Absent until the vote account is read. */
 function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   const store = useStore();
   const credits = store.get("summary", "vote_credits");
@@ -95,7 +93,6 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={shareText(share)} />;
 }
 
-/** In place of the vote figure while the vote account has no seat. */
 function NoSeatStat({ admission }: { admission: Admission }) {
   return (
     <Stat
@@ -108,8 +105,6 @@ function NoSeatStat({ admission }: { admission: Admission }) {
   );
 }
 
-/** Where this validator's unrewarded votes fell this epoch, opening the list below. Alpenglow only,
- *  after a certificate from the epoch is read. */
 function MissesStat({ epoch, open, onToggle }: { epoch: EpochInfo; open: boolean; onToggle: () => void }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
@@ -139,8 +134,6 @@ function MissesStat({ epoch, open, onToggle }: { epoch: EpochInfo; open: boolean
   );
 }
 
-/** The misses as a bar cut by place, a legend naming each place that has
- *  any, and who wrote the lost ones out when a few leaders did. */
 function MissesSplit({ participation }: { participation: VoteParticipation }) {
   const { misses } = participation;
   const places = MISS_PLACES.filter((place) => misses[place] > 0);
@@ -180,8 +173,6 @@ function MissesSplit({ participation }: { participation: VoteParticipation }) {
   );
 }
 
-/** The epoch's progress, marked with our leader turns, left off when too many, and unrewarded
- *  votes. */
 function EpochMeter({ fraction, epoch }: { fraction: number; epoch: EpochInfo }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
@@ -207,8 +198,7 @@ function EpochMeter({ fraction, epoch }: { fraction: number; epoch: EpochInfo })
   );
 }
 
-/** Staked SOL as fifty ticks, the delinquent share eating them from the
- *  right. Ticks show a share too small for an arc. */
+/** Ticks show a share too small for an arc. */
 function StakeStrip({ delinquent, total }: { delinquent: number; total: number }) {
   const { full, partial } = stakeTicks(delinquent, total);
 
@@ -234,8 +224,6 @@ function StakeStrip({ delinquent, total }: { delinquent: number; total: number }
   );
 }
 
-/** The cluster this validator is one of: its stake, and how much of it is
- *  keeping up. */
 export function ClusterCard(): ReactElement {
   const store = useStore();
   const counts = store.get("summary", "validator_counts");
@@ -277,8 +265,6 @@ export function ClusterCard(): ReactElement {
   );
 }
 
-/** Throughput now and the shape of the last minute. The figures are the
- *  chart's key, each in its series' colour. */
 export function TransactionsCard(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
@@ -338,7 +324,6 @@ export function TransactionsCard(): ReactElement {
   );
 }
 
-/** One series, named in the colour it is lit in. */
 function SeriesRow({
   label,
   series,

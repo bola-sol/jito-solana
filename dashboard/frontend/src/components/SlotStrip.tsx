@@ -8,11 +8,8 @@ import { useAlpenglow } from "../consensus";
 import { Logo } from "./Logo";
 import { Explain, PeakLine } from "./primitives";
 
-/** Slots shown in the strip. Beyond this the bars are too thin to read. */
 const STRIP_LENGTH = 64;
 
-/** What each bar colour means, in the order a slot passes through them,
- *  named to match the position readouts under the bars. */
 const LEVELS: Array<[SlotLevel, string, string]> = [
   ["incomplete", "pending", "Received but not yet replayed, or still arriving"],
   ["completed", "processed", "Replayed and frozen by this validator"],
@@ -26,8 +23,6 @@ const LEVEL_NAMES = new Map<SlotLevel, string>(
   LEVELS.map(([level, label]) => [level, label]),
 );
 
-/** The last minute of slots as bars, the six positions under them as the
- *  axis, and the key. */
 export function SlotStrip(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
@@ -40,8 +35,7 @@ export function SlotStrip(): ReactElement {
   // The strip advances a bar every slot, so entering it pins what is on screen and leaving jumps
   // back to live.
   const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
-  // The slot being inspected, by number rather than position, so it survives
-  // the strip scrolling and the bars stay memoised.
+  // By number rather than position, so it survives the strip scrolling and the bars stay memoised.
   const [cursor, setCursor] = useState<number | null>(null);
   const live = store.getSlots().slice(-STRIP_LENGTH);
   const slots = pinned ?? live;
@@ -52,8 +46,6 @@ export function SlotStrip(): ReactElement {
   const nominalMs =
     (store.get("summary", "estimated_slot_duration_nanos") ?? 400_000_000) / 1e6;
 
-  // Marked across the strip so the bars read as durations rather than as some
-  // unlabelled quantity. Taken from the slots on screen, so it follows them.
   const peakMs = slots.reduce<number | null>((peak, entry) => {
     if (entry.duration_nanos === null) return peak;
     const ms = entry.duration_nanos / 1e6;
@@ -117,7 +109,6 @@ export function SlotStrip(): ReactElement {
     release();
   };
 
-  // One tab stop for the whole strip, with the arrows moving within it.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const last = slots.length - 1;
     if (last < 0) return;
@@ -208,7 +199,6 @@ export function SlotStrip(): ReactElement {
           <div className="slot-position" key={label}>
             <div className="slot-position-label">
               <Explain text={explanation}>{label}</Explain>
-              {/* The chain's height is not a slot and has no distance. */}
               {label !== "Block height" && (
                 <span className="slot-position-delta">{slotDelta(slot, processed)}</span>
               )}
@@ -240,8 +230,6 @@ export function SlotStrip(): ReactElement {
   );
 }
 
-/** The hovered slot, in a fixed place rather than a tooltip. `role="status"`
- *  so arrowing along the strip is announced. */
 function SlotDetail({ entry, leader }: { entry: SlotEntry | null; leader: LeaderRef }) {
   if (!entry) {
     return (
@@ -284,12 +272,8 @@ const SlotBar = memo(function SlotBar({
   nominalMs: number;
   onPoint: (slot: number) => void;
 }) {
-  // Height is duration, colour is consensus level. A slot with no shreds yet
-  // shows as a stub.
   const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
   const height = barHeight(durationMs, nominalMs);
-  // Named the same way the sidebar names them, so the two agree on who a slot
-  // belonged to.
   const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : null);
   const title = [
     `slot ${entry.slot}`,

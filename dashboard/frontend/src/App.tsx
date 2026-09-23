@@ -34,8 +34,6 @@ export function App(): ReactElement {
     document.title = pageTitle(name, identity, cluster);
   }, [name, identity, cluster]);
 
-  // Only the overview keeps the slot rail; the collapsed state is remembered
-  // across pages.
   const rail = page === "overview";
   const classes = ["app"];
   if (rail && collapsed) classes.push("is-collapsed");
@@ -86,8 +84,6 @@ export function App(): ReactElement {
   );
 }
 
-/** What this validator is doing, which is what the dashboard opens on: the
- *  sentence, the slots, the three cards, then the sections that fold. */
 function Overview() {
   // Open for this visit only: a list of a hundred rows is not a place to
   // come back to on a reload.
@@ -104,21 +100,13 @@ function Overview() {
       {missesOpen && <MissesPanel onClose={() => setMissesOpen(false)} />}
       <GossipStakeCard />
       <TransactionsCard />
-      {/* Both read the same traffic from opposite ends: bytes on the wire, and
-          what the sockets failed to take off it. */}
       <div className="grid">
         <NetworkCard />
         <IngestCard />
       </div>
-      {/* Last of the host group: an operator reaches for the box once the validator's cards say it
-          is struggling. */}
       <HostCard />
-      {/* Replay, then what it waits on: programs and accounts are parts of its sections and then
-          cards of their own. */}
       <ReplayCard />
       <CachesCard />
-      {/* Picks the traffic up where the socket card leaves it, with the three QUIC ports that card
-          does not draw. */}
       <TpuPathCard />
     </>
   );

@@ -12,8 +12,6 @@ import type { AccountsCache, ProgramCache } from "../types";
 import { useStore } from "../useStore";
 import { Explain, Fold, Meter, Stat } from "./primitives";
 
-/** The two caches replay waits on. Each section folds to a heading that
- *  states its health; both start folded, and the choice is remembered. */
 export function CachesCard(): ReactElement | null {
   const store = useStore();
   const programs = store.get("summary", "program_cache");
@@ -77,8 +75,8 @@ export function CachesCard(): ReactElement | null {
   );
 }
 
-/** One foldable section. The row holds a button rather than being one,
- *  since the rate's explanation is itself a button. */
+/** The row holds a button rather than being one, since the rate's explanation is itself a button.
+ *  */
 function Group({
   name,
   rate,
@@ -100,8 +98,6 @@ function Group({
 
   return (
     <section className="cache-group">
-      {/* Not a button, so the rate keeps its explanation; the chevron is the keyboard's control.
-          */}
       <div className="cache-head" onClick={onFold}>
         <span className="cache-name">
           <i className={`cache-dot tone-${tone}`} aria-hidden="true" />
@@ -134,8 +130,7 @@ function Group({
   );
 }
 
-/** Every figure is a minute's rate except the entry peak, a level. Size is
- *  in entries: the cache has an entry limit and no byte budget. */
+/** Size is in entries: the cache has an entry limit and no byte budget. */
 function ProgramBody({ cache }: { cache: ProgramCache }) {
   const filled =
     cache.peak_entries !== null && cache.entry_limit > 0
@@ -180,8 +175,6 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
         />
       </div>
 
-      {/* Drawn before any eviction so the section keeps its height; the bar stays empty until one
-          reports. */}
       <div className="cache-storage">
         <div className="cache-storage-head">
           <Explain text="Most entries loaded at any eviction in the last minute, against the limit. Empty until an eviction runs.">

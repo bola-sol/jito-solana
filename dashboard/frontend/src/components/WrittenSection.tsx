@@ -5,8 +5,7 @@ import { useStore } from "../useStore";
 import { writtenFigures, writtenKinds, writtenLine, type WrittenFigure, type WrittenKind } from "../written";
 import { Copyable } from "./Copyable";
 
-/** How often the list is asked for again while the page is open. The
- *  validator rebuilds it every five seconds. */
+/** The validator rebuilds it every five seconds. */
 const POLL_MS = 15_000;
 
 const LINE_TITLE =
@@ -22,8 +21,6 @@ const KIND_TITLE: Record<WrittenKind, string> = {
   missing: "Left out of nearly every certificate from any writer.",
 };
 
-/** What this node's certificates carried this epoch, and on request who they left out more than the
- *  network did. Polled every `POLL_MS` while open. */
 export function WrittenSection(): ReactElement {
   const store = useStore();
   const [list, setList] = useState<WrittenList | null>(null);
@@ -31,7 +28,6 @@ export function WrittenSection(): ReactElement {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<WrittenKind | null>(null);
 
-  // A reply that lands after the page is gone is dropped.
   const live = useRef(true);
   const load = useCallback(() => {
     store.request<WrittenList>("summary", "written", {}).then(
@@ -112,8 +108,7 @@ export function WrittenSection(): ReactElement {
   );
 }
 
-/** One validator and how often ours and everyone's certificates left it out. Module-level, or it
- *  remounts every tick. */
+/** Module-level, or it remounts every tick. */
 function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: number }) {
   const { row, ours, everywhere, kind } = figure;
   const build = buildLabel(row.client ?? undefined, row.version ?? undefined);

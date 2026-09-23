@@ -23,12 +23,10 @@ describe("barHeight", () => {
   });
 
   it("keeps a fast slot visible rather than collapsing it", () => {
-    // Eight doublings below nominal is far past zero on the raw scale.
     expect(barHeight(1, NOMINAL)).toBe(8);
   });
 
   it("draws a stub for a slot with no duration", () => {
-    // Skipped slots never get a shred, so they never get a timestamp.
     expect(barHeight(null, NOMINAL)).toBe(6);
     expect(barHeight(0, NOMINAL)).toBe(6);
   });

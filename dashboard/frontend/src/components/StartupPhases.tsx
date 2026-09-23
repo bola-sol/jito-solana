@@ -4,8 +4,6 @@ import { stakeSeen, SUPERMAJORITY_PERCENT } from "../startup";
 import type { StartupProgress } from "../types";
 import { Meter } from "./primitives";
 
-/** The boot sequence in `ValidatorStartProgress` order; anything above the current phase is done or
- *  skipped. */
 const PHASES: Array<[string, string]> = [
   ["initializing", "Initializing"],
   ["searching_for_rpc_service", "Searching for an RPC service"],
@@ -24,7 +22,6 @@ export function StartupPhases({
   withStake,
 }: {
   startup: StartupProgress;
-  /** Whether the supermajority wait's meter is drawn here rather than on its own card. */
   withStake: boolean;
 }): ReactElement {
   const current = PHASES.findIndex(([phase]) => phase === startup.phase);
@@ -44,7 +41,6 @@ export function StartupPhases({
     );
   }
 
-  // Replay counts slots and the supermajority wait counts stake, so the bar says which it shows.
   const stake = withStake ? stakeSeen(startup) : null;
   const measured = stake
     ? { fraction: stake.fraction, label: "of stake visible in gossip", decimals: stake.decimals }
@@ -57,8 +53,6 @@ export function StartupPhases({
       <ol className="startup-list">
         {PHASES.map(([phase, label], index) => {
           const state = index < current ? "is-done" : index === current ? "is-current" : "is-todo";
-          // A finished phase shows what it took and the current one counts up; a skipped one shows
-          // nothing.
           const elapsed =
             index === current
               ? startup.phase_elapsed_nanos
@@ -80,7 +74,6 @@ export function StartupPhases({
       </ol>
       {measured && (
         <div className="startup-measure">
-          {/* The wait ends at a fixed share, so the bar carries a tick there. */}
           <div className="startup-meter">
             <Meter fraction={measured.fraction} />
             {stake && (

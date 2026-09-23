@@ -1,5 +1,3 @@
-/** Whether the slot list down the side is collapsed, remembered across
- *  reloads. */
 
 export const SIDEBAR_STORAGE_KEY = "agave-dashboard-sidebar";
 
@@ -23,8 +21,7 @@ export function writeSidebarCollapsed(collapsed: boolean): void {
   }
 }
 
-/** Whether the host card's thread group is folded. Null where the viewer has
- *  never chosen, so the card defaults by width. */
+/** Null where the viewer has never chosen, so the card defaults by width. */
 export const THREADS_STORAGE_KEY = "agave-dashboard-threads";
 
 export function readThreadsCollapsed(): boolean | null {
@@ -43,12 +40,9 @@ export function writeThreadsCollapsed(collapsed: boolean): void {
       collapsed ? "collapsed" : "expanded",
     );
   } catch {
-    // As above.
   }
 }
 
-/** Whether the header's two balances are hidden, for a screen others can
- *  see. Shown unless chosen otherwise. */
 export const BALANCES_STORAGE_KEY = "agave-dashboard-balances";
 
 export function readBalancesHidden(): boolean {
@@ -63,12 +57,9 @@ export function writeBalancesHidden(hidden: boolean): void {
   try {
     window.localStorage.setItem(BALANCES_STORAGE_KEY, hidden ? "hidden" : "shown");
   } catch {
-    // As above.
   }
 }
 
-/** Which of the folding sections under the cards the viewer has folded.
- *  Every section starts open. */
 export const FOLDED_STORAGE_KEY = "agave-dashboard-folded";
 
 export function readFolded(): string[] {
@@ -84,6 +75,5 @@ export function writeFolded(folded: string[]): void {
   try {
     window.localStorage.setItem(FOLDED_STORAGE_KEY, folded.join(","));
   } catch {
-    // As above.
   }
 }

@@ -1,17 +1,14 @@
-/** The scheduler's counters arranged into the rows the waterfall draws. */
 
 import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
 
-/** A count as a share of the stage's total, capped at one. A stage fed from
- *  the queue can exceed its total; the overflow is reported separately. */
+/** Capped at one: a stage fed from the queue can exceed its total; the overflow is reported
+ *  separately. */
 function against(total: number, count: number): { share: number; over: boolean } {
   if (total <= 0) return { share: 0, over: false };
   const share = count / total;
   return { share: Math.min(1, share), over: share > 1 };
 }
 
-/** A row's share of its section; nought for a `count` row, which is in
- *  another unit. */
 function shareOf(
   kind: RowKind,
   total: number,
@@ -20,15 +17,10 @@ function shareOf(
   return kind === "count" ? { share: 0, over: false } : against(total, count);
 }
 
-/** What a row is doing in the list, which is what decides how it is drawn. */
 export type RowKind =
-  /** A point every transaction passes through: received, buffered, scheduled. */
   | "stage"
-  /** A transaction that got no further, and the reason. */
   | "loss"
-  /** Neither: something that happened without anything being lost. */
   | "note"
-  /** A figure in a different unit from the rest, drawn without a bar. */
   | "count";
 
 export interface WaterfallRow {
@@ -36,16 +28,13 @@ export interface WaterfallRow {
   label: string;
   kind: RowKind;
   count: number;
-  /** Of everything received, in `[0, 1]`. The bar's length. */
   share: number;
-  /** Whether the count exceeds the total it is drawn against, which the queue
-   *  makes routine over a single slot. The row then shows no percentage. */
+  /** The queue makes this routine over a single slot; the row then shows no percentage. */
   over: boolean;
   explain: string;
 }
 
-/** The rows in the order a transaction meets them, always all of them: a
- *  nought is a reading, and the card must not change height. */
+/** Always all of them: a nought is a reading, and the card must not change height. */
 export function waterfallRows(w: Waterfall): WaterfallRow[] {
   // On a BAM slot `received` and the first loss row are in batches, so
   // `buffered` is the denominator and those two rows show no share.
@@ -168,7 +157,6 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
       "Passed every check and entered the queue. This plus the losses above is the received count.",
     ),
 
-    // Lost from the queue, having already been buffered.
     row(
       "queue_full",
       "queue full",
@@ -237,8 +225,6 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
   ];
 }
 
-/** The rows for a stage, against the stage's own total rather than the one
- *  before it. */
 function rowsOf(
   total: number,
   rows: Array<[key: string, label: string, kind: RowKind, count: number, explain: string]>,
@@ -253,7 +239,6 @@ function rowsOf(
   }));
 }
 
-/** What signature verification and deduplication did with it. */
 export function verifyRows(v: VerifyStage): WaterfallRow[] {
   // Sigverify discards at one step, so what is left after the other three is exactly the bad.
   const bad = Math.max(0, v.received - v.duplicate - v.below_floor - v.verified);
@@ -303,12 +288,10 @@ export function verifyRows(v: VerifyStage): WaterfallRow[] {
   ]);
 }
 
-/** What the worker threads did with what the scheduler gave them. */
 export function executedRows(e: ExecutedStage): WaterfallRow[] {
   const failed = Math.max(0, e.processed - e.succeeded);
 
-  // Taken up and neither committed nor handed back. Derived: no counter
-  // holds it, and without it the section does not close.
+  // Derived: no counter holds it, and without it the section does not close.
   const dropped = Math.max(0, e.attempted - e.processed - e.retryable);
   const named =
     e.too_many_locks +

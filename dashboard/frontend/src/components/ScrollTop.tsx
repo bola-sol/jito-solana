@@ -1,11 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type ReactElement } from "react";
 import { heldScrollTop } from "../scroll";
 
-/** How far a list must be scrolled before the way back is offered. */
 const LIVE_EDGE_PX = 120;
 
-/** A pill that returns a list to the top, hanging over the rows rather
- *  than moving them. */
 export function ScrollTop({ scroller }: { scroller: RefObject<HTMLElement | null> }): ReactElement {
   const [away, setAway] = useState(false);
   // Shared with the hook below: it needs to know where the list was left, to
@@ -52,8 +49,7 @@ export function ScrollTop({ scroller }: { scroller: RefObject<HTMLElement | null
   );
 }
 
-/** Keeps what is on screen still while rows arrive above it. Browser scroll
- *  anchoring cannot be relied on; corrections are instant. */
+/** Browser scroll anchoring cannot be relied on; corrections are instant. */
 function useHeldScroll(
   scroller: RefObject<HTMLElement | null>,
   // A plain box rather than `RefObject`, whose `current` React types as

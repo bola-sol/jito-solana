@@ -9,13 +9,10 @@ const stamp = (sample: Sample) => sample.at;
 describe("render lag", () => {
   const WIDTH = 600;
   const windowMs = 60_000;
-  /** The x a chart would place a sample at, for an edge one lag behind live. */
   const at = (timestampMs: number, now: number) =>
     WIDTH * (1 - (now - RENDER_LAG_MS - timestampMs) / windowMs);
 
   it("keeps the newest sample past the right edge for a whole interval", () => {
-    // With the edge at live, a sample landing on the second sits on the edge then retreats,
-    // stepping the chart.
     const arrived = 1_000_000;
     for (let elapsed = 0; elapsed < RENDER_LAG_MS; elapsed += 100) {
       expect(at(arrived, arrived + elapsed)).toBeGreaterThanOrEqual(WIDTH);
@@ -31,7 +28,6 @@ describe("render lag", () => {
     const arrived = 1_000_000;
     const first = at(arrived, arrived + 500);
     const second = at(arrived, arrived + 600);
-    // A tenth of a second across a sixty second window of six hundred units.
     expect(first - second).toBeCloseTo(1, 6);
   });
 });
@@ -52,7 +48,6 @@ describe("windowed", () => {
   const windowMs = 10_000;
 
   it("keeps one sample older than the window", () => {
-    // The extra point lets the line slide out under the viewBox edge rather than vanish.
     const samples = [at(30_000), at(45_000), at(52_000), at(58_000)];
     expect(windowed(samples, now, windowMs, stamp)).toEqual([
       at(45_000),

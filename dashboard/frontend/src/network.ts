@@ -1,27 +1,19 @@
-/** A minute of throughput read into the three figures the card shows. */
 
-/** How much of the past the card covers. Matches the transactions chart. */
 export const NETWORK_WINDOW_SECONDS = 60;
 
-/** How far from the average a reading must be to count as a direction, relative to it. */
 const TREND_NOISE = 0.02;
 
-/** Seconds of trailing readings the arrow is taken from, so one noisy second
- *  does not flip it. */
+/** So one noisy second does not flip it. */
 const TREND_SAMPLES = 10;
 
 export interface Direction {
-  /** The newest reading. */
   current: number;
   average: number;
-  /** The newest reading less the average, in the same unit. */
   delta: number;
-  /** Which way it is going, the last few seconds against the minute. Never
-   *  toned: rising throughput is neither good nor bad. */
+  /** Never toned: rising throughput is neither good nor bad. */
   trend: "up" | "down" | "flat";
 }
 
-/** The three figures for one direction of traffic, from its samples. */
 export function direction(values: number[]): Direction | null {
   if (values.length === 0) return null;
   const current = values[values.length - 1];
@@ -41,7 +33,6 @@ function trendOf(recent: number, average: number): Direction["trend"] {
   return "flat";
 }
 
-/** One scale for both directions, so the lines compare. Never nought. */
 export function sharedPeak(...series: number[][]): number {
   let peak = 0;
   for (const values of series) {
@@ -54,9 +45,7 @@ export function sharedPeak(...series: number[][]): number {
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
-/** The unit a reading of this size wants, applied to the average and delta
- *  too so the three compare. */
-/** Egress cut into what is measured and what is not, none of it below nought. */
+/** Applied to the average and delta too, so the three compare. */
 export interface EgressShares {
   gossip: number;
   repair: number;

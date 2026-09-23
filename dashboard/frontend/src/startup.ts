@@ -1,8 +1,6 @@
-/** What the Uptime hover shows: start time, boot phases, catch-up. */
 
 import type { StartupProgress } from "./types";
 
-/** The phases worth a line of their own; the rest are folded together. */
 const NAMED = new Map<string, string>([
   ["downloading_snapshot", "snapshot download"],
   ["loading_ledger", "loading ledger"],
@@ -11,23 +9,17 @@ const NAMED = new Map<string, string>([
 
 const REST = "everything else";
 
-/** The share of stake the validator waits to see in gossip. Private in core,
- *  so written down here. */
+/** Private in core, so written down here. */
 export const SUPERMAJORITY_PERCENT = 80;
 
-/** What the supermajority wait has seen, in the form the status card draws. */
 export interface StakeSeen {
-  /** In `[0, 1]`. */
   fraction: number;
-  /** Decimals worth drawing: three from the exact count, none from the whole percent. */
+  /** Three decimals from the exact count, none from the whole percent. */
   decimals: number;
-  /** Lamports, or null while only the whole percent has arrived. */
   online: number | null;
   total: number | null;
 }
 
-/** The wait's progress: the validator's count once it has arrived, the whole
- *  percent before then. Null outside the wait. */
 export function stakeSeen(startup: StartupProgress): StakeSeen | null {
   if (startup.phase !== "waiting_for_supermajority") return null;
   const counted = startup.stake_in_gossip;
@@ -51,14 +43,11 @@ export interface BootPhase {
 export interface BootTimes {
   startedMillis: number;
   startupMillis: number;
-  /** Only phases that took time, summing to `startupMillis`. */
   phases: BootPhase[];
-  /** After running, or null until the collector has caught up. */
   catchUpMillis: number | null;
 }
 
-/** Phases under a second fold into the rest, so the lines add up to the
- *  total. */
+/** So the lines add up to the total. */
 export function bootTimes(
   startup: StartupProgress | undefined,
   uptimeNanos: number | undefined,

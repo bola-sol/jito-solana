@@ -14,11 +14,9 @@ import {
 } from "./matrix";
 import type { TpsSample } from "./types";
 
-/** Numbered samples: the number is the second, and the merge keeps the newest. */
 const second = (sample: number) => sample;
 const newest = (bucket: number[]) => bucket[bucket.length - 1];
 
-/** A mainnet-shaped second: vote, then failed, then succeeded on top. */
 const MAINNET = [1654.28, 412, 1087.44];
 const CEILING = ceilingFor(3684);
 
@@ -43,13 +41,11 @@ describe("columnRows", () => {
   });
 
   it("leaves a series at nought unlit", () => {
-    // The guarantee is for small, not for absent. Nothing failed here.
     const lit = columnRows([1654.28, 0, 1087.44], CEILING, ROWS_TALL);
     expect(lit[1]).toBe(0);
   });
 
   it("takes the guaranteed row from the largest series, not from another small one", () => {
-    // A column already full, with a sliver that has to fit somewhere.
     const lit = columnRows([4000, 1, 60], CEILING, ROWS_TALL);
     expect(lit[1]).toBe(1);
     expect(lit[2]).toBeGreaterThanOrEqual(1);
@@ -75,8 +71,6 @@ describe("the grid's columns", () => {
   });
 
   it("never has more columns than the window holds", () => {
-    // A very wide card does not get a wider grid; a full minute fills it
-    // exactly, and beyond that the dots would simply spread apart.
     expect(slotsFor(4000)).toBe(60);
   });
 
@@ -90,8 +84,6 @@ describe("the grid's columns", () => {
   });
 
   it("does not halve the grid when the window carries one sample too many", () => {
-    // `windowed` keeps one sample past the edge, so sixty-one samples on sixty columns must not
-    // round the stride to two.
     const over = Array.from({ length: 61 }, (_unused, index) => index);
     const columns = columnsFor(over, 60, second, newest);
     expect(columns).toHaveLength(60);
@@ -128,8 +120,6 @@ describe("the grid's columns", () => {
   });
 
   it("pads the left with nothing while the window is still filling", () => {
-    // The unlit columns are what make a validator that has just started look
-    // like a grid waiting to fill rather than a panel that has failed.
     const columns = columnsFor([1, 2, 3], 10, second, newest);
     expect(columns).toHaveLength(10);
     expect(columns.slice(0, 7)).toEqual([null, null, null, null, null, null, null]);

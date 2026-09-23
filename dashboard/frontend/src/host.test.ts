@@ -124,8 +124,6 @@ describe("thresholds", () => {
   });
 
   it("turns the cores amber at eighty percent busy and red at ninety", () => {
-    // A duty cycle over every core: what matters is the idle time left to
-    // absorb a burst, and a pinned PoH core near full is one core of many.
     expect(cpuTone(0.31)).toBe("good");
     expect(cpuTone(0.8)).toBe("warn");
     expect(cpuTone(0.9)).toBe("bad");
@@ -138,8 +136,6 @@ describe("thresholds", () => {
   });
 
   it("says nothing about wait where the device did nothing", () => {
-    // Nought would read as an idle device being infinitely fast, and green
-    // would claim a health nobody measured.
     expect(waitTone(null)).toBe("muted");
   });
 
@@ -154,8 +150,6 @@ describe("thresholds", () => {
   });
 
   it("treats any swap at all as worth noticing", () => {
-    // There is no healthy amount to allow for: a validator that has begun
-    // swapping is already being hurt by it.
     expect(swapTone(0)).toBe("good");
     expect(swapTone(1)).toBe("warn");
   });
@@ -178,8 +172,6 @@ describe("deviceLabel", () => {
   });
 
   it("names both where two mounts share a disk", () => {
-    // They compete for one queue, so they are one row and the label has to say
-    // that rather than picking whichever was resolved first.
     expect(deviceLabel(device({ roles: ["ledger", "accounts"] }))).toBe("ledger and accounts");
   });
 });

@@ -8,24 +8,19 @@ import type {
 } from "./types";
 import { executedRows, verifyRows, type WaterfallRow } from "./waterfall";
 
-/** What happened to transactions on their way in, before the scheduler, one bar per section cut
- *  into outcomes. */
 
-/** A loss, and what it was a loss out of. */
 export interface PathLoss {
   key: string;
   label: string;
   count: number;
-  /** Of the section's total, in `[0, 1]`. */
   share: number;
-  /** Whether this loss means the validator could not keep up, as against a
-   *  refusal working as designed. */
+  /** Whether it means the validator could not keep up, rather than a refusal working as designed.
+   *  */
   warn: boolean;
   explain: string;
 }
 
-/** A figure in a different unit from the bar, drawn beside the heading with
- *  no segment and no share. */
+/** In a different unit from the bar: drawn beside the heading, with no segment or share. */
 export interface PathAside {
   label: string;
   count: number;
@@ -36,33 +31,22 @@ export interface PathAside {
 
 export interface PathSection {
   key: string;
-  /** What the section counts, named for the quantity rather than its place
-   *  in the pipeline. */
   title: string;
-  /** What the total is scoped to. No section is drawn against the one
-   *  above it. */
+  /** No section is drawn against the one above it. */
   note: string;
   explain: string;
-  /** What the bar is drawn against. */
   total: number;
-  /** What came out of the section, and what to call it. */
   through: { label: string; count: number };
-  /** Losses, largest first, with the ones at nought left out. */
   losses: PathLoss[];
-  /** Reasons behind one of the losses above. Shown when expanded, never in
-   *  the bar, where they would count twice. */
+  /** Shown when expanded, never in the bar, where they would count twice. */
   detail: PathLoss[];
-  /** How many of the section's counters stayed at nought, as a figure rather
-   *  than rows. */
   zeros: number;
   aside: PathAside | null;
 }
 
-/** How many losses a section lists before the rest go behind a control. */
 export const LOSSES_SHOWN = 6;
 export const LOSSES_SHOWN_NARROW = 3;
 
-/** How many names the listener refuses a connection under. */
 const REFUSAL_NAMES = 4;
 
 /** Connections refused a place in the table, from four overlapping counters: the larger of
@@ -79,7 +63,6 @@ function shareOf(total: number, count: number): number {
   return Math.min(1, count / total);
 }
 
-/** The losses largest first, and a count of the ones that did not fire. */
 function sorted(
   total: number,
   rows: Array<
@@ -108,8 +91,7 @@ export function doorSection(
 ): PathSection {
   const admitted = q.admitted_staked + q.admitted_unstaked;
   const refused = refusedTable(q);
-  // Everything the listener counts, off the offer. The rate limits fire on
-  // either side of the handshake, and the split cancels here.
+  // The rate limits fire on either side of the handshake, and the split cancels here.
   const beforeHandshake = Math.max(
     0,
     q.offered -
@@ -227,7 +209,6 @@ export function doorSection(
   };
 }
 
-/** What was opened on the connections that got in, and what became of it. */
 export function streamSection(q: QuicPort): PathSection {
   const { losses, zeros } = sorted(q.streams, [
     [
@@ -283,8 +264,6 @@ export function streamSection(q: QuicPort): PathSection {
   };
 }
 
-/** What came out of the listener towards verification, drawn against the
- *  three outcomes summed. */
 export function listenerSection(q: QuicPort): PathSection {
   const read = q.handed_on + q.queue_full + q.disconnected;
   const { losses, zeros } = sorted(read, [
@@ -319,13 +298,10 @@ export function listenerSection(q: QuicPort): PathSection {
   };
 }
 
-/** One row out of a built list, for the two sections adapted from them. */
 function pick(rows: WaterfallRow[], key: string): number {
   return rows.find((row) => row.key === key)?.count ?? 0;
 }
 
-/** Signature verification, built through `verifyRows`, which derives the
- *  unreported bad-signature count. */
 export function verifySection(v: VerifyStage): PathSection {
   const rows = verifyRows(v);
   const { losses, zeros } = sorted(v.received, [
@@ -377,7 +353,6 @@ export function verifySection(v: VerifyStage): PathSection {
   };
 }
 
-/** Reasons a transaction failed to load, which sit behind the row above them. */
 const LOAD_REASONS: Array<[key: string, label: string]> = [
   ["exec_blockhash_missing", "blockhash not found"],
   ["exec_blockhash_old", "blockhash too old"],
@@ -393,8 +368,6 @@ const LOAD_REASONS: Array<[key: string, label: string]> = [
   ["exec_other_reasons", "other reasons"],
 ];
 
-/** The reasons behind the "failed to load" and "sent back to retry" rows,
- *  and how many of them stayed at nought. */
 function executedDetail(rows: WaterfallRow[]): { detail: PathLoss[]; zeros: number } {
   const failedToLoad = pick(rows, "exec_dropped");
   const loadReasons = LOAD_REASONS.map(([key, label]) => ({
@@ -430,8 +403,6 @@ function executedDetail(rows: WaterfallRow[]): { detail: PathLoss[]; zeros: numb
   };
 }
 
-/** The worker threads: what became of each transaction, with the load
- *  failure reasons nested under one row and out of the bar. */
 export function executedSection(
   e: ExecutedStage,
   bundles: BundleStage | null,
@@ -499,14 +470,10 @@ export function executedSection(
   };
 }
 
-/** The share of connection attempts let in. Null before anything was
- *  offered. */
 /** Slots of an epoch that may go uncounted before the gap is worth saying:
  *  the totals start over a tick after the epoch turns. */
 const EPOCH_START_SLACK = 32;
 
-/** What the per-epoch sections are counted over, as a line of text, with a
- *  second clause where counting began after the epoch did. */
 export function epochSpanLabel(span: EpochSpan): string {
   if (span.slots_in_epoch <= 0) return `Epoch ${span.epoch}`;
   const elapsed = percent(span.elapsed_slots / span.slots_in_epoch, 0);
@@ -522,25 +489,21 @@ export function admittedShare(q: QuicPort): number | null {
   return Math.min(1, (q.admitted_staked + q.admitted_unstaked) / q.offered);
 }
 
-/** The staked share of what was admitted, or null where nothing was. */
 export function stakedShare(q: QuicPort): number | null {
   const admitted = q.admitted_staked + q.admitted_unstaked;
   if (admitted <= 0) return null;
   return q.admitted_staked / admitted;
 }
 
-/** The port a section is about, or null where the validator has no such port. */
 export function portNamed(ports: QuicPort[], name: string): QuicPort | null {
   return ports.find((port) => port.name === name) ?? null;
 }
 
-/** The ports busiest first over the window, used where the TPU address is
- *  answered off this host. Ties keep the order sent. */
+/** Ties keep the order sent. */
 export function portsBusiestFirst(ports: QuicPort[]): QuicPort[] {
   return [...ports].sort((a, b) => b.offered - a.offered);
 }
 
-/** Which of the quieter ports the reader last left unfolded. */
 export const TPU_PATH_STORAGE_KEY = "agave-dashboard-tpu-path-open";
 
 export function readOpenPorts(): string[] {

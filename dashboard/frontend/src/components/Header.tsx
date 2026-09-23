@@ -12,7 +12,6 @@ import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
-/** Who this validator is, and what it is worth in the line under it. */
 export function Header(): ReactElement {
   const store = useStore();
   const identity = store.get("summary", "identity_key");
@@ -82,7 +81,6 @@ export function Header(): ReactElement {
       </div>
 
       <div className="figures">
-        {/* The vote account hangs off the stake delegated to it. */}
         <Figure
           value={`${solCompact(stake?.activated_stake)} SOL`}
           label={`staked, ${percent(stake?.share, 4)} of the cluster`}
@@ -117,8 +115,7 @@ export function Header(): ReactElement {
   );
 }
 
-/** A balance, toned and relabelled where voting is about to outrun it. Hidden
- *  with the balances toggle, warning and all. */
+/** Hidden with the balances toggle, warning and all. */
 function Balance({
   value,
   name,
@@ -138,8 +135,7 @@ function Balance({
   );
 }
 
-/** A missing BLS key on the vote account: a warning before alpenglow and a fault after, since no
- *  vote counts without one. */
+/** A warning before alpenglow and a fault after, since no vote counts without one. */
 function Bls() {
   const set = useStore().get("summary", "bls_key");
   const alpenglow = useAlpenglow();
@@ -153,9 +149,6 @@ function Bls() {
   );
 }
 
-/** One figure and what it is; the label opens the detail where there is one. */
-/** A vote account outside the admitted set. Nothing while it holds a seat,
- *  or before alpenglow. */
 function Seat() {
   const admission = useStore().get("summary", "admission");
   if (!admission || admission.seat) return null;
@@ -189,7 +182,6 @@ function Figure({
   );
 }
 
-/** When the validator started, what the boot took, and how long it trailed the tip. */
 function Boot({ boot }: { boot: BootTimes }) {
   return (
     <>
@@ -227,8 +219,6 @@ function Boot({ boot }: { boot: BootTimes }) {
 /** Lag under this is delivery jitter, not worth a word. */
 const LAG_SHOWN_MS = 3_000;
 
-/** The websocket's state: a dot, and the word "live" while it is open, or how
- *  far behind the feed is running when the connection cannot carry it. */
 function Connection({ state, lagMs }: { state: string; lagMs: number | null }) {
   const behind = state === "open" && lagMs !== null && lagMs >= LAG_SHOWN_MS;
   const seconds = Math.round((lagMs ?? 0) / 1000);

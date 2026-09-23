@@ -13,8 +13,7 @@ import type { MissList, MissPlace, MissRow, MissValidator, MissWriter } from "..
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 
-/** Every vote this epoch a certificate left out, newest first, filtered by the legend. Explanations
- *  sit under the legend because a scrolling table clips bubbles. */
+/** Explanations sit under the legend because a scrolling table clips bubbles. */
 export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement {
   const store = useStore();
   const participation = store.get("summary", "vote_participation");
@@ -22,9 +21,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<MissPlace | null>(null);
-  /** What the pointer is on, shown on the line; the filtered place's sentence otherwise. */
   const [hint, setHint] = useState<string | null>(null);
-  /** The row unfolded to name who else its certificate left out. */
   const [opened, setOpened] = useState<number | null>(null);
   const panel = useRef<HTMLElement>(null);
 
@@ -156,8 +153,6 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   );
 }
 
-/** A label whose sentence goes on the panel's line while the pointer is on
- *  it, or after a tap where there is no pointer. */
 function Hinted({
   hint,
   onHint,
@@ -189,7 +184,6 @@ function Hinted({
   );
 }
 
-/** One miss, and under it, when opened, who else its certificate left out. */
 function Row({
   row,
   writer,

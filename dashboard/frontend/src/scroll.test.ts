@@ -7,7 +7,6 @@ describe("heldScrollTop", () => {
   });
 
   it("leaves a viewer at the live edge alone", () => {
-    // Being at the top is a request to see what arrives next.
     expect(heldScrollTop(0, 0, 5000, 5116)).toBe(0);
   });
 
@@ -16,7 +15,6 @@ describe("heldScrollTop", () => {
   });
 
   it("does not drag the view when the list shrinks", () => {
-    // Slots are pruned from the bottom, which moves nothing above them.
     expect(heldScrollTop(900, 900, 5000, 4800)).toBe(900);
   });
 

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connect } from "./connection";
 import { Store } from "./store";
 
-/** Stands in for the browser's WebSocket, with the peer under test control. */
 class FakeSocket {
   static live: FakeSocket[] = [];
   onopen: (() => void) | null = null;
@@ -19,7 +18,6 @@ class FakeSocket {
     FakeSocket.live.push(this);
   }
 
-  /** The browser calling close() fires onclose; a dead peer may not. */
   close() {
     this.closed = true;
   }
@@ -32,7 +30,6 @@ class FakeSocket {
     this.onmessage?.({ data: JSON.stringify({ topic, key, value }) });
   }
 
-  /** The server's binary frame: the envelope, zlib-deflated. */
   async deliverDeflated(topic: string, key: string, value: unknown) {
     const json = JSON.stringify({ topic, key, value });
     const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("deflate"));
@@ -48,7 +45,6 @@ beforeEach(() => {
   FakeSocket.live = [];
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal("location", { protocol: "http:", host: "validator:10999" });
-  // The store notifies on an animation frame, which node has no concept of.
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
     cb(0);
     return 0;
@@ -122,14 +118,11 @@ describe("the silence watchdog", () => {
     expect(sockets()[0].closed).toBe(true);
     expect(sockets()).toHaveLength(1);
 
-    // The existing backoff then opens another.
     vi.advanceTimersByTime(500);
     expect(sockets()).toHaveLength(2);
   });
 
   it("stays connected while anything at all keeps arriving", () => {
-    // The validator publishes its clock every second whether or not anything
-    // else changed, so a working connection is never quiet for long.
     const store = new Store();
     connect(store);
     latest().accept();
@@ -160,8 +153,6 @@ describe("the silence watchdog", () => {
   });
 
   it("counts a frame it cannot parse as proof of life", () => {
-    // The connection is what is being watched, not the payload. A frame the
-    // store rejects still shows the path is delivering.
     const store = new Store();
     connect(store);
     latest().accept();
@@ -176,8 +167,6 @@ describe("the silence watchdog", () => {
   });
 
   it("does not fire on a socket that has not opened yet", () => {
-    // Before the handshake completes there is nothing to be silent, and the
-    // close path already covers a connection that never comes up.
     const store = new Store();
     connect(store);
     vi.advanceTimersByTime(30_000);

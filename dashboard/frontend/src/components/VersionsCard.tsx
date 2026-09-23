@@ -3,8 +3,6 @@ import { count, percent, release, solCompact } from "../format";
 import { useStore } from "../useStore";
 import { Card } from "./primitives";
 
-/** How the cluster's stake divides across client versions, ordered by stake.
- *  The counts are staked validators, matching the validator card. */
 export function VersionsCard(): ReactElement {
   const store = useStore();
   const shares = store.get("summary", "versions");
@@ -23,7 +21,6 @@ export function VersionsCard(): ReactElement {
       <div className="versions">
         {shares.map((share, index) => {
           const fraction = totalStake === 0 ? 0 : share.stake / totalStake;
-          // The server flags the folded tail, which like an unreported group has no version.
           const label = share.other ? "other" : (share.version ?? "unknown");
           const isOurs = share.version !== null && share.version === ours;
 

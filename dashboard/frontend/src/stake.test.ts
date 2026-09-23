@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STAKE_TICKS, stakeTicks } from "./stake";
 
-/** Lamports, so the figures read the way the payload carries them. */
 const SOL = 1_000_000_000;
 
 describe("stakeTicks", () => {
@@ -44,8 +43,6 @@ describe("stakeTicks", () => {
   });
 
   it("does not overflow the strip when the two figures disagree", () => {
-    // The counts are tallied from the same walk, but nothing in the types
-    // stops a delinquent figure larger than the total it is out of.
     expect(stakeTicks(900, 100)).toEqual({ full: STAKE_TICKS, partial: 0 });
   });
 

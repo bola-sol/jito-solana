@@ -9,7 +9,6 @@ import {
 import type { LeaderTurn, SlotWaterfall, Waterfall } from "./types";
 import { waterfallRows } from "./waterfall";
 
-/** Each of a turn's slots keyed to it, for grouping the block list. */
 export function turnOf(turns: LeaderTurn[]): Map<number, LeaderTurn> {
   const map = new Map<number, LeaderTurn>();
   for (const turn of turns) {
@@ -18,24 +17,21 @@ export function turnOf(turns: LeaderTurn[]): Map<number, LeaderTurn> {
   return map;
 }
 
-/** The turn's slots, as a range where there is more than one. */
 export function turnRangeLabel(turn: LeaderTurn): string {
   if (turn.first === turn.last) return count(turn.first);
   return `${count(turn.first)}–${count(turn.last)}`;
 }
 
-/** What the three differenced sections span. */
 export function turnSpanLabel(turn: LeaderTurn): string {
   if (turn.since_millis === null) return "since the dashboard started";
   return `${duration(turn.drained_millis - turn.since_millis)} since the previous turn drained`;
 }
 
-/** The keys of a waterfall that hold a count. */
 type CounterKey = {
   [K in keyof Waterfall]-?: Waterfall[K] extends number ? K : never;
 }[keyof Waterfall];
 
-/** Every counter a waterfall carries. A test checks it against the type. */
+/** A test checks it against the type. */
 export const COUNTERS = [
   "received",
   "not_held",
@@ -60,8 +56,7 @@ export const COUNTERS = [
   "retried",
 ] as const satisfies readonly CounterKey[];
 
-/** The turn's per-slot scheduler counts as one, the newest slot's source
- *  standing for all. `null` where no slot of the turn has reported. */
+/** The newest slot's source stands for all; `null` where no slot of the turn has reported. */
 export function sumWaterfalls(slots: SlotWaterfall[]): Waterfall | null {
   if (slots.length === 0) return null;
   const newest = slots.reduce((a, b) => (b.slot > a.slot ? b : a));
@@ -73,8 +68,6 @@ export function sumWaterfalls(slots: SlotWaterfall[]): Waterfall | null {
   return sum;
 }
 
-/** The scheduler's own counts in the TPU path card's shape: the intake losses
- *  against what arrived, and what was scheduled as the way through. */
 export function schedulerSection(w: Waterfall): PathSection {
   const rows = waterfallRows(w);
   const batches = w.source === "bam";
@@ -115,8 +108,7 @@ export function schedulerSection(w: Waterfall): PathSection {
   };
 }
 
-/** The four sections of a turn's drawer: three differenced from the running totals, the scheduler's
- *  from the slots' own counts. `landed` is set beside executions, which count runs. */
+/** `landed` is set beside executions, which count runs. */
 export function turnSections(
   turn: LeaderTurn,
   slots: SlotWaterfall[],

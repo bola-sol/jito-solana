@@ -1,8 +1,5 @@
-/** Holding a reading position in a list that grows at the top. Stands in for
- *  scroll anchoring, which Safari lacks. */
+/** Stands in for scroll anchoring, which Safari lacks. */
 
-/** Where a scroller should sit after growing from `was` to `now` tall; left alone at the top, when
- *  nothing grew, and when the browser has anchored it. */
 export function heldScrollTop(
   scrollTop: number,
   previousTop: number,

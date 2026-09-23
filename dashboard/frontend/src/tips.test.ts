@@ -13,8 +13,6 @@ describe("jitoShare", () => {
   });
 
   it("returns nothing for a turn that was paid nothing", () => {
-    // A real reading, and distinct from a turn never measured, which never
-    // reaches here at all.
     expect(jitoShare(0, rates())).toBe(0);
   });
 
@@ -36,8 +34,6 @@ describe("ourShare", () => {
   });
 
   it("answers nothing where no commission is configured", () => {
-    // Rather than assuming a figure. The page then shows what the turn paid and
-    // claims nothing about what it earned.
     expect(ourShare(1_400_000_000, rates({ commission_bps: null }))).toBeNull();
   });
 

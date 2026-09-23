@@ -1,4 +1,3 @@
-/** The header's balance warnings, from what voting costs. */
 
 import { sol } from "./format";
 import type { VoteCost } from "./types";
@@ -6,12 +5,11 @@ import type { VoteCost } from "./types";
 export interface BalanceWarning {
   tone: "warn" | "bad";
   label: string;
-  /** One sentence for the hover. */
   title: string;
 }
 
-/** Under TowerBFT the identity pays each vote: under three days of them warns, under a day is a
- *  fault. Nothing on a node that is not the voter. */
+/** Under three days of votes warns, under a day is a fault; nothing on a node that is not the
+ *  voter. */
 export function identityWarning(
   balance: number | undefined,
   cost: VoteCost | undefined,
@@ -27,8 +25,7 @@ export function identityWarning(
   return { tone: "warn", label: "identity, under three days of votes", title };
 }
 
-/** Under alpenglow each epoch burns the admission ticket from the vote account: below the minimum
- *  the next fails, one ticket above it the one after. */
+/** Below the minimum the next epoch fails; one ticket above it, the one after. */
 export function voteWarning(balance: number | undefined, cost: VoteCost | undefined): BalanceWarning | null {
   if (balance === undefined || cost === undefined || cost.kind !== "ticket") return null;
   if (balance >= cost.minimum + cost.lamports) return null;

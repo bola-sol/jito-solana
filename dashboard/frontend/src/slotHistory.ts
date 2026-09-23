@@ -4,20 +4,13 @@
 import { leaderAt } from "./schedule";
 import type { EpochInfo, Reward, SlotEntry, SlotLevel } from "./types";
 
-/** Set where the slot recorded a block. */
 export const HAS_BLOCK = 1;
-/** Set where the slot's first shred was timed. */
 export const HAS_CLOCK = 1 << 1;
-/** Set where the slot's tips were measured; nought is then a real reading. */
+/** Nought is then a real reading. */
 export const HAS_TIPS = 1 << 2;
-/** Set where replay's time on the slot was seen. */
 export const HAS_REPLAY = 1 << 3;
-/** Set where the blockstore reported the slot filling. */
 export const HAS_SHREDS = 1 << 4;
-/** Set where replay's finish was seen, and so timed from the first shred. */
 export const HAS_REPLAYED = 1 << 5;
-/** Two bits for the reward certificate's verdict: unseen, paid, unpaid, or no
- *  certificate written. */
 export const REWARD_SHIFT = 6;
 export const REWARD_MASK = 0b11 << REWARD_SHIFT;
 const REWARDS: (Reward | null)[] = [null, "paid", "unpaid", "no_certificate"];
@@ -42,7 +35,6 @@ export type WireRow = [
   leftOut: number,
 ];
 
-/** A span of history, oldest first, with `null` for slots it does not hold. */
 export interface SlotRange {
   first_slot: number;
   rows: (WireRow | null)[];
@@ -58,8 +50,7 @@ const LEVELS: SlotLevel[] = [
   "skipped",
 ];
 
-/** A fetched span as slot entries, oldest first. Holes are dropped;
- *  `turnsOf` draws the gap from the slots either side. */
+/** Holes are dropped; `turnsOf` draws the gap from the slots either side. */
 export function entriesOf(
   range: SlotRange,
   epoch: EpochInfo | undefined,
@@ -90,8 +81,6 @@ export function entriesOf(
       replayedMillis,
       leftOut,
     ] = row;
-    // Only to decide whether the slot was ours; the page resolves the leader through
-    // `store.leaderOf`.
     const leader = leaderAt(epoch, slot);
     const timed = (flags & HAS_CLOCK) !== 0;
     const reward = REWARDS[(flags & REWARD_MASK) >> REWARD_SHIFT] ?? null;

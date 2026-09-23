@@ -1,20 +1,15 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
 import { readFolded, writeFolded } from "../layout";
 
-/** Gap kept between an open explanation and the edge of the window. */
 const EDGE_MARGIN = 12;
 
-/** Where the highest value on screen sits, as a fraction of a chart's
- *  height, leaving room for the peak line. */
 export const PEAK_HEADROOM = 0.85;
 
-/** Vertical position of `value` in a chart scaled so `peak` lands on the peak
- *  line. Shared so the line and the series agree. */
+/** Shared so the line and the series agree. */
 export function chartY(value: number, peak: number, height: number): number {
   return height - (value / (peak / PEAK_HEADROOM)) * height;
 }
 
-/** The dotted line marking the highest value on screen. */
 export function PeakLine({ fraction, label }: { fraction: number; label: string }): ReactElement {
   const height = Math.max(0, Math.min(100, fraction * 100));
   return (
@@ -29,7 +24,6 @@ export function PeakLine({ fraction, label }: { fraction: number; label: string 
   );
 }
 
-/** How far to slide an open explanation so it sits inside the window. */
 export function edgeShift(left: number, right: number, viewportWidth: number): number {
   const past = right - (viewportWidth - EDGE_MARGIN);
   const before = EDGE_MARGIN - left;
@@ -38,11 +32,8 @@ export function edgeShift(left: number, right: number, viewportWidth: number): n
   return 0;
 }
 
-/** Space left between an explanation and the label it belongs to. */
 const ANCHOR_GAP = 6;
 
-/** Whether an explanation opens above its label: when it would run off the
- *  bottom and there is room above. */
 export function shouldFlipAbove(
   bubbleBottom: number,
   bubbleHeight: number,
@@ -54,8 +45,7 @@ export function shouldFlipAbove(
   return overflowsBelow && fitsAbove;
 }
 
-/** A label with an explanation that opens on tap as well as hover. Hover and
- *  focus are tracked apart: a tap fires both and leaves only one. */
+/** Hover and focus are tracked apart: a tap fires both and leaves only one. */
 export function Explain({
   text,
   children,
@@ -65,8 +55,7 @@ export function Explain({
   text: ReactNode;
   children: ReactNode;
   className?: string;
-  /** Whether the bubble takes the pointer and keyboard, for the few that
-   *  hold something to copy. Then not an ARIA tooltip. */
+  /** For the few bubbles holding something to copy; then not an ARIA tooltip. */
   interactive?: boolean;
 }): ReactElement {
   const id = useId();
@@ -78,7 +67,6 @@ export function Explain({
   const [above, setAbove] = useState(false);
   const open = hovered || focused;
 
-  // Measured on open and slid back inside the window.
   useLayoutEffect(() => {
     if (!open || !bubble.current || !anchor.current) {
       setShift(0);
@@ -147,12 +135,9 @@ export function Card({
   lit,
 }: {
   title?: string;
-  /** A figure that belongs to the card rather than any row, set beside the
-   *  heading. */
   aside?: ReactNode;
   children: ReactNode;
   className?: string;
-  /** Kept sharp while the validator boots and every other card is blurred. */
   lit?: boolean;
 }): ReactElement {
   // The body is a separate element so that a card can lay its content out as a
@@ -181,7 +166,6 @@ export function Stat({
   value: ReactNode;
   sub?: ReactNode;
   tone?: "good" | "bad" | "warn" | "muted";
-  /** Explanation for a figure whose label cannot say enough on its own. */
   explain?: string;
 }): ReactElement {
   return (
@@ -195,8 +179,6 @@ export function Stat({
   );
 }
 
-/** A labelled horizontal progress bar, as used by the epoch countdown. The
- *  children are marks laid along it, outside what a reader is told. */
 export function Meter({ fraction, children }: { fraction: number; children?: ReactNode }): ReactElement {
   const clamped = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
   return (
@@ -215,18 +197,14 @@ export function Meter({ fraction, children }: { fraction: number; children?: Rea
   );
 }
 
-/** A section under the cards, summed up in a line and folded as the viewer
- *  last left it. */
 export function Fold({
   id,
   title,
   summary,
   children,
 }: {
-  /** What the choice is remembered under. */
   id: string;
   title: string;
-  /** One line that says what the body would, for while it is folded. */
   summary: ReactNode;
   children: ReactNode;
 }): ReactElement {

@@ -28,7 +28,6 @@ describe("the written figures", () => {
   });
 
   it("does not call a few misses faring worse", () => {
-    // Nine of a hundred is under the floor, whatever the gap.
     expect(writtenFigures(list(100, 91, [row("a", 9, 0)]))).toEqual([]);
   });
 

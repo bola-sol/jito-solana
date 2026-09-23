@@ -20,8 +20,6 @@ function held(over: Partial<SlotEntry> = {}): SlotEntry {
 
 describe("timelineOf", () => {
   it("splits the slot into waiting for the block and finishing it", () => {
-    // The slot from the trace: most of a second waiting for shreds, then a
-    // few milliseconds of replay once they were all there.
     const timeline = timelineOf(held());
     expect(timeline?.wait).toBe(921);
     expect(timeline?.run).toBe(11);
@@ -44,7 +42,6 @@ describe("timelineOf", () => {
   });
 
   it("has one span where replay's finish was not seen", () => {
-    // Every block we built, since replay never times a bank it did not replay.
     const timeline = timelineOf(held({ replayed_millis: null }));
     expect(timeline?.run).toBeNull();
     expect(timeline?.runShare).toBe(0);

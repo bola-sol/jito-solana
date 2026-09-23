@@ -1,28 +1,18 @@
-/** What this node's certificates carried this epoch, per validator, as the
- *  schedule page shows it. */
 
 import { count, percent } from "./format";
 import type { WrittenList, WrittenRow } from "./types";
 
-/** Points by which a validator's share in our certificates has to exceed its
- *  share everywhere to fare worse in ours. */
 export const WORSE_BY = 0.05;
 
-/** Our certificates a validator has to be missing from before it can fare
- *  worse in ours. */
 export const WORSE_MIN = 10;
 
-/** Share of everyone's certificates a validator is missing from to be missing
- *  everywhere. */
 export const MISSING_EVERYWHERE = 0.9;
 
 export type WrittenKind = "worse" | "missing";
 
 export interface WrittenFigure {
   row: WrittenRow;
-  /** Share of our certificates that left it out; null before we wrote any. */
   ours: number | null;
-  /** Share of everyone's certificates that left it out; null before any. */
   everywhere: number | null;
   kind: WrittenKind;
 }
@@ -31,8 +21,6 @@ function gap(figure: WrittenFigure): number {
   return (figure.ours ?? 0) - (figure.everywhere ?? 0);
 }
 
-/** The validators worth a row: faring worse in our certificates, widest gap first, then missing
- *  everywhere, most first. */
 export function writtenFigures(list: WrittenList): WrittenFigure[] {
   const written = list.certificates;
   const figures: WrittenFigure[] = [];
@@ -62,8 +50,7 @@ export function writtenKinds(figures: WrittenFigure[]): Record<WrittenKind, numb
   return kinds;
 }
 
-/** The section's one line: how many written, and the share that carried
- *  everyone certificates usually pay. */
+/** The share that carried everyone certificates usually pay. */
 export function writtenLine(list: WrittenList): string {
   const { certificates, carried_all } = list;
   if (certificates === 0) return "none written yet this epoch";

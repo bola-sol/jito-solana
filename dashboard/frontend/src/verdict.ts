@@ -1,4 +1,3 @@
-/** The one sentence at the top of the overview: what the validator is doing. */
 
 import { count, duration } from "./format";
 import type { Health } from "./types";
@@ -10,12 +9,10 @@ export interface Verdict {
   headline: string;
 }
 
-/** Slots replay may trail the cluster by before the sentence says so: a slot
- *  or two is the ordinary lag of hearing about the tip. */
+/** A slot or two is the ordinary lag of hearing about the tip. */
 export const IN_STEP_SLOTS = 4;
 
-/** Read from the health flags, worst first: a stalled replay outranks the vote, and delinquent the
- *  rest. Each branch carries the distance once past the allowance. */
+/** A stalled replay outranks the vote, and delinquent the rest. */
 export function verdictOf(
   health: Health | undefined,
   behindCluster: number | null | undefined,
@@ -50,8 +47,6 @@ export function verdictOf(
   }
 }
 
-/** The replay rate while trailing, and the time to close the gap at the net gain over the cluster.
- *  Null in step and until both rates are known. */
 export function catchUpClause(
   behindCluster: number | null | undefined,
   replayRate: number | null | undefined,

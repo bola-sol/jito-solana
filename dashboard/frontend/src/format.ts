@@ -20,7 +20,6 @@ export function sol(lamports: number | undefined, digits = 2): string {
   return withDigits(digits).format(lamports / LAMPORTS_PER_SOL);
 }
 
-/** Large SOL amounts, abbreviated the way the header shows them. */
 export function solCompact(lamports: number | undefined): string {
   if (lamports === undefined) return "—";
   const amount = lamports / LAMPORTS_PER_SOL;
@@ -29,7 +28,6 @@ export function solCompact(lamports: number | undefined): string {
   return amount.toFixed(1);
 }
 
-/** Compute units, abbreviated: `11.8M`. */
 export function units(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -51,7 +49,6 @@ export function percent(fraction: number | null | undefined, digits = 2): string
   return `${(fraction * 100).toFixed(digits)}%`;
 }
 
-/** Compact duration, e.g. `6d 23h 39m` or `2m 51s`. */
 export function duration(millis: number | undefined): string {
   if (millis === undefined || millis < 0) return "—";
   const total = Math.floor(millis / 1000);
@@ -66,8 +63,7 @@ export function duration(millis: number | undefined): string {
   return `${seconds}s`;
 }
 
-/** Wall-clock time of a block to the millisecond, since two blocks in a row
- *  can be under two hundred apart. */
+/** To the millisecond, since two blocks in a row can be under two hundred apart. */
 export function blockTime(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);
@@ -77,8 +73,6 @@ export function blockTime(millis: number | null | undefined): string {
   return `${day} ${time}.${String(at.getMilliseconds()).padStart(3, "0")}`;
 }
 
-/** Wall-clock time of a block to the second, with the browser's own zone
- *  abbreviation. The row version of [`blockTime`]. */
 export function blockStamp(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);
@@ -88,16 +82,13 @@ export function blockStamp(millis: number | null | undefined): string {
   return `${day} ${time}`;
 }
 
-/** The release a version belongs to, `4.3.0-beta.0` to `4.3.0`. Mirrors
- *  `release_of` in `collect.rs`, which keys the version rows. */
+/** Mirrors `release_of` in `collect.rs`, which keys the version rows. */
 export function release(version: string | undefined): string | undefined {
   if (version === undefined) return undefined;
   const at = version.search(/[-+]/);
   return at === -1 ? version : version.slice(0, at);
 }
 
-/** How the header names this build, e.g. `Agave v4.3.0-beta.0`. Either half
- *  may be absent and the other is shown alone. */
 export function buildLabel(
   client: string | undefined,
   version: string | undefined,
@@ -105,14 +96,12 @@ export function buildLabel(
   return [client, version && `v${version}`].filter(Boolean).join(" ");
 }
 
-/** Microseconds read in milliseconds, e.g. `205.6 ms`. Always one decimal
- *  so a column lines up. */
+/** Always one decimal so a column lines up. */
 export function micros(us: number | null | undefined): string {
   if (us === null || us === undefined || Number.isNaN(us)) return "—";
   return `${(us / 1000).toFixed(1)} ms`;
 }
 
-/** Shortened pubkey, e.g. `J5e4xh…c8FF1`. */
 export function shortKey(key: string | null | undefined, lead = 6, tail = 5): string {
   if (!key) return "—";
   if (key.length <= lead + tail + 1) return key;
@@ -131,7 +120,6 @@ export function bytes(value: number | undefined): string {
   return `${scaled.toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
 }
 
-/** Signed delta against a reference slot, e.g. `-32` or `+1`. */
 export function slotDelta(slot: number | undefined, reference: number | undefined): string {
   if (slot === undefined || reference === undefined) return "";
   const delta = slot - reference;

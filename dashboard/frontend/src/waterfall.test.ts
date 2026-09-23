@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
 import { executedRows, verifyRows, waterfallRows } from "./waterfall";
 
-/** A window in which nothing happened, to be overridden a field at a time. */
 function quiet(over: Partial<Waterfall> = {}): Waterfall {
   return {
     received: 0,
@@ -30,7 +29,6 @@ function quiet(over: Partial<Waterfall> = {}): Waterfall {
   };
 }
 
-/** A validator mid-leader-slot, with the receive stretch balancing exactly. */
 function busy(): Waterfall {
   return quiet({
     received: 1000,
@@ -71,7 +69,6 @@ describe("waterfallRows", () => {
   });
 
   it("measures every bar against what arrived, not against the stage above", () => {
-    // Every section is drawn against what arrived, so lengths compare down the card.
     const rows = waterfallRows(busy());
     const buffered = rows.find((row) => row.key === "buffered");
     expect(buffered?.share).toBeCloseTo(0.08, 10);
@@ -80,7 +77,6 @@ describe("waterfallRows", () => {
   });
 
   it("draws the same rows in the same order whatever happened", () => {
-    // The rows are fixed, so the card never changes height and a zero is shown as one.
     const busyKeys = waterfallRows(busy()).map((row) => row.key);
     const quietKeys = waterfallRows(quiet()).map((row) => row.key);
     expect(quietKeys).toEqual(busyKeys);
@@ -101,7 +97,6 @@ describe("waterfallRows", () => {
   });
 
   it("counts held-back work as a note rather than a loss", () => {
-    // A transaction the scheduler cannot place this pass waits; it is not a loss.
     const rows = waterfallRows(busy());
     const blocked = rows.filter((row) => row.key.startsWith("blocked_"));
     expect(blocked.map((row) => row.kind)).toEqual(["note", "note"]);
@@ -115,7 +110,6 @@ describe("a slot BAM built", () => {
     return quiet({
       source: "bam",
       received: 40,
-      // Fed by a different check on this path: batches past their own slot.
       not_held: 5,
       unparsable: 3,
       buffered: 700,
@@ -131,7 +125,6 @@ describe("a slot BAM built", () => {
     const parsed = rows.find((r) => r.key === "unparsable")!;
     expect(parsed.share).toBeCloseTo(3 / 700, 5);
 
-    // A slot that dispatched more than arrived holds work across slots: the count, no percentage.
     const finished = rows.find((r) => r.key === "finished")!;
     expect(finished.over).toBe(true);
     expect(finished.share).toBe(1);
@@ -142,7 +135,6 @@ describe("a slot BAM built", () => {
     expect(received.label).toBe("Batches received");
     expect(received.kind).toBe("count");
     expect(received.count).toBe(40);
-    // No share, because there is no total it is a share of.
     expect(received.share).toBe(0);
     expect(received.over).toBe(false);
   });
@@ -157,14 +149,11 @@ describe("a slot BAM built", () => {
   });
 
   it("changes nothing at all for a validator not running BAM", () => {
-    // A stock validator sends no source and jito sends "scheduler" off BAM; both read the ordinary
-    // way.
     const numbers = { received: 1000, not_held: 5, buffered: 700, finished: 500 };
     const absent = waterfallRows(quiet(numbers));
     const named = waterfallRows(quiet({ ...numbers, source: "scheduler" }));
     expect(named).toEqual(absent);
 
-    // And it is the same reading it always was: every row a share of received.
     expect(absent.find((r) => r.key === "received")!.label).toBe("Received");
     expect(absent.find((r) => r.key === "not_held")!.label).toBe("forwarding, not held");
     expect(absent.every((r) => r.kind !== "count" || r.key === "verify_evicted")).toBe(true);
@@ -172,7 +161,6 @@ describe("a slot BAM built", () => {
   });
 
   it("leaves a slot the validator built alone", () => {
-    // Same numbers, no source: the ordinary reading, drawn against received.
     const rows = waterfallRows(
       quiet({ received: 1000, not_held: 5, buffered: 700, finished: 500 }),
     );
@@ -187,7 +175,6 @@ describe("a slot BAM built", () => {
   });
 });
 
-/** Finds one row by key, so a test names what it is asserting on. */
 function rowOf(rows: ReturnType<typeof waterfallRows>, key: string) {
   const row = rows.find((r) => r.key === key);
   if (!row) throw new Error(`no row ${key}`);
@@ -205,8 +192,6 @@ describe("verifyRows", () => {
   });
 
   it("derives bad signatures from what the other outcomes leave over", () => {
-    // Sigverify stops at the first discard, so the remainder after the other three is exactly the
-    // bad.
     const rows = verifyRows(
       stage({ received: 1000, duplicate: 300, below_floor: 50, verified: 620 }),
     );
@@ -214,21 +199,17 @@ describe("verifyRows", () => {
   });
 
   it("never reports a negative count when the parts do not line up", () => {
-    // A point arriving mid-reset can put the parts above the total; no row goes negative.
     const rows = verifyRows(stage({ received: 100, duplicate: 90, verified: 40 }));
     expect(rowOf(rows, "verify_bad").count).toBe(0);
   });
 
   it("keeps the batch figure out of the transaction arithmetic", () => {
-    // It counts batches. Subtracting it from a packet count, or adding it in,
-    // would be mixing two units.
     const rows = verifyRows(
       stage({ received: 100, duplicate: 0, verified: 100, evicted_batches: 7 }),
     );
     expect(rowOf(rows, "verify_bad").count).toBe(0);
     expect(rowOf(rows, "verify_evicted").count).toBe(7);
     expect(rowOf(rows, "verify_evicted").kind).toBe("count");
-    // And carries no share, for the same reason it is labelled apart.
     expect(rowOf(rows, "verify_evicted").share).toBe(0);
   });
 });
@@ -264,8 +245,6 @@ describe("executedRows", () => {
     expect(dropped.count).toBe(25);
     expect(dropped.share).toBeCloseTo(25 / 101, 10);
 
-    // With no reasons reported, the whole of it falls to the gathered row
-    // rather than vanishing.
     expect(rowOf(rows, "exec_other_reasons").count).toBe(25);
   });
 
@@ -284,7 +263,6 @@ describe("executedRows", () => {
     expect(rowOf(rows, "exec_dropped").count).toBe(30);
     expect(rowOf(rows, "exec_blockhash_missing").count).toBe(12);
     expect(rowOf(rows, "exec_fee_payer_broke").count).toBe(8);
-    // Thirty lost, twenty-four named, six left over.
     expect(rowOf(rows, "exec_other_reasons").count).toBe(6);
   });
 
@@ -299,8 +277,6 @@ describe("executedRows", () => {
   });
 
   it("derives the failures from committed less succeeded", () => {
-    // A transaction that returns an error still lands in the block and still
-    // pays, so this is a real row rather than a loss to be hidden.
     const rows = executedRows(stage({ attempted: 100, processed: 90, succeeded: 80 }));
     expect(rowOf(rows, "exec_failed").count).toBe(10);
   });
@@ -313,7 +289,6 @@ describe("executedRows", () => {
 
 describe("a stage fed from the queue", () => {
   it("caps its bar and reports the overflow rather than exceeding the total", () => {
-    // The queue holds transactions across slots, so a slot can dispatch more than arrived in it.
     const rows = waterfallRows(quiet({ received: 12, buffered: 12, scheduled: 13, finished: 13 }));
 
     const scheduled = rowOf(rows, "scheduled");

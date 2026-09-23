@@ -1,13 +1,10 @@
-/** Replay's timings arranged into the rows the panel draws. */
 
 import type { ReplayWindow } from "./types";
 
 export interface ReplayRow {
   key: string;
   label: string;
-  /** Microseconds, a mean over the window's slots. */
   micros: number;
-  /** Of the section's own total, in `[0, 1]`. */
   share: number;
   explain: string;
 }
@@ -25,8 +22,7 @@ function rowsOf(
   }));
 }
 
-/** What replay's own thread spent on the average slot: three disjoint spans
- *  whose sum is the serial bottleneck against the slot time. */
+/** Three disjoint spans whose sum is the serial bottleneck against the slot time. */
 export function serialRows(r: ReplayWindow): ReplayRow[] {
   const total = r.fetch + r.confirming + r.completing;
   return rowsOf(total, [
@@ -51,8 +47,7 @@ export function serialRows(r: ReplayWindow): ReplayRow[] {
   ]);
 }
 
-/** Which half of verification costs more. Relative only: these are sums of
- *  overlapping jobs. */
+/** Relative only: these are sums of overlapping jobs. */
 export function verifyRows(r: ReplayWindow): ReplayRow[] {
   const total = r.poh_verify + r.tx_verify + r.dispatch;
   return rowsOf(total, [
@@ -77,8 +72,7 @@ export function verifyRows(r: ReplayWindow): ReplayRow[] {
   ]);
 }
 
-/** Where the thread time went across every worker: CPU time, which
- *  partitions cleanly and normally exceeds the slot. */
+/** CPU time, which partitions cleanly and normally exceeds the slot. */
 export function cpuRows(r: ReplayWindow): ReplayRow[] {
   const total = r.execute + r.load + r.store + r.program_cache + r.checking + r.other;
   return rowsOf(total, [
@@ -121,12 +115,9 @@ export function cpuRows(r: ReplayWindow): ReplayRow[] {
   ]);
 }
 
-/** One figure that sits inside a phase rather than beside it. */
 export interface ReplayPart {
-  /** Lower case, because it is read inside a sentence rather than as a label. */
   label: string;
   micros: number;
-  /** The worst single slot, where the spread says more than the mean. */
   peak?: number;
   explain: string;
 }

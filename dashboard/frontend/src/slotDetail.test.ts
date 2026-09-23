@@ -49,7 +49,6 @@ function cost(over: Partial<SlotCost> = {}): SlotCost {
   };
 }
 
-/** A slot the scheduler had a quiet time with, to be overridden a field at a time. */
 function slot(over: Partial<SlotWaterfall> = {}): SlotWaterfall {
   return {
     slot: 443_077_280,
@@ -150,7 +149,6 @@ describe("grouping the scheduler's counters", () => {
     expect(intake.rows.slice(0, 2).map((r) => r.key)).toEqual(["too_old", "already_processed"]);
     expect(intake.hits).toBe(2);
 
-    // Checked against the waterfall's own order, since the 4.2 line has three fewer counters.
     const pipeline = waterfallRows(slot()).map((row) => row.key);
     const quiet = intake.rows.slice(2).map((r) => r.key);
     expect(quiet).toEqual([...quiet].sort((a, b) => pipeline.indexOf(a) - pipeline.indexOf(b)));
@@ -158,8 +156,6 @@ describe("grouping the scheduler's counters", () => {
   });
 
   it("holds the batch-counted rows apart from the transaction totals", () => {
-    // BAM counts its pre-parse rejections in batches, so they are never added to the transaction
-    // counts.
     const view = schedulerView(slot({ source: "bam", not_held: 4, too_old: 17 }));
     const intake = view.groups.find((g) => g.key === "intake")!;
     expect(intake.aside.map((r) => r.key)).toEqual(["not_held"]);
@@ -184,19 +180,15 @@ describe("what the strip says", () => {
   });
 
   it("works completion against the first figure counted in transactions", () => {
-    // On a BAM slot that is buffered: received is batches there, and
-    // transactions over batches is a percentage of nothing.
     const view = schedulerView(slot({ source: "bam", received: 377, buffered: 900, finished: 855 }));
     expect(view.completion).toBeCloseTo(855 / 900, 10);
   });
 
   it("caps completion, since a slot can finish more than arrived in it", () => {
-    // The queue holds transactions across slots.
     expect(schedulerView(slot({ received: 100, finished: 140 })).completion).toBe(1);
   });
 
   it("has no completion to report where nothing arrived", () => {
-    // Not nought, which would read as a slot that finished nothing.
     expect(schedulerView(slot({ received: 0, buffered: 0, finished: 0 })).completion).toBeNull();
   });
 

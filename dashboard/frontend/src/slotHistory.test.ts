@@ -63,15 +63,11 @@ describe("leaderAt", () => {
   });
 
   it("names nobody outside the epoch the arrays describe", () => {
-    // Two epochs are in play either side of a boundary, and answering from the
-    // wrong one would name a leader confidently and wrongly.
     expect(leaderAt(epochOf(), 999)).toBeNull();
     expect(leaderAt(epochOf(), 1016)).toBeNull();
   });
 
   it("names nobody where the validator could not derive the schedule", () => {
-    // Sent as an empty array rather than a partial one, so this is the whole
-    // of the check.
     expect(leaderAt(epochOf({ turns: [] }), 1000)).toBeNull();
     expect(leaderAt(undefined, 1000)).toBeNull();
   });
@@ -97,8 +93,6 @@ describe("entriesOf", () => {
   });
 
   it("leaves the arrival and the replay end absent where neither was seen", () => {
-    // A fill reported before the dashboard was watching, and a block this
-    // validator built, both read as nothing rather than as noughts.
     const [entry] = entriesOf(
       range([row({ 1: HAS_BLOCK | HAS_CLOCK, 10: 1_203, 13: 393 })]),
       epochOf(),
@@ -109,16 +103,12 @@ describe("entriesOf", () => {
   });
 
   it("carries an arrival for a slot that filled and never froze", () => {
-    // A dead slot has shreds and no block, which is why the arrival is on the
-    // entry rather than inside the block.
     const [entry] = entriesOf(range([row({ 1: HAS_CLOCK | HAS_SHREDS })]), epochOf(), undefined);
     expect(entry.block).toBeNull();
     expect(entry.shreds?.count).toBe(1_203);
   });
 
   it("leaves replay time absent for a block replay never timed", () => {
-    // Our own blocks are built rather than replayed, and read as absent rather
-    // than as a slot replayed in no time.
     const [entry] = entriesOf(
       range([row({ 1: HAS_BLOCK | HAS_CLOCK, 9: 47_200 })]),
       epochOf(),
@@ -141,21 +131,17 @@ describe("entriesOf", () => {
   });
 
   it("carries the two kinds of fee apart, so the split survives the trip back", () => {
-    // Base is the total less priority.
     const [entry] = entriesOf(range([row()]), epochOf(), undefined);
     const base = (entry.block?.total_fees ?? 0) - (entry.block?.priority_fees ?? 0);
     expect(base).toBe(44_087_520);
   });
 
   it("takes the cost limits from the epoch rather than from the row", () => {
-    // They are the same two numbers for the epoch's whole life, which is why
-    // they are not on the row at all.
     const [entry] = entriesOf(range([row()]), epochOf(), undefined);
     expect(entry.block?.block_cost_limit).toBe(60_000_000);
   });
 
   it("works the duration out as the gap to the last slot that had a clock", () => {
-    // Not carried, because it is a subtraction of two things that are.
     const entries = entriesOf(
       range([row({ 8: 1_000_000 }), row({ 8: 1_000_400 })]),
       epochOf(),
@@ -163,14 +149,11 @@ describe("entriesOf", () => {
     );
     expect(entries[0].duration_nanos).toBeNull();
     expect(entries[1].duration_nanos).toBe(400_000_000);
-    // The clock itself travels too, for stamping a turn.
     expect(entries[0].time_millis).toBe(1_000_000);
     expect(entries[1].time_millis).toBe(1_000_400);
   });
 
   it("carries the gap across a slot it has no row for", () => {
-    // A skipped slot shows as one long interval rather than as none, which is
-    // what the validator's own walk does with it.
     const entries = entriesOf(
       range([row({ 8: 1_000_000 }), null, row({ 8: 1_000_800 })]),
       epochOf(),
@@ -193,7 +176,6 @@ describe("entriesOf", () => {
   });
 
   it("says nothing about who led, only whether we did", () => {
-    // A fetched slot carries `mine`; the page resolves its leader as it does a live one.
     const [entry] = entriesOf(range([row()]), epochOf(), ALICE);
     expect(entry.mine).toBe(true);
     expect("leader" in entry).toBe(false);

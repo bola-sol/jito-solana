@@ -3,7 +3,7 @@
 //! the default.
 
 #[cfg(target_os = "linux")]
-use std::{ffi::CString, os::unix::ffi::OsStrExt, path::PathBuf};
+use std::path::PathBuf;
 use {
     serde::Serialize,
     std::{collections::BTreeMap, io, path::Path},
@@ -202,20 +202,13 @@ pub fn read() -> io::Result<HostSnapshot> {
 
 #[cfg(target_os = "linux")]
 pub fn filesystem(path: &Path) -> io::Result<Filesystem> {
-    let c_path = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| invalid("path contains a nul byte"))?;
-    // SAFETY: `stat` is written only on success, and the pointer is valid for
-    // the duration of the call.
-    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // `f_frsize` rather than `f_bsize`: the block counts are in fragments, and
-    // on filesystems where the two differ using `f_bsize` overstates the size.
-    let block = stat.f_frsize as u64;
+    let stat = nix::sys::statvfs::statvfs(path)?;
+    // `fragment_size` rather than `block_size`: the block counts are in fragments, and on
+    // filesystems where the two differ `block_size` overstates the size.
+    let block = stat.fragment_size() as u64;
     Ok(Filesystem {
-        total: (stat.f_blocks as u64).saturating_mul(block),
-        available: (stat.f_bavail as u64).saturating_mul(block),
+        total: (stat.blocks() as u64).saturating_mul(block),
+        available: (stat.blocks_available() as u64).saturating_mul(block),
     })
 }
 
@@ -270,7 +263,7 @@ pub fn filesystem_id(_path: &Path) -> io::Result<u64> {
 pub fn device_for(path: &Path) -> io::Result<Option<String>> {
     use std::os::linux::fs::MetadataExt;
     let device = std::fs::metadata(path)?.st_dev();
-    let (major, minor) = (libc::major(device), libc::minor(device));
+    let (major, minor) = (nix::sys::stat::major(device), nix::sys::stat::minor(device));
     if major == 0 {
         // Anonymous device: tmpfs, overlayfs and the like, with no block
         // device underneath.

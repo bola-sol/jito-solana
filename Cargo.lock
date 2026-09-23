@@ -168,6 +168,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
  "solana-rpc",
+ "solana-rpc-client-types",
  "solana-runtime",
  "solana-sdk-ids",
  "solana-signature",

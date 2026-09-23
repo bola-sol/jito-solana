@@ -42,6 +42,7 @@ solana-metrics = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
+solana-rpc-client-types = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer-store = { workspace = true }

@@ -32,6 +32,7 @@ use {
     solana_rpc::optimistically_confirmed_bank_tracker::{
         BankNotification, BankNotificationReceiver,
     },
+    solana_rpc_client_types::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
     solana_runtime::bank::{Bank, VATHealthError},
     solana_vote_interface::state::VoteStateV4,
     std::{
@@ -40,10 +41,6 @@ use {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
-
-/// A validator whose last vote is further behind than this is reported as
-/// delinquent, matching the threshold the RPC layer uses.
-const MAX_DELINQUENT_SLOT_DISTANCE: u64 = 128;
 
 /// How often the expensive samples (the full validator set, the program cache)
 /// are taken, regardless of the poll interval.
@@ -2627,7 +2624,7 @@ fn tally_stake(
             continue;
         }
         let is_delinquent = last_vote
-            .map(|vote| tip.saturating_sub(vote) > MAX_DELINQUENT_SLOT_DISTANCE)
+            .map(|vote| tip.saturating_sub(vote) > DELINQUENT_VALIDATOR_SLOT_DISTANCE)
             .unwrap_or(true);
         if is_delinquent {
             tally.delinquent.insert(identity);
@@ -3001,7 +2998,7 @@ mod tests {
 
     #[test]
     fn test_delinquency_is_decided_at_the_threshold() {
-        let at = TIP - MAX_DELINQUENT_SLOT_DISTANCE;
+        let at = TIP - DELINQUENT_VALIDATOR_SLOT_DISTANCE;
         assert!(
             tally_stake([(identity(1), 1, Some(at))].into_iter(), TIP)
                 .delinquent

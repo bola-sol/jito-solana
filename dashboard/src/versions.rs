@@ -3,8 +3,10 @@
 
 use {
     serde::Serialize,
-    solana_sdk_ids::vote,
-    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
+    solana_transaction::{
+        simple_vote_transaction_checker::is_simple_vote_transaction_impl,
+        versioned::{TransactionVersion, VersionedTransaction},
+    },
 };
 
 /// Non-vote transactions in one block, by message version.
@@ -31,17 +33,16 @@ pub fn tally<'a>(transactions: impl IntoIterator<Item = &'a VersionedTransaction
     versions
 }
 
-/// The runtime's rule: one or two signatures, one instruction, to the vote
-/// program.
+/// The runtime's rule, as the completed data sets service applies it.
 fn is_simple_vote(transaction: &VersionedTransaction) -> bool {
     let message = &transaction.message;
-    let [instruction] = message.instructions() else {
-        return false;
-    };
-    let program = message
-        .static_account_keys()
-        .get(usize::from(instruction.program_id_index));
-    (1..=2).contains(&transaction.signatures.len()) && program == Some(&vote::id())
+    let is_legacy = matches!(transaction.version(), TransactionVersion::Legacy(_));
+    let programs = message.instructions().iter().filter_map(|instruction| {
+        message
+            .static_account_keys()
+            .get(usize::from(instruction.program_id_index))
+    });
+    is_simple_vote_transaction_impl(&transaction.signatures, is_legacy, programs)
 }
 
 #[cfg(test)]
@@ -52,6 +53,7 @@ mod tests {
             VersionedMessage, compiled_instruction::CompiledInstruction, legacy, v0, v1,
         },
         solana_pubkey::Pubkey,
+        solana_sdk_ids::vote,
         solana_signature::Signature,
     };
 
@@ -96,6 +98,17 @@ mod tests {
     fn test_a_simple_vote_is_not_counted() {
         let block = [legacy_tx(vote::id(), 1), legacy_tx(vote::id(), 2)];
         assert_eq!(tally(&block), TxVersions::default());
+    }
+
+    #[test]
+    fn test_a_vote_in_a_v0_message_counts_as_v0() {
+        // The runtime takes only legacy messages for simple votes.
+        let message = v0::Message {
+            account_keys: vec![Pubkey::new_unique(), vote::id()],
+            instructions: vec![CompiledInstruction::new_from_raw_parts(1, vec![], vec![])],
+            ..v0::Message::default()
+        };
+        assert_eq!(tally(&[versioned(VersionedMessage::V0(message))]).v0, 1);
     }
 
     #[test]

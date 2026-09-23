@@ -491,7 +491,6 @@ pub struct Collector {
     voting: bool,
     last_slow_tick: Instant,
     subscribers: usize,
-    cluster_max_credits: Option<(Epoch, u64)>,
 
     tips: Option<TipMeter>,
     /// `None` reads bank forks instead, which misses banks pruned between ticks.
@@ -585,7 +584,6 @@ impl Collector {
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             subscribers: 0,
-            cluster_max_credits: None,
             tips,
             commission_bps,
             tips_residual: None,
@@ -1775,9 +1773,16 @@ impl Collector {
             compute_vote_cost(bank),
         );
 
+        let epoch = bank.epoch();
         let vote_accounts = bank.vote_accounts();
         let mine = vote_accounts.get(&self.ctx.vote_account);
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
+        // From the same bank as our own credits, so the share never compares two moments.
+        let cluster_max = vote_accounts
+            .values()
+            .filter(|(stake, _)| *stake > 0)
+            .map(|(_, account)| count_epoch_credits(account.vote_state_view(), epoch))
+            .max();
 
         // After a failover the vote account is voted from another machine, whose
         // last vote must not be read as this one's health.
@@ -1792,16 +1797,12 @@ impl Collector {
             None => (0, None, None),
         };
 
-        let epoch = bank.epoch();
         let bls_key =
             mine.map(|(_, account)| account.vote_state_view().bls_pubkey_compressed().is_some());
         let vote_credits = mine.map(|(_, account)| VoteCredits {
             epoch,
             credits: count_epoch_credits(account.vote_state_view(), epoch),
-            cluster_max: self
-                .cluster_max_credits
-                .filter(|(held, _)| *held == epoch)
-                .map(|(_, max)| max),
+            cluster_max,
         });
         self.debounces
             .bls_key
@@ -2075,14 +2076,6 @@ impl Collector {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
 
-        let epoch = bank.epoch();
-        self.cluster_max_credits = vote_accounts
-            .values()
-            .filter(|(stake, _)| *stake > 0)
-            .map(|(_, account)| count_epoch_credits(account.vote_state_view(), epoch))
-            .max()
-            .map(|max| (epoch, max));
-
         // A validator can be in gossip or the vote accounts without the other, so both are walked.
         let versions: HashMap<Pubkey, String> = peers
             .iter()
@@ -2294,9 +2287,11 @@ fn compute_vote_cost(bank: &Bank) -> VoteCost {
     }
 }
 
+/// Reads only the newest entry, which is the bank's own epoch once the account has voted in it.
 fn count_epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch: Epoch) -> u64 {
     view.epoch_credits_iter()
-        .find(|item| item.epoch() == epoch)
+        .last()
+        .filter(|item| item.epoch() == epoch)
         .map_or(0, |item| item.credits().saturating_sub(item.prev_credits()))
 }
 
@@ -2847,6 +2842,17 @@ mod tests {
     }
 
     #[test]
+    fn test_epoch_credits_count_only_the_asked_epoch() {
+        let state = solana_vote_interface::state::VoteStateV3 {
+            epoch_credits: vec![(5, 100, 0), (6, 250, 100), (7, 400, 250)],
+            ..Default::default()
+        };
+        let view = solana_vote::vote_state_view::VoteStateView::from(state);
+        assert_eq!(count_epoch_credits(&view, 7), 150);
+        assert_eq!(count_epoch_credits(&view, 8), 0, "not voted in yet");
+    }
+
+    #[test]
     fn test_the_vote_account_reports_its_bls_key_and_credits() {
         let harness = fixture();
         harness.advance_to(8);
@@ -2859,15 +2865,9 @@ mod tests {
         );
         let credits = harness.published_key("summary", "vote_credits").unwrap();
         assert!(credits.contains(r#""credits":0"#), "{credits}");
-        assert!(credits.contains(r#""cluster_max":null"#), "{credits}");
+        assert!(credits.contains(r#""cluster_max":0"#), "{credits}");
         let admission = harness.published_key("summary", "admission").unwrap();
         assert!(admission.contains(r#""value":null"#), "{admission}");
-
-        let mut collector = harness.collector();
-        collector.collect_peers(&harness.working_bank(), &[]);
-        collector.tick();
-        let credits = harness.published_key("summary", "vote_credits").unwrap();
-        assert!(credits.contains(r#""cluster_max":0"#), "{credits}");
     }
 
     #[test]

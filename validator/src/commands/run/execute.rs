@@ -72,7 +72,9 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationSender,
+    solana_rpc::optimistically_confirmed_bank_tracker::{
+        BankNotification, BankNotificationFilter, BankNotificationSender,
+    },
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
     solana_streamer::{
@@ -822,7 +824,8 @@ pub fn execute(
     // Frozen banks reach the collector from replay rather than by polling bank
     // forks, which under alpenglow prunes a bank within a slot of freezing.
     let dashboard_banks = dashboard_config.is_some().then(|| {
-        let (sender, receiver) = BankNotificationSender::channel("dashboard");
+        let (sender, receiver) =
+            BankNotificationSender::channel_with_filter("dashboard", FrozenOnly);
         extra_bank_notification_senders.push(sender);
         receiver
     });
@@ -1340,6 +1343,16 @@ pub fn execute(
     listen_result?;
 
     Ok(())
+}
+
+/// The one notification the dashboard's collector reads; its channel is
+/// unbounded, so the rest would only queue there.
+struct FrozenOnly;
+
+impl BankNotificationFilter for FrozenOnly {
+    fn should_forward(&self, notification: &BankNotification) -> bool {
+        matches!(notification, BankNotification::Frozen(_))
+    }
 }
 
 // This function is duplicated in ledger-tool/src/main.rs...

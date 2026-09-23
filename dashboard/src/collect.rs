@@ -441,6 +441,7 @@ pub struct SkipRate {
 
 #[derive(Default)]
 struct Debounces {
+    client: Debounced<String>,
     identity_key: Debounced<String>,
     identity_name: Debounced<Option<String>>,
     identity_icon: Debounced<Option<String>>,
@@ -704,16 +705,13 @@ impl Collector {
         }
     }
 
-    /// Publishes the values that never change for the lifetime of the process.
-    pub fn publish_static(&self) {
+    /// Publishes the values fixed for the lifetime of the process, and the
+    /// client, which the slow tier keeps following.
+    pub fn publish_static(&mut self) {
         let version = solana_version::Version::this_build();
         self.publisher
             .publish(TOPIC_SUMMARY, "version", &version.as_semver_string());
-        // Published apart from the version, which does not carry it: forks ship the
-        // version of the release they follow, and `4.2.1` alone does not say whether
-        // this is Agave or Jito.
-        self.publisher
-            .publish(TOPIC_SUMMARY, "client", &version.client().to_string());
+        self.collect_client();
         self.publisher.publish(
             TOPIC_SUMMARY,
             "commit_hash",
@@ -821,6 +819,7 @@ impl Collector {
             // One snapshot for both walks below: it clones the whole table under
             // the gossip lock.
             let peers = self.ctx.cluster_info.all_peers();
+            self.collect_client();
             self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
@@ -845,6 +844,22 @@ impl Collector {
             self.overview_dirty = false;
             self.overview_retained_at = now;
         }
+    }
+
+    /// The client this node gossips, published apart from the version, which
+    /// does not carry it. Read from gossip rather than the build: Jito's
+    /// validator gossips `AgaveBam` while it is on BAM and `JitoLabs` otherwise.
+    fn collect_client(&mut self) {
+        let client = self
+            .ctx
+            .cluster_info
+            .my_contact_info()
+            .version()
+            .client()
+            .to_string();
+        self.debounces
+            .client
+            .publish(&self.publisher, TOPIC_SUMMARY, "client", client);
     }
 
     /// Logs what the last sweep says the tip readings missed, once per change. The
@@ -3220,23 +3235,23 @@ mod tests {
     // ---- what this build is ---------------------------------------------
 
     #[test]
-    fn test_the_build_reports_its_client_beside_its_version() {
+    fn test_the_node_reports_the_client_it_gossips_beside_its_version() {
         let harness = fixture();
         harness.collector().publish_static();
-        let client = solana_version::Version::this_build().client().to_string();
+        let client = harness
+            .ctx
+            .cluster_info
+            .my_contact_info()
+            .version()
+            .client()
+            .to_string();
 
-        // Asserting a name would only assert which fork the tests ran from. What can
-        // break is the header disagreeing with the validator's own startup line.
+        // Asserting a name would only assert which fork the tests ran from. What
+        // can break is the header disagreeing with what peers see in gossip.
         let published = harness.published_key("summary", "client").unwrap();
         assert!(
             published.contains(&format!(r#""value":"{client}""#)),
             "published {published}, which does not carry the client {client}"
-        );
-        assert!(
-            solana_version::Version::this_build()
-                .as_detailed_string()
-                .contains(&format!("client:{client}")),
-            "the header and the startup log would name the client differently"
         );
 
         // And the reason it is published at all: the version it sits beside

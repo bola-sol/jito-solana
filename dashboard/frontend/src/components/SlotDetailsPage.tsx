@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type ReactElement } from "react";
-import { blockStamp, blockTime, bytes, count, micros, percent, sol, units } from "../format";
+import { blockStamp, blockTime, bytes, count, micros, percent, shortKey, sol, units } from "../format";
 import { recurrence } from "../cost";
 import {
   blockSummary,
+  certificateVerdict,
   earnedOf,
   sortBlocks,
   type BlockFigures,
@@ -13,6 +14,7 @@ import {
 import { epochOf } from "../schedule";
 import { jitoShare, ourShare } from "../tips";
 import type {
+  BlockCertificate,
   Execution,
   LeaderTurn,
   ProducedBlock,
@@ -426,6 +428,7 @@ function BlockRow({
           {cost && <BlockAccount block={block} cost={cost} costs={costs} />}
           {waterfall && <BlockScheduler waterfall={waterfall} />}
           {cost && <BlockFigures cost={cost} />}
+          {block.certificate && <BlockCertificateStrip certificate={block.certificate} />}
 
           {/* The block's identity, together: which slot, when, and its hash.
               The slot stays in the row above as well, since that is the only
@@ -474,6 +477,62 @@ function Stat({
     <div className={`sx-stat${className ? ` ${className}` : ""}`} title={title}>
       <span className="sx-eyebrow">{label}</span>
       <span className={`sx-stat-value${warn ? " tone-warn" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+/** The reward certificate this block wrote, as a strip: the votes it paid
+ *  for the slot eight back, and who certificates usually pay that it left out. */
+function BlockCertificateStrip({ certificate }: { certificate: BlockCertificate }) {
+  const verdict = certificateVerdict(certificate);
+  const leader = certificate.leader_name ?? shortKey(certificate.leader, 6, 5);
+  return (
+    <div className="sx-cert">
+      <div className="sx-strip">
+        <span className="sx-strip-label">
+          <Explain text="The reward certificate this block wrote, for the slot eight back, against what the epoch's certificates usually pay.">
+            Reward certificate
+          </Explain>
+        </span>
+        <div className="sx-cert-figures">
+          <span>
+            <b>{count(certificate.paid)}</b> of {count(certificate.ranks)} votes
+          </span>
+          <span>
+            <b>{percent(certificate.stake_paid, 1)}</b> of stake
+          </span>
+          <span>
+            notarize <b>{count(certificate.notar)}</b>
+          </span>
+          <span className={certificate.notarized ? undefined : "is-out"}>
+            skip <b>{count(certificate.skip)}</b>
+          </span>
+          <span className={certificate.ours_in ? undefined : "is-out"}>
+            our vote <b>{certificate.ours_in ? "in" : "out"}</b>
+          </span>
+          <span className={verdict.warn ? "is-out" : undefined}>{verdict.text}</span>
+        </div>
+        <span className="sx-strip-right">
+          for slot <Copyable text={String(certificate.rewards)} label={count(certificate.rewards)} /> ·{" "}
+          <b>{leader}</b> · {certificate.notarized ? "notarized" : "skipped"}
+        </span>
+      </div>
+      {certificate.left_out.length > 0 && (
+        <div className="misses-out-list">
+          {certificate.left_out.map((validator) => (
+            <span className="misses-out" key={validator.identity}>
+              <b>{validator.name ?? shortKey(validator.identity, 6, 5)}</b>
+              <Copyable text={validator.identity} label={shortKey(validator.identity, 8, 8)} />
+              {validator.ip && <Copyable text={validator.ip} />}
+            </span>
+          ))}
+        </div>
+      )}
+      {certificate.usual !== null && (
+        <div className="sx-cert-note">
+          The epoch's usual certificate pays {count(certificate.usual)} of {count(certificate.ranks)}.
+        </div>
+      )}
     </div>
   );
 }

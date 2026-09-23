@@ -1,7 +1,8 @@
 /** Summary figures over the blocks this validator produced. */
 
 import { ourShare } from "./tips";
-import type { ProducedBlock, TipRates } from "./types";
+import { count } from "./format";
+import type { BlockCertificate, ProducedBlock, TipRates } from "./types";
 
 /** The share of base fees the runtime burns; the rest goes to the leader
  *  with the priority fees. Fixed in `fee_distribution.rs`. */
@@ -139,4 +140,11 @@ export function blockSummary(blocks: ProducedBlock[] | undefined, rates?: TipRat
       durationMillis: quantileOf(duration, 0.95),
     },
   };
+}
+
+/** The certificate strip's verdict: in line, or who it left out. */
+export function certificateVerdict(certificate: BlockCertificate): { text: string; warn: boolean } {
+  const out = certificate.left_out.length;
+  if (out === 0) return { text: "in line with the cluster", warn: false };
+  return { text: `left out ${count(out)} certificates usually pay`, warn: true };
 }

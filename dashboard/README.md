@@ -153,8 +153,8 @@ Topics currently published:
 
 A client can also send a request carrying an `id`, and the reply goes back to
 that `id` alone: `summary.ping`, `summary.displays` for the whole name table,
-`summary.misses` for the epoch's unrewarded votes one a row and, under `written`,
-what this node's own certificates left out per validator,
+`summary.misses` for the epoch's unrewarded votes one a row, `summary.written`
+for what this node's own certificates left out per validator,
 `epoch.query` for a held epoch's schedule, and `slot.range` for a run of slots
 out of the packed history.
 

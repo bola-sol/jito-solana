@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { buildLabel, count, percent, shortKey } from "../format";
-import type { MissList } from "../types";
+import type { WrittenList } from "../types";
 import { useStore } from "../useStore";
 import { writtenFigures, writtenKinds, writtenLine, type WrittenFigure, type WrittenKind } from "../written";
 import { Copyable } from "./Copyable";
+
+/** How often the list is asked for again while the page is open. The
+ *  validator rebuilds it every five seconds. */
+const POLL_MS = 15_000;
 
 const LINE_TITLE =
   "Everyone is every validator paid in at least nine of ten of the epoch's certificates so far.";
@@ -20,10 +24,10 @@ const KIND_TITLE: Record<WrittenKind, string> = {
 
 /** What this node's certificates carried this epoch: one line, and on request
  *  the validators they left out more than the network did. Asked for with the
- *  page, through the miss list's request. */
+ *  page and again every `POLL_MS` while it is open. */
 export function WrittenSection(): ReactElement {
   const store = useStore();
-  const [list, setList] = useState<MissList | null>(null);
+  const [list, setList] = useState<WrittenList | null>(null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<WrittenKind | null>(null);
@@ -31,7 +35,7 @@ export function WrittenSection(): ReactElement {
   // A reply that lands after the page is gone is dropped.
   const live = useRef(true);
   const load = useCallback(() => {
-    store.request<MissList>("summary", "misses", {}).then(
+    store.request<WrittenList>("summary", "written", {}).then(
       (got) => {
         if (!live.current) return;
         setList(got);
@@ -47,8 +51,10 @@ export function WrittenSection(): ReactElement {
   useEffect(() => {
     live.current = true;
     load();
+    const timer = setInterval(load, POLL_MS);
     return () => {
       live.current = false;
+      clearInterval(timer);
     };
   }, [load]);
 
@@ -87,9 +93,6 @@ export function WrittenSection(): ReactElement {
             {open ? "hide the list" : "show the list"}
           </button>
         )}
-        <button type="button" className="misses-close" onClick={load}>
-          ↻ refresh
-        </button>
       </div>
       {open && list !== null && figures.length > 0 && (
         <div className="misses-table">
@@ -102,7 +105,7 @@ export function WrittenSection(): ReactElement {
             <span title="Its share of ours as a bar, its share network-wide as the mark.">ours against the network</span>
           </div>
           {shown.map((figure) => (
-            <WrittenRowView key={figure.row.identity} figure={figure} written={list.written.certificates} />
+            <WrittenRowView key={figure.row.identity} figure={figure} written={list.certificates} />
           ))}
         </div>
       )}
@@ -133,7 +136,7 @@ function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: n
       <span className="written-all">{percent(everywhere, 1)}</span>
       <span className="written-gap" aria-hidden="true">
         <i className={kind === "missing" ? "is-down" : undefined} style={{ width: `${Math.min(100, (ours ?? 0) * 100)}%` }} />
-        <b style={{ left: `${Math.min(100, (everywhere ?? 0) * 100)}%` }} />
+        <b style={{ left: `clamp(0px, calc(${Math.min(100, (everywhere ?? 0) * 100)}% - 1px), calc(100% - 2px))` }} />
       </span>
     </div>
   );

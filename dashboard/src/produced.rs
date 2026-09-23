@@ -77,6 +77,40 @@ pub struct ProducedBlock {
     pub versions: Option<TxVersions>,
     /// Where the banking stage's time went. Absent until its reports are in.
     pub execution: Option<Execution>,
+    /// The reward certificate this block wrote. Absent until the walk has read
+    /// it back, and always under TowerBFT.
+    pub certificate: Option<BlockCertificate>,
+}
+
+/// The reward certificate a block wrote, for the slot eight back.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BlockCertificate {
+    /// The slot it rewards.
+    pub rewards: Slot,
+    /// That slot's leader.
+    pub leader: Option<String>,
+    pub leader_name: Option<String>,
+    /// No fewer notarize votes than skip votes.
+    pub notarized: bool,
+    pub paid: u32,
+    pub ranks: u32,
+    /// Share of the epoch's stake behind the paid ranks.
+    pub stake_paid: f64,
+    pub notar: u32,
+    pub skip: u32,
+    /// Whether it carried this node's own vote.
+    pub ours_in: bool,
+    /// Ranks the epoch's usual certificate pays. Absent early in the epoch.
+    pub usual: Option<u32>,
+    /// The validators certificates usually pay that this one left out.
+    pub left_out: Vec<CertificateValidator>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CertificateValidator {
+    pub identity: String,
+    pub name: Option<String>,
+    pub ip: Option<String>,
 }
 
 /// The most recent produced blocks, oldest first.
@@ -149,6 +183,18 @@ impl ProducedRing {
         }
     }
 
+    /// Records the certificate of a block still without it. True if a block
+    /// changed.
+    pub fn set_certificate(&mut self, slot: Slot, certificate: BlockCertificate) -> bool {
+        match self.block_mut(slot) {
+            Some(block) if block.certificate.is_none() => {
+                block.certificate = Some(certificate);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Records the execution time of a block still without it. True if a
     /// block changed.
     pub fn set_execution(&mut self, slot: Slot, execution: Execution) -> bool {
@@ -185,7 +231,38 @@ mod tests {
             bundles: None,
             versions: None,
             execution: None,
+            certificate: None,
         }
+    }
+
+    fn certificate(rewards: Slot) -> BlockCertificate {
+        BlockCertificate {
+            rewards,
+            leader: None,
+            leader_name: None,
+            notarized: true,
+            paid: 103,
+            ranks: 112,
+            stake_paid: 0.986,
+            notar: 101,
+            skip: 2,
+            ours_in: true,
+            usual: Some(103),
+            left_out: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_a_certificate_is_recorded_once() {
+        let mut ring = ProducedRing::new(4);
+        ring.insert(block(10));
+        assert!(ring.set_certificate(10, certificate(2)));
+        assert!(!ring.set_certificate(10, certificate(2)));
+        assert!(!ring.set_certificate(11, certificate(3)));
+        assert_eq!(
+            ring.blocks()[0].certificate.as_ref().map(|c| c.rewards),
+            Some(2)
+        );
     }
 
     #[test]

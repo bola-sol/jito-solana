@@ -2,7 +2,7 @@
  *  schedule page shows it. */
 
 import { count, percent } from "./format";
-import type { MissList, WrittenRow } from "./types";
+import type { WrittenList, WrittenRow } from "./types";
 
 /** Points by which a validator's share in our certificates has to exceed its
  *  share everywhere to fare worse in ours. */
@@ -34,10 +34,10 @@ function gap(figure: WrittenFigure): number {
 /** The validators worth a row: those faring worse in our certificates than
  *  everywhere, widest gap first, then those missing everywhere, most missing
  *  first. Everyone else is left out of the table. */
-export function writtenFigures(list: MissList): WrittenFigure[] {
-  const written = list.written.certificates;
+export function writtenFigures(list: WrittenList): WrittenFigure[] {
+  const written = list.certificates;
   const figures: WrittenFigure[] = [];
-  for (const row of list.written.rows) {
+  for (const row of list.rows) {
     const ours = written > 0 ? row.left_out_of_ours / written : null;
     const everywhere = list.rewarded > 0 ? row.left_out_everywhere / list.rewarded : null;
     if (everywhere !== null && everywhere >= MISSING_EVERYWHERE) {
@@ -65,8 +65,8 @@ export function writtenKinds(figures: WrittenFigure[]): Record<WrittenKind, numb
 
 /** The section's one line: how many written, and the share that carried
  *  everyone certificates usually pay. */
-export function writtenLine(list: MissList): string {
-  const { certificates, carried_all } = list.written;
+export function writtenLine(list: WrittenList): string {
+  const { certificates, carried_all } = list;
   if (certificates === 0) return "none written yet this epoch";
   return `${count(certificates)} written · ${percent(carried_all / certificates, 1)} carried everyone`;
 }

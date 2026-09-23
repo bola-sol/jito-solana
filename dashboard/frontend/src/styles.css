@@ -5511,6 +5511,11 @@ body {
   background: var(--text-faint);
 }
 
+/* The rows fit the panel at any width the page allows, so nothing scrolls sideways. */
+.written .misses-table {
+  overflow-x: hidden;
+}
+
 .written-row {
   display: grid;
   grid-template-columns: minmax(14em, 1.4fr) 8em 11em 6em 7.5em 13em;
@@ -5580,10 +5585,10 @@ body {
   background: var(--text);
 }
 
-/* A seventh figure column under alpenglow, at 52 px minimums so a turn still
-   fits 1240 without a sideways scroll. */
+/* A seventh figure column under alpenglow, each column held at what its
+   heading needs, so the turn fits 1240 without the headings running together. */
 .schedule-slots.has-certificate .schedule-row {
-  grid-template-columns: 150px repeat(7, minmax(52px, 1fr)) minmax(80px, 1.1fr) minmax(150px, 2fr) minmax(10em, 1.1fr);
+  grid-template-columns: 150px minmax(40px, 0.7fr) minmax(66px, 1fr) minmax(72px, 1fr) minmax(52px, 1fr) minmax(52px, 1fr) minmax(46px, 0.8fr) minmax(56px, 1fr) minmax(80px, 1.1fr) minmax(140px, 2fr) minmax(9em, 1.1fr);
 }
 
 .schedule-cert.is-out {
@@ -5633,4 +5638,56 @@ body {
     grid-area: gap;
     margin: 4px 0 2px;
   }
+}
+
+/* ---- the reward certificate a block wrote, a strip above its foot ---- */
+
+.sx-cert {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sx-cert .sx-strip-right .copyable {
+  display: inline-block;
+  font-family: var(--mono);
+}
+
+.sx-cert .sx-strip-right b {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.sx-cert-figures {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.sx-cert-figures b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.sx-cert-figures .is-out,
+.sx-cert-figures .is-out b {
+  color: var(--warn);
+}
+
+.sx-cert-note {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.sx-cert .misses-out-list {
+  padding: 0;
+}
+
+.sx-cert .misses-out {
+  font-size: 12px;
 }

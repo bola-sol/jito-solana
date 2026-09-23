@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blockSummary, earnedOf, sortBlocks } from "./produced";
-import type { ProducedBlock, TipRates } from "./types";
+import { blockSummary, certificateVerdict, earnedOf, sortBlocks } from "./produced";
+import type { BlockCertificate, ProducedBlock, TipRates } from "./types";
 
 /** A produced block, to be overridden a field at a time. */
 function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
@@ -22,9 +22,45 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     bundles: null,
     versions: null,
     execution: null,
+    certificate: null,
     ...over,
   };
 }
+
+function certificate(over: Partial<BlockCertificate> = {}): BlockCertificate {
+  return {
+    rewards: 1,
+    leader: null,
+    leader_name: null,
+    notarized: true,
+    paid: 103,
+    ranks: 112,
+    stake_paid: 0.986,
+    notar: 101,
+    skip: 2,
+    ours_in: true,
+    usual: 103,
+    left_out: [],
+    ...over,
+  };
+}
+
+describe("certificateVerdict", () => {
+  it("is in line when nobody certificates usually pay was left out", () => {
+    expect(certificateVerdict(certificate())).toEqual({ text: "in line with the cluster", warn: false });
+  });
+
+  it("counts the ones left out, in warn", () => {
+    const left = [
+      { identity: "a", name: null, ip: null },
+      { identity: "b", name: "B", ip: "1.2.3.4" },
+    ];
+    expect(certificateVerdict(certificate({ left_out: left }))).toEqual({
+      text: "left out 2 certificates usually pay",
+      warn: true,
+    });
+  });
+});
 
 const RATES: TipRates = { jito_cut_bps: 600, commission_bps: 1_000 };
 

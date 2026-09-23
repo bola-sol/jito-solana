@@ -278,6 +278,38 @@ export interface ProducedBlock {
   /** Where the banking stage's time went, from its own reports. `null`
    *  until the last report for the slot can have arrived. */
   execution: Execution | null;
+  /** The reward certificate this block wrote. `null` until the walk has
+   *  read it back, and always under TowerBFT. */
+  certificate: BlockCertificate | null;
+}
+
+/** The reward certificate a block wrote, for the slot eight back. */
+export interface BlockCertificate {
+  /** The slot it rewards. */
+  rewards: number;
+  /** That slot's leader. */
+  leader: string | null;
+  leader_name: string | null;
+  /** No fewer notarize votes than skip votes. */
+  notarized: boolean;
+  paid: number;
+  ranks: number;
+  /** Share of the epoch's stake behind the paid ranks. */
+  stake_paid: number;
+  notar: number;
+  skip: number;
+  /** Whether it carried this node's own vote. */
+  ours_in: boolean;
+  /** Ranks the epoch's usual certificate pays. Null early in the epoch. */
+  usual: number | null;
+  /** The validators certificates usually pay that this one left out. */
+  left_out: CertificateValidator[];
+}
+
+export interface CertificateValidator {
+  identity: string;
+  name: string | null;
+  ip: string | null;
 }
 
 export interface TxVersions {
@@ -870,6 +902,8 @@ export interface MissList {
 
 /** What this node's certificates carried, per validator. */
 export interface WrittenList {
+  /** Certificates from any writer that paid anybody, which `left_out_everywhere` is of. */
+  rewarded: number;
   /** Certificates this node wrote that paid anybody. */
   certificates: number;
   /** Of those, the ones that left out nobody certificates usually pay. */

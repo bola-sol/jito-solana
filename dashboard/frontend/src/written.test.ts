@@ -1,22 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { MissList, WrittenRow } from "./types";
+import type { WrittenList, WrittenRow } from "./types";
 import { writtenFigures, writtenKinds, writtenLine } from "./written";
 
 function row(identity: string, ours: number, everywhere: number): WrittenRow {
   return { identity, name: null, client: null, version: null, ip: null, left_out_of_ours: ours, left_out_everywhere: everywhere };
 }
 
-function list(certificates: number, carried_all: number, rows: WrittenRow[], rewarded = 1000): MissList {
-  return {
-    epoch: 1,
-    since_slot: 0,
-    rewarded,
-    ranks: rows.length,
-    writers: [],
-    validators: [],
-    rows: [],
-    written: { certificates, carried_all, rows },
-  };
+function list(certificates: number, carried_all: number, rows: WrittenRow[], rewarded = 1000): WrittenList {
+  return { rewarded, certificates, carried_all, rows };
 }
 
 describe("the written figures", () => {

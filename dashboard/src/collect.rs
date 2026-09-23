@@ -12,7 +12,9 @@ use {
             BundleLanding, MetricsTap, ShredFill, StageTimes, TapCounters, WindowedCounters,
             WorkerSum,
         },
-        produced::{Bundles, Execution, ProducedBlock, ProducedRing},
+        produced::{
+            BlockCertificate, Bundles, CertificateValidator, Execution, ProducedBlock, ProducedRing,
+        },
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         snapshot::{self, Snapshots, Writing, Written},
@@ -234,6 +236,9 @@ pub struct MissList {
 /// it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct WrittenList {
+    /// Certificates from any writer that paid anybody, which `left_out_everywhere`
+    /// is of.
+    pub rewarded: u64,
     /// Certificates this node wrote that paid anybody.
     pub certificates: u64,
     /// Of those, the ones that left no regular out.
@@ -826,6 +831,10 @@ impl Collector {
             self.report_tip_residual();
             self.collect_snapshots();
             self.collect_miss_list(&working_bank, &peers);
+            if self.fill_certificates(&working_bank, &peers) {
+                self.publisher
+                    .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
+            }
         }
 
         // Encoded on a timer rather than per change: live clients follow the
@@ -1519,6 +1528,7 @@ impl Collector {
             bundles: self.metrics_tap.bundles_landed(slot).map(landed),
             versions: None,
             execution: None,
+            certificate: None,
         }
     }
 
@@ -1716,11 +1726,113 @@ impl Collector {
             validators,
             rows,
             written: WrittenList {
+                rewarded: tally.rewarded(),
                 certificates: summary.certificates,
                 carried_all: summary.carried_all,
                 rows: written_rows,
             },
         };
+    }
+
+    /// Adds the reward certificate each of our blocks wrote, once the walk has
+    /// read it back. True if a block changed.
+    fn fill_certificates(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) -> bool {
+        let Some(tally) = &self.certs_tally else {
+            return false;
+        };
+        let pending: Vec<Slot> = self
+            .produced
+            .blocks()
+            .iter()
+            .filter(|block| block.certificate.is_none())
+            .map(|block| block.slot)
+            .collect();
+        if pending.is_empty() {
+            return false;
+        }
+        let heard = |key: &Pubkey| {
+            peers
+                .iter()
+                .find(|(contact, _)| contact.pubkey() == key)
+                .map(|(contact, _)| contact)
+        };
+        let info = self.info_cache.read().unwrap();
+        let regulars = tally.regulars();
+        let mut found = Vec::new();
+        for slot in pending {
+            let Some(rewards) = certs::rewarded_slot(slot) else {
+                continue;
+            };
+            let Some(written) = tally.written_for(rewards) else {
+                continue;
+            };
+            let map = bank.get_rank_map(rewards);
+            let ranks = map.map_or(0, |map| map.len());
+            let stake_of = |rank: usize| {
+                map.and_then(|map| map.get_pubkey_stake_entry(rank))
+                    .map_or(0, |entry| entry.stake.get())
+            };
+            let total = (0..ranks).fold(0u64, |sum, rank| sum.saturating_add(stake_of(rank)));
+            let unpaid = written
+                .unpaid
+                .iter()
+                .filter_map(|rank| usize::try_from(*rank).ok())
+                .fold(0u64, |sum, rank| sum.saturating_add(stake_of(rank)));
+            let stake_paid = if total > 0 {
+                total.saturating_sub(unpaid) as f64 / total as f64
+            } else {
+                0.0
+            };
+            let left_out = written
+                .unpaid
+                .iter()
+                .filter_map(|rank| {
+                    let at = usize::try_from(*rank).ok()?;
+                    if !regulars.get(at).copied().unwrap_or(false) {
+                        return None;
+                    }
+                    let key = map
+                        .and_then(|map| map.get_pubkey_stake_entry(at))
+                        .map(|entry| entry.node_pubkey)?;
+                    Some(CertificateValidator {
+                        identity: key.to_string(),
+                        name: info.get(&key).and_then(|info| info.name.clone()),
+                        ip: heard(&key)
+                            .and_then(|contact| contact.gossip())
+                            .map(|addr| addr.ip().to_string()),
+                    })
+                })
+                .collect();
+            let leader = self
+                .ctx
+                .leader_schedule_cache
+                .slot_leader_at(rewards, Some(bank))
+                .map(|leader| leader.id);
+            found.push((
+                slot,
+                BlockCertificate {
+                    rewards,
+                    leader: leader.map(|key| key.to_string()),
+                    leader_name: leader
+                        .and_then(|key| info.get(&key).and_then(|info| info.name.clone())),
+                    notarized: written.notar >= written.skip,
+                    paid: written.paid,
+                    ranks: u32::try_from(ranks).unwrap_or(u32::MAX),
+                    stake_paid,
+                    notar: written.notar,
+                    skip: written.skip,
+                    ours_in: written.ours_in,
+                    usual: tally.usual_paid(),
+                    left_out,
+                },
+            ));
+        }
+        drop(info);
+        let mut changed = false;
+        for (slot, certificate) in found {
+            changed |= self.produced.set_certificate(slot, certificate);
+        }
+        changed
     }
 
     /// A tally for `epoch` from `since_slot`. An unknown leader schedule is

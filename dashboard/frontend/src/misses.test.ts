@@ -25,7 +25,7 @@ function list(
     since_slot: 6_696_000,
     rewarded: 5_774,
     ranks: 112,
-    written: { certificates: 0, carried_all: 0, rows: [] },
+    written: { rewarded: 5_774, certificates: 0, carried_all: 0, rows: [] },
     writers: writers.map(([name, misses, certificates]) => ({
       identity: `${name}Key111111111111111`,
       name,

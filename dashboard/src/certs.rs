@@ -66,6 +66,9 @@ pub struct Mark {
     /// Each rank's bit in the notar and skip certificates together. Empty
     /// where there was no certificate.
     pub paid: Vec<bool>,
+    /// Ranks set in the notarization certificate, and in the skip certificate.
+    pub notar: u32,
+    pub skip: u32,
 }
 
 /// Slots this validator's vote was paid for in an epoch, against the most any
@@ -167,6 +170,11 @@ pub fn writer_slot(slot: Slot) -> Slot {
     slot.saturating_add(NUM_SLOTS_FOR_REWARD)
 }
 
+/// The slot the certificate written in `writer_slot` rewards.
+pub fn rewarded_slot(writer_slot: Slot) -> Option<Slot> {
+    writer_slot.checked_sub(NUM_SLOTS_FOR_REWARD)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Place {
@@ -193,11 +201,16 @@ struct Miss {
     vote: Option<VoteSent>,
 }
 
-/// A certificate written in one of this node's leader slots, by the ranks it
-/// did not pay.
-#[derive(Debug, Clone)]
-struct Written {
-    unpaid: Vec<u32>,
+/// A certificate written in one of this node's leader slots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    pub paid: u32,
+    pub notar: u32,
+    pub skip: u32,
+    /// Whether it carried this node's own vote.
+    pub ours_in: bool,
+    /// The ranks it did not pay.
+    pub unpaid: Vec<u32>,
 }
 
 /// What this node's certificates carried, and what every rank was left out of.
@@ -235,8 +248,9 @@ pub struct Tally {
     writer_certs: HashMap<Pubkey, u64>,
     /// Votes sent for slots whose certificate has not been read yet.
     pending_votes: BTreeMap<Slot, VoteSent>,
-    /// Certificates written in this node's leader slots, in reading order.
-    ours: Vec<Written>,
+    /// Certificates written in this node's leader slots, by the slot each
+    /// rewards.
+    ours: BTreeMap<Slot, Written>,
 }
 
 impl Tally {
@@ -261,7 +275,7 @@ impl Tally {
             paid_ranks: Vec::new(),
             writer_certs: HashMap::new(),
             pending_votes: BTreeMap::new(),
-            ours: Vec::new(),
+            ours: BTreeMap::new(),
         }
     }
 
@@ -295,7 +309,16 @@ impl Tally {
                 .filter(|(_, paid)| !**paid)
                 .filter_map(|(rank, _)| u32::try_from(rank).ok())
                 .collect();
-            self.ours.push(Written { unpaid });
+            self.ours.insert(
+                mark.slot,
+                Written {
+                    paid: u32::try_from(paid_ranks).unwrap_or(u32::MAX),
+                    notar: mark.notar,
+                    skip: mark.skip,
+                    ours_in: matches!(mark.reward, Reward::Paid),
+                    unpaid,
+                },
+            );
         }
         if self.paid_ranks.len() <= paid_ranks {
             self.paid_ranks.resize(paid_ranks.saturating_add(1), 0);
@@ -389,12 +412,17 @@ impl Tally {
         Some(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
+    /// The certificate this node wrote for `slot`, where it has been read.
+    pub fn written_for(&self, slot: Slot) -> Option<&Written> {
+        self.ours.get(&slot)
+    }
+
     /// What this node's certificates carried, against the regulars as of now.
     pub fn written(&self) -> WrittenSummary {
         let regulars = self.regulars();
         let mut unpaid_by_rank = vec![0u64; self.per_rank.len()];
         let mut carried_all = 0u64;
-        for written in &self.ours {
+        for written in self.ours.values() {
             let mut left_regular_out = false;
             for rank in &written.unpaid {
                 let Ok(at) = usize::try_from(*rank) else {
@@ -449,7 +477,7 @@ impl Tally {
     }
 
     /// The ranks paid in at least `REGULAR_PERCENT` of the certificates.
-    fn regulars(&self) -> Vec<bool> {
+    pub fn regulars(&self) -> Vec<bool> {
         let floor = self.rewarded.saturating_mul(REGULAR_PERCENT);
         self.per_rank
             .iter()
@@ -487,23 +515,26 @@ impl Tally {
             .collect()
     }
 
-    /// A tenth under the median paid-rank count of the epoch's certificates,
-    /// below which one is thin. `None` until `THIN_MIN_CERTIFICATES` are in.
-    fn thin_below(&self) -> Option<u32> {
+    /// The median paid-rank count of the epoch's certificates. `None` until
+    /// `THIN_MIN_CERTIFICATES` are in.
+    pub fn usual_paid(&self) -> Option<u32> {
         if self.rewarded < THIN_MIN_CERTIFICATES {
             return None;
         }
         let half = self.rewarded.checked_div(2)?;
         let mut seen = 0u64;
-        let mut median = None;
         for (ranks, count) in self.paid_ranks.iter().enumerate() {
             seen = seen.saturating_add(u64::from(*count));
             if seen > half {
-                median = Some(ranks);
-                break;
+                return u32::try_from(ranks).ok();
             }
         }
-        let median = u64::try_from(median?).ok()?;
+        None
+    }
+
+    /// A tenth under the usual certificate, below which one is thin.
+    fn thin_below(&self) -> Option<u32> {
+        let median = u64::from(self.usual_paid()?);
         let shortfall = median
             .saturating_mul(THIN_SHORTFALL_PERCENT)
             .checked_div(100)?;
@@ -622,6 +653,8 @@ pub fn walk(
                 reward: Reward::NoCertificate,
                 rank,
                 paid: Vec::new(),
+                notar: 0,
+                skip: 0,
             }),
             Block::Pending => break,
             Block::Opaque => {}
@@ -682,13 +715,27 @@ fn mark_of(
             reward: Reward::NoCertificate,
             rank,
             paid: Vec::new(),
+            notar: 0,
+            skip: 0,
         });
     }
-    let bitmaps = notar
-        .map(|cert| cert.bitmap())
-        .into_iter()
-        .chain(skip.map(|cert| cert.to_bitmap()));
-    let paid = union(bitmaps, len)?;
+    let notar_paid = match notar {
+        Some(cert) => union(std::iter::once(cert.bitmap()), len)?,
+        None => Vec::new(),
+    };
+    let skip_paid = match skip {
+        Some(cert) => union(std::iter::once(cert.to_bitmap()), len)?,
+        None => Vec::new(),
+    };
+    let paid: Vec<bool> = (0..len)
+        .map(|rank| {
+            notar_paid.get(rank).copied().unwrap_or(false)
+                || skip_paid.get(rank).copied().unwrap_or(false)
+        })
+        .collect();
+    let set = |bits: &[bool]| {
+        u32::try_from(bits.iter().filter(|paid| **paid).count()).unwrap_or(u32::MAX)
+    };
     let reward = if paid.get(rank).is_some_and(|flag| *flag) {
         Reward::Paid
     } else {
@@ -699,6 +746,8 @@ fn mark_of(
         reward,
         rank,
         paid,
+        notar: set(&notar_paid),
+        skip: set(&skip_paid),
     })
 }
 
@@ -746,6 +795,8 @@ mod tests {
             reward,
             rank: 0,
             paid: flags(4, paid),
+            notar: u32::try_from(paid.len()).unwrap(),
+            skip: 0,
         }
     }
 
@@ -799,6 +850,8 @@ mod tests {
             reward,
             rank: 0,
             paid: (0..20).map(|rank| rank < paid).collect(),
+            notar: u32::try_from(paid).unwrap(),
+            skip: 0,
         }
     }
 
@@ -822,6 +875,25 @@ mod tests {
         // Everywhere: thirty of the fill, then three of the four above.
         assert_eq!(written.unpaid_everywhere[19], 33);
         assert_eq!(written.unpaid_everywhere[0], 0);
+    }
+
+    #[test]
+    fn test_a_certificate_we_wrote_is_kept_whole_by_the_slot_it_rewards() {
+        // No usual certificate until enough are in.
+        assert_eq!(tally().usual_paid(), None);
+        let mut tally = tally();
+        fill(&mut tally, 100);
+        tally.add(&wide(1_993, Reward::Paid, 17), &[], None);
+        let written = tally.written_for(1_993).expect("ours");
+        assert_eq!(written.paid, 17);
+        assert_eq!(written.notar, 17);
+        assert_eq!(written.skip, 0);
+        assert!(written.ours_in);
+        assert_eq!(written.unpaid, [17, 18, 19]);
+        // Not ours: the writer slot is nobody's leader slot in this tally.
+        assert!(tally.written_for(500).is_none());
+        // The usual certificate is the median, once enough are in.
+        assert_eq!(tally.usual_paid(), Some(20));
     }
 
     #[test]

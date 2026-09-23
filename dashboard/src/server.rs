@@ -644,6 +644,15 @@ fn respond(
             };
             Some(encode_with_id("summary", "misses", id, &list))
         }
+        ("summary", "written") => {
+            // What this node's certificates carried, a row per validator: a
+            // few kilobytes, polled by the schedule page while it is open.
+            let written = match misses.read() {
+                Ok(list) => list.written.clone(),
+                Err(_) => return Some(encode_with_id("summary", "written", id, &())),
+            };
+            Some(encode_with_id("summary", "written", id, &written))
+        }
         ("epoch", "query") => {
             let Ok(params) = serde_json::from_value::<EpochParams>(request.params) else {
                 return Some(encode_with_id(
@@ -1314,6 +1323,21 @@ mod tests {
         )
         .unwrap();
         assert!(reply.contains(r#""id":9"#), "{reply}");
+        assert!(reply.contains(r#""rows":[]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_the_written_list_is_answered_with_its_id() {
+        let reply = respond(
+            br#"{"topic":"summary","key":"written","id":10}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &no_misses(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":10"#), "{reply}");
+        assert!(reply.contains(r#""certificates":0"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
     }
 

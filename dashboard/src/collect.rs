@@ -1644,6 +1644,7 @@ impl Collector {
                     leader: leader.map(|key| key.to_string()),
                     leader_name: leader
                         .and_then(|key| info.get(&key).and_then(|info| info.name.clone())),
+                    // A tie reads as notarized.
                     notarized: written.notar >= written.skip,
                     paid: written.paid,
                     ranks: u32::try_from(ranks).unwrap_or(u32::MAX),

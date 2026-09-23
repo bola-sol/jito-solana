@@ -101,6 +101,7 @@ impl SlotHistory {
 
     pub fn get(&self, slot: Slot) -> Option<&PackedSlot> {
         let (held, row) = self.rows.get(self.index(slot))?;
+        // Unfilled rows hold slot 0, so slot 0 itself is never reported.
         (*held == slot && slot != 0).then_some(row)
     }
 

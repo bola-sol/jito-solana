@@ -232,6 +232,31 @@ pub struct MissList {
     pub written: WrittenList,
 }
 
+/// The gossip table keyed by identity, built once a slow tick for the lists
+/// that look a validator up per rank.
+type Contacts<'a> = HashMap<Pubkey, &'a ContactInfo>;
+
+/// What the lists say of a validator beside its key: its name from the info
+/// cache, and its client, version and address from gossip.
+struct Described {
+    name: Option<String>,
+    client: Option<String>,
+    version: Option<String>,
+    ip: Option<String>,
+}
+
+fn describe(key: &Pubkey, info: &ValidatorInfoCache, heard: &Contacts) -> Described {
+    let contact = heard.get(key);
+    Described {
+        name: info.get(key).and_then(|info| info.name.clone()),
+        client: contact.map(|contact| contact.version().client().to_string()),
+        version: contact.map(|contact| contact.version().to_string()),
+        ip: contact
+            .and_then(|contact| contact.gossip())
+            .map(|addr| addr.ip().to_string()),
+    }
+}
+
 /// The miss list's two replies, serialised when the list is rebuilt rather
 /// than for each viewer that asks.
 pub struct MissReplies {
@@ -863,8 +888,12 @@ impl Collector {
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.report_tip_residual();
             self.collect_snapshots();
-            self.collect_miss_list(&working_bank, &peers);
-            if self.fill_certificates(&working_bank, &peers) {
+            let heard: Contacts = peers
+                .iter()
+                .map(|(contact, _)| (*contact.pubkey(), contact))
+                .collect();
+            self.collect_miss_list(&working_bank, &heard);
+            if self.fill_certificates(&working_bank, &heard) {
                 self.publisher
                     .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
             }
@@ -1661,19 +1690,13 @@ impl Collector {
     /// Rebuilds the list a viewer asks for from the tally: each unpaid slot with
     /// its time, and each writer and left-out validator named from gossip and
     /// the info cache once. Ranks resolve through the epoch's rank map.
-    fn collect_miss_list(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
+    fn collect_miss_list(&self, bank: &Bank, heard: &Contacts) {
         let Some(tally) = &self.certs_tally else {
             return;
         };
         let records = tally.records();
         let epoch_start = bank.epoch_schedule().get_first_slot_in_epoch(tally.epoch());
         let rank_map = bank.get_rank_map(epoch_start);
-        let heard = |key: &Pubkey| {
-            peers
-                .iter()
-                .find(|(contact, _)| contact.pubkey() == key)
-                .map(|(contact, _)| contact)
-        };
         let mut writers: Vec<MissWriter> = Vec::new();
         let mut writer_at: HashMap<Pubkey, u32> = HashMap::new();
         let mut validators: Vec<MissValidator> = Vec::new();
@@ -1695,12 +1718,11 @@ impl Collector {
                                 map.get_pubkey_stake_entry(usize::try_from(*rank).ok()?)
                             })
                             .map(|entry| entry.node_pubkey)?;
+                        let described = describe(&key, &info, heard);
                         validators.push(MissValidator {
                             identity: key.to_string(),
-                            name: info.get(&key).and_then(|info| info.name.clone()),
-                            ip: heard(&key)
-                                .and_then(|contact| contact.gossip())
-                                .map(|addr| addr.ip().to_string()),
+                            name: described.name,
+                            ip: described.ip,
                         });
                         let at = u32::try_from(validators.len().saturating_sub(1)).ok()?;
                         validator_at.insert(*rank, at);
@@ -1709,15 +1731,13 @@ impl Collector {
                     .collect();
                 let writer = record.writer.map(|key| {
                     let at = *writer_at.entry(key).or_insert_with(|| {
-                        let heard = heard(&key);
+                        let described = describe(&key, &info, heard);
                         writers.push(MissWriter {
                             identity: key.to_string(),
-                            name: info.get(&key).and_then(|info| info.name.clone()),
-                            client: heard.map(|contact| contact.version().client().to_string()),
-                            version: heard.map(|contact| contact.version().to_string()),
-                            ip: heard
-                                .and_then(|contact| contact.gossip())
-                                .map(|addr| addr.ip().to_string()),
+                            name: described.name,
+                            client: described.client,
+                            version: described.version,
+                            ip: described.ip,
                             certificates: tally.writer_certificates(&key),
                             misses: 0,
                         });
@@ -1751,15 +1771,13 @@ impl Collector {
                 let key = rank_map
                     .and_then(|map| map.get_pubkey_stake_entry(rank))
                     .map(|entry| entry.node_pubkey)?;
-                let heard = heard(&key);
+                let described = describe(&key, &info, heard);
                 Some(WrittenRow {
                     identity: key.to_string(),
-                    name: info.get(&key).and_then(|info| info.name.clone()),
-                    client: heard.map(|contact| contact.version().client().to_string()),
-                    version: heard.map(|contact| contact.version().to_string()),
-                    ip: heard
-                        .and_then(|contact| contact.gossip())
-                        .map(|addr| addr.ip().to_string()),
+                    name: described.name,
+                    client: described.client,
+                    version: described.version,
+                    ip: described.ip,
                     left_out_of_ours: summary.unpaid_by_rank.get(rank).copied().unwrap_or(0),
                     left_out_everywhere: summary.unpaid_everywhere.get(rank).copied().unwrap_or(0),
                 })
@@ -1787,7 +1805,7 @@ impl Collector {
 
     /// Adds the reward certificate each of our blocks wrote, once the walk has
     /// read it back. True if a block changed.
-    fn fill_certificates(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) -> bool {
+    fn fill_certificates(&mut self, bank: &Bank, heard: &Contacts) -> bool {
         let Some(tally) = &self.certs_tally else {
             return false;
         };
@@ -1801,12 +1819,6 @@ impl Collector {
         if pending.is_empty() {
             return false;
         }
-        let heard = |key: &Pubkey| {
-            peers
-                .iter()
-                .find(|(contact, _)| contact.pubkey() == key)
-                .map(|(contact, _)| contact)
-        };
         let info = self.info_cache.read().unwrap();
         let regulars = tally.regulars();
         let mut found = Vec::new();
@@ -1845,12 +1857,11 @@ impl Collector {
                     let key = map
                         .and_then(|map| map.get_pubkey_stake_entry(at))
                         .map(|entry| entry.node_pubkey)?;
+                    let described = describe(&key, &info, heard);
                     Some(CertificateValidator {
                         identity: key.to_string(),
-                        name: info.get(&key).and_then(|info| info.name.clone()),
-                        ip: heard(&key)
-                            .and_then(|contact| contact.gossip())
-                            .map(|addr| addr.ip().to_string()),
+                        name: described.name,
+                        ip: described.ip,
                     })
                 })
                 .collect();

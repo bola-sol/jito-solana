@@ -73,9 +73,11 @@ the domain in the site block is the name to allow, and nothing else is needed.
   since every node in the cluster holds it, but serving the page publishes it to
   anyone who can reach it.
 - The machine card shows what is not on chain: the host's memory and the
-  validator's share of it, each disk's device name and fill, the network
-  interface's driver and model where XDP is on, thread names, and when a
-  snapshot is being written.
+  validator's share of it, each disk's device name and fill, the absolute paths
+  of the ledger, accounts and snapshot directories (cut short on the card, in
+  full on hover), the network interface's driver and model and the kernel
+  version where XDP is on, the validator's thread names and the cores each is
+  pinned to, and when a snapshot is being written.
 
 ### What it costs the validator
 

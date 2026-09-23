@@ -154,7 +154,6 @@ export function SchedulePage({
     void loadDepth();
     // Deliberately only the flag: this runs on the first keystroke and not on
     // every one after it, and `loadDepth` guards itself besides.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searching]);
 
   const loadOlder = async () => {

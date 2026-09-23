@@ -331,7 +331,8 @@ mod tests {
 
     #[test]
     fn test_the_allowed_cores_are_one_line_of_the_status_file() {
-        let status = "Name:\tsolPohTickProd\nState:\tR (running)\nCpus_allowed:\t8\nCpus_allowed_list:\t3\nMems_allowed_list:\t0\n";
+        let status = "Name:\tsolPohTickProd\nState:\tR \
+                      (running)\nCpus_allowed:\t8\nCpus_allowed_list:\t3\nMems_allowed_list:\t0\n";
         assert_eq!(parse_cpus_allowed(status).as_deref(), Some("3"));
         assert_eq!(parse_cpus_allowed("Name:\tx\n"), None);
     }

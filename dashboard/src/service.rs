@@ -181,7 +181,8 @@ impl DashboardService {
                                 let found = entries.len();
                                 let loaded = info_cache.write().unwrap().merge(entries);
                                 log::info!(
-                                    "dashboard: read validator info before the wait, {found} accounts, {loaded} cached"
+                                    "dashboard: read validator info before the wait, {found} \
+                                     accounts, {loaded} cached"
                                 );
                                 // The header's own name, which otherwise waits for
                                 // the collector.

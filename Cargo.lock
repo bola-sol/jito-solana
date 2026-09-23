@@ -145,6 +145,7 @@ dependencies = [
  "agave-votor-messages",
  "bincode",
  "crossbeam-channel",
+ "flate2",
  "libc",
  "log",
  "serde",

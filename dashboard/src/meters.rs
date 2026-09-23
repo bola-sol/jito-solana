@@ -336,8 +336,8 @@ impl LeaderTotals {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 /// In microseconds: means per slot, and two peaks that are the worst single slot's sums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ReplayWindow {
     pub slots: usize,
     pub transactions: u64,

@@ -5049,13 +5049,15 @@ body {
   text-align: right;
 }
 
+/* Sized on the cells, not the row: the row's em sets the width of the em
+   tracks, which have to match the body's. */
 .schedule-head > span {
   font-family: var(--sans);
+  font-size: 11px;
 }
 
 .schedule-head {
   color: var(--text-dim);
-  font-size: 11px;
   padding-bottom: 5px;
   margin-bottom: 2px;
   border-bottom: 1px solid var(--border);
@@ -5593,10 +5595,11 @@ body {
   background: var(--text);
 }
 
-/* A seventh figure column under alpenglow, each column held at what its
-   heading needs, so the turn fits 1240 without the headings running together. */
+/* A seventh figure column under alpenglow. Each column is held at what its
+   heading needs in DejaVu Sans, the widest of the fallbacks, and the slot and
+   shred columns give up the room, so the turn fits 1240 without scrolling. */
 .schedule-slots.has-certificate .schedule-row {
-  grid-template-columns: 150px minmax(40px, 0.7fr) minmax(66px, 1fr) minmax(72px, 1fr) minmax(52px, 1fr) minmax(52px, 1fr) minmax(46px, 0.8fr) minmax(56px, 1fr) minmax(80px, 1.1fr) minmax(140px, 2fr) minmax(9em, 1.1fr);
+  grid-template-columns: 116px minmax(40px, 0.7fr) minmax(78px, 1fr) minmax(84px, 1fr) minmax(58px, 1fr) minmax(58px, 1fr) minmax(46px, 0.8fr) minmax(58px, 1fr) minmax(56px, 1.1fr) minmax(140px, 2fr) minmax(9em, 1.1fr);
 }
 
 .schedule-cert.is-out {

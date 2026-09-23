@@ -1,6 +1,6 @@
-import { useStore } from "./useStore";
+import { useStoreValue } from "./useStore";
 
 /** Whether the cluster runs alpenglow, for the figures that only exist under one consensus. */
 export function useAlpenglow(): boolean {
-  return useStore().get("summary", "consensus") === "alpenglow";
+  return useStoreValue((store) => store.get("summary", "consensus") === "alpenglow");
 }

@@ -16,3 +16,11 @@ export function useStore(): Store {
   useSyncExternalStore(store.subscribe, store.getRevision, store.getRevision);
   return store;
 }
+
+/** Re-renders the caller only when `select` returns something new, compared
+ *  with `Object.is`, so it should return a primitive. */
+export function useStoreValue<T>(select: (store: Store) => T): T {
+  const store = useStoreInstance();
+  const read = (): T => select(store);
+  return useSyncExternalStore(store.subscribe, read, read);
+}

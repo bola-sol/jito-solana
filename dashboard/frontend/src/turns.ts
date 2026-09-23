@@ -115,10 +115,8 @@ export function schedulerSection(w: Waterfall): PathSection {
   };
 }
 
-/** The four sections of a turn's drawer. Three are differences of the running
- *  totals over the turn's span; the scheduler's is the slots' own counts.
- *  `landed` is the turn's blocks' transactions, set beside the executions,
- *  which count runs rather than landings. */
+/** The four sections of a turn's drawer: three differenced from the running totals, the scheduler's
+ *  from the slots' own counts. `landed` is set beside executions, which count runs. */
 export function turnSections(
   turn: LeaderTurn,
   slots: SlotWaterfall[],

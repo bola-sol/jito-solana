@@ -16,9 +16,7 @@ import {
   solCompact,
 } from "./format";
 
-// Anything going through `toLocaleString` is asserted only where the answer
-// does not depend on the machine's locale. A test that expects "1,234" passes
-// in en-US and fails in de-DE, which would make this suite worse than nothing.
+// `toLocaleString` output is asserted only where it does not depend on the machine's locale.
 
 describe("missing values", () => {
   it("all render as an em dash rather than as zero", () => {
@@ -36,10 +34,8 @@ describe("missing values", () => {
 });
 
 describe("cached formatters", () => {
-  // The formatters are built once rather than per call, which is worth about
-  // twelve microseconds each. Compared against toLocaleString rather than
-  // against literal strings, so this holds in any locale — what is being
-  // pinned is that caching did not change the output.
+  // The cached formatters must match `toLocaleString`, compared rather than written out so it holds
+  // in any locale.
   it("format numbers exactly as toLocaleString does", () => {
     for (const value of [0, 7, 1234, 340_000_000, -42, 1e15]) {
       expect(count(value)).toBe(value.toLocaleString());
@@ -57,9 +53,7 @@ describe("cached formatters", () => {
   });
 
   it("keep one formatter per digit count rather than one for all", () => {
-    // The cache is keyed by digits. Keyed by nothing, whichever precision was
-    // asked for first would be fixed for every later caller — so asking for
-    // four digits after asking for zero has to still give four.
+    // The cache is keyed by digits, so an earlier precision does not stick.
     expect(decimal(1.23456, 0)).toBe("1");
     expect(decimal(1.23456, 4)).toBe(
       (1.23456).toLocaleString(undefined, {
@@ -240,9 +234,7 @@ describe("blockStamp", () => {
   });
 
   it("names the zone it is being read in", () => {
-    // Whatever abbreviation the browser holds: a short form where English has
-    // one, an offset where it does not. Either way the reader is told which
-    // clock this is, which a bare time does not.
+    // The browser's abbreviation or an offset; either way the reader is told which clock this is.
     const stamp = blockStamp(Date.UTC(2026, 7, 22, 9, 29, 57));
     expect(stamp).toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(stamp.split(" ").length).toBeGreaterThan(2);

@@ -87,14 +87,11 @@ const MAX_VERSIONS_REPORTED: usize = 5;
 /// How far ahead to look for this validator's next leader slot.
 const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
-/// Slots of the leader schedule published ahead of the tip: eight turns, of
-/// which the page shows two. On the slow tier because the list shifts by a
-/// couple of slots a second.
+/// Slots of the leader schedule published ahead of the tip: eight turns, of which the page shows
+/// two.
 const UPCOMING_SLOTS: u64 = 32;
 
-/// Produced blocks kept for the block detail panel, matched to the own-slot
-/// retention in the slot ring: about eleven hours for a validator leading four
-/// slots in eight hundred.
+/// Produced blocks kept for the block panel, matched to the slot ring's own-slot retention.
 const PRODUCED_BLOCKS: usize = 500;
 
 /// How often a consume worker reports its timing.
@@ -118,33 +115,27 @@ const SLOT_READOUT_SPAN_MS: u64 = 60_000;
 /// following the cluster rather than replaying towards it.
 const CAUGHT_UP_SLOT_DISTANCE: u64 = 4;
 
-/// Samples the window must hold before the distance is believed. A validator
-/// that has just loaded a snapshot sits at zero distance before replaying
-/// anything.
+/// Samples the window must hold before the distance is believed: a validator just loaded from a
+/// snapshot sits at zero distance before replaying anything.
 const CAUGHT_UP_MIN_SAMPLES: usize = 64;
 
 /// Slots skipped past when the marker is set, so that the interval straddling
 /// the transition — part replay burst, part cluster — is not measured.
 const CAUGHT_UP_MARGIN_SLOTS: u64 = 4;
 
-/// Slots an epoch must have run before its own rate is believed. Below this
-/// the cluster clock's whole-second quantisation is noisier than the sliding
-/// window; above it the epoch's rate is the quieter of the two.
+/// Slots an epoch must have run before its own rate is believed; below this the cluster clock's
+/// whole-second steps are noisier than the sliding window.
 const EPOCH_RATE_MIN_ELAPSED_SLOTS: u64 = 4_000;
 
-/// The countdown follows its estimate once it has moved further than this
-/// fraction of the time left. Proportional because a fixed allowance is four
-/// hundred times looser at the end of an epoch than at the start.
+/// The countdown follows its estimate once they differ by more than this fraction of the time left.
 const EPOCH_END_DRIFT_DIVISOR: u32 = 64;
 
 /// Slots timed in one tick. Bounds the blockstore lookups after a stall, when
 /// the cursor could otherwise be thousands of slots behind.
 const MAX_SLOTS_TIMED_PER_TICK: u64 = 512;
 
-/// Above this rate of slots replayed per second the validator is catching up
-/// rather than following the cluster, so throughput samples are discarded.
-/// Well above any slot time a cluster runs at, and well below replay's pace
-/// when it has a backlog.
+/// Above this many slots replayed a second the validator is catching up, so throughput samples are
+/// discarded.
 pub(crate) const CATCH_UP_SLOTS_PER_SECOND: f64 = 20.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -159,8 +150,7 @@ pub struct StakeSummary {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ValidatorCounts {
-    /// Distinct staked identities this epoch. Unstaked vote accounts are excluded,
-    /// and identities rather than vote accounts are counted so one validator counts
+    /// Distinct staked identities this epoch, so a validator with several vote accounts counts
     /// once.
     pub total: usize,
     /// Staked validators whose last vote is too far behind the chain tip.
@@ -376,8 +366,7 @@ pub struct EpochInfo {
     /// Every leader of this epoch, in the order they first take a turn. Sent once
     /// rather than on every slot.
     pub leaders: Vec<String>,
-    /// One index into `leaders` per run of consecutive slots:
-    /// `leaders[turns[(slot - start_slot) / NUM_CONSECUTIVE_LEADER_SLOTS]]`.
+    /// One index into `leaders` per run of `NUM_CONSECUTIVE_LEADER_SLOTS` slots from `start_slot`.
     /// Empty, never partial, until the schedule is derived.
     pub turns: Vec<u16>,
 
@@ -420,9 +409,8 @@ pub enum Consensus {
     Alpenglow,
 }
 
-/// What voting costs, for the header's balance warnings. Fees leave the
-/// identity with each vote under TowerBFT; the admission ticket leaves the
-/// vote account at each epoch's turn under alpenglow.
+/// What voting costs: fees from the identity per vote under TowerBFT, the admission ticket from the
+/// vote account each epoch under alpenglow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoteCost {
@@ -438,9 +426,8 @@ pub enum VoteCost {
     },
 }
 
-/// This validator's vote credits in the epoch being built on, against the
-/// most any staked validator has earned in it. Under alpenglow the vote
-/// account keeps lamports of reward in the same field.
+/// This validator's vote credits in the epoch, against the most any staked validator has earned.
+/// Under alpenglow the field holds lamports of reward.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VoteCredits {
     pub epoch: Epoch,
@@ -488,9 +475,8 @@ fn admission(bank: &Bank, vote_account: &Pubkey) -> Option<Admission> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipRate {
     pub epoch: Epoch,
-    /// Fraction of this validator's leader slots that produced no block, over the
-    /// part of the epoch the blockstore covers. `None` until the root has passed
-    /// one.
+    /// Share of this validator's leader slots that produced no block, over the part of the epoch
+    /// the blockstore covers. `None` until the root has passed one.
     pub rate: Option<f64>,
 }
 
@@ -544,9 +530,7 @@ pub struct Collector {
     debounces: Debounces,
     slots: SlotRing,
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
-    /// The boot thread's own publisher, handed over rather than replaced: it
-    /// holds what each phase took, and a fresh one here published `running`
-    /// with no phases at all.
+    /// The boot thread's publisher, handed over so the phases it recorded survive.
     startup: Arc<Mutex<StartupPublisher>>,
     /// For what replay spent on each slot, asked by slot as the bank freezes.
     metrics_tap: Arc<MetricsTap>,
@@ -571,16 +555,13 @@ pub struct Collector {
     /// The same slots packed to a schedule row's columns and kept far deeper.
     /// Shared with the server, which answers range queries out of it.
     history: Arc<RwLock<SlotHistory>>,
-    /// This epoch and the one before it, shared with the server. Only the current
-    /// one is published; the previous is kept for pages reading back across the
-    /// boundary.
+    /// This epoch and the one before it, shared with the server; only the current one is published.
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
     /// The epoch, identity and schedule-known flag the epoch message was last
     /// built for; any of them changing rebuilds it.
     epoch_published: Option<(Epoch, Pubkey, bool)>,
-    /// This validator's leader slots for the epoch the root is in, walked by the
-    /// skip rate as the root passes each. Rebuilt with `skip_next_index` when the
-    /// root crosses an epoch, and on an identity change.
+    /// This validator's leader slots in the root's epoch, walked by the skip rate as the root
+    /// passes each. Rebuilt when the root crosses an epoch and on an identity change.
     skip_leader_slots: Vec<Slot>,
     skip_epoch: Option<(Epoch, Pubkey)>,
     skip_next_index: usize,
@@ -588,17 +569,14 @@ pub struct Collector {
     skip_elapsed: usize,
     last_completed_slot: Slot,
     last_completed_at: Instant,
-    /// The slot the certificate walk started at and the last it has read. Marks
-    /// for slots before the start are dropped: a slot the walk never covered
-    /// cannot be told apart from one alpenglow was not yet running for.
+    /// The slot the certificate walk started at and the last it has read. Marks before the start
+    /// are dropped, since an unwalked slot looks like one before alpenglow.
     certs_walk: Option<(Slot, Slot)>,
     /// Shared with the server, rebuilt on the slow tier.
     misses: Arc<RwLock<MissReplies>>,
     /// Paid slots per rank in the epoch the walk is in.
     certs_tally: Option<certs::Tally>,
-    /// The slots each finished snapshot write spanned, from the write the
-    /// tally's epoch began in. Together with the write in progress these
-    /// place the unpaid slots.
+    /// The slots each finished snapshot write spanned since the tally's epoch began.
     snapshot_spans: Vec<certs::Span>,
     /// Highest slot examined for a shred timestamp, whether or not it had one.
     /// Skipped slots never do, so this advances past them independently.
@@ -615,9 +593,8 @@ pub struct Collector {
     /// Whether replay was seen trailing the tip before the marker was set, which
     /// decides whether there is anything to discard.
     replayed_behind: bool,
-    /// Whether a tip ahead of replay has been seen since startup, and whether
-    /// replay has since drawn level with it. The first tip read after a restart
-    /// is stale, so level with that is not caught up.
+    /// Whether a tip ahead of replay has been seen since startup, and whether replay has since
+    /// drawn level with it. The first tip read after a restart is stale.
     trailed_cluster: bool,
     caught_cluster: bool,
     /// The epoch end being counted down to, held so the readout does not chase its
@@ -774,9 +751,8 @@ impl Collector {
         );
         self.publisher
             .publish(TOPIC_SUMMARY, "cluster", &self.ctx.cluster_name());
-        // The rates the page derives its tip figures with. Sent rather than applied so
-        // a corrected rate repairs the whole history. Absent where no tip program is
-        // configured.
+        // The rates the page derives tip figures with, sent rather than applied so a corrected rate
+        // repairs the whole history.
         if let Some(meter) = &self.tips {
             log::info!(
                 "dashboard: reading jito tips from {} accounts, {:?}",
@@ -905,9 +881,8 @@ impl Collector {
         }
     }
 
-    /// The client this node gossips, published apart from the version, which
-    /// does not carry it. Read from gossip rather than the build: Jito's
-    /// validator gossips `AgaveBam` while it is on BAM and `JitoLabs` otherwise.
+    /// The client this node gossips, which the version does not carry. From gossip rather than the
+    /// build: jito's validator gossips `AgaveBam` while on BAM and `JitoLabs` otherwise.
     fn collect_client(&mut self) {
         let client = self
             .ctx
@@ -921,9 +896,8 @@ impl Collector {
             .publish(&self.publisher, TOPIC_SUMMARY, "client", client);
     }
 
-    /// Logs what the last sweep says the tip readings missed, once per change. The
-    /// only check the measurement gets; logged rather than published because it is
-    /// about our arithmetic, not the cluster.
+    /// Logs what the last sweep says the tip readings missed, once per change: a check on our
+    /// arithmetic rather than a figure for the page.
     fn report_tip_residual(&mut self) {
         let residual = self.tips.as_ref().and_then(TipMeter::residual);
         if residual == self.tips_residual {
@@ -1018,9 +992,8 @@ impl Collector {
         self.observe_slot_duration(root_bank, completed);
     }
 
-    /// Publishes both slot durations: what the cluster is configured for, which the
-    /// strip's bars are drawn against, and what it is doing, which is the strip's
-    /// readout.
+    /// Publishes both slot durations: the configured one the strip's bars are drawn against, and
+    /// the measured one it reads out.
     fn observe_slot_duration(&mut self, root_bank: &Bank, completed: Slot) {
         let now = Instant::now();
         if completed > self.last_completed_slot {
@@ -1125,9 +1098,8 @@ impl Collector {
         let from = completed.saturating_add(CAUGHT_UP_MARGIN_SLOTS);
         self.caught_up_at = Some(from);
         if self.replayed_behind {
-            // Everything held was measured while trailing the tip, so it goes and the
-            // readout is blank until the window refills. A validator that started level
-            // keeps its samples.
+            // Everything held was measured while trailing the tip, so it goes and the readout is
+            // blank until the window refills.
             self.slot_time_window.retain(|(slot, _)| *slot >= from);
         }
         log::info!("dashboard: caught up with the cluster, timing slots from {from}");
@@ -1195,9 +1167,8 @@ impl Collector {
         );
     }
 
-    /// Groups our slots into turns as their leaders resolve, and reads the
-    /// tap's totals once the cluster has passed a turn: its share of the TPU
-    /// path is the difference from the previous reading.
+    /// Groups our slots into turns as their leaders resolve, and once the cluster has passed a turn
+    /// credits it with the difference in the tap's totals since the previous reading.
     fn collect_turns(&mut self, completed: Slot) {
         let from = self
             .turns_scanned_to
@@ -1281,9 +1252,8 @@ impl Collector {
         leaders
     }
 
-    /// Publishes stake, client version and address for the leaders on screen, and
-    /// no more: a table of every node would be the largest message the dashboard
-    /// sends. Sorted by identity so the debounce has a stable value.
+    /// Publishes stake, client version and address for the leaders on screen only, sorted by
+    /// identity so the debounce has a stable value.
     fn collect_peer_table(
         &mut self,
         bank: &Bank,
@@ -1431,9 +1401,8 @@ impl Collector {
             } else {
                 None
             };
-            // Replay reports a point for a bank this validator built too, at nought:
-            // it finds the block already executed and has nothing to do. Left
-            // absent rather than shown as replayed in no time.
+            // Replay reports nought for a bank this validator built, finding it already executed;
+            // left absent rather than shown as replayed in no time.
             let mine = self.slots.get(slot).is_some_and(|entry| entry.mine);
             let replayed = (fresh && !mine)
                 .then(|| self.metrics_tap.replayed(slot))
@@ -1580,9 +1549,7 @@ impl Collector {
         changed
     }
 
-    /// Adds what only our own blocks report: the blockhash and start time, which
-    /// only the block panel reads and would be forty-four characters on every slot
-    /// otherwise.
+    /// Adds what only the block panel reads for our own blocks: the blockhash and start time.
     fn capture_block(&self, slot: Slot, bank: &Bank, detail: &BlockDetail) -> ProducedBlock {
         ProducedBlock {
             slot,
@@ -1606,9 +1573,8 @@ impl Collector {
         }
     }
 
-    /// Reads the block footers since the last tick for what they say about this
-    /// node's vote, marks the slots they speak of, and tallies the epoch's paid
-    /// slots per rank. Alpenglow only: nothing else writes footers.
+    /// Reads the block footers since the last tick, marks the slots their certificates speak of,
+    /// and tallies the epoch's paid slots per rank. Alpenglow only.
     fn collect_vote_certs(&mut self, root_bank: &Bank) {
         if !root_bank.is_alpenglow() || self.last_completed_slot == 0 {
             return;
@@ -1683,9 +1649,8 @@ impl Collector {
         }
     }
 
-    /// Rebuilds the list a viewer asks for from the tally: each unpaid slot with
-    /// its time, and each writer and left-out validator named from gossip and
-    /// the info cache once. Ranks resolve through the epoch's rank map.
+    /// Rebuilds the list a viewer asks for from the tally, naming each writer and left-out
+    /// validator once. Ranks resolve through the epoch's rank map.
     fn collect_miss_list(&self, bank: &Bank, heard: &Contacts) {
         let Some(tally) = &self.certs_tally else {
             return;
@@ -1941,9 +1906,8 @@ impl Collector {
         )
     }
 
-    /// Sends one changed slot to live clients and keeps it in the packed history.
-    /// Here rather than at the four places that change a slot, since no single
-    /// moment finishes an entry.
+    /// Sends one changed slot to live clients and keeps it in the packed history. Here because no
+    /// single moment finishes an entry.
     fn publish_slot(&mut self, entry: &SlotEntry) {
         self.history.write().unwrap().record(entry);
         self.publisher
@@ -2151,9 +2115,8 @@ impl Collector {
                 account_cost_limit,
             };
 
-            // The epoch before this one, built alongside and kept rather than sent. A page
-            // reading back through the history crosses into it about a quarter of the
-            // time, and it is half a megabyte, so it is asked for rather than pushed.
+            // The previous epoch, kept for the server rather than sent: half a megabyte, wanted
+            // only by a page reading back across the boundary.
             let previous = epoch
                 .checked_sub(1)
                 .map(|before| self.epoch_record(bank, before));
@@ -2173,9 +2136,8 @@ impl Collector {
         self.collect_epoch_countdown(bank, epoch, start_slot, end_slot);
     }
 
-    /// Publishes how much of the epoch is left as a duration, which needs no
-    /// agreement about the clock between this validator and the viewer. Rounded to
-    /// the second so the debounce has something to suppress.
+    /// Publishes the epoch's time left as a duration, which needs no agreement between the two
+    /// clocks. Rounded to the second so the debounce has something to suppress.
     fn collect_epoch_countdown(
         &mut self,
         bank: &Bank,
@@ -2231,9 +2193,8 @@ impl Collector {
         )
     }
 
-    /// Everything the page needs to name the leaders of an epoch that is not the
-    /// current one. `my_leader_slots` is left empty; nothing asks about a past
-    /// epoch's. `None` where the schedule is no longer cached.
+    /// What the page needs to name the leaders of a past epoch, with `my_leader_slots` left empty.
+    /// `None` where the schedule is no longer cached.
     fn epoch_record(&self, bank: &Bank, epoch: Epoch) -> Option<EpochInfo> {
         let schedule = bank.epoch_schedule();
         let start_slot = schedule.get_first_slot_in_epoch(epoch);
@@ -2330,8 +2291,6 @@ impl Collector {
     // ---- peers ----------------------------------------------------------
 
     /// Counts the cluster: who holds stake, who is behind, and what they run.
-    /// Accumulated straight into the counters rather than building a record per
-    /// validator first.
     fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
@@ -2427,9 +2386,8 @@ impl Collector {
 
     // ---- health, skip rate ----------------------------------------------
 
-    /// Stamps, once, the moment replay draws level with a cluster tip it was
-    /// seen trailing: caught up as an operator means it. On the fast path, since
-    /// the health figures only run while someone is watching.
+    /// Stamps, once, the moment replay draws level with a cluster tip it was seen trailing. On the
+    /// fast path, since the health figures only run with a viewer.
     fn mark_caught_cluster(&mut self, cluster_tip: Option<Slot>) {
         if self.caught_cluster {
             return;
@@ -2480,9 +2438,8 @@ impl Collector {
             .publish(&self.publisher, TOPIC_SUMMARY, "replay_rate", rate);
     }
 
-    /// Skip rate across this validator's leader slots for the epoch, from the
-    /// blockstore rather than the slot ring, on the same basis as `solana
-    /// block-production`. Each leader slot is checked once, as the root passes it.
+    /// Skip rate across this validator's leader slots for the epoch, from the blockstore as `solana
+    /// block-production` reads it. Each slot is checked once, as the root passes it.
     fn collect_skip_rate(&mut self, root_bank: &Bank) {
         // The root's epoch, not the working bank's: they differ for half a minute
         // after a rollover.
@@ -2503,9 +2460,8 @@ impl Collector {
             self.skip_elapsed = 0;
         }
 
-        // Only slots the root has passed have a settled outcome, and only slots the
-        // blockstore covers say anything about production. After a restart from a
-        // snapshot the ledger begins partway through the epoch.
+        // Only slots the root has passed are settled, and only those the blockstore covers count:
+        // after a restart from a snapshot the ledger begins partway through the epoch.
         let root = root_bank.slot();
         let floor = self.ctx.blockstore.lowest_slot();
         while let Some(slot) = self.skip_leader_slots.get(self.skip_next_index).copied() {
@@ -2579,9 +2535,8 @@ fn epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch: Epoc
         .map_or(0, |item| item.credits().saturating_sub(item.prev_credits()))
 }
 
-/// How settled a frozen slot is. Tested most-settled first, because the
-/// thresholds cross during startup when the commitment cache lags the root
-/// bank.
+/// How settled a frozen slot is, tested most settled first because the thresholds cross while the
+/// commitment cache lags the root at startup.
 fn level_for(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLevel {
     if slot <= finalized {
         SlotLevel::Finalized
@@ -2594,9 +2549,8 @@ fn level_for(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLe
     }
 }
 
-/// Who holds stake and who is behind, keyed by identity: a validator running
-/// several staked vote accounts is one validator. Counted per vote account,
-/// active validators went negative.
+/// Who holds stake and who is behind, keyed by identity: several staked vote accounts are one
+/// validator.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct StakeTally {
     /// Stake per identity, summed across that identity's vote accounts.
@@ -2634,9 +2588,8 @@ fn tally_stake(
     tally
 }
 
-/// A vote further behind than this is reported as delinquent on the status
-/// card. Looser than the cluster-wide threshold, since a brief lag on our own
-/// node is normal.
+/// A vote further behind than this is reported as delinquent on the status card; looser than the
+/// cluster's threshold, since a brief lag on our own node is normal.
 const VOTE_BEHIND_LIMIT: u64 = 150;
 
 /// How long replay may go without completing a slot before it reads as stalled.
@@ -2664,9 +2617,8 @@ fn health_of(
         ReplayHealth::Running
     };
 
-    // Checked first: a node that is not the voter has no votes of its own, and
-    // every rule below would read the other machine's health. Not a fault; an
-    // operator who has just failed over wants to see that it took.
+    // Checked first: a node that is not the voter has no votes of its own, and the rules below
+    // would read the other machine's health.
     let vote = if !voting {
         VoteHealth::NotVoting
     } else {
@@ -2755,9 +2707,8 @@ fn windowed_mean_nanos(window: &VecDeque<(Slot, u64)>, span_ms: u64) -> Option<u
     Some(nanos as u64)
 }
 
-/// Reads a frozen bank's own figures for one block. `transactions` and
-/// `non_vote` are already differenced by the caller; the error and entry
-/// counters are reset per bank, so differencing them would be wrong.
+/// Reads a frozen bank's own figures for one block. The error and entry counters are per bank, so
+/// only `transactions` and `non_vote` come differenced from the caller.
 fn block_detail(
     bank: &Bank,
     transactions: u64,
@@ -2827,9 +2778,8 @@ fn arrival(fill: ShredFill) -> ShredArrival {
     }
 }
 
-/// The window is measured on this node's own clock. The cluster clock is a
-/// consensus estimate clamped near the nominal slot, so on a cluster running
-/// far from nominal it reads the clamp rather than the rate.
+/// The window is measured on this node's clock: the cluster clock is clamped near the nominal slot,
+/// so off nominal it reads the clamp rather than the rate.
 fn best_slot_nanos(window: Option<u64>, clock: Option<u64>, configured: u64) -> u64 {
     window.or(clock).unwrap_or(configured)
 }
@@ -3139,9 +3089,8 @@ mod tests {
 
     #[test]
     fn test_swapped_identity_rebuilds_the_epoch() {
-        // A validator that boots on a dummy identity and swaps had the dummy's leader
-        // slots, none, latched for the epoch while the countdown beside it kept
-        // working.
+        // A validator that boots on a dummy identity and swaps had the dummy's empty leader slots
+        // latched for the epoch.
         let harness = fixture();
         let mut collector = harness.collector();
         collector.tick();
@@ -3859,9 +3808,8 @@ mod tests {
 
     #[test]
     fn test_the_collector_keeps_the_phases_the_boot_thread_timed() {
-        // Each side had a publisher of its own, and the collector's, starting
-        // empty, published `running` with no phases at all. The page then read
-        // startup as nought and put the whole boot into catching up.
+        // The collector used to publish `running` from a fresh publisher of its own, with no
+        // phases.
         let harness = fixture();
         let shared = Arc::new(Mutex::new(StartupPublisher::default()));
         shared.lock().unwrap().publish(
@@ -3890,9 +3838,8 @@ mod tests {
 
     #[test]
     fn test_stale_tip_is_not_caught_up() {
-        // The blockstore keeps optimistic slots from before a restart, so the
-        // first tip read is below what replay started from. That stamped catch-up
-        // at nought seconds on a node still twenty-five slots behind.
+        // The blockstore keeps optimistic slots from before a restart, so the first tip read is
+        // below where replay started; that stamped catch-up at nought on a node still behind.
         let harness = fixture();
         harness.advance_to(64);
         let mut collector = harness.collector();

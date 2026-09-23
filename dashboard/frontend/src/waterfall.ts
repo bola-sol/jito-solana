@@ -52,9 +52,8 @@ export function waterfallRows(w: Waterfall): WaterfallRow[] {
   const batches = w.source === "bam";
   const total = batches ? w.buffered : w.received;
 
-  // Everything is drawn against what arrived, so the bars are comparable down
-  // the whole card rather than each stage being renormalised against the one
-  // above it. Guarded because the card is drawn from the first sample.
+  // Drawn against what arrived so the bars compare down the card; guarded because it draws from the
+  // first sample.
   const row = (
     key: string,
     label: string,
@@ -256,9 +255,7 @@ function rowsOf(
 
 /** What signature verification and deduplication did with it. */
 export function verifyRows(v: VerifyStage): WaterfallRow[] {
-  // No counter exists for a failed signature. Sigverify discards at one step
-  // and returns, so a packet is deduplicated, or dropped below the floor, or
-  // verified, or bad — never two — and what is left over is exactly the bad.
+  // Sigverify discards at one step, so what is left after the other three is exactly the bad.
   const bad = Math.max(0, v.received - v.duplicate - v.below_floor - v.verified);
   return rowsOf(v.received, [
     [

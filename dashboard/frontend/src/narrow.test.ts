@@ -35,9 +35,7 @@ describe("isNarrow", () => {
   });
 
   it("answers wide where matchMedia does not exist", () => {
-    // Some embedded webviews have no matchMedia at all. The wide header is the
-    // one that works without the panel, so an absent query must not read as a
-    // phone and hide six figures behind a control nothing can open.
+    // Some embedded webviews have no matchMedia; they get the wide header, which needs no panel.
     vi.stubGlobal("window", {});
     expect(isNarrow()).toBe(false);
   });

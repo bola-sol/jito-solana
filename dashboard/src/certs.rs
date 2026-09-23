@@ -121,9 +121,8 @@ pub struct LostLeader {
     pub count: u64,
 }
 
-/// Votor's timeline for a slot, in microseconds from when it began tracking
-/// the slot. The first shred is only reported for the first slot of a leader
-/// window; the parent becoming ready is the anchor for the rest.
+/// Votor's timeline for a slot, in microseconds from when it began tracking it. The first shred is
+/// reported only for a leader window's first slot; the rest anchor on the parent becoming ready.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct VoteSent {
     pub first_shred_us: Option<u64>,
@@ -373,9 +372,8 @@ impl Tally {
         });
     }
 
-    /// Records when this node voted for `slot`. Kept for a slot whose
-    /// certificate has not been read yet, since votor reports later than the
-    /// walk on some slots and earlier on others.
+    /// Records when this node voted for `slot`, kept until its certificate is read: votor reports
+    /// before the walk on some slots and after it on others.
     pub fn note_vote(&mut self, slot: Slot, vote: VoteSent) {
         if let Some(miss) = self
             .by_slot
@@ -615,9 +613,8 @@ enum Block {
     Opaque,
 }
 
-/// Reads the footers of `from..=to` for the reward certificates they carry,
-/// returning a mark per certificate and the last slot read. Stops at the
-/// first slot still filling.
+/// Reads the footers of `from..=to` for their reward certificates, returning a mark per
+/// certificate and the last slot read. Stops at the first slot still filling.
 pub fn walk(
     blockstore: &Blockstore,
     bank: &Bank,
@@ -699,9 +696,8 @@ fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
         .map_or(Block::Opaque, |footer| Block::Footer(Box::new(footer)))
 }
 
-/// What a footer's reward certificates say about `rank`, with every rank's
-/// bit. Neither certificate means nobody was paid. `None` where a bitmap
-/// could not be read.
+/// What a footer's reward certificates say about `rank`, with every rank's bit; neither
+/// certificate means nobody was paid. `None` where a bitmap could not be read.
 fn mark_of(
     notar: Option<&NotarRewardCertificate>,
     skip: Option<&SkipRewardCertificate>,
@@ -751,9 +747,8 @@ fn mark_of(
     })
 }
 
-/// The ranks set in any of the signer bitmaps, one flag per rank. `None`
-/// where a bitmap does not decode, or uses the two-vector form no certificate
-/// here should carry.
+/// The ranks set in any of the signer bitmaps, one flag per rank. `None` where a bitmap does not
+/// decode or uses the two-vector form.
 fn union<'a>(bitmaps: impl Iterator<Item = &'a [u8]>, len: usize) -> Option<Vec<bool>> {
     let mut paid = vec![false; len];
     for bitmap in bitmaps {

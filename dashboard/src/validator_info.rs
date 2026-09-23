@@ -91,9 +91,8 @@ impl ValidatorInfoCache {
     }
 }
 
-/// Validator info written in `bank`'s own slot, which works on every
-/// validator, indexed or not. Returns rather than merges so a caller sweeping
-/// several banks takes the cache lock once, and only if anything turned up.
+/// Validator info written in `bank`'s own slot, which needs no index. Returned rather than merged
+/// so a caller sweeping several banks locks the cache once.
 pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     bank.get_program_accounts_modified_since_parent(&solana_sdk_ids::config::id())
         .into_iter()
@@ -106,9 +105,8 @@ pub fn scan_slot(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
 pub fn scan_all(bank: &Bank) -> Vec<(Pubkey, ValidatorInfo)> {
     let config_id = solana_sdk_ids::config::id();
 
-    // Refused when the config program is excluded from the index, because the
-    // indexed call falls back to reading every account on the validator, which
-    // takes hours and cannot be interrupted.
+    // Without the config program in the index, the indexed call reads every account on the
+    // validator, which takes hours and cannot be interrupted.
     if !bank.account_indexes_include_key(&config_id) {
         log::info!(
             "dashboard: the config program is excluded from the account index, so validator names \
@@ -235,9 +233,7 @@ mod tests {
 
     #[test]
     fn test_the_full_scan_finds_info_from_an_earlier_slot() {
-        // The one-shot startup read that populates the cache. The fixture's bank
-        // carries the config program in its index, without which this finds nothing
-        // by design.
+        // The startup read; the fixture's bank carries the config program in its index.
         let harness = fixture();
         let identity = Pubkey::new_unique();
         harness.advance_with(

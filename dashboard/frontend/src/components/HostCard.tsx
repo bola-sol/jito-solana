@@ -153,9 +153,7 @@ export function HostCard(): ReactElement | null {
           </div>
         </div>
 
-        {/* Absent where the machine has no swap at all. Nothing to report and
-            nothing to warn about, and a permanent nought is a row that teaches
-            people to skip that corner of the card. */}
+        {/* Absent where the machine has no swap, rather than a permanent nought. */}
         {host.swap && (
           <div className="host-figure">
             <div className="host-label">
@@ -231,9 +229,7 @@ function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
   const tone = fullnessTone(share);
   return (
     <div className="host-capacity">
-      {/* The name identifies the row and never truncates; the path is context
-          and does, since a real one runs longer than any column this card can
-          spare. Carried as a title so it is still recoverable. */}
+      {/* The name never truncates; the path does, and is carried whole as a title. */}
       <span className="host-mount" title={filesystem.path}>
         <b>{filesystem.name}</b>
         <s>{filesystem.path}</s>

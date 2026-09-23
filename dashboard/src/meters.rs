@@ -124,9 +124,8 @@ pub struct AccountsCache {
     /// above into rates without assuming it is full.
     pub window_seconds: f64,
 
-    /// How much storage exists, how much is live, and how many files. `None` until
-    /// the accounts database has reported once, on a clean cycle rather than a
-    /// timer.
+    /// How much storage exists, how much is live, and how many files. `None` until the accounts
+    /// database has reported, which it does on a clean cycle.
     pub disk: Option<AccountsDisk>,
 }
 
@@ -175,9 +174,8 @@ pub struct ProgramCache {
     pub entry_limit: u64,
 }
 
-/// A window of `(hits, misses, evictions)` as `(asked, rate, evicted)`, or
-/// `None` while nothing has been asked: a hit rate of nought reads as a cache
-/// that is failing.
+/// A window of `(hits, misses, evictions)` as `(asked, rate, evicted)`, or `None` while nothing has
+/// been asked, so an idle cache does not read as failing.
 fn cache_rate(window: &VecDeque<(u64, u64, u64)>) -> Option<(u64, f64, u64)> {
     let mut hits = 0u64;
     let mut misses = 0u64;
@@ -215,9 +213,8 @@ pub struct Network {
     pub sent_per_second: u64,
 }
 
-/// The host the validator runs on. Load, processor time and memory are what
-/// the process has to work with, `filesystems` what will run out of room,
-/// `devices` what will run out of throughput.
+/// The host the validator runs on: what the process has to work with, what will run out of room,
+/// and what will run out of throughput.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Host {
     pub cores: usize,
@@ -317,9 +314,8 @@ pub struct IngestPath {
     /// Bytes waiting unread at the instant of the sample.
     pub queued_bytes: u64,
 
-    /// Packets the port handed over across the same window. `None` for a port
-    /// with no receiver reporting one; `Some(0)` where the validator logs below
-    /// info and the points never fire.
+    /// Packets the port handed over across the same window. `None` for a port with no receiver
+    /// reporting one; `Some(0)` where the validator logs below info.
     pub received_recent: Option<u64>,
     pub received_total: Option<u64>,
 
@@ -338,9 +334,8 @@ pub struct QuicPort {
     pub counts: QuicTotals,
     #[serde(flatten)]
     pub levels: QuicLevels,
-    /// Datagrams the kernel discarded on this port over the same span as the counts
-    /// beside them. Whole datagrams where everything else is connections or
-    /// transactions, so drawn without a bar and never added.
+    /// Datagrams the kernel discarded on this port over the same span. Whole datagrams, unlike the
+    /// counts beside them, so never added to them.
     pub kernel_drops: Option<u64>,
 }
 
@@ -369,9 +364,8 @@ pub struct WaterfallWindow {
     pub source: SchedulerSource,
 }
 
-/// What the two per-epoch sections of the TPU path card cover, in slots. Two
-/// figures because a restart part way through an epoch leaves totals honest
-/// about a shorter span than the heading.
+/// What the two per-epoch sections of the TPU path card cover, in slots; a restart partway through
+/// an epoch shortens it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct EpochSpan {
     pub epoch: Epoch,
@@ -392,9 +386,8 @@ struct EpochPosition {
     slots_in_epoch: u64,
 }
 
-/// Verify, Executed and the bundles, summed from the start of the epoch. One
-/// structure because they share an epoch and starting slot; the bundles are
-/// printed on Executed's line and must cover the same span.
+/// Verify, Executed and the bundles, summed from the start of the epoch, which they share with
+/// their starting slot.
 #[derive(Debug, Clone, Copy, Default)]
 struct LeaderTotals {
     /// The epoch these cover. `None` until the first sample lands.
@@ -428,9 +421,8 @@ impl LeaderTotals {
         self.bundles = self.bundles.plus(&bundles);
     }
 
-    /// What the totals cover as of the last position added at, inclusive at both
-    /// ends. `from_slot` is clamped to the epoch's first slot, since a bank read
-    /// can land before the one that turned the epoch.
+    /// What the totals cover as of the last position added, inclusive. `from_slot` is clamped to
+    /// the epoch's first slot, since a bank read can land before the one that turned it.
     fn span(&self, at: EpochPosition) -> EpochSpan {
         let from_slot = self.from_slot.max(at.start_slot);
         EpochSpan {
@@ -451,9 +443,8 @@ impl LeaderTotals {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-/// What replay did with the last few hundred slots, in microseconds. Every
-/// figure but the two peaks is a mean per slot; the peaks are the worst single
-/// slot's sums, not the maximum of each field, which land on different slots.
+/// What replay did with the last few hundred slots, in microseconds: means per slot, and two peaks
+/// that are the worst single slot's sums.
 pub struct ReplayWindow {
     /// Slots behind the figures, so the panel can name what it is showing
     /// rather than claim a window it has not yet filled.
@@ -487,9 +478,7 @@ pub struct ReplayWindow {
     pub cpu_peak: u64,
 }
 
-/// Averages a window of replayed slots and finds its worst. `None` until a
-/// slot has been replayed, so the panel stays absent rather than showing
-/// noughts.
+/// Averages a window of replayed slots and finds its worst. `None` until a slot has been replayed.
 fn replay_window(slots: &[ReplaySlotTimes]) -> Option<ReplayWindow> {
     let count = u64::try_from(slots.len()).ok().filter(|n| *n > 0)?;
     // Checked: the workspace denies bare arithmetic and cannot see the guard
@@ -587,9 +576,8 @@ struct HostPath {
     path: PathBuf,
 }
 
-/// The paths worth reporting, one row per filesystem: several accounts
-/// directories on one mount are one lot of free space, and reported per path
-/// would read as four disks filling.
+/// The paths worth reporting, one row per filesystem, since several accounts directories on one
+/// mount share its free space.
 fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
     let mut paths = Vec::new();
     let mut seen = HashSet::new();
@@ -795,9 +783,8 @@ impl Meters {
             .publish(TOPIC_SUMMARY, "uptime_nanos", &uptime);
     }
 
-    /// The readings from the metrics tap, each the difference against the last.
-    /// The first reading sets the baseline: from zero it would report everything
-    /// since startup as one second's work.
+    /// The readings from the metrics tap, each the difference against the last. The first reading
+    /// only sets the baseline.
     fn collect_from_metrics(&mut self) {
         let current = self.metrics_tap.counters();
         let Some(previous) = self.last_tap.replace(current) else {
@@ -813,9 +800,8 @@ impl Meters {
     }
 
     fn collect_waterfall(&mut self, previous: &TapCounters, current: &TapCounters) {
-        // Whether the advertised TPU port is bound here: a port missing from the
-        // kernel's table is one this host is not listening on. Only answerable once
-        // that table has been read, and while it can be.
+        // Whether the advertised TPU port is bound here, answerable only once the kernel's table
+        // has been read.
         let tpu_offhost = self.sockets.sampled
             && !self.sockets.unavailable
             && !self.sockets.kernel_drops.contains_key("tpu");
@@ -1181,9 +1167,8 @@ impl ThreadMeter {
     }
 }
 
-/// Packets lost in the kernel before the validator could read them, per
-/// advertised port. These never reached userspace, and are the usual way shreds
-/// go missing.
+/// Packets the kernel dropped before the validator read them, per advertised port: the usual way
+/// shreds go missing.
 struct SocketMeter {
     /// Trailing history of per-port drop totals, so a startup burst ages out.
     drops_window: PortWindow,
@@ -1193,25 +1178,21 @@ struct SocketMeter {
     /// What that window last worked out, per port name, for the TPU meter to
     /// pick up.
     kernel_drops: HashMap<&'static str, u64>,
-    /// Per-port drops when the validator finished starting. Most drops happen
-    /// during startup, and carrying that burst for the life of the process said
-    /// nothing about now.
+    /// Per-port drops when the validator finished starting, so the startup burst is not carried for
+    /// the life of the process.
     drops_baseline: Option<HashMap<u16, u64>>,
-    /// The same window and baseline for what each port delivered, the other term
-    /// in the share lost. Kept apart because only three of the seven ports have a
-    /// count.
+    /// The same window and baseline for what each port delivered, which only three of the seven
+    /// ports count.
     received_window: PortWindow,
     received_baseline: Option<HashMap<u16, u64>>,
-    /// Last counters seen per reported port. `/proc/net/udp` is not read
-    /// atomically, so a bound socket can drop out of one snapshot; taking the
-    /// snapshot at its word made rows vanish for a tick.
+    /// Last counters seen per reported port: `/proc/net/udp` is not read atomically, so a bound
+    /// socket can drop out of one snapshot.
     known_sockets: HashMap<u16, PortCounters>,
     /// Set once `/proc/net/udp` proves unreadable. It fails independently of
     /// the other `/proc` files: a container can expose one and not another.
     unavailable: bool,
-    /// Set once the table has been read at all. This meter only runs while
-    /// somebody is watching, and an empty table before the first read must
-    /// not say the TPU port is bound elsewhere.
+    /// Set once the table has been read, so an empty table before then does not say the TPU port is
+    /// bound elsewhere.
     sampled: bool,
     published: Debounced<IngestSummary>,
 }
@@ -1257,9 +1238,7 @@ impl SocketMeter {
         let now = Instant::now();
         let ports = ingest_ports(ctx, tap);
 
-        // A port absent from this snapshot keeps the counters it had, which is a
-        // sample stale rather than a vanished row. Only the reported ports are
-        // remembered.
+        // A port absent from this snapshot keeps the counters it had.
         for port in &ports {
             if let Some(counters) = current.get(&port.port) {
                 self.known_sockets.insert(port.port, *counters);
@@ -1354,9 +1333,8 @@ fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
             Some(tap.shreds_turbine),
             false,
         ),
-        // QUIC. The stream layer counts transactions, not datagrams, so no share can
-        // be worked out against a datagram drop count; the TPU path panel draws these
-        // instead.
+        // QUIC counts transactions, not datagrams, so no share of a drop count; the TPU path panel
+        // draws these.
         ("tpu", info.tpu(Protocol::QUIC), None, true),
         (
             "tpu forwards",
@@ -1403,9 +1381,8 @@ struct EgressSplit {
     repair_per_second: Option<u64>,
 }
 
-/// The gossip and repair share of egress, from the senders' own reports. Each
-/// point carries the window it covers, so a rate is bytes over that window and
-/// holds its last value between points rather than dropping to nought.
+/// The gossip and repair share of egress, from the senders' own reports. Each point covers its own
+/// window, so a rate holds between points.
 #[derive(Default)]
 struct EgressMeter {
     split: EgressSplit,
@@ -1630,9 +1607,8 @@ impl AccountsMeter {
     }
 }
 
-/// How often replay found a program already compiled. The counters reset per
-/// bank, so a reading alone is one slot's handful of lookups; summed over a
-/// minute the rate is steady, and nothing is counted twice.
+/// How often replay found a program already compiled, summed over a minute because the counters
+/// reset per bank.
 struct ProgramCacheMeter {
     /// One interval's worth of the cache's counters per sample, and beside it
     /// the level readings, which are peaked rather than summed.
@@ -1689,9 +1665,8 @@ impl ProgramCacheMeter {
 /// The path a transaction takes through this validator, the two stages that
 /// only run while it is leader, and the per-slot lists the block pages join on.
 struct TpuMeter {
-    /// One interval of the scheduler's counters per sample. Its own window and
-    /// key, apart from the QUIC and leader stages, because the stages do not
-    /// reconcile into one flow.
+    /// One interval of the scheduler's counters per sample, windowed apart from the QUIC and leader
+    /// stages, which do not reconcile with it.
     waterfall_window: VecDeque<SchedulerTotals>,
     waterfall: Debounced<Option<WaterfallWindow>>,
     /// Which scheduler the samples in that window came from, so that a
@@ -1752,9 +1727,8 @@ impl TpuMeter {
         }
     }
 
-    /// Remembers where the chain is in its epoch, from the working bank rather
-    /// than the root: the counters are reported as the work happens, not as it is
-    /// finalised.
+    /// Remembers where the chain is in its epoch, from the working bank: the counters are reported
+    /// as the work happens.
     fn note_epoch(&mut self, working_bank: &Bank) {
         let schedule = working_bank.epoch_schedule();
         let slot = working_bank.slot();
@@ -1773,9 +1747,8 @@ impl TpuMeter {
         self.xdp.publish(publisher, TOPIC_SUMMARY, "xdp", tap.xdp());
     }
 
-    /// Publishes where the transactions handed to the banking stage went. The
-    /// scheduler reports once a second with its counters reset, so the window is a
-    /// sum of seconds' work, not a queue depth.
+    /// Publishes where the transactions handed to the banking stage went. The scheduler reports
+    /// each second with its counters reset, so the window is a sum.
     fn tick(
         &mut self,
         tap: &MetricsTap,
@@ -1785,8 +1758,7 @@ impl TpuMeter {
         tpu_offhost: bool,
         publisher: &Publisher,
     ) {
-        // Nothing rather than noughts for a stage with an empty window: its point is
-        // only submitted when it had something to say. Started over when the
+        // A stage with an empty window is absent rather than nought. Started over when the
         // scheduler changes, since the two count `received` in different units.
         let source = tap.scheduler_source();
         if source != self.waterfall_source {
@@ -1824,9 +1796,8 @@ impl TpuMeter {
         }
         let vote_quiet = self.vote_quiet;
 
-        // Present once any port has ever taken a connection, not within the
-        // window: behind a proxy the only inbound QUIC is vote traffic during
-        // leader slots.
+        // Present once any port has taken a connection, not within the window: behind a proxy the
+        // only inbound QUIC is votes in leader slots.
         let ports: Vec<QuicPort> = [
             (
                 "tpu",
@@ -1915,9 +1886,7 @@ impl TpuMeter {
                 "executed",
                 (executed.attempted > 0).then_some(executed),
             );
-            // A note on what Executed is made of rather than a stage of its own. Absent
-            // where no bundle arrived, which without a block engine or under BAM is
-            // always.
+            // A note on what Executed is made of, absent where no bundle arrived.
             self.bundles.publish(
                 publisher,
                 TOPIC_SUMMARY,
@@ -1926,9 +1895,8 @@ impl TpuMeter {
             );
         }
 
-        // The per-slot points are sent as their own lists and joined by slot in the
-        // browser, since the produced block is captured on the other thread and either
-        // can arrive first. Copied only when the tap's revision says a list moved.
+        // Sent as lists joined by slot in the browser, since the produced block is captured on
+        // another thread. Copied only when the tap's revision says a list moved.
         let revision = tap.slot_lists_revision();
         if self.slot_lists_seen != Some(revision) {
             self.slot_lists_seen = Some(revision);
@@ -1965,9 +1933,7 @@ fn windowed<T: WindowedCounters>(window: &mut VecDeque<T>, sample: T, span: usiz
         .fold(T::default(), |total, sample| total.plus(sample))
 }
 
-/// What a port's counter read when the baseline was taken, or nought before
-/// there is one, so the first minute reports totals from when each counter
-/// started rather than a blank panel over the startup burst.
+/// What a port's counter read when the baseline was taken, or nought before there is one.
 fn at_baseline(baseline: Option<&HashMap<u16, u64>>, port: u16) -> u64 {
     baseline
         .and_then(|baseline| baseline.get(&port))
@@ -2116,9 +2082,7 @@ mod tests {
 
     #[test]
     fn test_received_figure_only_on_datagram_ports() {
-        // The kernel keys drops by port and the validator keys packets by thread
-        // name, and only this join knows `shred_fetch_receiver` is the socket gossip
-        // advertises as `tvu`.
+        // Only this join knows `shred_fetch_receiver` is the socket gossip advertises as `tvu`.
         let harness = fixture();
         let counted = ingest_ports(
             &harness.ctx,
@@ -2552,9 +2516,8 @@ mod tests {
 
     #[test]
     fn test_the_path_card_stays_once_a_port_has_ever_been_used() {
-        // The same reading twice, so every windowed figure is nought while the
-        // cumulative offer stands: the quiet half hour between leader groups behind a
-        // proxy.
+        // The same reading twice: every windowed figure is nought while the cumulative offer
+        // stands.
         let harness = fixture();
         let mut meters = harness.meters();
         let used = quic_tap(40);

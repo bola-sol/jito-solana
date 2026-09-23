@@ -27,11 +27,8 @@ function held(slot: number): SlotEntry {
   };
 }
 
-/**
- * A resolver standing in for the store's, which reads the epoch's turn array
- * and the peer table. Named leaders come from a table here for the same reason
- * they do there: the slot itself no longer carries one.
- */
+/** A resolver standing in for the store's, naming leaders from a table since the slot carries none.
+ *  */
 function resolver(
   leaders: Record<number, LeaderRef> = {},
   fallback: LeaderRef = { key: "alice", name: null, icon: null },
@@ -55,9 +52,7 @@ describe("turnsOf", () => {
   });
 
   it("splits a leader drawn twice in a row into two turns", () => {
-    // Eight consecutive slots is two turns. Run together the card is twice the
-    // height of every other, and a list of cards of different heights has no
-    // fixed place to hold.
+    // Eight consecutive slots are two turns, so every card is the same height.
     const slots = [96, 97, 98, 99, 100, 101, 102, 103].map((slot) => held(slot));
     const turns = turnsOf(slots, resolver());
     expect(turns.map((turn) => turn.slots.length)).toEqual([4, 4]);
@@ -90,11 +85,8 @@ describe("turnsOf", () => {
   });
 
   it("tells the resolver whether the turn was ours", () => {
-    // The resolver answers ours from what the validator says about itself,
-    // which is the only route that reaches a turn older than the peer table or
-    // outside the epoch the page holds arrays for. Dropping this argument is
-    // what left our own turns showing a bare key on the schedule page while the
-    // sidebar had them right.
+    // Ours is resolved from what the validator says of itself, the only route to a turn beyond the
+    // peer table or the held epoch.
     const asked: Array<[number, boolean]> = [];
     const resolve = (slot: number, mine: boolean) => {
       asked.push([slot, mine]);

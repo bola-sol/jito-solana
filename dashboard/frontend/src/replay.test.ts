@@ -50,19 +50,15 @@ describe("serialRows", () => {
 
 describe("verifyRows", () => {
   it("is drawn against the three added, not against the window they ran in", () => {
-    // Against `confirming` these would come to well over three times it: the
-    // jobs overlap each other and each runs across many threads. Against their
-    // own sum they answer the only question they can, which is which costs
-    // more.
+    // The verify jobs overlap and span threads, so they are drawn against their own sum, not
+    // `confirming`.
     const rows = verifyRows(window());
     expect(rows.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(1, 10);
     expect(rowOf(rows, "poh").share).toBeGreaterThan(rowOf(rows, "signatures").share);
   });
 
   it("would exceed the window it happened in", () => {
-    // Stated as a test because it is the reason the section is labelled
-    // relative: if this ever stops being true the labelling is over-cautious,
-    // and if the rows are ever drawn against `confirming` it will show.
+    // The reason the section is labelled relative.
     const w = window();
     expect(w.poh_verify + w.tx_verify + w.dispatch).toBeGreaterThan(w.confirming);
   });
@@ -78,9 +74,7 @@ describe("cpuRows", () => {
   });
 
   it("leaves the nested figures out of the phases entirely", () => {
-    // They are already counted inside `execute` and `program_cache`. A segment
-    // for any of them would draw the same microseconds twice and leave the bar
-    // claiming more than the slot cost.
+    // Already counted inside `execute` and `program_cache`, so a segment would draw them twice.
     const keys = cpuRows(window()).map((row) => row.key);
     expect(keys).not.toContain("bytecode");
     expect(keys).not.toContain("serialising");

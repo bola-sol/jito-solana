@@ -9,20 +9,15 @@ import type { Envelope } from "./types";
 const MIN_RETRY_MS = 500;
 const MAX_RETRY_MS = 10_000;
 
-/**
- * Silence before the connection counts as dead. A socket can stop delivering
- * without closing; the validator publishes its clock every second, so a
- * working one is never quiet this long. Eight seconds rides out a mobile
- * handover.
- */
+/** Silence before the connection counts as dead: a socket can stop delivering without closing, and
+ *  the validator's clock arrives every second. Eight seconds rides out a mobile handover. */
 const SILENCE_LIMIT_MS = 8_000;
 
 /** How often the silence is checked. */
 const WATCHDOG_INTERVAL_MS = 2_000;
 
-/** The subprotocol that asks the server for long messages as deflated binary
- *  frames, offered when this browser can inflate them, which every current
- *  one can. */
+/** The subprotocol that asks for long messages as deflated binary frames, offered where the browser
+ *  can inflate them. */
 const DEFLATE_PROTOCOL = "deflate";
 
 function canInflate(): boolean {

@@ -52,10 +52,8 @@ pub struct GossipValidator {
     pub seen: bool,
 }
 
-/// Walks the bank's staked identities against gossip the way the validator's
-/// own wait does: seen is a TVU peer whose contact is fresh, since contacts
-/// restored from disk outlive the nodes that wrote them, and this node counts
-/// as seen.
+/// Walks the bank's staked identities against gossip as the validator's own wait does: seen is a
+/// TVU peer with a fresh contact, and this node counts as seen.
 pub fn gossip_stake(
     cluster_info: &ClusterInfo,
     bank: &Bank,
@@ -133,9 +131,8 @@ pub struct StartupProgress {
     /// Share of the cluster's stake seen in gossip while waiting for a
     /// supermajority, from 0 to 1. A whole percent, truncated by the validator.
     pub stake_percent: Option<f64>,
-    /// The same wait as the validator counted it, in lamports, from the point
-    /// it submits every tenth check. Exact, and a few seconds behind. Only
-    /// during the wait, and only once a point has arrived.
+    /// The same wait as the validator counted it, in lamports, a few seconds behind. Only during
+    /// the wait, once a point has arrived.
     pub stake_in_gossip: Option<StakeInGossip>,
     /// How long the validator has been in this phase, and how long each phase
     /// before it took, since most phases cannot say how far along they are.

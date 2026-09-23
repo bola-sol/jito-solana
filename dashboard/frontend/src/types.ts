@@ -157,9 +157,8 @@ export interface BlockDetail {
   account_cost_limit: number;
   total_fees: number;
   priority_fees: number;
-  /** Lamports paid into the jito tip accounts during this slot, as measured;
-   *  shares are derived in `tips.ts`. `null` where unmeasured, nought where
-   *  nobody tipped. */
+  /** Lamports paid into the jito tip accounts during this slot, as measured; shares are derived in
+   *  `tips.ts`. `null` where unmeasured. */
   tips: number | null;
   /** Wall time replay's own thread spent on this slot, in microseconds. Null
    *  for a block this validator built. */
@@ -211,9 +210,8 @@ export interface EpochInfo {
 
   /** Every leader of this epoch, in the order they first take a turn. */
   leaders: string[];
-  /** One index into `leaders` per turn of four slots:
-   *  `leaders[turns[(slot - start_slot) / 4]]`. Empty where the validator
-   *  could not derive the schedule. */
+  /** One index into `leaders` per turn of four slots, `leaders[turns[(slot - start_slot) / 4]]`.
+   *  Empty where the schedule could not be derived. */
   turns: number[];
 
   /** Consensus limits every block of this epoch is measured against. */
@@ -360,12 +358,8 @@ export interface LeaderTurn {
  *  in batches. */
 export type SchedulerSource = "scheduler" | "bam";
 
-/**
- * Where the transactions handed to the banking stage went, over the window.
- * `received` equals `buffered` plus the losses through `nonce_conflict`; the
- * later stretches are not identities. On a BAM slot `received` and `not_held`
- * are in batches.
- */
+/** Where the transactions handed to the banking stage went, over the window. `received` equals
+ *  `buffered` plus the losses through `nonce_conflict`; a BAM slot's first two count batches. */
 export interface Waterfall {
   received: number;
 
@@ -403,11 +397,8 @@ export interface Waterfall {
   retried: number;
 }
 
-/**
- * One QUIC listener's account of the traffic offered to it: the connection
- * funnel, then streams on admitted connections, then what came out towards
- * verification. `open` and `active_streams` are levels.
- */
+/** One QUIC listener's account of the traffic offered to it: connections, streams, then what went
+ *  on to verification. `open` and `active_streams` are levels. */
 export interface QuicPort {
   /** Matches the socket row of the same name on the ingest list. */
   name: string;
@@ -453,9 +444,8 @@ export interface QuicPaths {
   /** What the counts above actually span, which is short until it has filled. */
   window_seconds: number;
   ports: QuicPort[];
-  /** Whether the advertised TPU address is a socket on this host. False
-   *  behind a relayer or block-assembly proxy, which the validator cannot
-   *  tell apart. */
+  /** Whether the advertised TPU address is a socket on this host; false behind a relayer or
+   *  block-assembly proxy. */
   tpu_offhost: boolean;
 }
 
@@ -470,9 +460,8 @@ export interface EpochSpan {
   slots_in_epoch: number;
 }
 
-/** Bundles the block engine sent this epoch, counted where they arrive, so
- *  an upper bound on the executed share. Absent without a block engine and
- *  under BAM. */
+/** Bundles the block engine sent this epoch, counted on arrival, so an upper bound on the executed
+ *  share. Absent without a block engine and under BAM. */
 export interface BundleStage {
   received: number;
   packets: number;
@@ -510,20 +499,12 @@ export interface ExecutedStage {
   program_restricted: number;
 }
 
-/** One leader slot's waterfall, sent as its own list and joined to the
- *  produced block by slot, since either can arrive first. Only for slots
- *  this validator led. */
+/** One leader slot's waterfall, joined to the produced block by slot since either can arrive first.
+ *  */
 export interface SlotWaterfall extends Waterfall {
   slot: number;
 }
 
-/**
- * What replay did with the last few hundred slots, in microseconds, as means
- * per slot bar the two peaks. `fetch`, `confirming` and `completing` are
- * disjoint spans; the verify figures are overlapping jobs, relative only;
- * everything from `execute` down is worker thread time.
- */
-/** The machine the validator runs on, sampled once a second from /proc. */
 /** Where every core's time went over the last second, as shares of it. */
 export interface CpuUse {
   /** Everything but idle and iowait. */
@@ -537,6 +518,7 @@ export interface CpuUse {
   steal: number;
 }
 
+/** The machine the validator runs on, sampled once a second from /proc. */
 export interface Host {
   cores: number;
   load_one: number;
@@ -613,6 +595,8 @@ export interface DeviceLoad {
   write_per_second: number;
 }
 
+/** What replay did with the last few hundred slots, in microseconds, as means per slot bar the two
+ *  peaks. `fetch`, `confirming` and `completing` are disjoint; the verify figures overlap. */
 export interface ReplayWindow {
   /** Slots behind the figures, which is short until the window has filled. */
   slots: number;
@@ -786,16 +770,14 @@ export interface Turbine {
   xdp: boolean | null;
 }
 
-/** What voting costs, for the header's balance warnings: fees leave the
- *  identity with each vote under TowerBFT, the admission ticket leaves the
- *  vote account at each epoch's turn under alpenglow. */
+/** What voting costs: fees from the identity per vote under TowerBFT, the admission ticket from the
+ *  vote account each epoch under alpenglow. */
 export type VoteCost =
   | { kind: "fees"; per_day: number }
   | { kind: "ticket"; lamports: number; minimum: number };
 
-/** This validator's vote credits in the epoch being built on, against the
- *  most any staked validator has earned in it. Under alpenglow the vote
- *  account keeps lamports of reward in the same field. */
+/** This validator's vote credits in the epoch, against the most any staked validator has earned.
+ *  Under alpenglow the field holds lamports of reward. */
 export interface VoteCredits {
   epoch: number;
   credits: number;
@@ -803,9 +785,8 @@ export interface VoteCredits {
   cluster_max: number | null;
 }
 
-/** Slots this validator's vote was paid for this epoch, against the most any
- *  validator's was, counted from `since_slot` where the certificate walk
- *  began. Alpenglow only. */
+/** Slots this validator's vote was paid for this epoch, against the most any validator's was, from
+ *  `since_slot`. Alpenglow only. */
 export interface VoteParticipation {
   epoch: number;
   since_slot: number;
@@ -844,9 +825,8 @@ export interface Admission {
 
 export type MissPlace = "boundary" | "leader" | "snapshot" | "thin" | "late" | "lost";
 
-/** Votor's timeline for a slot, in microseconds from when it began tracking
- *  the slot. The first shred is reported only for the first slot of a
- *  leader window; the parent becoming ready anchors the rest. */
+/** Votor's timeline for a slot, in microseconds from when it began tracking it. The first shred is
+ *  reported only for a leader window's first slot; the rest anchor on the parent becoming ready. */
 export interface VoteSent {
   first_shred_us: number | null;
   parent_ready_us: number | null;

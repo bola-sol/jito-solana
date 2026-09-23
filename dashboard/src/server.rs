@@ -46,9 +46,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// bug or an attempt to make the server allocate, so the connection is closed.
 const MAX_CLIENT_MESSAGE: usize = 4096;
 
-/// How long one send may block before the client is treated as gone. A viewer
-/// that stops reading holds a connection slot until TCP notices, which takes
-/// minutes. Not an inbound-idle timeout: a healthy viewer never sends.
+/// How long one send may block before the client is treated as gone; otherwise a viewer that stops
+/// reading holds a slot until TCP notices.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Websocket clients served at once. They are the long-lived resource;
@@ -233,9 +232,8 @@ async fn refuse(
 /// clears readiness, so `readable` returns at once.
 const HEAD_POLL: Duration = Duration::from_millis(20);
 
-/// Reads the request head without consuming it, so a websocket connection can
-/// still be handed to soketto. Returns the head and its exact length, which the
-/// HTTP path drains.
+/// Reads the request head without consuming it, so a websocket can still be handed to soketto.
+/// Returns the head and its exact length.
 async fn peek_request_head(socket: &TcpStream) -> io::Result<(String, usize)> {
     let mut buffer = vec![0u8; MAX_REQUEST_HEAD];
     let mut last_peeked = 0;
@@ -304,9 +302,8 @@ fn host_is_allowed(head: &str, allowed: &[String]) -> bool {
         .any(|candidate| host_of(candidate).eq_ignore_ascii_case(host))
 }
 
-/// Whether a websocket upgrade comes from a page this dashboard served.
-/// No `Origin` is not a browser and is allowed; `null` is a sandboxed frame
-/// and is refused.
+/// Whether a websocket upgrade comes from a page this dashboard served. No `Origin` is not a
+/// browser and is allowed; `null` is a sandboxed frame and is refused.
 fn origin_is_allowed(head: &str) -> bool {
     let Some(origin) = header(head, "origin") else {
         return true;
@@ -397,9 +394,8 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
         .map(|(_, content_type, body)| (*content_type, *body))
 }
 
-/// Sent with every response. `img-src` allows any https host for validator
-/// icons; inline scripts and styles are for index.html's theme stamp and
-/// splash.
+/// Sent with every response. `img-src` allows https for validator icons; the inline script and
+/// style are index.html's theme stamp and splash.
 const SECURITY_HEADERS: &str = concat!(
     "content-security-policy:",
     " default-src 'none';",
@@ -475,9 +471,7 @@ async fn serve_websocket(
     let mut server = Server::new(socket.compat());
     // Only a protocol the server lists is reported back from the request.
     server.add_protocol(DEFLATE_PROTOCOL);
-    // The key is copied out so the request's borrow ends before the response
-    // goes back. Bounded like the peek: a head cut off at its limit leaves
-    // soketto waiting for the rest.
+    // Bounded like the peek: a head cut off at its limit leaves soketto waiting for the rest.
     let (key, deflate) = timeout(REQUEST_TIMEOUT, async {
         let request = server.receive_request().await?;
         let deflate = request
@@ -692,9 +686,8 @@ fn respond(
     match (request.topic.as_str(), request.key.as_str()) {
         ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
         ("summary", "displays") => {
-            // Asked for rather than published: a hundred and fifty kilobytes on a cluster
-            // this size, wanted only by a page that has searched into history. The whole
-            // table rather than one epoch's leaders, since the cache is keyed by identity.
+            // Asked for rather than published: about 150 KB, wanted only by a page that has
+            // searched into history.
             let displays = match info.read() {
                 Ok(info) => info.displays(),
                 Err(_) => return Some(encode_with_id("summary", "displays", id, &())),
@@ -728,9 +721,7 @@ fn respond(
                     &serde_json::json!({ "error": "query needs an epoch" }),
                 ));
             };
-            // Only this epoch and the one before it are held. Anything else is answered
-            // with nothing rather than an error: a validator that has not been up that
-            // long has no schedule for it.
+            // Only this epoch and the one before are held; anything else is answered with nothing.
             let found = match epochs.read() {
                 Ok(epochs) => epochs
                     .iter()

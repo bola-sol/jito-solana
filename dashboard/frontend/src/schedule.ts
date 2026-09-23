@@ -28,11 +28,8 @@ export function leaderAt(epoch: EpochInfo | undefined, slot: number): string | n
   return epoch.leaders[index] ?? null;
 }
 
-/**
- * Which epoch a slot fell in, counted from the current epoch's start at its
- * length, which has been constant since warmup. Null without an epoch to
- * count from.
- */
+/** Which epoch a slot fell in, counted from the current epoch's start at its constant length. Null
+ *  without an epoch. */
 export function epochOf(epoch: EpochInfo | undefined, slot: number): number | null {
   if (!epoch || epoch.slots_in_epoch <= 0) return null;
   const at = epoch.epoch + Math.floor((slot - epoch.start_slot) / epoch.slots_in_epoch);
@@ -61,9 +58,8 @@ export interface Turn {
   slots: TurnSlot[];
 }
 
-/** The turns the held slots belong to, newest first. A turn is drawn whole
- *  from its first slot so nothing below it moves as it fills; a turn the
- *  window begins part way through keeps only the slots there are. */
+/** The turns the held slots belong to, newest first, each drawn whole from its first slot so
+ *  nothing below moves as it fills. */
 export function turnsOf(
   held: SlotEntry[],
   leaderOf: (slot: number, mine: boolean) => LeaderRef,
@@ -130,10 +126,8 @@ export function rewardTitle(reward: Reward | null | undefined): string {
 /** Slots from a slot to the one whose leader writes its reward certificate. */
 export const REWARD_LAG = 8;
 
-/** What the certificate written in a slot left out: a count of the validators
- *  certificates usually pay; "none" where the leader produced no block; null
- *  where the certificate has not been read; undefined where the slot it
- *  rewards is not held. */
+/** What the certificate written in a slot left out: a count of usual payees, "none" without a
+ *  block, null until read, undefined where the rewarded slot is not held. */
 export type Certificate = number | "none" | null | undefined;
 
 export function certificateAt(

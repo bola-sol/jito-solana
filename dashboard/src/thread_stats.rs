@@ -27,9 +27,8 @@ pub struct ThreadGroup {
     /// row.
     pub name: String,
     pub count: usize,
-    /// The cores the threads may run on, where every thread in the group is
-    /// held to fewer than the machine has: the union, since a pool is often
-    /// pinned one thread to a core. `None` where any thread is free to roam.
+    /// The union of cores the group's threads may run on, where every thread is held to fewer than
+    /// the machine has. `None` where any thread is free to roam.
     pub cores: Option<String>,
     /// Share of the second on a core, and runnable but waiting for one.
     pub on_cpu: f64,
@@ -170,9 +169,8 @@ struct GroupSum {
     cores: Option<Option<BTreeSet<usize>>>,
 }
 
-/// Each group's second, from two readings of every thread. A thread with no
-/// earlier reading, or one whose id was reused under another name, is left
-/// out: there is nothing honest to difference.
+/// Each group's second, from two readings of every thread. A thread with no earlier reading, or
+/// whose id was reused under another name, is left out.
 pub fn group_shares(
     previous: &HashMap<u64, ThreadReading>,
     current: &[ThreadReading],
@@ -233,9 +231,8 @@ fn share(nanos: u64, count: usize, span: f64) -> f64 {
     (nanos as f64 / (count as f64 * span)).min(1.0)
 }
 
-/// The groups worth a row: the `top` by their mean share over the window, in
-/// that order, and every other group folded into one row. Ranked on the
-/// window rather than the second, so the rows do not reorder every tick.
+/// The `top` groups by mean share over the window, in that order, and the rest folded into one row.
+/// Ranked on the window so rows do not reorder every tick.
 pub fn select_rows(
     mut groups: Vec<ThreadGroup>,
     means: &HashMap<String, f64>,

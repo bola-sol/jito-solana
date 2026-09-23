@@ -1,8 +1,6 @@
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
-/** Number formatters built once: `toLocaleString` constructs an
- *  `Intl.NumberFormat` per call, and the page formats eighty numbers a
- *  render. */
+/** Number formatters built once, since `toLocaleString` builds an `Intl.NumberFormat` per call. */
 const PLAIN = new Intl.NumberFormat();
 const BY_DIGITS = new Map<number, Intl.NumberFormat>();
 

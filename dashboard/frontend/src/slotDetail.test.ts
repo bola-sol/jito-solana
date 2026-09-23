@@ -88,9 +88,8 @@ describe("how the block's compute limit was spent", () => {
   });
 
   it("draws the costliest account against the limit, not against the block", () => {
-    // The two differ by however empty the block was, and only the share of the
-    // limit can sit on the same bar as the unused headroom. Here the account is
-    // 11.5% of the block but 8.2% of the limit.
+    // Only the share of the limit can share a bar with the headroom: here 11.5% of the block is
+    // 8.2% of the limit.
     const c = capacity(block(), cost())!;
     expect(c.top).toBeLessThan(7_175_000 / 62_387_500);
     expect(c.top).toBeCloseTo(0.082, 3);
@@ -151,10 +150,7 @@ describe("grouping the scheduler's counters", () => {
     expect(intake.rows.slice(0, 2).map((r) => r.key)).toEqual(["too_old", "already_processed"]);
     expect(intake.hits).toBe(2);
 
-    // The rest keep the order a transaction meets them in. Checked against the
-    // waterfall's own ordering rather than against a list written out here,
-    // because the counters differ by branch: the 4.2 line has three fewer, and
-    // a hard-coded list would make this file diverge for good.
+    // Checked against the waterfall's own order, since the 4.2 line has three fewer counters.
     const pipeline = waterfallRows(slot()).map((row) => row.key);
     const quiet = intake.rows.slice(2).map((r) => r.key);
     expect(quiet).toEqual([...quiet].sort((a, b) => pipeline.indexOf(a) - pipeline.indexOf(b)));
@@ -162,9 +158,8 @@ describe("grouping the scheduler's counters", () => {
   });
 
   it("holds the batch-counted rows apart from the transaction totals", () => {
-    // BAM counts what it rejected before parsing in batches. Added to the
-    // transaction counters beside it, or drawn as a share of them, it would be
-    // two units in one figure.
+    // BAM counts its pre-parse rejections in batches, so they are never added to the transaction
+    // counts.
     const view = schedulerView(slot({ source: "bam", not_held: 4, too_old: 17 }));
     const intake = view.groups.find((g) => g.key === "intake")!;
     expect(intake.aside.map((r) => r.key)).toEqual(["not_held"]);

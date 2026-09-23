@@ -151,9 +151,8 @@ describe("slots", () => {
   });
 
   it("keeps our own leader slots long after the window has passed them", () => {
-    // A validator leads about four slots in eight hundred, so a window of five
-    // hundred usually holds none of its own. Without this the sidebar's own
-    // slots view would be empty nearly all the time.
+    // A validator leads about four slots in eight hundred, so a window of five hundred rarely holds
+    // its own.
     const store = new Store();
     for (const number of [1, 2, 3, 4]) {
       store.apply(envelope("slot", "update", { ...slot(number), mine: true }));
@@ -166,9 +165,7 @@ describe("slots", () => {
   });
 
   it("names a leader in an epoch the page was never sent, once it is fetched", async () => {
-    // Reading back through the history leaves the published epoch whenever the
-    // tip is within its depth of a boundary, about a quarter of the time. Every
-    // slot on the far side had no leader at all until this.
+    // Reading back through history crosses into the previous epoch about a quarter of the time.
     const store = new Store();
     const sent: string[] = [];
     store.setSender((frame) => sent.push(frame));
@@ -233,9 +230,8 @@ describe("slots", () => {
   });
 
   it("names a leader the peer table does not reach, once the table is fetched", async () => {
-    // The peer table covers the leaders of the held window. A turn from further
-    // back had a key and nothing else, which is what made a search by name find
-    // only the last few minutes of a history eleven hours deep.
+    // The peer table covers only the held window, so a turn further back is named from the display
+    // table.
     const store = new Store();
     const sent: string[] = [];
     store.setSender((frame) => sent.push(frame));
@@ -293,11 +289,8 @@ describe("slots", () => {
   });
 
   it("names a slot of ours from what the validator says about itself", () => {
-    // Not from the turn array or the peer table. Both have a reach and our own
-    // slots are kept past both: five hundred of them is about eleven hours,
-    // outside the peer table's window and often across an epoch boundary, which
-    // is where the turn array stops. Live, that showed our own turns as a bare
-    // key, or as unknown once the boundary was behind them.
+    // Our own slots outlive both the peer table's window and the turn array's epoch, so they are
+    // named from what the validator says of itself.
     const store = new Store();
     store.apply(envelope("summary", "identity_key", "OURKEY"));
     store.apply(envelope("summary", "identity_name", "Lantern"));
@@ -370,9 +363,8 @@ describe("slots", () => {
   });
 
   it("fails the requests in flight when the connection goes", async () => {
-    // Both paths that give up on a socket set the connection state, so this is
-    // the one place that has to notice. Left pending, a caller shows a loading
-    // state that never resolves.
+    // Both paths that give up on a socket set the connection state, so pending requests are
+    // rejected here.
     const store = new Store();
     store.setSender(() => {});
     store.setConnection("open");
@@ -453,9 +445,7 @@ describe("isReady", () => {
   });
 
   it("does not wait for a validator that is still booting", () => {
-    // A booting validator has no slots and no identity to report, and the boot
-    // sequence is exactly what should be on screen, so there is nothing left
-    // for the splash to wait for.
+    // A booting validator has no slots or identity yet, so the splash stops waiting.
     const store = new Store();
     store.apply(envelope("summary", "startup_progress", { running: false }));
     expect(store.isReady()).toBe(true);

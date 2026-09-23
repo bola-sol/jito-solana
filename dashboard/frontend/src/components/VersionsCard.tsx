@@ -23,9 +23,7 @@ export function VersionsCard(): ReactElement {
       <div className="versions">
         {shares.map((share, index) => {
           const fraction = totalStake === 0 ? 0 : share.stake / totalStake;
-          // A folded tail and a group reporting no version both have no
-          // version, so the server flags which is which rather than leaving it
-          // to be guessed from ordering.
+          // The server flags the folded tail, which like an unreported group has no version.
           const label = share.other ? "other" : (share.version ?? "unknown");
           const isOurs = share.version !== null && share.version === ours;
 

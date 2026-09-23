@@ -5,14 +5,11 @@ import { useCallback, useEffect, useState } from "react";
 
 export type Page = "overview" | "slots" | "schedule";
 
-/** In the order the nav lists them, which is the order they are worked through:
- *  what the validator is doing now, the blocks it produced, then what is
- *  coming. */
+/** In nav order: what the validator is doing now, the blocks it produced, then what is coming. */
 const PAGES: Page[] = ["overview", "slots", "schedule"];
 
-/** A page and what is open on it: `#/slots/5539826` is a produced block
- *  expanded, `#/slots?q=826` the block list filtered, `#/schedule?q=mithril&ours`
- *  a filtered schedule. */
+/** A page and what is open on it: `#/slots/5539826` an expanded block, `#/slots?q=826` a filtered
+ *  list, `#/schedule?q=mithril&ours` a filtered schedule. */
 export interface Route {
   page: Page;
   /** The open block on the slot page. */
@@ -60,9 +57,8 @@ function withSearch(path: string, query: string, ours: boolean): string {
   return search ? `${path}?${search}` : path;
 }
 
-/** The current route, following the address bar so the back button works.
- *  A page change is a history entry; what is open on a page replaces the
- *  entry, so the back button steps between pages and not between clicks. */
+/** The current route, following the address bar. A page change is a history entry and anything else
+ *  replaces it, so back steps between pages. */
 export function useRoute(): [Route, (next: Route, replace?: boolean) => void] {
   const [route, setRoute] = useState<Route>(() => readRoute(window.location.hash));
 

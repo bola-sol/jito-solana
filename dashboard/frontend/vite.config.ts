@@ -1,11 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The build output is embedded into `agave-validator` by `dashboard/build.rs`.
-// Assets must land under `assets/`, the only prefix the server caches
-// immutably, and must be referenced absolutely: the server falls back to
-// index.html for unknown paths, and relative asset URLs would resolve against
-// that path instead of the root.
+// Embedded into `agave-validator` by `dashboard/build.rs`. Assets go under `assets/`, the prefix
+// the server caches, referenced absolutely since unknown paths fall back to index.html.
 export default defineConfig({
   plugins: [react()],
   base: "/",

@@ -5,9 +5,8 @@ const HEIGHT = 120;
 
 describe("chartY", () => {
   it("puts the highest sample exactly on the peak line", () => {
-    // The line is placed from the bottom as a percentage and the series from
-    // the top in viewBox units. This is the only thing keeping them level, so
-    // a change to either that forgets the other fails here.
+    // The line is placed from the bottom in percent and the series from the top in viewBox units;
+    // this keeps them level.
     const lineFromTop = HEIGHT * (1 - PEAK_HEADROOM);
     expect(chartY(4820, 4820, HEIGHT)).toBeCloseTo(lineFromTop, 10);
   });

@@ -13,11 +13,8 @@ import type { MissList, MissPlace, MissRow, MissValidator, MissWriter } from "..
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 
-/** Every vote of this epoch a certificate left out, one a row, newest first,
- *  the legend filtering to one place. Explanations go on one line under the
- *  legend rather than in bubbles, which a scrolling table would clip. Asked
- *  for when opened rather than pushed: a few kilobytes on a good node and far
- *  more on a bad one. */
+/** Every vote this epoch a certificate left out, newest first, filtered by the legend. Explanations
+ *  sit under the legend because a scrolling table clips bubbles. */
 export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement {
   const store = useStore();
   const participation = store.get("summary", "vote_participation");

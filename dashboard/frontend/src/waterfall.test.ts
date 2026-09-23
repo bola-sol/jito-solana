@@ -59,10 +59,7 @@ function busy(): Waterfall {
 
 describe("waterfallRows", () => {
   it("accounts for every received transaction across the first stretch", () => {
-    // The identity the validator's own tests assert, restated here because it
-    // is what makes the top section an account rather than a list of numbers
-    // that happen to sit under a heading. If a counter is ever added upstream
-    // and not mapped, this is what notices.
+    // The identity the validator's own tests assert; an unmapped upstream counter breaks it here.
     const w = busy();
     const rows = waterfallRows(w);
     const upToBuffered = rows.slice(
@@ -74,9 +71,7 @@ describe("waterfallRows", () => {
   });
 
   it("measures every bar against what arrived, not against the stage above", () => {
-    // So the lengths are comparable the whole way down. Renormalising each
-    // section against its own heading would draw a loss of eighty out of eighty
-    // as long as the received bar itself.
+    // Every section is drawn against what arrived, so lengths compare down the card.
     const rows = waterfallRows(busy());
     const buffered = rows.find((row) => row.key === "buffered");
     expect(buffered?.share).toBeCloseTo(0.08, 10);
@@ -85,9 +80,7 @@ describe("waterfallRows", () => {
   });
 
   it("draws the same rows in the same order whatever happened", () => {
-    // The card must not change height under someone reading it, and a zero is
-    // itself worth reading — no fee payer failed is not the same as nothing
-    // counts fee payer failures.
+    // The rows are fixed, so the card never changes height and a zero is shown as one.
     const busyKeys = waterfallRows(busy()).map((row) => row.key);
     const quietKeys = waterfallRows(quiet()).map((row) => row.key);
     expect(quietKeys).toEqual(busyKeys);
@@ -108,9 +101,7 @@ describe("waterfallRows", () => {
   });
 
   it("counts held-back work as a note rather than a loss", () => {
-    // Nothing is lost when the scheduler cannot place a transaction this pass;
-    // it waits. Counting it as loss would make a contended slot look like a
-    // failing one.
+    // A transaction the scheduler cannot place this pass waits; it is not a loss.
     const rows = waterfallRows(busy());
     const blocked = rows.filter((row) => row.key.startsWith("blocked_"));
     expect(blocked.map((row) => row.kind)).toEqual(["note", "note"]);
@@ -134,18 +125,13 @@ describe("a slot BAM built", () => {
   }
 
   it("does not draw the rows against a count of batches", () => {
-    // The bug this guards. BAM is sent atomic batches and counts them, so
-    // drawing 735 finished transactions against 40 received batches puts every
-    // row past a hundred percent and reports nothing at all.
+    // BAM counts received batches, so rows are drawn against what parsed, or every one passes a
+    // hundred percent.
     const rows = waterfallRows(bamSlot());
     const parsed = rows.find((r) => r.key === "unparsable")!;
     expect(parsed.share).toBeCloseTo(3 / 700, 5);
 
-    // Against the batch count 735 finished would have been eighteen times the
-    // total. Against what parsed it is a slot that dispatched a little more
-    // than arrived in it, which is the ordinary reading of a queue that holds
-    // work across slots, and gets the ordinary treatment: the count, no
-    // percentage.
+    // A slot that dispatched more than arrived holds work across slots: the count, no percentage.
     const finished = rows.find((r) => r.key === "finished")!;
     expect(finished.over).toBe(true);
     expect(finished.share).toBe(1);
@@ -162,10 +148,7 @@ describe("a slot BAM built", () => {
   });
 
   it("does not call a late batch a forwarded transaction", () => {
-    // Same counter, different check, different unit, different meaning. On
-    // this path it holds batches BAM sent that had already missed the slot
-    // they named — the one figure on a BAM slot worth acting on, and the last
-    // thing that should read as ordinary forwarding.
+    // On BAM `not_held` is batches that had already missed their slot, the figure worth acting on.
     const notHeld = waterfallRows(bamSlot()).find((r) => r.key === "not_held")!;
     expect(notHeld.label).toBe("batches too late to schedule");
     expect(notHeld.kind).toBe("count");
@@ -174,10 +157,8 @@ describe("a slot BAM built", () => {
   });
 
   it("changes nothing at all for a validator not running BAM", () => {
-    // The whole BAM branch hangs off one field. A stock validator never sends
-    // it, and a jito validator sends "scheduler" whenever BAM is not the one
-    // building — so the ordinary reading has to survive both spellings
-    // untouched, row for row.
+    // A stock validator sends no source and jito sends "scheduler" off BAM; both read the ordinary
+    // way.
     const numbers = { received: 1000, not_held: 5, buffered: 700, finished: 500 };
     const absent = waterfallRows(quiet(numbers));
     const named = waterfallRows(quiet({ ...numbers, source: "scheduler" }));
@@ -224,9 +205,8 @@ describe("verifyRows", () => {
   });
 
   it("derives bad signatures from what the other outcomes leave over", () => {
-    // There is no counter for it. Sigverify stops at the first thing that
-    // discards a packet, so each one is deduplicated, or below the floor, or
-    // verified, or bad, and the remainder is exactly the bad ones.
+    // Sigverify stops at the first discard, so the remainder after the other three is exactly the
+    // bad.
     const rows = verifyRows(
       stage({ received: 1000, duplicate: 300, below_floor: 50, verified: 620 }),
     );
@@ -234,9 +214,7 @@ describe("verifyRows", () => {
   });
 
   it("never reports a negative count when the parts do not line up", () => {
-    // The four figures are swapped to zero as they are reported and the tap
-    // accumulates whatever it is given, so a point arriving mid-reset can put
-    // the parts above the total. A negative row would be nonsense on screen.
+    // A point arriving mid-reset can put the parts above the total; no row goes negative.
     const rows = verifyRows(stage({ received: 100, duplicate: 90, verified: 40 }));
     expect(rowOf(rows, "verify_bad").count).toBe(0);
   });
@@ -278,9 +256,7 @@ describe("executedRows", () => {
   });
 
   it("accounts for everything the workers took up", () => {
-    // The reading from testnet that started this: a hundred and one attempted,
-    // thirteen handed back, sixty-three committed, and twenty-five in no row at
-    // all — a quarter of the section, under a footnote promising it added up.
+    // A testnet reading: 101 attempted, 13 handed back, 63 committed, and 25 in no row at all.
     const rows = executedRows(
       stage({ attempted: 101, retryable: 13, processed: 63, succeeded: 63 }),
     );
@@ -337,10 +313,7 @@ describe("executedRows", () => {
 
 describe("a stage fed from the queue", () => {
   it("caps its bar and reports the overflow rather than exceeding the total", () => {
-    // Routine over a single slot. The scheduler's queue holds transactions
-    // across slots, so a slot can dispatch more than arrived in it by taking
-    // the difference from what was already waiting. Twelve received and
-    // thirteen scheduled is the case that was reported as a broken figure.
+    // The queue holds transactions across slots, so a slot can dispatch more than arrived in it.
     const rows = waterfallRows(quiet({ received: 12, buffered: 12, scheduled: 13, finished: 13 }));
 
     const scheduled = rowOf(rows, "scheduled");

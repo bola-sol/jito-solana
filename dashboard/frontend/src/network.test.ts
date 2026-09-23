@@ -15,9 +15,7 @@ describe("direction", () => {
   });
 
   it("does not let one noisy second move the arrow", () => {
-    // Throughput jitters by more than this from second to second, and an arrow
-    // that flips every time is an arrow nobody reads. The figure itself still
-    // shows the spike.
+    // Throughput jitters by more than this each second, and the figure shows the spike anyway.
     const jitter = [...Array(59).fill(100), 115];
     expect(direction(jitter)!.trend).toBe("flat");
     expect(direction(jitter)!.current).toBe(115);
@@ -51,9 +49,8 @@ describe("direction", () => {
 
 describe("sharedPeak", () => {
   it("is the highest reading either direction took", () => {
-    // One scale for both. Given a band each, ten kilobytes a second fills its
-    // band exactly as ten megabytes fills the other, and the picture says the
-    // two are equals.
+    // One scale for both directions, or ten kilobytes would fill its band as ten megabytes fills
+    // the other.
     expect(sharedPeak([1 * MB, 2 * MB], [7 * MB, 3 * MB])).toBe(7 * MB);
   });
 
@@ -107,9 +104,7 @@ describe("the XDP line", () => {
   });
 
   it("leaves out what the validator could not look up", () => {
-    // Both come back as the literal string "unknown" where the device would
-    // not answer or the host has no PCI database. Printed, it reads as a fault
-    // in the card rather than in the lookup.
+    // The lookup returns "unknown" where it failed, which is left out rather than printed.
     expect(xdpDetail(config({ model: "unknown" }))).toEqual(["ice"]);
     expect(xdpDetail(config({ driver: "unknown", model: "unknown" }))).toEqual([]);
   });

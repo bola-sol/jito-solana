@@ -30,15 +30,13 @@ pub struct Execution {
     pub window_millis: u64,
 }
 
-/// What one produced block looked like. `transactions` and
-/// `non_vote_transactions` are differences against the parent; the rest are
-/// the bank's own.
+/// What one produced block looked like. `transactions` and `non_vote_transactions` are differences
+/// against the parent; the rest are the bank's own.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProducedBlock {
     pub slot: Slot,
-    /// When the blockstore recorded the first shred of this slot, in milliseconds,
-    /// which for our own block is when it started. `None` where the blockstore
-    /// holds no timing.
+    /// When the blockstore recorded the slot's first shred, in milliseconds: for our own block,
+    /// when it started.
     pub slot_time_millis: Option<u64>,
     pub blockhash: String,
     /// Time from the previous slot, when the blockstore recorded one.
@@ -151,9 +149,8 @@ impl ProducedRing {
         true
     }
 
-    /// Fills in the bundles of any block still without them. The stage reports
-    /// a slot a moment after its bank freezes, which is after the block was
-    /// captured. True if a block changed.
+    /// Fills in the bundles of any block still without them, since the stage reports a slot after
+    /// it was captured. True if a block changed.
     pub fn fill_bundles(&mut self, landed: impl Fn(Slot) -> Option<Bundles>) -> bool {
         let mut changed = false;
         for block in &mut self.blocks {

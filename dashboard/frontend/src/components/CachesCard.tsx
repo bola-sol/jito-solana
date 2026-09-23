@@ -18,9 +18,8 @@ export function CachesCard(): ReactElement | null {
   const store = useStore();
   const programs = store.get("summary", "program_cache");
   const accounts = store.get("summary", "accounts_cache");
-  // Read once at the first render. Unlike the theme there is nothing to stamp
-  // before the bundle runs: a section that starts closed is what an unstyled
-  // page shows anyway, so there is no flash to head off.
+  // Read once at the first render: a section starting closed is what an unstyled page shows, so
+  // nothing flashes.
   const [open, setOpen] = useState<string[]>(readOpenSections);
   useEffect(() => writeOpenSections(open), [open]);
   if (!programs && !accounts) return null;
@@ -101,9 +100,8 @@ function Group({
 
   return (
     <section className="cache-group">
-      {/* Not a button, so the rate can keep its explanation. Keyboard reaches
-          the chevron, which is the control; this is the pointer's larger
-          target. */}
+      {/* Not a button, so the rate keeps its explanation; the chevron is the keyboard's control.
+          */}
       <div className="cache-head" onClick={onFold}>
         <span className="cache-name">
           <i className={`cache-dot tone-${tone}`} aria-hidden="true" />
@@ -182,9 +180,8 @@ function ProgramBody({ cache }: { cache: ProgramCache }) {
         />
       </div>
 
-      {/* Drawn whether or not an eviction has happened, so the section keeps its
-          height. The bar is empty until one has, which is honest: nothing has
-          reported where the cache stood. */}
+      {/* Drawn before any eviction so the section keeps its height; the bar stays empty until one
+          reports. */}
       <div className="cache-storage">
         <div className="cache-storage-head">
           <Explain text="Most entries loaded at any eviction in the last minute, against the limit. Empty until an eviction runs.">

@@ -1,17 +1,5 @@
-/* Every colour in the frontend resolves through the two blocks below. Nothing
-   else in this file, and nothing in the components, names a colour directly,
-   which is what keeps a second theme to a block of values rather than a sweep
-   through the tree.
-
-   Dark is the default because this is an operations console meant to be left
-   open on a screen for hours. The OS preference is deliberately not consulted:
-   a dashboard on a wall should not change with the laptop that happens to be
-   driving it. The header toggle sets `data-theme` and the choice is remembered
-   per host.
-
-   Greens and sages are Anza's; the semantic colours keep their hues so that
-   green still reads as running, red as delinquent and terracotta as caution.
-   Labels are sentence case in the body face, figures in the monospace. */
+/* Every colour resolves through the two blocks below, so a theme is a block of values. Dark unless
+   the header toggle sets `data-theme`, never from the OS. */
 
 :root {
   --bg: #0b1004;
@@ -242,9 +230,7 @@ body {
   outline-offset: 2px;
 }
 
-/* The value keeps its space while the confirmation is up, so the button's width
-   never changes and nothing around it reflows. Hidden rather than removed for
-   the same reason; the button carries its own aria-label so it stays named. */
+/* The value keeps its space while the confirmation shows, so the button never changes width. */
 .copyable.copied .copyable-text {
   visibility: hidden;
 }
@@ -494,10 +480,8 @@ body {
   gap: 12px;
 }
 
-/* While the validator boots, everything but the boot sequence, the live
-   dot and the theme toggle is blurred and dimmed, and takes no clicks. The
-   card that stays sharp is raised so a neighbour's blur cannot bleed over
-   its edge. */
+/* While the validator boots, everything but the boot sequence, the live dot and the theme toggle is
+   blurred and inert; the lit card is raised above its neighbours' blur. */
 .app.is-booting .card:not(.is-lit),
 .app.is-booting .fold,
 .app.is-booting .slot-strip,
@@ -636,9 +620,7 @@ body {
 .tone-bad {
   color: var(--bad);
 }
-/* A state that is deliberate rather than broken, but still wants noticing: a
-   validator on its backup identity is where it is meant to be, and an operator
-   who thinks it is voting needs to see that it is not. */
+/* Deliberate rather than broken, but worth noticing, such as a validator on its backup identity. */
 .tone-warn {
   color: var(--warn);
 }
@@ -1060,10 +1042,7 @@ body {
   flex-direction: column;
 }
 
-/* Pushed to the foot of the card. The four figures are what the card is for;
-   the strip restates one of them in a form that can be read without reading,
-   so it sits under them rather than beside them, and takes the height the
-   grid hands this card for being in a row with the versions list. */
+/* Pushed to the foot of the card, under the figures it restates. */
 .stake-share {
   margin-top: auto;
   padding-top: 16px;
@@ -1085,10 +1064,8 @@ body {
   color: var(--text);
 }
 
-/* Fifty ticks have to fit a card that can be as narrow as 300px, which leaves
-   each one a few pixels. The gap is what gives way first: at 3px the ticks
-   themselves fall to hairlines, and marks that cannot be told apart are worse
-   than marks set close together. */
+/* Fifty ticks fit a card as narrow as 300px; the gap gives way before the ticks become hairlines.
+   */
 .stake-strip {
   display: flex;
   gap: 1.5px;
@@ -1107,9 +1084,7 @@ body {
   background: var(--bad);
 }
 
-/* Filled from the base rather than from the side, because a tick is far taller
-   than it is wide and a fraction of its height is the only one of the two that
-   survives the narrow card. */
+/* Filled from the base, since a tick's height is the dimension that survives a narrow card. */
 .stake-strip i.is-part {
   background: linear-gradient(
     to top,
@@ -1305,9 +1280,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  /* Six rows at 36px plus their gaps. The grid sizes every card in a row to
-     the tallest, so without a ceiling here a cluster mid-upgrade stretches
-     Epoch, Status and Validators to match and leaves them mostly empty. */
+  /* Six rows at 36px plus their gaps, so a long list does not stretch the other cards in the row.
+     */
   max-height: 252px;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -1454,9 +1428,7 @@ body {
   text-transform: inherit;
   text-align: left;
   cursor: help;
-  /* The hint that there is something to open lives here rather than on the
-     label, because text-decoration set on an ancestor does not reach into a
-     button. */
+  /* On the button, since text-decoration set on an ancestor does not reach into one. */
   text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: 2px;
 }
@@ -1495,10 +1467,8 @@ body {
   pointer-events: auto;
 }
 
-/* The bubble sits six pixels clear of its trigger, and a pointer crossing that
-   gap is over neither, which fires the leave and closes the thing being reached
-   for. This bridges it. Only on the interactive ones: for a bubble that takes no
-   pointer events there is nothing to reach and the gap costs nothing. */
+/* Bridges the six pixels between trigger and bubble, so a pointer crossing them does not close it.
+   */
 .explain-bubble.is-interactive::before {
   content: "";
   position: absolute;
@@ -1513,21 +1483,14 @@ body {
   bottom: -7px;
 }
 
-/* Opens upwards when there is no room below. Hanging off the foot of the page
-   makes the document taller and raises a scrollbar that was not there, which
-   moves the layout out from under whoever was reading. */
+/* Opens upwards when there is no room below, rather than growing the page. */
 .explain-bubble.is-above {
   top: auto;
   bottom: calc(100% + 6px);
 }
 
-/* Closed, it is clipped to a point rather than hidden.
-
-   A `visibility: hidden` box still counts toward the page's scroll width, so
-   every closed explanation was widening the page — a hundred and sixteen
-   pixels of horizontal scrollbar with nothing open. Clipping keeps it in the
-   accessibility tree, where `aria-describedby` still needs to reach it, while
-   taking up a single pixel. */
+/* Closed, clipped to a point rather than hidden: a hidden box still widens the page's scroll width,
+   and `aria-describedby` still reaches this. */
 .explain-bubble:not(.is-open) {
   width: 1px;
   height: 1px;
@@ -1685,9 +1648,7 @@ body {
   align-items: center;
   gap: 6px 16px;
   margin-top: 10px;
-  /* Pinned so the card cannot change height when the hover detail appears.
-     The detail's slot number is a size larger than the key labels, and a flex
-     row sized by its contents grew by a pixel and a half the moment it showed. */
+  /* Pinned, so the card does not grow when the larger hover detail appears. */
   min-height: 16px;
 }
 
@@ -1803,9 +1764,7 @@ body {
 .sidebar-rows {
   overflow-y: auto;
   min-height: 0;
-  /* The list is five hundred rows long, so the bar is a thin sliver that says
-     nothing useful and crowds an already narrow rail. The way back to the top
-     is the button below, which only appears when it is needed. */
+  /* Five hundred rows make the bar a useless sliver; the button below goes back to the top. */
   scrollbar-width: none;
 }
 
@@ -1813,9 +1772,7 @@ body {
   display: none;
 }
 
-/* Carries no height, so the button hangs over the rows instead of moving them.
-   Sticky rather than absolute so it tracks the list it belongs to and not the
-   page around it. */
+/* Carries no height, so the button hangs over the rows; sticky so it tracks the list. */
 .scroll-top-anchor {
   position: sticky;
   top: 0;
@@ -1991,10 +1948,7 @@ body {
   flex: none;
 }
 
-/* The figure is the key. Each carries the colour its series is lit in, which is
-   what the stacked areas here before never had: two bands, nothing saying which
-   was which, and a success figure toned in a green that was not the green in
-   the chart. */
+/* The figure is the key, carrying its series' colour. */
 .tps-swatch.is-vote {
   background: var(--vote);
 }
@@ -2030,11 +1984,8 @@ body {
   min-width: 0;
 }
 
-/* Drawn at a measured pixel width, so it has to be stopped from outgrowing its
-   column if that measurement goes stale. It can: the fallback for a webview
-   whose ResizeObserver never delivers is a single reading at mount, and a
-   window resized after that leaves the grid too wide. Scaled down it stays
-   square and merely shrinks; unguarded it pushes the card. */
+/* Drawn at a measured width, so it shrinks rather than pushing the card if the measurement goes
+   stale. */
 .matrix svg {
   display: block;
   max-width: 100%;
@@ -2081,11 +2032,7 @@ body {
   flex-direction: column;
 }
 
-/* The rows share whatever height the card is given. This one sits in a grid
-   row beside the socket card, which is much the taller of the two, so the card
-   is stretched to match it whatever its own content needs. Left alone the
-   surplus was a block of nothing under the second row; spent on the lines it
-   makes a minute of throughput readable instead. */
+/* The rows share the height the taller socket card beside it stretches this one to. */
 .net-row {
   display: grid;
   grid-template-columns: minmax(140px, auto) minmax(120px, 1fr) minmax(92px, auto);
@@ -2141,12 +2088,8 @@ body {
   grid-row: 1 / 3;
   align-self: stretch;
   min-width: 0;
-  /* A range rather than a fixed height. The row grows when the card is
-     stretched to match a taller neighbour, and the line grows with it, but only
-     so far: the viewBox is drawn without preserving its ratio, so past about
-     this height the wash under the line becomes a slab with a jagged top and
-     stops reading as a minute of anything. Surplus past the cap becomes room
-     around the rows instead. */
+  /* A range: the line grows with a stretched card, but past this its unscaled wash stops reading as
+     a chart. */
   min-height: 38px;
   max-height: 72px;
 }
@@ -2216,9 +2159,8 @@ body {
   fill: color-mix(in srgb, var(--apricot) 12%, transparent);
 }
 
-/* The egress split, on the rows' own three columns so the bar sits under the
-   line it divides. The unattributed segment is hatched rather than filled:
-   it is not a measurement, and a solid third colour would say it was. */
+/* The egress split on the rows' columns, so the bar sits under the line it divides; the
+   unattributed part is hatched, not measured. */
 .net-split {
   display: grid;
   grid-template-columns: minmax(140px, auto) minmax(120px, 1fr) minmax(92px, auto);
@@ -2311,18 +2253,8 @@ body {
   color: var(--text-dim);
 }
 
-/* How the XDP transmit path is configured, where there is one. One line high
-   and `flex: none`: the rows above share out the card's surplus height between
-   them, and this must not take a share of it, being a fixed statement rather
-   than a line that grows more readable with room.
-
-   Two columns rather than the three the rows use, and the label sized to its
-   own words rather than to their 140px track. Aligned to the rows above, the
-   card's model got a 272px column that a real one needs 321px for, and in a
-   narrow grid column the fixed label took half the width and left sixty pixels
-   for the text. The tidier grid cost the line the only part of it an operator
-   could not have guessed. Nothing here lines up with the rows, so nothing is
-   gained by pretending it does. */
+/* The XDP line: one line high and `flex: none`, so it takes none of the card's surplus. Its own two
+   columns, since the rows' 140px label track squeezed the model name. */
 .net-xdp {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2350,11 +2282,8 @@ body {
   white-space: nowrap;
 }
 
-/* The one word on this line an operator turned a flag on to get, so the one
-   word set in the body colour. Untoned on purpose: zero-copy is not better than
-   copy in any sense this card can judge, only what was asked for, and the bind
-   fails outright rather than falling back, so there is no silent failure here
-   for an amber to warn about. */
+/* The word the operator set a flag for, in the body colour and untoned: the bind fails rather than
+   falling back. */
 .net-xdp-mode {
   color: var(--text);
 }
@@ -2404,9 +2333,7 @@ body {
 
 /* ---- produced blocks ---- */
 
-/* Scrolls with the page rather than inside a window of its own. On the overview
-   this was a card capped at six rows, which meant reading several hundred
-   pixels of opened detail through a slot that size. A page has the room. */
+/* Scrolls with the page rather than in a window of its own. */
 .slot-details {
   display: flex;
   flex-direction: column;
@@ -2419,11 +2346,8 @@ body {
   gap: 4px;
 }
 
-/* The averages row shares every rule that lays the columns out, so it cannot
-   drift out of step with the rows it sits above — including at the two widths
-   where the grid loses a column. */
-/* Columns sized to the figures with a sort arrow in front; the arrow's slot
-   collapses until one is shown. */
+/* Columns sized to the figures with a sort arrow in front, shared with the averages row so the two
+   cannot drift. The arrow's slot collapses until one is shown. */
 .produced-head,
 .produced-averages {
   display: grid;
@@ -2457,10 +2381,8 @@ body {
   color: var(--text);
 }
 
-/* Faint and ruled off, so it reads as the head of the columns rather than as
-   the most recent block. No hover or focus treatment: there is nothing to open.
-   The padding matches a row's so the figures line up with the column, not just
-   with the column's edge. */
+/* Faint and ruled off, so it reads as the columns' head; padded like a row so the figures line up.
+   */
 .produced-averages {
   padding: 5px 6px;
   border-bottom: 1px solid var(--border);
@@ -2611,9 +2533,8 @@ body {
   color: var(--text-faint);
 }
 
-/* A leader turn's head, opening the TPU path over the turn beneath it. The
-   blocks of a finished turn sit in from its edge, so the grouping is drawn;
-   a block whose turn has not drained yet stays flush. */
+/* A leader turn's head, opening the TPU path over its turn. A finished turn's blocks sit in from
+   its edge. */
 .turn {
   margin-top: 8px;
 }
@@ -2680,9 +2601,7 @@ body {
   background: var(--bg);
 }
 
-/* Where the list steps from one epoch into the next: a rule across the list
-   with the label on it, since it is a larger break than a turn. Drawn only
-   while the blocks held span more than one epoch. */
+/* Where the list steps into the previous epoch: a rule across it with the label on it. */
 .produced-epoch {
   display: flex;
   align-items: center;
@@ -2712,25 +2631,15 @@ body {
   }
 }
 
-/* On a narrow screen the four figure columns leave too little for the slot
-   number, which is the one thing in the row that must not be cut. The fill
-   percentage goes, since the meter states it whenever the row is open.
-
-   The column count here has to match what is left after that: the row has five
-   children and hiding one leaves four, and a fourth child in a three column
-   grid wraps onto a second row and doubles the height of every row in the
-   list. */
-/* The stamp is the first thing to go when the row tightens: it is context, and
-   the figures beside it are the reason anyone opened the page. Nothing about
-   the grid changes, because it never had a column of its own. */
+/* The stamp goes first as the row tightens; it never had a column, so the grid is unchanged. */
 @media (max-width: 900px) {
   .produced-when {
     display: none;
   }
 }
 
-/* The unit goes with the fill column rather than a figure: fees on this
-   page are only ever in SOL, and the detail under an opened row says so. */
+/* The fill column goes first, since an open row's meter states it, and the SOL unit with it; the
+   detail under an opened row says fees are in SOL. */
 @media (max-width: 560px) {
   .produced-head,
   .produced-averages {
@@ -2753,11 +2662,8 @@ body {
   flex-direction: column;
 }
 
-/* Said once, at the top, where the advertised TPU address is answered off this
-   host and the ports below it therefore have almost nothing to report.
-
-   Sky rather than a tone: a validator behind a relayer is configured, not
-   broken. */
+/* Said once, where the TPU is answered off-host and the ports below have little to report. Sky, not
+   a tone: that is configured, not broken. */
 .path-notice {
   padding: 9px 12px;
   margin-bottom: 11px;
@@ -2806,12 +2712,8 @@ body {
   color: var(--text-dim);
 }
 
-/* The two stages counted over the epoch, bracketed off from the sections
-   counted over the window.
-   Bracketed down the left rather than ruled off above, because a rule with the
-   span written on it reads as governing everything below it and what follows
-   this is the port list, which is back on the window. A left rule says where
-   the different span starts and, more to the point, where it stops. */
+/* The two stages counted over the epoch, bracketed down the left, which shows where the span stops
+   as a rule above would not. */
 .path-epoch {
   margin-top: 11px;
   padding: 11px 0 3px 11px;
@@ -2825,9 +2727,7 @@ body {
   padding-top: 9px;
 }
 
-/* Set as a caption and not as a heading. It sits directly above a section
-   title, and at the titles' own size, case and colour the two read as one
-   heading of two lines rather than as a label and the thing it labels. */
+/* A caption, not a heading, so it does not merge with the section title below it. */
 .path-span {
   font-size: 12px;
   color: var(--text-dim);
@@ -2896,23 +2796,13 @@ body {
 .path-seg {
   display: block;
   height: 100%;
-  /* No floor. A segment worth a twentieth of a percent is drawn as nothing,
-     which is right: the figure beside it says what happened, and widening it to
-     be visible would misstate the one thing a bar is for. This is the opposite
-     call from the transaction matrix, where a series with no dot would have
-     read as a series that never fired and there was no figure to correct it. */
+  /* No floor: a segment too small to see is drawn as nothing, and the figure beside it says what
+     happened. */
   background: var(--path-6);
 }
 
-/* What keys a legend row to its segment is the order, not the colour. Six steps
-   of one hue cannot be told apart individually: every step has to clear three to
-   one against the panel, and the range left above that floor divides into steps
-   about a quarter apart, which is below what the eye separates at the size of an
-   eight-pixel swatch. Widening it is not available — five gaps at a legible
-   ratio would need a range wider than white on this panel. So the ramp says
-   rank, the list is in the same order as the bar, and the figures say the rest.
-   Measured, both themes: 9.7 down to 3.3 against the panel dark, 3.4 up to 10.2
-   light. */
+/* Order, not colour, keys a legend row to its segment: six steps of one hue clearing 3:1 on the
+   panel are too close to tell apart. */
 
 .path-seg.is-through {
   background: var(--good);
@@ -2942,9 +2832,7 @@ body {
   background: var(--path-6);
 }
 
-/* Two columns, because the rows are short and the card was twice as tall as it
-   needed to be. One column below the breakpoint, where two would leave the
-   labels ellipsised to nothing. */
+/* Two columns, one below the breakpoint where two would ellipsise the labels. */
 .path-legend {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3003,12 +2891,8 @@ body {
   border: 1px solid var(--border);
 }
 
-/* The truncation goes on the trigger inside, never on this element.
-   `Explain` puts the class it is given on its own wrapper, and that wrapper is
-   the bubble's containing block, so `overflow: hidden` here clips the bubble to
-   the height of a line of text and nothing of it is ever drawn. The label keeps
-   its help cursor and its dotted underline, so the row reads as though it
-   explains itself and then does not, which is worse than not offering. */
+/* Truncated on the trigger inside, never here: this wrapper is the bubble's containing block, and
+   clipping it hides the bubble. */
 .path-loss-label {
   color: var(--text-dim);
   min-width: 0;
@@ -3042,10 +2926,8 @@ body {
   color: var(--text-faint);
 }
 
-/* A solid underline and a pointer, not the dotted underline and help cursor the
-   explanations use. On this dashboard a dotted underline means there is
-   something to read on hover, and wearing it for a control that instead does
-   something on click promises the wrong thing. */
+/* A solid underline and pointer: the dotted underline means something to read, and this is a
+   control. */
 .path-more {
   padding: 0;
   border: 0;
@@ -3074,10 +2956,8 @@ body {
   margin-top: 4px;
 }
 
-/* The same gesture as the caches panel, so it is the same treatment: hover
-   raises the row and nothing else. Folded is the resting state for both of
-   these, unlike the caches sections, because on most validators neither port
-   has anything to say and the line saying so is the whole of what is wanted. */
+/* Hover raises the row, as in the caches panel. Folded by default, since most ports have nothing to
+   say. */
 .path-port-head {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
@@ -3137,11 +3017,7 @@ body {
   gap: 18px;
 }
 
-/* Four figures. Two or three columns on a narrow screen, one row on a wide
-   one, which is where the card spends most of its life: it is the only
-   full-width card on the page. Transactions per slot is not among them. It is
-   the denominator all four are averages over rather than a timing, and it sits
-   beside the heading. */
+/* Four figures, two or three columns on a narrow screen and one row on a wide one. */
 .replay-figures {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
@@ -3167,10 +3043,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Wrapping rather than a breakpoint. Measured down to a 320px card the title
-   and the total share the line at every width, so a rule that moved the total
-   below it would never have fired; wrapping covers the case a longer figure
-   would create without guessing where that is. */
+/* Wraps rather than breaking at a width, which covers a longer figure without guessing where. */
 .replay-head {
   display: flex;
   align-items: baseline;
@@ -3204,17 +3077,12 @@ body {
   display: block;
   height: 100%;
   background: var(--part-6);
-  /* A phase worth a fraction of a percent still leaves a mark. The share is
-     printed in the legend, so nothing is lost by refusing to draw a segment
-     thinner than the eye can find. */
+  /* A phase worth a fraction of a percent still leaves a mark; the legend prints the share. */
   min-width: 2px;
 }
 
-/* Held apart, for a section whose figures do not partition anything. The three
-   verification sums overlap one another and each runs across the thread pool,
-   so they come to several times the span they happened in. One continuous bar
-   would say they are parts of a whole; the breaks keep the proportions without
-   making that claim. */
+/* Broken into pieces for the verify sums, which overlap and span threads, so they are not parts of
+   a whole. */
 .replay-bar.is-broken {
   gap: 3px;
   background: none;
@@ -3225,16 +3093,10 @@ body {
   border-radius: 2px;
 }
 
-/* A grid rather than a flowing row. Flowed, the durations scatter across the
-   width and the six execution phases can only be compared by reading each one;
-   in columns they line up under each other at every width the card takes. */
+/* A grid, so the phases line up in columns for comparison at every width. */
 .replay-legend {
   display: grid;
-  /* Never more than three across, whatever the width. Left to fit as many as
-     it can, a wide card gave the execution section five columns and left the
-     sixth phase alone on a second row; a third of the width is the widest a
-     column is allowed to be, so three, two and one are the only shapes it
-     takes and six items always come out even. */
+  /* Never more than three across, so six phases always come out as three, two or one per row. */
   grid-template-columns: repeat(auto-fit, minmax(max(250px, (100% - 48px) / 3), 1fr));
   gap: 4px 24px;
   margin-top: 10px;
@@ -3297,9 +3159,7 @@ body {
   color: var(--text-faint);
 }
 
-/* The figures that sit inside a phase above rather than beside it, said in a
-   sentence because a segment for any of them would draw the same microseconds
-   twice. */
+/* The figures inside a phase, said in a sentence since a segment would draw them twice. */
 .replay-parts {
   margin: 0;
   padding-top: 12px;
@@ -3311,13 +3171,8 @@ body {
 
 /* ---- what a block cost ---- */
 
-/* The expanded body of a slot row. Led by the block's compute, because that is
-   what an operator opens a produced block to read; the scheduler's two dozen
-   counters are nought on a healthy slot and sit behind a control.
-
-   Every label here is the dashboard's own 12px sentence-case label rather
-   than a scale of its own, so these sections read as part of the same
-   instrument as every card. */
+/* The expanded body of a slot row, led by the block's compute; the scheduler's counters sit behind
+   a control. Labels are the dashboard's own 12px sentence case. */
 
 .sx-lead {
   display: flex;
@@ -3381,9 +3236,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* The limit, cut three ways. Shares of the limit rather than of the block,
-   which is the only reading under which unused headroom belongs on the same
-   bar as the used part. */
+/* The limit, cut three ways: shares of the limit, so the unused headroom belongs on the bar. */
 .sx-cap {
   display: flex;
   flex-direction: column;
@@ -3456,9 +3309,8 @@ body {
   border: 1px solid var(--border);
 }
 
-/* Where the banking stage's time went, in the compute headline's shape. The
-   workers' stages take the part colours; the vote worker is sky, as votes
-   are everywhere, and is absent under alpenglow. */
+/* Where the banking stage's time went: the workers' stages in the part colours, the vote worker in
+   sky where it ran. */
 .sx-exec {
   display: flex;
   flex-direction: column;
@@ -3760,9 +3612,8 @@ body {
   color: var(--text-faint);
 }
 
-/* One rule between what fired and what did not, drawn on the first quiet row
-   rather than as a separate element, so it appears only when both halves are
-   there. */
+/* One rule between what fired and what did not, on the first quiet row so it shows only when both
+   are there. */
 .sx-counter.is-first-quiet {
   border-top: 1px solid var(--border);
   padding-top: 8px;
@@ -3778,9 +3629,7 @@ body {
   overflow: hidden;
 }
 
-/* The same sage ramp the TPU path card uses for its losses, and for the same
-   reason: these are parts of one quantity, not three severities. Amber is kept
-   for the group totals, where it says something went wrong at that stage. */
+/* The sage ramp, since these are parts of one quantity; amber is kept for the group totals. */
 .sx-counter-fill {
   display: block;
   height: 100%;
@@ -3826,41 +3675,30 @@ body {
     gap: 16px;
   }
 
-  /* The four counts are short enough to share a row; the fee values are not,
-     so those take half the width on a row of their own. Each keeps its own
-     label: a slash between two unrelated counts reads as a ratio. */
+  /* The four counts share a row and the fee values take half the width each below; each keeps its
+     label. */
   .sx-stats {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2px;
   }
 
-  /* Padding kept narrow on purpose. At 360px, which some phones still are, a
-     quarter of the row is 54px of content at 11px of padding and the longest
-     label wants 53 of them. Eight leaves the label somewhere to go rather than
-     wrapping the moment a device is a hair narrower than the one it was
-     measured on. */
+  /* Narrow padding, so the longest label still fits a quarter of a 360px row. */
   .sx-stat {
     background: var(--panel-raised);
     padding: 9px 8px;
     gap: 4px;
   }
 
-  /* A fee value is 106px at this size and a third of the row is 103, so the
-     fees take half each: base and priority side by side, tips beneath. By class
-     rather than position, since tips is only there on a jito validator. */
+  /* A fee value is wider than a third of the row, so fees go two across, tips beneath; by class,
+     since tips is jito only. */
   .sx-stats .sx-fee,
   .sx-stats .sx-wide {
     grid-column: span 2;
   }
 
-  /* The four block figures, two by two.
-     Their desktop layout is a flex-wrap on a twenty-six pixel gutter, which is
-     right for bare text and wrong from the moment the boxes above arrive at
-     this width: three fit across and the fourth drops to a row of its own. A
-     grid on the same two-pixel gutter as the stats above puts them even, and
-     the pairing falls out of the order they are already in, the two account
-     counts and then the two rates. */
+  /* The four block figures two by two, on the stats' gutter, since three across left the fourth on
+     a row alone. */
   .sx-keep {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3969,9 +3807,8 @@ body {
   flex-direction: column;
 }
 
-/* Load, processor time, memory and swap across the top. Swap is absent on a
-   machine without any, so the row is sized by what is there rather than by
-   fixed columns. */
+/* Load, processor time, memory and swap across the top, sized by what is there since swap can be
+   absent. */
 .host-top {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -4018,11 +3855,8 @@ body {
   color: var(--warn);
 }
 
-/* Two segments of one bar: what is committed, and the page cache beside it.
-   Drawn together because the question the bar answers is how much of this
-   machine's memory is spoken for, and the second segment is the part of the
-   answer that is only borrowed. The processor tile draws the same shape, its
-   busy time and then the time idle on a disk request. */
+/* Two segments of one bar: memory committed, then the page cache that is only borrowed. The
+   processor tile uses the same shape for busy and iowait. */
 .host-memory {
   display: flex;
   height: 6px;
@@ -4120,10 +3954,7 @@ body {
   background: var(--bad);
 }
 
-/* A device is a duty cycle, not a container, so there is no bar here at all.
-   Two rows of figures read fine by eye, and an identical shape beside the
-   capacity bars above is exactly what makes people read a busy device as a
-   full one. */
+/* A device is a duty cycle, not a container, so no bar, which would read as a full disk. */
 .host-device {
   display: grid;
   grid-template-columns: minmax(0, 15em) 5.4em 5.6em 5em 8.4em;
@@ -4133,12 +3964,8 @@ body {
   padding: 4px 0;
 }
 
-/* The smaller size goes on the cells, not on the row. The template above is in
-   em, which resolves against whichever element carries it, so shrinking the row
-   itself shrank every column with it: at the wide arrangement the headers ended
-   up between thirty and seventy-nine pixels left of the figures they name, and
-   the drift grew across the row. `.produced-averages` sizes its labels the same
-   way for the same reason. */
+/* The smaller size goes on the cells, not the row: the template is in em, and shrinking the row
+   shifted every header off its figures. */
 .host-device.is-head {
   color: var(--text-faint);
   padding-bottom: 1px;
@@ -4173,18 +4000,16 @@ body {
   color: var(--text-dim);
 }
 
-/* The threads section folds the way the caches card's do and borrows its
-   rules; this is only the rule between it and the disk rows above, which the
-   other host groups carry on their headings. */
+/* Borrows the caches card's fold; this is only the rule above it that the other host groups carry
+   on their headings. */
 .host-threads {
   margin-top: 16px;
   padding-top: 9px;
   border-top: 1px solid var(--border);
 }
 
-/* One thread, or a pool of them: the name, its count and cores, a minute of
-   bars, then the two figures. The same shape as a device row, since the two
-   groups answer the same question. */
+/* One thread or pool: name, count and cores, a minute of bars, then two figures, shaped like a
+   device row. */
 .host-thread {
   display: grid;
   /* The bars are capped: uncapped they ran to the card's edge with fifteen
@@ -4283,9 +4108,7 @@ body {
 
 /* ---- caches and storage ---- */
 
-/* The two subsystems replay waits on, folded into one card. Ruled apart rather
-   than spaced apart, so a folded section still reads as a section and not as a
-   line of the one above it. */
+/* The two subsystems replay waits on, ruled apart so a folded section still reads as one. */
 .caches {
   display: flex;
   flex-direction: column;
@@ -4300,13 +4123,8 @@ body {
   margin-top: -4px;
 }
 
-/* The same treatment the produced blocks on the slot page use, because it is
-   the same gesture. Hover raises the row and nothing else: no border, no
-   brightening of the text, and the raised panel colour rather than anything
-   lighter. Deliberately not kept while open, which is where this parts company
-   with the produced blocks: there one row of many is open and the shading says
-   which, here both are open to begin with and shading both would light the
-   whole card. */
+/* The slot page's hover treatment, raising the row only; not kept while open, since both sections
+   start open. */
 .cache-head {
   display: grid;
   grid-template-columns: minmax(9.4em, auto) auto minmax(0, 1fr) auto;
@@ -4331,9 +4149,7 @@ body {
   white-space: nowrap;
 }
 
-/* Says at a glance what the rate says in full, for when the section is folded
-   and the rate is the only thing on the row. Takes its colour from the same
-   tone the rate does, so the two can never disagree. */
+/* The rate at a glance for a folded section, in the rate's own tone. */
 .cache-dot {
   width: 7px;
   height: 7px;
@@ -4396,23 +4212,15 @@ body {
   padding: 4px 6px 16px;
 }
 
-/* auto-fill rather than auto-fit, and capped at four. The on-disk pair sits in
-   its own grid under the four reads, and auto-fit collapses the tracks it does
-   not fill: two figures became two half-width columns, so "storage files"
-   landed at the midpoint of the card instead of under the third heading above
-   it. Keeping the empty tracks keeps the columns of both grids in line. A
-   quarter of the width is also the widest a track may be, which is what stops
-   auto-fill opening a fifth and sixth column on a wide screen and squeezing
-   four figures into the left half of the card. */
+/* auto-fill, capped at four, so the on-disk pair's columns line up with the four reads above. */
 .cache-figures {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(max(170px, (100% - 66px) / 4), 1fr));
   gap: 16px 22px;
 }
 
-/* Names a group of figures inside an open section. The groups count different
-   things, reads and writes and what is on disk, and running them together as
-   one grid read as one list of unrelated numbers. */
+/* Names a group of figures in an open section, since reads, writes and disk count different things.
+   */
 .cache-section-title {
   font-size: 13px;
   color: var(--text);
@@ -4455,14 +4263,10 @@ body {
   color: var(--text-faint);
 }
 
-/* Below here the four columns of the heading cannot all hold their width, and
-   the summary is the one that gives: squeezed, it was the only cell that lost
-   anything, and it lost it to an ellipsis mid-figure. Stacked under the name it
-   keeps whole figures, and the last two are dropped rather than cut. */
+/* Below here the summary stacks under the name and drops its last two figures rather than
+   ellipsising mid-figure. */
 @media (max-width: 700px) {
-  /* The two figures that decide something keep their columns; throughput and
-     iops are the detail behind them and go. The mount path goes with them: at
-     this width it is longer than the name it qualifies. */
+  /* The two deciding figures keep their columns; throughput, iops and the mount path go. */
   .host-capacity {
     grid-template-columns: minmax(0, 1fr) 3.4em;
   }
@@ -4545,9 +4349,7 @@ body {
   font-size: 12px;
 }
 
-/* The smaller size goes on the cells rather than the row, because the template
-   above is in em and would otherwise be measured against this size instead of a
-   row's. See `.host-device.is-head`, which had the same fault. */
+/* Sized on the cells, as `.host-device.is-head` is, since the template is in em. */
 .ingest-row.is-head {
   color: var(--text-faint);
   padding-bottom: 3px;
@@ -4585,9 +4387,7 @@ body {
   text-align: right;
 }
 
-/* The share sits under its figure rather than beside it. The card is three
-   hundred pixels at its narrowest and the four columns already leave the name
-   ellipsised, so there is no width to give a second value on the same line. */
+/* The share sits under its figure, since the narrowest card has no width beside it. */
 .ingest-recent,
 .ingest-total {
   display: flex;
@@ -4596,9 +4396,7 @@ body {
   line-height: 1.25;
 }
 
-/* Always occupied, empty or not. Three of the rows never have a share and the
-   rest lose theirs whenever the window clears, and a line that came and went
-   would leave the six rows changing height against each other every minute. */
+/* Always occupied, so the rows do not change height as shares come and go. */
 .ingest-share {
   /* Matched to the line-height, not merely close to it: an empty line a
      fraction shorter than a filled one leaves the rows a pixel out of step. */
@@ -4617,20 +4415,14 @@ body {
   color: var(--text-dim);
 }
 
-/* Dimmer than the window figure beside it. The total is context — how bad it
-   has ever been — where the window is the live signal, and a column of large
-   startup totals should not out-shout a column of zeroes that is the thing
-   actually worth reading. */
+/* Dimmer than the window figure: the total is context, the window the live signal. */
 .ingest-total {
   color: var(--text-faint);
 }
 
 @media (max-width: 900px) {
-  /* The collapsed rail has to be named here too, or its two-column template
-     outranks this one and survives into a width it was never meant for. The
-     sidebar is hidden below this breakpoint, so the main column would then be
-     placed in the rail's track and squeezed to thirty-four pixels, leaving the
-     rest of the row empty. */
+  /* The collapsed rail is named too, or its two-column template outranks this and squeezes the main
+     column into the rail's track. */
   .app,
   .app.is-collapsed {
     grid-template-columns: 1fr;
@@ -4640,9 +4432,7 @@ body {
     display: none;
   }
 
-  /* Both are two-column grids above this width. The network card is not in
-     this list any more: its body is a flex column at every width, and its rows
-     do their own rearranging below. */
+  /* Both are two-column grids above this width. */
   .transactions-body,
   .validators-body {
     grid-template-columns: 1fr;
@@ -4830,9 +4620,8 @@ body {
 
 /* ---- schedule ---- */
 
-/* Fills the column and scrolls its list rather than scrolling the page, so
-   the filter above stays put and new leader groups arriving at the top do not
-   push the rows being read down the screen. */
+/* Fills the column and scrolls its list, so the filter stays put as leader groups arrive at the
+   top. */
 .schedule {
   display: flex;
   flex-direction: column;
@@ -4842,9 +4631,7 @@ body {
   min-height: 0;
 }
 
-/* Scrolls what has been produced, newest first, with the live edge at the top.
-   The same arrangement as the slot list down the side, and handled the same
-   way. */
+/* Scrolls what has been produced, newest first, like the slot list down the side. */
 .schedule-list {
   display: flex;
   flex-direction: column;
@@ -4857,13 +4644,7 @@ body {
   scrollbar-width: none;
 }
 
-/* The way further back than the live window reaches. A control rather than a
-   scroll trigger: the list is not virtualised, so what is fetched is what gets
-   rendered, and the reader asking is what decides how much is worth the DOM. */
-/* Where the list stops, and why. Set as prose rather than as a disabled
-   control: there is nothing to press, and a greyed-out button invites trying.
-   It is the same place the button was, so the foot of the list always says
-   what happens next. */
+/* Where the list stops, as prose rather than a disabled button, in the place the button was. */
 .schedule-capped {
   align-self: center;
   max-width: 46ch;
@@ -4875,6 +4656,7 @@ body {
   color: var(--text-faint);
 }
 
+/* A control rather than a scroll trigger: the list is not virtualised, so the reader decides. */
 .schedule-older {
   align-self: center;
   margin: 4px 0 var(--gap);
@@ -5031,10 +4813,8 @@ body {
 
 .schedule-row {
   display: grid;
-  /* Nine figure columns. The timeline takes the width of two, and compute is
-     held at what a full block's figure needs, `49,998,560 100%`, or it
-     overflows the track and puts a scrollbar under that turn alone. The
-     container scrolls sideways on a narrow screen either way. */
+  /* Compute is held at what a full block's figure needs, `49,998,560 100%`; narrow screens scroll
+     the turn sideways. */
   grid-template-columns: 150px repeat(6, minmax(58px, 1fr)) minmax(80px, 1.1fr) minmax(150px, 2fr) minmax(10em, 1.1fr);
   gap: 8px;
   padding: 3px 0;
@@ -5149,9 +4929,7 @@ body {
   color: var(--warn);
 }
 
-/* From the first shred to the block being full, then to replay finishing, on
-   one fixed track so rows compare with each other rather than each filling its
-   own cell. The text beside it is the same two spans. */
+/* First shred to full, then to replay finishing, on one fixed track so rows compare. */
 .schedule-tl {
   display: flex;
   align-items: center;
@@ -5595,9 +5373,8 @@ body {
   background: var(--text);
 }
 
-/* A seventh figure column under alpenglow. Each column is held at what its
-   heading needs in DejaVu Sans, the widest of the fallbacks, and the slot and
-   shred columns give up the room, so the turn fits 1240 without scrolling. */
+/* A seventh figure column under alpenglow, each held at what its heading needs in DejaVu Sans, the
+   widest fallback, so a turn fits 1240. */
 .schedule-slots.has-certificate .schedule-row {
   grid-template-columns: 116px minmax(40px, 0.7fr) minmax(78px, 1fr) minmax(84px, 1fr) minmax(58px, 1fr) minmax(58px, 1fr) minmax(46px, 0.8fr) minmax(58px, 1fr) minmax(56px, 1.1fr) minmax(140px, 2fr) minmax(9em, 1.1fr);
 }

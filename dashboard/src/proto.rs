@@ -22,9 +22,8 @@ pub const MAX_MESSAGE: usize = 1024 * 1024;
 /// Messages buffered per client before it counts as too slow and is dropped.
 const BROADCAST_CAPACITY: usize = 8192;
 
-/// JSON this long or longer also travels deflated, as a binary frame to a
-/// client that offered the subprotocol. Below it the framing and the decode
-/// outweigh the saving.
+/// JSON this long or longer also travels deflated to a client that offered the subprotocol; below
+/// it the saving does not pay for the framing.
 pub const DEFLATE_FROM: usize = 512;
 
 /// The websocket subprotocol a client offers to be sent deflated frames.
@@ -154,9 +153,8 @@ fn deflate(bytes: &[u8]) -> Option<Vec<u8>> {
     encoder.finish().ok()
 }
 
-/// A burst of queued messages with every superseded value dropped: a retained
-/// key queued more than once is sent once, with its newest value, in the newest
-/// one's place. Everything else is kept in order.
+/// A burst of queued messages with each retained key sent once, with its newest value, in the
+/// newest one's place. Everything else keeps its order.
 pub fn coalesce(burst: Vec<Message>) -> Vec<Message> {
     let mut seen = std::collections::HashSet::new();
     let mut kept: Vec<Message> = burst

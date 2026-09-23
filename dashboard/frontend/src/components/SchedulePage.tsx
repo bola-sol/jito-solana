@@ -183,9 +183,8 @@ export function SchedulePage({
     [peers],
   );
 
-  // Built once when the depth lands, rather than with the list. Its own slots
-  // do not change as the chain moves, so this survives every arrival that
-  // rebuilds the list below it.
+  // Its slots do not change as the chain moves, so this survives every arrival that rebuilds the
+  // list.
   const deepTurns = useMemo(
     () => (deep === null ? [] : turnsOf(deep, (slot, mine) => store.leaderOf(slot, mine))),
     // The peer table is left out: it changes every few seconds and would
@@ -198,9 +197,8 @@ export function SchedulePage({
     const near = turnsOf(slots, (slot, mine) => store.leaderOf(slot, mine)).filter(wanted);
     if (!searching || deep === null) return near;
 
-    // The list's own turns first, then everything older that matches and is not
-    // already among them. The two overlap: the depth reaches up to the live
-    // window, and the list has usually loaded some way into it.
+    // The list's turns first, then older matches not already among them; the depth overlaps the
+    // live window.
     const seen = new Set(near.map(turnKey));
     const far = deepTurns.filter((turn) => !seen.has(turnKey(turn)) && wanted(turn));
     return [...near, ...far].sort(
@@ -210,9 +208,7 @@ export function SchedulePage({
     // page. Affordable here because the cap bounds it.
   }, [store, slots, deep, deepTurns, searching, query, oursOnly]);
 
-  // Newest first, so the cap keeps the newest and drops the tail. A search that
-  // matches more than the page will draw says so rather than quietly showing
-  // some of its answer.
+  // Newest first, so the cap drops the tail, and a search that matches more says so.
   const turns = matched.slice(0, MAX_TURNS);
   const beyondCap = matched.length - turns.length;
   // Counted in slots because that is what a span is asked for in. The live
@@ -389,9 +385,8 @@ function TurnLeader({
           className="schedule-leader-key"
         />
       )}
-      {/* Both always drawn, empty or not: the stamp lands once the first slot
-          is timed and the peer table on the slow tier, and a turn that grew a
-          line when either did would be measured twice. */}
+      {/* Both always drawn, empty or not, so a turn does not grow a line when the stamp or the peer
+          table lands. */}
       <span className="schedule-leader-when">{began === null ? "" : blockStamp(began)}</span>
       {/* Three lines, each drawn empty until the peer table reaches the
           leader, for the same reason as the stamp above. */}
@@ -464,9 +459,7 @@ function SlotRow({
   const alpenglow = useAlpenglow();
   const entry = slot.entry;
   const block = entry?.block ?? null;
-  // Votes are what is left of the block once the rest is taken out. Clamped
-  // because the two counters are differenced independently and a bank whose
-  // parent has gone reports neither.
+  // Votes are the block less the rest, clamped since the two counters are differenced separately.
   const votes = block ? Math.max(0, block.transactions - block.non_vote_transactions) : null;
   const filled =
     block && block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null;
@@ -488,9 +481,7 @@ function SlotRow({
       <span>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
       <span>{block ? sol(block.priority_fees, 4) : "—"}</span>
       <span>
-        {/* Absent where the tip program is not configured or the slot was never
-            measured. Nought is a real reading and draws as nought: it says the
-            searchers passed that leader by. */}
+        {/* Absent where tips were never measured; nought is a real reading. */}
         {rates && block?.tips != null ? sol(jitoShare(block.tips, rates), 4) : "—"}
       </span>
       <span>

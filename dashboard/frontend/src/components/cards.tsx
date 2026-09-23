@@ -63,11 +63,8 @@ export function EpochCard({
   );
 }
 
-/** Vote performance this epoch against the best any validator has: credits
- *  under TowerBFT, and under alpenglow the slots whose reward certificates
- *  included this validator's vote, since the vote account's own figure is
- *  lamports that leader slots pay into. That figure goes with the balances
- *  when they are hidden. Absent until the vote account has been read. */
+/** Vote performance this epoch against the best any validator has: credits under TowerBFT, paid
+ *  certificate slots under alpenglow. Absent until the vote account is read. */
 function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   const store = useStore();
   const credits = store.get("summary", "vote_credits");
@@ -111,9 +108,8 @@ function NoSeatStat({ admission }: { admission: Admission }) {
   );
 }
 
-/** Where this validator's unrewarded votes fell this epoch, the figure
- *  opening the list of each one under the cards. Alpenglow only, and absent
- *  until a certificate from this epoch has been read. */
+/** Where this validator's unrewarded votes fell this epoch, opening the list below. Alpenglow only,
+ *  after a certificate from the epoch is read. */
 function MissesStat({ epoch, open, onToggle }: { epoch: EpochInfo; open: boolean; onToggle: () => void }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
@@ -184,9 +180,8 @@ function MissesSplit({ participation }: { participation: VoteParticipation }) {
   );
 }
 
-/** The epoch's progress, with this validator's leader turns and unrewarded
- *  votes marked along it once the certificates say where they fell. The
- *  turns are left off when there are too many to read as marks. */
+/** The epoch's progress, marked with our leader turns, left off when too many, and unrewarded
+ *  votes. */
 function EpochMeter({ fraction, epoch }: { fraction: number; epoch: EpochInfo }) {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();

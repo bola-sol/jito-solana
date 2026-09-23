@@ -4,9 +4,8 @@ import { cpuRows, parts, serialRows, verifyRows, type ReplayPart, type ReplayRow
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
 
-/** What replay spends its time on over the last few hundred slots: its own
- *  serial thread, and worker time in cores. Absent where the point never
- *  arrives, which is a validator logging below info. */
+/** What replay spends its time on over the last few hundred slots: its own thread, and worker time
+ *  in cores. Absent where the validator logs below info. */
 export function ReplayCard(): ReactElement | null {
   const store = useStore();
   const replay = store.get("summary", "replay");
@@ -17,9 +16,7 @@ export function ReplayCard(): ReactElement | null {
   const cpu =
     replay.execute + replay.load + replay.store + replay.program_cache + replay.checking + replay.other;
 
-  // Against the slot time this cluster is actually keeping, not the nominal
-  // one. The two drift apart under load, which is exactly when the figure is
-  // being read.
+  // Against the slot time the cluster is keeping, which drifts from nominal under load.
   const slotMicros = slotNanos ? slotNanos / 1000 : null;
   const ofSlot = slotMicros ? serial / slotMicros : null;
   const cores = slotMicros ? cpu / slotMicros : null;
@@ -90,10 +87,8 @@ export function ReplayCard(): ReactElement | null {
         explain="CPU time across the worker threads. The phases partition, so they add up to what one slot costs."
       />
 
-      {/* The four figures that sit inside a phase rather than beside it. A
-          segment for any of them would draw the same microseconds twice, so
-          they are said in a sentence, where nesting is something prose can
-          carry. */}
+      {/* The figures inside a phase are said in a sentence, since a segment would draw them twice.
+          */}
       <p className="replay-parts">
         Inside running programs: <Part part={inside.bytecode} />, <Part part={inside.serialising} />,{" "}
         <Part part={inside.deserialising} />. Of program loading,{" "}
@@ -154,9 +149,7 @@ function Section({
           <i
             key={row.key}
             className={`is-${index + 1}`}
-            // Grown from a basis of nothing rather than given a width, so that
-            // the gaps in a broken bar come out of the track before the shares
-            // are shared out, instead of pushing the total past its width.
+            // Grown from nothing, so a broken bar's gaps come out of the track before the shares.
             style={{ flexGrow: row.share }}
           />
         ))}

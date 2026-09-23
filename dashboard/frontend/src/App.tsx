@@ -40,9 +40,8 @@ export function App(): ReactElement {
   const classes = ["app"];
   if (rail && collapsed) classes.push("is-collapsed");
   if (!rail) classes.push("is-full");
-  // While the validator boots everything but the boot sequence is blurred:
-  // the rest has nothing to say yet, and the eye goes to the one thing that
-  // does. The same test the verdict makes to show the phases.
+  // While the validator boots, everything but the boot sequence is blurred, by the same test the
+  // verdict uses.
   const startup = store.get("summary", "startup_progress");
   if (startup && !startup.running) classes.push("is-booting");
 
@@ -111,21 +110,15 @@ function Overview() {
         <NetworkCard />
         <IngestCard />
       </div>
-      {/* The machine the cards above are running on. Last of the host group
-          rather than first: an operator comes to this page for the validator,
-          and reaches for the box only once something here says the validator
+      {/* Last of the host group: an operator reaches for the box once the validator's cards say it
           is struggling. */}
       <HostCard />
-      {/* What replay does, then the two things it spends that time waiting
-          on. Loading programs and loading accounts are rows on the first
-          section and parts of the one under it, so they read downwards: how
-          long, then how well each of the two is going. */}
+      {/* Replay, then what it waits on: programs and accounts are parts of its sections and then
+          cards of their own. */}
       <ReplayCard />
       <CachesCard />
-      {/* Picks the same traffic up where the socket card leaves it. That one
-          counts the datagrams the kernel never handed over; this one counts
-          what the QUIC listener above it made of the rest, and carries the
-          three QUIC ports the socket card therefore does not draw. */}
+      {/* Picks the traffic up where the socket card leaves it, with the three QUIC ports that card
+          does not draw. */}
       <TpuPathCard />
     </>
   );

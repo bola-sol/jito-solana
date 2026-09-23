@@ -1,9 +1,5 @@
-/**
- * The measured tip figure times the rates the validator sends. `jitoShare` is
- * what reached a distribution account, for any leader; `ourShare` is what a
- * turn earned us, for our own slots only. Both are estimates: label them
- * derived.
- */
+/** The measured tip figure times the rates the validator sends: `jitoShare` for any leader,
+ *  `ourShare` for our own slots. Both are estimates, labelled derived. */
 
 import type { TipRates } from "./types";
 

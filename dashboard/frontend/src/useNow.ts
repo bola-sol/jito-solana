@@ -3,9 +3,8 @@ import { useStore } from "./useStore";
 
 /** A wall-clock reading that advances on its own, so the charts scroll
  *  between samples. Only the chart components use it. */
-/** How far behind live the charts draw, so the newest sample sits past the
- *  edge: two of `METER_INTERVAL` in `dashboard/src/meters.rs`, one for the
- *  sample and one for its delivery. */
+/** How far behind live the charts draw: two of `METER_INTERVAL` in `dashboard/src/meters.rs`, one
+ *  for the sample and one for its delivery. */
 export const RENDER_LAG_MS = 2000;
 
 /** The right edge of a chart, on the validator's clock: `now` less how far

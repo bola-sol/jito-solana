@@ -138,9 +138,8 @@ function Balance({
   );
 }
 
-/** A missing BLS key on the vote account, a warning before alpenglow and a
- *  fault after it, since it counts no vote without one. Nothing while the
- *  key is set, or until the vote account has been read. */
+/** A missing BLS key on the vote account: a warning before alpenglow and a fault after, since no
+ *  vote counts without one. */
 function Bls() {
   const set = useStore().get("summary", "bls_key");
   const alpenglow = useAlpenglow();

@@ -1,9 +1,5 @@
-/**
- * Slots fetched from the validator's packed history, turned back into the
- * entries the schedule page draws. A reconstruction: the packed row carries
- * only the schedule columns, so failed transactions and entries read as
- * nought here and must not be drawn from these.
- */
+/** Slots fetched from the validator's packed history, turned back into schedule entries. Only the
+ *  schedule columns survive packing; the rest read as nought. */
 
 import { leaderAt } from "./schedule";
 import type { EpochInfo, Reward, SlotEntry, SlotLevel } from "./types";
@@ -26,9 +22,8 @@ export const REWARD_SHIFT = 6;
 export const REWARD_MASK = 0b11 << REWARD_SHIFT;
 const REWARDS: (Reward | null)[] = [null, "paid", "unpaid", "no_certificate"];
 
-/** One slot as the validator sends it, positional: level, flags, votes,
- *  non-votes, compute, fees, priority fees, tips, time, replay, shreds,
- *  repaired, full, replayed, left out. Pinned by a test on each side. */
+/** One slot as the validator sends it, positional: level, flags, votes, non-votes, compute, fees,
+ *  priority fees, tips, time, replay, shreds, repaired, full, replayed, left out. */
 export type WireRow = [
   level: number,
   flags: number,
@@ -71,9 +66,8 @@ export function entriesOf(
   identity: string | undefined,
 ): SlotEntry[] {
   const entries: SlotEntry[] = [];
-  // The gap to the previous slot that had a clock, which is what the validator
-  // measures a duration as. Carried across holes for the same reason it is
-  // there: a skipped slot shows up as one long interval, not as none.
+  // The gap to the previous slot with a clock, as the validator measures it, so a skipped slot is
+  // one long interval.
   let previousTime: number | null = null;
 
   range.rows.forEach((row, index) => {
@@ -96,9 +90,8 @@ export function entriesOf(
       replayedMillis,
       leftOut,
     ] = row;
-    // Only to decide whether the slot was ours. Who the leader is, and what
-    // they are called, the page resolves for itself through `store.leaderOf`,
-    // the same way it does for a live slot.
+    // Only to decide whether the slot was ours; the page resolves the leader through
+    // `store.leaderOf`.
     const leader = leaderAt(epoch, slot);
     const timed = (flags & HAS_CLOCK) !== 0;
     const reward = REWARDS[(flags & REWARD_MASK) >> REWARD_SHIFT] ?? null;

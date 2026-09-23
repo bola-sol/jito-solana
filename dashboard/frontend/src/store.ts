@@ -107,9 +107,8 @@ export class Store {
 
   /** True once enough has arrived for the dashboard to be worth looking at. */
   isReady(): boolean {
-    // A validator that is still booting has no slots and no identity to report,
-    // but the boot sequence is exactly what should be on screen then, so the
-    // splash has nothing left to wait for.
+    // A booting validator has no slots or identity yet, and the boot sequence is what the page
+    // shows, so the splash stops waiting.
     const startup = this.get("summary", "startup_progress");
     if (startup && !startup.running) return true;
 
@@ -189,9 +188,8 @@ export class Store {
     if (cached) return cached;
 
     const key = this.leaderAtAny(slot);
-    // The peer table first, being the fresher of the two: it is rebuilt every
-    // few seconds where the display table is fetched once. Both hold the same
-    // answer for a leader they both know.
+    // The peer table first, being rebuilt every few seconds where the display table is fetched
+    // once.
     const shown = key === null ? undefined : (this.peersByIdentity().get(key) ?? this.displays.get(key));
     const leader: LeaderRef =
       key === null ? NO_LEADER : { key, name: shown?.name ?? null, icon: shown?.icon ?? null };
@@ -284,9 +282,8 @@ export class Store {
   apply(envelope: Envelope): void {
     const { topic, key, value } = envelope;
 
-    // Replies to our own requests carry an id and are not state. An id we are
-    // not waiting on is dropped: a reply that outlived its caller is the
-    // ordinary result of a reconnect, not something to act on.
+    // Replies to our own requests carry an id and are not state; one nobody is waiting on, as after
+    // a reconnect, is dropped.
     if (envelope.id !== undefined) {
       const pending = this.pending.get(envelope.id);
       if (pending) {
@@ -345,9 +342,7 @@ export class Store {
   private trimSlots(): void {
     if (this.slots.size <= MAX_SLOTS) return;
     const ordered = [...this.slots.values()].sort((a, b) => a.slot - b.slot);
-    // Split rather than walked oldest-first, because our own slots are kept to
-    // a separate depth. Walking one list and skipping ours would have deleted
-    // newer slots to make room for the ones it skipped.
+    // Split rather than walked oldest first, because our own slots are kept to a separate depth.
     const own = ordered.filter((entry) => entry.mine).slice(-MAX_OWN_SLOTS);
     const rest = ordered.filter((entry) => !entry.mine).slice(-MAX_SLOTS);
     this.slots = new Map([...rest, ...own].map((entry) => [entry.slot, entry]));

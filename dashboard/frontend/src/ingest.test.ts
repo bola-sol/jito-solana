@@ -3,9 +3,7 @@ import { lossShare, shareLabel, windowLabel } from "./components/IngestCard";
 
 describe("windowLabel", () => {
   it("names the period actually watched while the window fills", () => {
-    // The point of the heading: for the first minute the card must not claim a
-    // minute it has not watched, because "0 drops in the last minute" read off
-    // a five-second window is a reassurance nobody measured.
+    // For its first minute the card does not claim a minute it has not watched.
     expect(windowLabel(0)).toBe("last 5s");
     expect(windowLabel(12)).toBe("last 10s");
     expect(windowLabel(38)).toBe("last 40s");
@@ -23,9 +21,8 @@ describe("windowLabel", () => {
 
 describe("lossShare", () => {
   it("divides drops by everything that arrived, not by what got through", () => {
-    // The two are disjoint: a datagram the kernel discarded never reached the
-    // reader that counts them. Dividing by the delivered count alone would
-    // overstate the loss, slightly at first and without limit as it grows.
+    // A dropped datagram never reached the reader that counts delivered ones, so the loss is out of
+    // both.
     expect(lossShare(1, 99)).toBeCloseTo(0.01, 10);
     expect(lossShare(50, 50)).toBeCloseTo(0.5, 10);
   });
@@ -36,10 +33,8 @@ describe("lossShare", () => {
   });
 
   it("refuses to call it total loss when nothing was counted as received", () => {
-    // The dangerous case. These counts travel as metrics points, which are only
-    // submitted while info logging is on for the crate submitting them, so a
-    // validator run quieter than default reports nought received forever. Read
-    // literally that is every packet lost, on a node that is perfectly healthy.
+    // Received counts arrive only while info logging is on, so nought received is unknown, not
+    // total loss.
     expect(lossShare(12, 0)).toBeNull();
   });
 
@@ -52,9 +47,7 @@ describe("lossShare", () => {
 
 describe("shareLabel", () => {
   it("does not round a real loss away to nothing", () => {
-    // One in fifty thousand is a reading worth having, and 0.00% denies it —
-    // the wrong direction to err in for a figure whose only job is to show that
-    // something is being lost.
+    // One in fifty thousand is shown, not rounded to 0.00%.
     expect(shareLabel(1 / 50_000)).toBe("<0.01%");
   });
 

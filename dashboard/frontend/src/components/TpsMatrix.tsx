@@ -18,9 +18,8 @@ import { useWidth } from "../useWidth";
 /** The three series, bottom of the column upwards. */
 const SERIES = ["vote", "failed", "success"] as const;
 
-/** A minute of throughput as a grid of lit dots, one column per sample, lit
- *  from the bottom: votes, failed, succeeded. One path per colour rather
- *  than an element per dot. */
+/** A minute of throughput as a grid of dots lit from the bottom, one column per sample, one path
+ *  per colour. */
 export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }): ReactElement {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
@@ -71,9 +70,7 @@ function Grid({
   columns.forEach((sample, index) => {
     const live = index === columns.length - 1;
     const x = index * pitch + pitch / 2 - dot / 2;
-    // A column with nothing behind it is drawn as an unlit one, which is what
-    // makes a validator that has just started look like a grid waiting to fill
-    // rather than a panel that has failed.
+    // A column with nothing behind it is drawn unlit, so a fresh validator reads as a grid filling.
     const lit = sample
       ? columnRows([sample.vote, sample.non_vote_failed, sample.non_vote_success], ceiling, rows)
       : [0, 0, 0];

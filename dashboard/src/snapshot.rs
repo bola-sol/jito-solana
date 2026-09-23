@@ -98,9 +98,8 @@ fn millis(time: SystemTime) -> Option<u64> {
     u64::try_from(time.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()
 }
 
-/// The archive being staged in `dirs`, newest slot first. The packager
-/// stages a directory and a growing file under one prefix; the directory
-/// dates the start, and a file not written to for a minute is a leftover.
+/// The archive being staged in `dirs`, newest slot first. Its directory dates the start, and a file
+/// untouched for a minute is a leftover.
 fn writing_in(dirs: &[&Path]) -> Option<Writing> {
     let now = SystemTime::now();
     let mut seen: HashSet<&Path> = HashSet::new();

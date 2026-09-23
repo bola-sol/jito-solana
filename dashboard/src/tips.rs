@@ -35,14 +35,12 @@ pub struct TipRates {
     pub commission_bps: Option<u16>,
 }
 
-/// Reads what each slot paid in tips. Keeps a floor, since the accounts never
-/// empty, and a running total the sweep is checked against. Slots must arrive
-/// in order.
+/// Reads what each slot paid in tips, keeping a floor, since the accounts never empty, and a
+/// running total to check the sweep against. Slots must arrive in order.
 pub struct TipMeter {
     accounts: [Pubkey; TIP_ACCOUNTS],
-    /// The lowest total the accounts have been seen to hold. Learned rather than
-    /// computed from rent exemption; it starts high and converges at the first
-    /// crank, so the first turn after a restart reads low.
+    /// The lowest total the accounts have been seen to hold. It starts high and converges at the
+    /// first crank, so the first turn after a restart reads low.
     floor: u64,
     /// Credited to the current receiver since the last sweep.
     attributed: u64,
@@ -68,9 +66,8 @@ impl TipMeter {
         &self.accounts
     }
 
-    /// What the last sweep says was paid before the crank and counted nowhere.
-    /// `None` until a sweep has been seen. Near nought means the readings were
-    /// complete.
+    /// What the last sweep says was paid before the crank and counted nowhere; near nought means
+    /// the readings were complete. `None` before a sweep.
     pub fn residual(&self) -> Option<u64> {
         self.residual
     }
@@ -87,9 +84,8 @@ impl TipMeter {
             return paid;
         }
 
-        // The balance fell, so the receiver was cranked in this slot and what stands
-        // above the floor arrived after it. What arrived before was swept, and cannot
-        // be told apart from the rest of that turn here.
+        // The balance fell, so the receiver was cranked in this slot and only what stands above the
+        // floor arrived after it.
         let swept = before.saturating_sub(self.floor);
         let paid = now.saturating_sub(self.floor);
         self.residual = Some(swept.saturating_sub(self.attributed));

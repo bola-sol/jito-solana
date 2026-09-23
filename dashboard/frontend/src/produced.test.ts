@@ -139,9 +139,7 @@ describe("blockSummary", () => {
   });
 
   it("averages the blocks' own percentages, not the totals", () => {
-    // A block with a larger limit should not count for more in a column of
-    // percentages: the figure at the head of the column has to be the mean of
-    // what is under it. Totalled instead this would read 20/110, not 55%.
+    // The head of a column of percentages is the mean of what is under it, not a ratio of totals.
     const { mean } = blockSummary([
       block({ block_cost: 10, block_cost_limit: 100 }),
       block({ block_cost: 10, block_cost_limit: 10 }),

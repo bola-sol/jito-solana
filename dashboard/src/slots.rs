@@ -30,16 +30,14 @@ pub enum SlotLevel {
 pub struct SlotEntry {
     pub slot: Slot,
     pub level: SlotLevel,
-    /// True when this validator was the scheduled leader. The leader itself comes
-    /// from the epoch's turn array and the peer table, one copy per leader; `mine`
-    /// stays because those arrive on their own message.
+    /// True when this validator was the scheduled leader, whose identity arrives separately in the
+    /// turn array.
     pub mine: bool,
     /// What replay found in the block. `None` until the slot freezes, and for
     /// a slot that was skipped or never replayed.
     pub block: Option<BlockDetail>,
-    /// Wall-clock duration from the previous slot completing, in nanoseconds.
-    /// Outside [`BlockDetail`] because it is measured from shred arrival and exists
-    /// for slots with no block.
+    /// Wall-clock time from the previous slot completing, in nanoseconds, measured from shred
+    /// arrival so it exists without a block.
     pub duration_nanos: Option<u64>,
     /// When the slot's first shred arrived, in milliseconds. Stamps a turn on the
     /// schedule page; the packed history keeps the same figure for older slots.
@@ -94,13 +92,11 @@ pub struct BlockDetail {
     /// bank's `total_transaction_fee` adds the two despite its name.
     pub total_fees: u64,
     pub priority_fees: u64,
-    /// Lamports paid into the jito tip accounts during this slot, before jito's
-    /// cut and anyone's commission. `None` where no tip program is configured or
-    /// the parent was pruned; nought is a real reading.
+    /// Lamports paid into the jito tip accounts during this slot, before any cut. `None` where no
+    /// tip program is configured or the parent was pruned.
     pub tips: Option<u64>,
-    /// Wall time replay's own thread spent on this slot, in microseconds. `None`
-    /// where no replay point was seen for it, which includes a bank this
-    /// validator built rather than replayed.
+    /// Wall time replay's own thread spent on this slot, in microseconds. `None` where no replay
+    /// point was seen, as for a bank this validator built.
     pub replay_micros: Option<u64>,
 }
 
@@ -152,9 +148,8 @@ impl SlotRing {
         self.entries.values().skip(skip).cloned().collect()
     }
 
-    /// What a newly connected client is sent: the most recent `count` slots,
-    /// preceded by this validator's own from further back, without which a reload
-    /// lost every leader slot on screen.
+    /// What a newly connected client is sent: the most recent `count` slots, preceded by this
+    /// validator's own from further back.
     pub fn overview(&self, count: usize) -> Vec<SlotEntry> {
         let recent = self.recent(count);
         let floor = recent.first().map_or(Slot::MAX, |entry| entry.slot);
@@ -205,9 +200,7 @@ impl SlotRing {
         for (&slot, entry) in &self.entries {
             if entry.mine { &mut own } else { &mut rest }.push(slot);
         }
-        // Our own slots take up the ring's capacity rather than sitting on top of it.
-        // Kept on top, the map settled above the guard's threshold and every update
-        // ran the whole scan for nothing.
+        // Our own slots count against the ring's capacity, or the prune guard stays tripped.
         let drop_own = own.len().saturating_sub(OWN_SLOTS_KEPT);
         let kept_own = own.len().saturating_sub(drop_own);
         let drop_rest = rest
@@ -222,9 +215,8 @@ impl SlotRing {
         }
     }
 
-    /// Raises every replayed slot at or below `up_to` to `level`. Bank forks drops
-    /// banks once rooted, so a slot's level would otherwise freeze where it left
-    /// the fork tree.
+    /// Raises every replayed slot at or below `up_to` to `level`, since bank forks drops banks once
+    /// rooted.
     pub fn promote(&mut self, up_to: Slot, level: SlotLevel) -> Vec<SlotEntry> {
         let candidates: Vec<Slot> = self
             .entries
@@ -278,17 +270,15 @@ mod tests {
 
     #[test]
     fn test_marking_the_same_slot_ours_twice_reports_no_change() {
-        // The schedule is walked on every tick, so a slot is labelled repeatedly.
-        // Republishing each time would put the strip's window on the wire five times
-        // a second.
+        // The schedule is walked every tick, so a slot is labelled repeatedly and must publish only
+        // once.
         let mut ring = SlotRing::new(16);
         assert!(ring.set_mine(7, true).is_some());
         assert!(ring.set_mine(7, true).is_none());
     }
 
-    /// The two slot snapshots are the largest messages the server sends, and the
-    /// websocket ceiling is sized from them. Checked separately because they are
-    /// sent separately.
+    /// The two slot snapshots are the largest messages the server sends, and the websocket ceiling
+    /// is sized from them.
     #[test]
     fn test_the_largest_slot_snapshots_fit_the_message_ceiling() {
         // Worst case throughout: a full ring, every counter at its ceiling. The 512
@@ -391,8 +381,6 @@ mod tests {
     #[test]
     fn test_pruning_settles_where_the_guard_will_leave_it_alone() {
         // `prune` returns early at `capacity`, so it has to prune to at most that.
-        // With our slots kept on top, the guard never fired again and every update
-        // ran the whole scan.
         let mut ring = SlotRing::new(256);
         for slot in 1..=80 {
             ring.update(slot, |entry| entry.mine = true);

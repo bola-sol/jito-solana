@@ -222,9 +222,7 @@ pub fn fixture() -> Fixture {
     } = create_genesis_config_with_leader(MINT, &identity, VALIDATOR_STAKE);
     let vote_account = voting_keypair.pubkey();
 
-    // With the config program in the account index, which
-    // `validator_info::scan_all` requires; without it the tests covering it would
-    // pass against a path nobody runs.
+    // With the config program in the account index, which `validator_info::scan_all` requires.
     let bank = Bank::new_with_paths_for_tests(
         &genesis_config,
         Some(BankTestConfig {

@@ -106,9 +106,7 @@ export function Explain({
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
-      // Focus moving from the trigger to a control inside the bubble is focus
-      // staying within this, and closing on it would take the control away in
-      // the moment it was reached for.
+      // Focus moving into the bubble stays within it, so it does not close.
       onBlur={(event) => {
         const next = event.relatedTarget;
         if (interactive && next instanceof Node && event.currentTarget.contains(next)) return;

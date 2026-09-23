@@ -12,9 +12,8 @@ function list(certificates: number, carried_all: number, rows: WrittenRow[], rew
 
 describe("the written figures", () => {
   it("keeps the validators faring worse in ours, widest gap first", () => {
-    // Of 100 certificates we wrote, out of 1,000 seen: a left out of 30 of
-    // ours and 20 everywhere, b of 20 and 200 (the same share in both), c of
-    // 50 and 10.
+    // Of 100 we wrote and 1,000 seen: a left out of 30 and 20, b of 20 and 200 (the same share), c
+    // of 50 and 10.
     const figures = writtenFigures(list(100, 60, [row("a", 30, 20), row("b", 20, 200), row("c", 50, 10)]));
     expect(figures.map((figure) => figure.row.identity)).toEqual(["c", "a"]);
     expect(figures[0].kind).toBe("worse");

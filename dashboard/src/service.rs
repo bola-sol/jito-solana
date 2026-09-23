@@ -62,9 +62,8 @@ pub struct DashboardService {
     /// The jito tip settings, retained from `start` until the collector exists.
     tip_payment_program_id: Option<Pubkey>,
     commission_bps: Option<u16>,
-    /// The packed slot history, shared with the server, which answers range
-    /// queries out of it. Allocated here because the server starts before the
-    /// collector.
+    /// The packed slot history, allocated here since the server answers range queries before the
+    /// collector starts.
     history: Arc<RwLock<SlotHistory>>,
     /// Validator names and icons, shared with the server, which answers a
     /// request for the whole table out of it.
@@ -82,12 +81,8 @@ pub struct DashboardService {
 }
 
 impl DashboardService {
-    /// Binds the listener and begins serving startup progress. The only error is a
-    /// failure to bind, so a misconfigured dashboard fails loudly at boot. Call
-    /// [`DashboardService::attach`] once the validator is assembled.
-    /// `gossip_ready` carries gossip and bank forks once the validator has
-    /// them, before its supermajority wait; the wait is drawn per validator
-    /// from then on.
+    /// Binds the listener and serves startup progress until [`DashboardService::attach`]; fails
+    /// only to bind. `gossip_ready` hands over gossip and bank forks before the supermajority wait.
     pub fn start(
         config: DashboardConfig,
         startup_progress: StartProgress,
@@ -242,9 +237,8 @@ impl DashboardService {
         })
     }
 
-    /// Starts the collector against a fully assembled validator. Both threads
-    /// publish startup progress through the same [`StartupPublisher`], so the
-    /// handover is invisible to a client.
+    /// Starts the collector against the assembled validator, publishing through the boot thread's
+    /// [`StartupPublisher`].
     pub fn attach(
         &mut self,
         context: DashboardContext,
@@ -252,9 +246,8 @@ impl DashboardService {
     ) -> io::Result<()> {
         let info_cache = self.info_cache.clone();
 
-        // Validator names are read once here, off the collector's thread, and the
-        // cache lock is taken only to merge the result. Whether it finds anything
-        // depends on how the validator was started, which `scan_all` logs.
+        // Validator names are read once, off the collector's thread; `scan_all` logs whether the
+        // index lets it find any.
         self.info_loader = Some({
             let context = context.clone();
             let info_cache = info_cache.clone();

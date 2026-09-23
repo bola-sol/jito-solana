@@ -10,9 +10,8 @@ export interface BalanceWarning {
   title: string;
 }
 
-/** Under TowerBFT, the identity pays each vote; under three days of them is
- *  a warning and under a day a fault. Nothing where votes cost nothing, and
- *  nothing on a node that is not the voter, whose identity pays no votes. */
+/** Under TowerBFT the identity pays each vote: under three days of them warns, under a day is a
+ *  fault. Nothing on a node that is not the voter. */
 export function identityWarning(
   balance: number | undefined,
   cost: VoteCost | undefined,
@@ -28,9 +27,8 @@ export function identityWarning(
   return { tone: "warn", label: "identity, under three days of votes", title };
 }
 
-/** Under alpenglow, the epoch's turn burns the admission ticket from the vote
- *  account. Below the minimum it fails the next turn; with only one ticket
- *  above it, the one after. */
+/** Under alpenglow each epoch burns the admission ticket from the vote account: below the minimum
+ *  the next fails, one ticket above it the one after. */
 export function voteWarning(balance: number | undefined, cost: VoteCost | undefined): BalanceWarning | null {
   if (balance === undefined || cost === undefined || cost.kind !== "ticket") return null;
   if (balance >= cost.minimum + cost.lamports) return null;

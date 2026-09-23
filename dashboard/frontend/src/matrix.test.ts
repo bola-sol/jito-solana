@@ -90,10 +90,8 @@ describe("the grid's columns", () => {
   });
 
   it("does not halve the grid when the window carries one sample too many", () => {
-    // `windowed` keeps one sample past the left edge on purpose, so a full
-    // minute arrives as sixty-one samples against sixty columns. Rounding the
-    // stride up makes that a stride of two, and the grid visibly halves and
-    // un-halves every time a sample lands.
+    // `windowed` keeps one sample past the edge, so sixty-one samples on sixty columns must not
+    // round the stride to two.
     const over = Array.from({ length: 61 }, (_unused, index) => index);
     const columns = columnsFor(over, 60, second, newest);
     expect(columns).toHaveLength(60);

@@ -21,10 +21,8 @@ export const MIN_PITCH = 13;
  *  200 ms slots, where one second can fall wholly on an empty turn. */
 export const READOUT_SECONDS = 5;
 
-/**
- * How many rows each series lights, bottom to top, stacked. Any series with
- * something in it lights at least one row: unlit reads as "did not happen".
- */
+/** How many rows each series lights, bottom to top, stacked; any series with something in it lights
+ *  at least one. */
 export function columnRows(values: number[], ceiling: number, rows: number): number[] {
   if (ceiling <= 0 || rows <= 0) return values.map(() => 0);
 
@@ -41,9 +39,8 @@ export function columnRows(values: number[], ceiling: number, rows: number): num
     if (value > 0 && lit[index] === 0) lit[index] = 1;
   }
 
-  // The guarantee can push a column past the grid it has to fit in. Take the
-  // rows back from the largest series, which is the one that loses least by it,
-  // and never from a series down to its single guaranteed row.
+  // The guarantee can overfill the column, so rows come back from the largest series, never below
+  // one.
   let total = lit.reduce((sum, count) => sum + count, 0);
   while (total > rows) {
     let largest = 1;
@@ -67,12 +64,8 @@ export function slotsFor(width: number): number {
   return Math.max(1, Math.min(MATRIX_WINDOW_SECONDS, Math.floor(width / MIN_PITCH)));
 }
 
-/**
- * The sample each column draws, newest last, null where nothing arrived for
- * that column's seconds. A narrow card merges several seconds per column,
- * bucketed by the clock so a column keeps the same seconds from one tick to
- * the next, and a second the validator skipped stays a hole where it was.
- */
+/** The sample each column draws, newest last, null where nothing arrived. A narrow card merges
+ *  seconds per column, bucketed by the clock so columns keep their seconds. */
 export function columnsFor<T, C>(
   samples: T[],
   slots: number,

@@ -39,9 +39,8 @@ impl PortWindow {
         }
     }
 
-    /// Records a tick and forgets what has fallen out. The oldest sample kept is
-    /// the newest still at least a span old, so the window covers slightly more
-    /// than the span rather than under-reporting by a tick.
+    /// Records a tick and forgets what has fallen out, keeping the newest sample at least a span
+    /// old so the window never under-reports.
     pub fn push(&mut self, now: Instant, totals: HashMap<u16, u64>) {
         self.samples.push_back((now, totals));
         while let Some((next, _)) = self.samples.get(1) {
@@ -106,9 +105,8 @@ pub fn read() -> io::Result<PortMap> {
     ))
 }
 
-/// Accumulates one `/proc/net/udp`-format table into `ports`, returning the
-/// rows understood. Both address families share the layout. `drops` is the
-/// thirteenth column, not the last, so an appended column is ignored.
+/// Accumulates one `/proc/net/udp`-format table into `ports`, returning the rows understood.
+/// `drops` is the thirteenth column, so an appended column is ignored.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
     let mut rows: usize = 0;
@@ -151,9 +149,8 @@ fn parse_into(contents: &str, ports: &mut PortMap) -> usize {
 mod tests {
     use super::*;
 
-    /// Two sockets on port 8001 (0x1F41) as `SO_REUSEPORT` gives, and one on 8899
-    /// (0x22C3). Left unformatted: a verbatim transcript, and the column positions
-    /// are what is under test.
+    /// Two sockets on port 8001 (0x1F41) as `SO_REUSEPORT` gives, and one on 8899 (0x22C3): a
+    /// verbatim transcript, so left unformatted.
     #[rustfmt::skip]
     const V4: &str = "\
    sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops

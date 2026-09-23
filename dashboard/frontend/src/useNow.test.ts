@@ -14,9 +14,8 @@ describe("render lag", () => {
     WIDTH * (1 - (now - RENDER_LAG_MS - timestampMs) / windowMs);
 
   it("keeps the newest sample past the right edge for a whole interval", () => {
-    // The point of the lag: with the edge at live, a sample arriving on the
-    // second sits exactly on the edge and then retreats from it, leaving the
-    // notch that made the chart step once a second.
+    // With the edge at live, a sample landing on the second sits on the edge then retreats,
+    // stepping the chart.
     const arrived = 1_000_000;
     for (let elapsed = 0; elapsed < RENDER_LAG_MS; elapsed += 100) {
       expect(at(arrived, arrived + elapsed)).toBeGreaterThanOrEqual(WIDTH);
@@ -53,9 +52,7 @@ describe("windowed", () => {
   const windowMs = 10_000;
 
   it("keeps one sample older than the window", () => {
-    // That extra point is what lets the line leave the chart by sliding under
-    // the viewBox edge. Filtering strictly to the window made the leftmost
-    // segment vanish the moment its older end expired.
+    // The extra point lets the line slide out under the viewBox edge rather than vanish.
     const samples = [at(30_000), at(45_000), at(52_000), at(58_000)];
     expect(windowed(samples, now, windowMs, stamp)).toEqual([
       at(45_000),

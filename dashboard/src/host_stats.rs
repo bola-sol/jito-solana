@@ -296,9 +296,8 @@ pub fn filesystem_id(_path: &Path) -> io::Result<u64> {
     ))
 }
 
-/// The block device behind `path`, named as `/proc/diskstats` names it, folded
-/// up to the parent disk for a partition since every partition competes for
-/// the same queue. `None` where there is no block device at all, as on tmpfs.
+/// The block device behind `path` as `/proc/diskstats` names it, a partition folded up to its
+/// disk since they share a queue. `None` where there is no block device, as on tmpfs.
 #[cfg(target_os = "linux")]
 pub fn device_for(path: &Path) -> io::Result<Option<String>> {
     use std::os::linux::fs::MetadataExt;
@@ -363,8 +362,7 @@ fn parse_load(contents: &str) -> Option<LoadAverage> {
     })
 }
 
-/// `cpu  1234 5 678 90000 12 0 34 0 0 0`: the line summing every core, ahead
-/// of one per core. User, nice, system and idle, then iowait, irq, softirq and
+/// `cpu  1234 5 678 90000 12 0 34 0 0 0`: user, nice, system, idle, then iowait, irq, softirq and
 /// steal, which older kernels leave off.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_stat(contents: &str) -> Option<CpuCounters> {
@@ -431,9 +429,8 @@ fn parse_memory(contents: &str) -> Option<Memory> {
     seen_total.then_some(memory)
 }
 
-/// `259 0 nvme0n1 12345 0 987654 3210 ...`: reads, reads merged, sectors read,
-/// milliseconds reading, the same four for writes, requests in flight, then
-/// milliseconds doing any I/O. Later discard and flush counters are ignored.
+/// `259 0 nvme0n1 12345 0 987654 3210 ...`: reads, merged, sectors, milliseconds, the same four for
+/// writes, requests in flight, then milliseconds doing any I/O.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_diskstats(contents: &str) -> BTreeMap<String, DiskCounters> {
     let mut disks = BTreeMap::new();

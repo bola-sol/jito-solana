@@ -28,14 +28,12 @@ const ACCOUNTS_DB_TIMINGS: &str = "accounts_db_store_timings";
 const SHREDS_TURBINE: &str = "shred_fetch_receiver";
 const SHREDS_REPAIR: &str = "shred_fetch_repair_receiver";
 
-/// The receivers on the other two UDP ports the socket panel lists. TPU and TPU
-/// forwards speak QUIC, whose counters are transactions rather than datagrams,
-/// and serve repair's receiver is never reported.
+/// The receivers on the other two UDP ports the socket panel lists; the QUIC ports count
+/// transactions, and serve repair's receiver never reports.
 const GOSSIP_RECEIVER: &str = "gossip_receiver";
 
-/// The two UDP senders that report what they sent, under the name each was
-/// given. Turbine goes out over XDP and reports shred counts only, so egress
-/// can be split this far and no further.
+/// The two UDP senders that report what they sent, under their own names. Turbine goes out over XDP
+/// and reports shreds only.
 const GOSSIP_SENDER: &str = "Gossip";
 const REPAIR_SENDER: &str = "Repair";
 const SENT_BYTES: &str = "streamer-send-bytes_total";
@@ -58,9 +56,8 @@ const ACCOUNTS_LOADS: &str = "accounts_db_load_accounts";
 const ACCOUNTS_STORES: &str = "accounts_db-stores";
 const ACCOUNTS_FLUSH: &str = "accounts_db-flush_accounts_cache";
 
-/// The program cache's counters, reported once per bank and reset as they are,
-/// so each point is one slot's work. The cache object itself is behind
-/// `dev-context-only-utils`, and polling it would miss most of each slot.
+/// The program cache's counters, reported and reset once per bank, so each point is one slot's
+/// work.
 const PROGRAM_CACHE: &str = "loaded-programs-cache-stats";
 
 /// The QUIC listeners, one point per port. Only the TPU port feeds the stages
@@ -77,9 +74,8 @@ const TPU_VERIFIER: &str = "tpu-verifier";
 /// stage and under BAM.
 const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 
-/// The bundle stage's count for each leader slot: bundles it sanitised and
-/// bundles it executed into the block. One point per stage thread, summed.
-/// Silent under BAM, which drains the stage.
+/// The bundle stage's bundles sanitised and executed per leader slot, one point per stage thread.
+/// Silent under BAM.
 const BUNDLE_SLOT_STATS: &str = "bundle_stage-stats";
 
 /// A consume worker's time by stage, every twenty milliseconds while it has
@@ -92,19 +88,15 @@ const VOTE_SLOT_TIMING: &str = "banking_stage-leader_slot_vote_execute_and_commi
 /// The worker's tag naming it.
 const WORKER_ID: &str = "id";
 
-/// The worker threads, one point each under an `id` tag that is not read:
-/// summing them gives the stage's total. Submitted at trace level, which does
-/// not matter here because the observer runs before the level is consulted.
+/// The worker threads, one point each, summed. Submitted at trace level, which the observer sees
+/// anyway since it runs before the level check.
 const WORKER_COUNTS: &str = "banking_stage_worker_counts";
 
-/// The same counters again per leader slot, with the slot as a field. Submitted
-/// only while this validator is producing, so it exists for exactly the slots
-/// this node led.
+/// The same counters per leader slot, submitted only for the slots this node led.
 const SCHEDULER_SLOT_COUNTS: &str = "banking_stage_scheduler_slot_counts";
 
-/// How the XDP transmit path is set up, on a validator running one. Submitted
-/// on an interval only where an XDP config was given, so its absence is what
-/// says XDP is off. One transmitter serves turbine, repair and gossip alike.
+/// How the XDP transmit path is set up, submitted only where an XDP config was given, so its
+/// absence says XDP is off.
 const XDP_NETWORK_CONFIG: &str = "xdp-network-config";
 
 /// The retransmit stage's counters, every two seconds, under an `is_xdp`
@@ -126,9 +118,8 @@ const SHRED_FULL: &str = "shred_insert_is_full";
 /// with whether it was ours; only ours are kept.
 const COST_TRACKER: &str = "cost_tracker_stats";
 
-/// The stake the validator could see in gossip while it waited for a
-/// supermajority, in lamports. Submitted every tenth check, so about every
-/// ten seconds, and only during that wait.
+/// The stake the validator could see in gossip during the supermajority wait, in lamports; about
+/// every ten seconds.
 const WFSM_GOSSIP: &str = "wfsm_gossip";
 
 /// The tag saying whether the reporting node produced the block.
@@ -220,15 +211,13 @@ pub struct ProgramCacheCounters {
     /// Keys left holding no versions at all once pruning had finished.
     pub empty_entries: AtomicU64,
 
-    /// Entries loaded when an eviction last ran. A level, written only when an
-    /// eviction happens and reset with each bank, so the panel takes the peak across
-    /// its window rather than the latest reading.
+    /// Entries loaded when an eviction last ran, reset with each bank, so the panel takes the
+    /// window's peak.
     pub water_level: AtomicU64,
 }
 
-/// One QUIC port: who was let in, what they sent, and what got through. Most
-/// fields are deltas and accumulate; `offered` arrives cumulative and is
-/// stored; the last two are levels.
+/// One QUIC port: who was let in, what they sent, and what got through. `offered` arrives
+/// cumulative and the last two are levels; the rest are deltas.
 #[derive(Debug, Default)]
 pub struct QuicCounters {
     /// Connections offered, cumulative on the wire. The denominator for
@@ -322,9 +311,7 @@ pub struct ExecutedCounters {
     /// block having failed, which still costs their fee.
     pub succeeded: AtomicU64,
 
-    // Why a transaction the worker took up never reached the block. Only the
-    // terminal reasons: retries are drawn as retries, and `instruction_error`
-    // reached the block.
+    // Why a transaction the worker took up never reached the block: terminal reasons only.
     pub too_many_locks: AtomicU64,
     pub account_missing: AtomicU64,
     pub fee_payer_broke: AtomicU64,
@@ -348,9 +335,8 @@ pub struct MetricsTap {
     /// falls.
     pub accounts_cache_evicts: AtomicU64,
 
-    /// Shreds that arrived on their own, and shreds this validator had to ask for.
-    /// The first is also the turbine port's received count: everything on the TVU
-    /// port is a shred.
+    /// Shreds that arrived on their own, and shreds this validator had to ask for. The first is
+    /// also the turbine port's received count.
     pub shreds_turbine: AtomicU64,
     pub shreds_repair: AtomicU64,
 
@@ -369,9 +355,7 @@ pub struct MetricsTap {
     /// The `is_xdp` tag last seen: 0 none yet, 1 false, 2 true.
     retransmit_xdp: AtomicU8,
 
-    /// Bytes each named sender put on the wire, with the milliseconds each
-    /// sample covered, so a rate is bytes over the window reported rather than
-    /// over the interval the points happened to arrive at.
+    /// Bytes each named sender put on the wire, with the milliseconds each sample covered.
     pub gossip_sent_bytes: AtomicU64,
     pub gossip_sent_millis: AtomicU64,
     pub repair_sent_bytes: AtomicU64,
@@ -429,9 +413,8 @@ pub struct MetricsTap {
     /// The vote worker's report for each of our recent leader slots.
     vote_timings: Mutex<BTreeMap<Slot, StageTimes>>,
 
-    /// How the XDP transmit path is configured. Latched: it cannot change while the
-    /// process runs, and a config that stops being reported has not been turned
-    /// off.
+    /// How the XDP transmit path is configured, latched since it cannot change while the process
+    /// runs.
     xdp: Mutex<Option<XdpConfig>>,
 
     /// The last count of stake seen in gossip during the supermajority wait.
@@ -439,9 +422,8 @@ pub struct MetricsTap {
     stake_in_gossip: Mutex<Option<StakeInGossip>>,
 }
 
-/// Stake the validator could see in gossip when it last counted, in lamports.
-/// The validator's own figure for the supermajority wait, exact where the
-/// progress report carries a whole percent.
+/// Stake the validator could see in gossip when it last counted, in lamports: its own figure for
+/// the supermajority wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct StakeInGossip {
     pub online: u64,
@@ -449,9 +431,8 @@ pub struct StakeInGossip {
     pub total: u64,
 }
 
-/// How the XDP transmit path is configured, as the validator resolved it.
-/// Vendor and model may arrive as "unknown" on a host without the PCI
-/// database, and are passed through as sent.
+/// How the XDP transmit path is configured, as the validator resolved it. Vendor and model may read
+/// "unknown" on a host without the PCI database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct XdpConfig {
     /// Whether the socket bound with `XDP_ZEROCOPY`. The flag is passed straight to
@@ -568,9 +549,8 @@ pub struct BundleLanding {
     pub executed: u64,
 }
 
-/// One replayed slot's timings, in microseconds. `fetch`, `confirming` and
-/// `completing` are disjoint spans on replay's thread; the verify fields are
-/// overlapping jobs; everything from `execute` down is worker thread time.
+/// One replayed slot's timings, in microseconds: `fetch`, `confirming` and `completing` are
+/// disjoint on replay's thread, the verify fields overlap, and the rest is worker thread time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReplaySlotTimes {
     /// The slot the point described, so a row can be asked for its own figure.
@@ -654,17 +634,15 @@ fn describes_more_work(new: &SchedulerTotals, held: &SchedulerTotals) -> bool {
     (new.scheduled, new.finished, new.buffered) > (held.scheduled, held.finished, held.buffered)
 }
 
-/// The scheduler's counters in the order a transaction meets them, with the
-/// reasons the count falls between each. Only the first stretch is an
-/// identity.
+/// The scheduler's counters in the order a transaction meets them, with the reasons the count falls
+/// between each.
 #[derive(Debug, Default)]
 pub struct SchedulerCounters {
     /// Everything sigverify handed the scheduler.
     pub received: AtomicU64,
 
     // Lost at the door, before ever being buffered.
-    // Not held because the validator was forwarding rather than buffering, which
-    // on most nodes most of the time is nearly all the traffic.
+    /// Not held because the validator was forwarding rather than buffering.
     pub not_held: AtomicU64,
     /// The queue feeding the checks was full.
     pub check_queue_full: AtomicU64,
@@ -736,9 +714,8 @@ pub struct ProgramCacheTotals {
     pub empty_entries: u64,
 }
 
-/// One window of a QUIC port's counters. They do not partition the offer:
-/// the listener drops uncounted on either side of the handshake, and
-/// `handshook` separates the two gaps.
+/// One window of a QUIC port's counters. They do not partition the offer: the listener drops
+/// uncounted on either side of the handshake.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicTotals {
     pub offered: u64,
@@ -912,9 +889,8 @@ impl MetricsTap {
         self.observe(point);
     }
 
-    /// Adds what one point carries, if it is one of the few wanted. Every point the
-    /// validator submits passes through here, so an unwanted one costs the match
-    /// and nothing else.
+    /// Adds what one point carries, if it is one of the few wanted. Every point the validator
+    /// submits passes through here.
     fn observe(&self, point: &DataPoint) {
         match point.name {
             ACCOUNTS_DB_TIMINGS => {
@@ -1018,9 +994,8 @@ impl MetricsTap {
         }
     }
 
-    /// Records one leader slot's waterfall. These counts are already one slot's
-    /// own, so they are kept as they arrive. A point without a readable slot has
-    /// nowhere to be shown and is dropped.
+    /// Records one leader slot's waterfall, already that slot's own counts. A point without a
+    /// readable slot is dropped.
     fn remember_slot(&self, point: &DataPoint) {
         let Some(slot) = point
             .fields
@@ -1062,9 +1037,8 @@ impl MetricsTap {
         self.slot_lists_revision.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Latches how the XDP transmit path is set up. Read from tags as well as
-    /// fields: `driver` and `zero_copy` are tags, the rest fields. An unparseable
-    /// `zero_copy` is taken as false rather than dropping the report.
+    /// Latches how the XDP transmit path is set up, from tags (`driver`, `zero_copy`) and fields.
+    /// An unparseable `zero_copy` reads as false.
     fn remember_xdp(&self, point: &DataPoint) {
         let tag = |wanted: &str| {
             point
@@ -1130,9 +1104,8 @@ impl MetricsTap {
         }
     }
 
-    /// Records one replayed slot's timings. The confirm and dispatch spans arrive
-    /// as `confirmation_without_replay_us` and `task_submission_us`, the unified
-    /// scheduler's names, and `update_transaction_statuses` has no `_us` suffix.
+    /// Records one replayed slot's timings. Two spans arrive under the unified scheduler's names,
+    /// and `update_transaction_statuses` has no `_us` suffix.
     fn remember_replay(&self, point: &DataPoint) {
         let mut slot = ReplaySlotTimes::default();
         let mut seen = false;
@@ -2224,9 +2197,7 @@ mod tests {
 
     #[test]
     fn test_a_replayed_slot_can_be_asked_for_its_own_wall_time() {
-        // The three spans on replay's own thread, summed. The schedule page draws
-        // this beside the slot's duration, so it has to be reachable by slot rather
-        // than only as a window mean.
+        // The three spans on replay's own thread, summed, reachable by slot for the schedule page.
         let tap = MetricsTap::default();
         tap.observe(&named(
             REPLAY_SLOT_STATS,
@@ -2354,9 +2325,7 @@ mod tests {
 
     #[test]
     fn test_each_named_sender_keeps_its_bytes_and_its_window_apart() {
-        // Gossip reports every five seconds or so and repair every ten, so the
-        // window has to travel with the bytes or a rate would be off by the
-        // ratio of the two.
+        // Gossip and repair report over different windows, so the window travels with the bytes.
         let tap = MetricsTap::default();
         fn sent<'a>(bytes: &'a str, millis: &'a str) -> [(&'static str, &'a str); 3] {
             [
@@ -3240,9 +3209,8 @@ mod tests {
 
     #[test]
     fn test_the_verify_stage_accounts_for_every_packet_it_was_given() {
-        // There is no counter for a failed signature. It is what is left once
-        // duplicates, underpaying and verified are taken off, which is exact because
-        // sigverify discards at one step.
+        // No counter exists for a failed signature; it is what is left once duplicates, underpaying
+        // and verified are taken off.
         let tap = MetricsTap::default();
         tap.observe(&named(
             TPU_VERIFIER,

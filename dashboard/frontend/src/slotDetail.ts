@@ -27,9 +27,8 @@ export interface Capacity {
 export function capacity(block: ProducedBlock, cost: SlotCost | undefined): Capacity | null {
   const limit = block.block_cost_limit;
   if (limit <= 0) return null;
-  // Capped at the limit. A block cannot exceed it, but the two figures are
-  // captured from different places on the bank and a rounding disagreement
-  // would otherwise push the bar past its own track.
+  // Capped at the limit: the two figures are read from different places on the bank and can
+  // disagree by rounding.
   const used = Math.min(1, Math.max(0, block.block_cost) / limit);
   // Capped at what the block used, for the same reason and because the
   // costliest account cannot have spent more than the block did.
@@ -116,9 +115,8 @@ export function schedulerView(w: SlotWaterfall): SchedulerView {
   const chain: ChainLink[] = CHAIN_KEYS.flatMap((key) => {
     const row = byKey.get(key);
     if (!row) return [];
-    // Named for its unit where the unit changes. On a BAM slot the first link
-    // is batches and the three after it are transactions, and a reader given
-    // four bare numbers in a row would take them for one measurement narrowing.
+    // On a BAM slot the first link counts batches and the rest transactions, so it is named for its
+    // unit.
     const label = key === "received" && bam ? "batches" : key;
     return [{ key, label, count: row.count }];
   });
@@ -161,9 +159,7 @@ export function schedulerView(w: SlotWaterfall): SchedulerView {
     worst,
     nonZero: counted.filter((row) => row.count > 0).length,
     counters: counted.length,
-    // Capped, because the queue holds transactions across slots and a slot can
-    // finish more than arrived in it. Null rather than nought where nothing
-    // arrived, so an idle slot does not read as one that finished nothing.
+    // Capped, since a slot can finish work queued before it; null where nothing arrived.
     completion: against > 0 ? Math.min(1, finished / against) : null,
   };
 }
@@ -212,9 +208,8 @@ function stageTotal(times: StageTimes): number {
 const AFTER_COMMIT =
   "After each commit the workers scan for votes, update the fee cache and send the transaction statuses.";
 
-/** The stacked bar: the workers' stages largest first, the two fixed costs
- *  folded together, and the vote worker as one segment where it spent time.
- *  Under alpenglow it reports nought, and the segment is left out. */
+/** The stacked bar: the workers' stages largest first, the two fixed costs folded together, and the
+ *  vote worker where it spent time. */
 export function executionView(execution: Execution): ExecutionView {
   const w = execution.non_vote;
   const nonVote = stageTotal(w);

@@ -22,9 +22,8 @@ const KIND_TITLE: Record<WrittenKind, string> = {
   missing: "Left out of nearly every certificate from any writer.",
 };
 
-/** What this node's certificates carried this epoch: one line, and on request
- *  the validators they left out more than the network did. Asked for with the
- *  page and again every `POLL_MS` while it is open. */
+/** What this node's certificates carried this epoch, and on request who they left out more than the
+ *  network did. Polled every `POLL_MS` while open. */
 export function WrittenSection(): ReactElement {
   const store = useStore();
   const [list, setList] = useState<WrittenList | null>(null);
@@ -113,9 +112,8 @@ export function WrittenSection(): ReactElement {
   );
 }
 
-/** One validator: who, and how often our certificates and everyone's left it
- *  out. Module-level: a component defined in the render above would remount
- *  on every store tick. */
+/** One validator and how often ours and everyone's certificates left it out. Module-level, or it
+ *  remounts every tick. */
 function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: number }) {
   const { row, ours, everywhere, kind } = figure;
   const build = buildLabel(row.client ?? undefined, row.version ?? undefined);

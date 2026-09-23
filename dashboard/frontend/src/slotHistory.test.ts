@@ -81,9 +81,8 @@ describe("entriesOf", () => {
   const range = (rows: (WireRow | null)[]): SlotRange => ({ first_slot: 1000, rows });
 
   it("reads the columns in the order the validator writes them", () => {
-    // The one place the wire order is pinned on this side. It is positional, so
-    // a silent reordering would put fees in the compute column and nothing
-    // would fail until someone read the page.
+    // The wire order is positional and pinned here, so a reordering fails rather than moving fees
+    // into compute.
     const [entry] = entriesOf(range([row()]), epochOf(), undefined);
     expect(entry.level).toBe("rooted");
     expect(entry.block?.non_vote_transactions).toBe(8_752);
@@ -129,9 +128,7 @@ describe("entriesOf", () => {
   });
 
   it("keeps a tip figure that was never measured apart from one that was nought", () => {
-    // The reason for the third flag bit. A turn the searchers passed by is
-    // worth drawing; a turn measured on a bank with no parent is not the same
-    // thing and must not draw as nought.
+    // A turn measured with no tips differs from one never measured, which must not draw as nought.
     const measured = entriesOf(range([row({ 7: 0 })]), epochOf(), undefined);
     expect(measured[0].block?.tips).toBe(0);
 
@@ -144,9 +141,7 @@ describe("entriesOf", () => {
   });
 
   it("carries the two kinds of fee apart, so the split survives the trip back", () => {
-    // Base is the subtraction. The row carried only the total until the
-    // schedule page started drawing them separately, and the split appeared
-    // live and vanished in history.
+    // Base is the total less priority.
     const [entry] = entriesOf(range([row()]), epochOf(), undefined);
     const base = (entry.block?.total_fees ?? 0) - (entry.block?.priority_fees ?? 0);
     expect(base).toBe(44_087_520);
@@ -198,9 +193,7 @@ describe("entriesOf", () => {
   });
 
   it("says nothing about who led, only whether we did", () => {
-    // Naming is no longer this module's job. A fetched slot carries `mine` and
-    // the page resolves the leader itself, the same way it does for a live one,
-    // so the two agree by construction rather than by both being told.
+    // A fetched slot carries `mine`; the page resolves its leader as it does a live one.
     const [entry] = entriesOf(range([row()]), epochOf(), ALICE);
     expect(entry.mine).toBe(true);
     expect("leader" in entry).toBe(false);

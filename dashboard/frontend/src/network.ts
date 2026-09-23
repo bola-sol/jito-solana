@@ -3,9 +3,7 @@
 /** How much of the past the card covers. Matches the transactions chart. */
 export const NETWORK_WINDOW_SECONDS = 60;
 
-/** How far from the average a reading must be to count as a direction.
- *  Relative, since the card reads kilobytes on testnet and megabytes on
- *  mainnet. */
+/** How far from the average a reading must be to count as a direction, relative to it. */
 const TREND_NOISE = 0.02;
 
 /** Seconds of trailing readings the arrow is taken from, so one noisy second

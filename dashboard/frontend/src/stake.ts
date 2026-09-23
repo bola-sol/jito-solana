@@ -27,9 +27,7 @@ export function stakeTicks(delinquent: number, total: number): StakeTicks {
   const full = Math.min(STAKE_TICKS, Math.floor(exact));
   if (full >= STAKE_TICKS) return { full: STAKE_TICKS, partial: 0 };
 
-  // The floor only applies where there is nothing else to see. Once a whole
-  // tick is red the strip already reads as non-zero, and the part-filled one
-  // beside it can be left true.
+  // The floor applies only while no tick is full, since a red tick already reads as non-zero.
   const partial = exact - full;
   if (full > 0) return { full, partial };
 

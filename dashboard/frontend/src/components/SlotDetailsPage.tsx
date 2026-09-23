@@ -41,9 +41,8 @@ import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
 import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
 
-/** Every block this validator produced, captured as each froze; the list
- *  ends where the dashboard started. The open block and the search live in
- *  the route, so both can be linked to. */
+/** Every block this validator produced since the dashboard started. The open block and the search
+ *  live in the route, so both can be linked to. */
 export function SlotDetailsPage({
   slot: open,
   query,
@@ -66,9 +65,7 @@ export function SlotDetailsPage({
   const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
 
-  // Joined by slot rather than nested on the block, because the two are built
-  // on different threads and either can arrive first. A block whose waterfall
-  // has not landed yet simply has none, and gains it on the next tick.
+  // Joined by slot rather than nested on the block, since the two are built on different threads.
   const bySlot = useMemo(
     () => new Map((waterfalls ?? []).map((slot) => [slot.slot, slot])),
     [waterfalls],
@@ -396,11 +393,8 @@ function BlockRow({
   return (
     <div className={`produced-block${open ? " is-open" : ""}`} id={`block-${block.slot}`}>
       <button type="button" className="produced-head" onClick={onToggle} aria-expanded={open}>
-        {/* One cell, because both name the block where everything to the right
-            says what was in it. Kept together rather than given a column each,
-            which also leaves the grid at five columns however narrow the screen
-            gets: hiding the stamp is then a `display: none` and not a count
-            the media rules have to be kept in step with. */}
+        {/* One cell for slot and stamp, so the grid stays five columns and a narrow screen just
+            hides the stamp. */}
         <span className="produced-id">
           <span className="produced-slot">{count(block.slot)}</span>
           <span className="produced-when">{blockStamp(block.slot_time_millis)}</span>
@@ -410,9 +404,7 @@ function BlockRow({
         {/* What the block earned us; the detail below has the parts. */}
         <span className="produced-fees" title={earnedTitle(earned)}>
           {sol(earned.total, 5)}
-          {/* Dropped on the narrowest screens, where the column it costs is
-              the slot number's. SOL is the only unit fees are ever in here,
-              and the expanded detail below states it either way. */}
+          {/* Dropped on the narrowest screens; the detail below states the unit anyway. */}
           <span className="produced-fees-unit"> SOL</span>
         </span>
         <span className="produced-ms">
@@ -430,9 +422,8 @@ function BlockRow({
           {cost && <BlockFigures cost={cost} />}
           {block.certificate && <BlockCertificateStrip certificate={block.certificate} />}
 
-          {/* The block's identity, together: which slot, when, and its hash.
-              The slot stays in the row above as well, since that is the only
-              thing naming a row while it is shut. */}
+          {/* The block's identity together; the slot stays in the row above to name it while shut.
+              */}
           <div className="produced-foot">
             <Copyable
               text={String(block.slot)}
@@ -441,9 +432,7 @@ function BlockRow({
             />
             <span className="produced-time">{blockTime(block.slot_time_millis)}</span>
             {epoch !== null && <span className="produced-time">epoch {count(epoch)}</span>}
-            {/* The blockhash, which is the hash of the block's last entry and
-                not a transaction signature. Copyable because reading forty-four
-                base58 characters off a screen is nobody's idea of a good time. */}
+            {/* The blockhash, the hash of the block's last entry, not a transaction signature. */}
             <Copyable text={block.blockhash} className="produced-hash" />
           </div>
         </div>
@@ -572,9 +561,7 @@ function BlockCompute({
             value={count(block.non_vote_transactions)}
           />
           {!alpenglow && <Stat label="votes" value={count(votes)} />}
-          {/* Toned only when it happened. A failed transaction is still in the
-              block and still paid its fee, so this is worth noticing and is not
-              in itself a fault. */}
+          {/* Toned only when it happened: a failed transaction still landed and paid its fee. */}
           <Stat
             label="failed"
             value={count(block.failed_transactions)}
@@ -589,12 +576,7 @@ function BlockCompute({
             className="sx-fee"
           />
           <Stat label="priority fees, SOL" value={sol(block.priority_fees, 6)} className="sx-fee" />
-          {/* Ours, which is the question an operator is asking of their own
-              block. The wider figure it came from is on the hover rather than
-              in a column of its own: it is the same number twice, and only one
-              of them answers anything here. Drawn only where the tips were
-              measured, so a turn the searchers passed by reads nought and a
-              turn never measured is absent. */}
+          {/* Our share, with the total on the hover; drawn only where the tips were measured. */}
           {rates && block.tips != null && (
             <Stat
               label="our tips, SOL"
@@ -693,9 +675,8 @@ function BlockAccount({
         </span>
         <span className="sx-acct-cu">{units(cost.costliest_cost)} CU</span>
         <span className="sx-acct-of">
-          {/* The account ceiling moves with feature activation, so it is taken
-              from the bank rather than held here. Absent on a block captured
-              before it was read, and the clause goes with it. */}
+          {/* The account ceiling moves with feature activation, so it comes from the bank; absent
+              where it was not read. */}
           {ofLimit === null ? "" : `${percent(ofLimit, 0)} of account limit, `}
           {ofBlock === null ? "—" : `${percent(ofBlock, 0)} of block`}
         </span>
@@ -874,9 +855,8 @@ function CounterRow({
   );
 }
 
-/** Where the banking stage's time went, in the shape of the compute headline
- *  above it: one figure, one bar, a legend and a row of three. Thread time,
- *  so it can read longer than the slot. */
+/** Where the banking stage's time went, in the compute headline's shape. Thread time, so it can
+ *  read longer than the slot. */
 function ExecutionTime({ execution }: { execution: Execution }) {
   const view = executionView(execution);
   return (

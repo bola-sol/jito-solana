@@ -31,9 +31,8 @@ function gap(figure: WrittenFigure): number {
   return (figure.ours ?? 0) - (figure.everywhere ?? 0);
 }
 
-/** The validators worth a row: those faring worse in our certificates than
- *  everywhere, widest gap first, then those missing everywhere, most missing
- *  first. Everyone else is left out of the table. */
+/** The validators worth a row: faring worse in our certificates, widest gap first, then missing
+ *  everywhere, most first. */
 export function writtenFigures(list: WrittenList): WrittenFigure[] {
   const written = list.certificates;
   const figures: WrittenFigure[] = [];

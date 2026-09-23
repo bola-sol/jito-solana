@@ -177,9 +177,8 @@ describe("which sections are open", () => {
   });
 
   it("survives storage being refused", () => {
-    // Private browsing and some embedded webviews throw on access rather than
-    // returning null, which would otherwise take the whole panel down at
-    // render.
+    // Private browsing and some embedded webviews throw on storage access rather than returning
+    // null.
     vi.stubGlobal("window", {
       get localStorage(): Storage {
         throw new Error("denied");

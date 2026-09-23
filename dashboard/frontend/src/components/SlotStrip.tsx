@@ -37,9 +37,8 @@ export function SlotStrip(): ReactElement {
     "observed_slot_duration_nanos",
   );
 
-  // The strip advances a whole bar every slot, so a pointer cannot stay on the
-  // one it is aimed at. Entering the strip pins what is on screen; leaving
-  // releases it and the view jumps forward to live.
+  // The strip advances a bar every slot, so entering it pins what is on screen and leaving jumps
+  // back to live.
   const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
   // The slot being inspected, by number rather than position, so it survives
   // the strip scrolling and the bars stay memoised.
@@ -61,10 +60,8 @@ export function SlotStrip(): ReactElement {
     return peak === null || ms > peak ? ms : peak;
   }, null);
 
-  // Ordered from most settled to least, so the deltas read monotonically from
-  // left to right. Deltas are relative to Processed, this validator's own tip.
-  // Under alpenglow confirmed, root and finalized are one slot, and a vote
-  // shows by landing in a certificate.
+  // Most settled first, as deltas from Processed, this validator's own tip. Under alpenglow
+  // confirmed, root and finalized coincide.
   const positions: Array<[string, number | undefined, string]> = [
     [
       "Finalized",
@@ -113,17 +110,14 @@ export function SlotStrip(): ReactElement {
     setCursor(null);
   };
 
-  // The pointer leaving must not release a strip the keyboard is still holding,
-  // which is what happens when a click both focuses the strip and moves the
-  // pointer off it.
+  // The pointer leaving does not release a strip the keyboard holds, as when a click focuses it and
+  // moves off.
   const onMouseLeave = (event: MouseEvent<HTMLDivElement>) => {
     if (event.currentTarget.contains(document.activeElement)) return;
     release();
   };
 
-  // One tab stop for the whole strip, with the arrows moving within it. Sixty
-  // four focusable bars would be sixty four tab stops between the strip and
-  // whatever follows it.
+  // One tab stop for the whole strip, with the arrows moving within it.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const last = slots.length - 1;
     if (last < 0) return;

@@ -113,9 +113,8 @@ export function blockSummary(blocks: ProducedBlock[] | undefined, rates?: TipRat
     block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null,
   );
   const earned = valuesOf(held, (block) => earnedOf(block, rates).total);
-  // Only the blocks whose duration was measured. A slot the validator never
-  // saw timed shows a dash in its own row and is left out rather than counted
-  // as nought milliseconds.
+  // Only the blocks whose duration was measured; an untimed slot is left out rather than counted as
+  // nought.
   const duration = valuesOf(held, (block) =>
     block.duration_nanos === null ? null : block.duration_nanos / 1e6,
   );

@@ -47,9 +47,8 @@ impl DashboardContext {
         cluster_name(self.bank_forks.read().unwrap().root_bank().cluster_type())
     }
 
-    /// The highest slot the cluster has finalized as far as this node can tell:
-    /// votor's last certificate under Alpenglow, the blockstore's latest
-    /// optimistic slot before it.
+    /// The highest slot the cluster has finalized as far as this node can tell: votor's last
+    /// certificate under Alpenglow, the blockstore's latest optimistic slot before it.
     pub fn cluster_tip(&self) -> Option<Slot> {
         let migration_status = self.bank_forks.read().unwrap().migration_status();
         if migration_status.is_alpenglow_enabled() {

@@ -8,11 +8,8 @@ import type {
 } from "./types";
 import { executedRows, verifyRows, type WaterfallRow } from "./waterfall";
 
-/**
- * What happened to transactions on their way in, before the scheduler. The
- * first two sections describe the QUIC listener's connections, where most of
- * the loss happens. Each section is one bar cut into outcomes.
- */
+/** What happened to transactions on their way in, before the scheduler, one bar per section cut
+ *  into outcomes. */
 
 /** A loss, and what it was a loss out of. */
 export interface PathLoss {
@@ -68,12 +65,8 @@ export const LOSSES_SHOWN_NARROW = 3;
 /** How many names the listener refuses a connection under. */
 const REFUSAL_NAMES = 4;
 
-/**
- * Connections refused a place in the table, under four overlapping counters
- * that must not be summed. The larger of `add_failed` and the other three
- * together is the tighter lower bound; any shortfall lands in the unaccounted
- * row.
- */
+/** Connections refused a place in the table, from four overlapping counters: the larger of
+ *  `add_failed` and the other three together. */
 export function refusedTable(q: QuicPort): number {
   return Math.max(
     q.add_failed,
@@ -107,12 +100,8 @@ function sorted(
   return { losses, zeros: rows.length - losses.length };
 }
 
-/**
- * The connection funnel, drawn against the offer and clipped: a connection
- * can be rate-limited again after its handshake. The listener drops uncounted
- * on either side of the handshake, and those gaps are rows here, split by
- * the handshake count.
- */
+/** The connection funnel, drawn against the offer and clipped, since a connection can be
+ *  rate-limited after its handshake. The uncounted gaps either side of the handshake are rows. */
 export function doorSection(
   q: QuicPort,
   kernelDrops: number | null,

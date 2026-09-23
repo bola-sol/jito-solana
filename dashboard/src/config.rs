@@ -9,9 +9,8 @@ pub struct DashboardConfig {
     /// Host names this dashboard answers to, which is what stops DNS rebinding.
     /// Address literals are always accepted.
     pub allowed_hosts: Vec<String>,
-    /// The jito tip payment program, where this validator runs one. The eight tip
-    /// accounts are derived from it, since the id differs between clusters. `None`
-    /// on plain agave, and then no tips are read.
+    /// The jito tip payment program, from which the eight tip accounts are derived. `None` on plain
+    /// agave, where no tips are read.
     pub tip_payment_program_id: Option<Pubkey>,
     /// This validator's commission on tips, in basis points, for the one figure of
     /// what our own blocks earned us.

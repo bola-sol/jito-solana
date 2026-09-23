@@ -7,14 +7,12 @@ use {
     solana_clock::Slot,
 };
 
-/// Slots kept in the packed history: a hundred thousand, about eleven hours,
-/// for about eight megabytes. Allocated by the service because the server
-/// answers range queries out of it before the collector exists.
+/// Slots kept in the packed history: about eleven hours in eight megabytes. Allocated by the
+/// service, since the server answers range queries before the collector exists.
 pub const PACKED_SLOTS: usize = 100_000;
 
-/// One slot, packed to the columns a schedule row draws. The leader is not
-/// among them, it comes from the epoch's turn array; nor is the duration,
-/// which is the gap to the previous slot with a clock.
+/// One slot, packed to the columns a schedule row draws. The leader comes from the epoch's turn
+/// array and the duration from the previous slot with a clock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PackedSlot {
     /// [`crate::slots::SlotLevel`] as its discriminant.
@@ -38,16 +36,13 @@ pub struct PackedSlot {
     /// Wall time replay's own thread spent on the slot, in microseconds and
     /// saturating into `u32`, which is over an hour. Nought unless `HAS_REPLAY`.
     pub replay_micros: u32,
-    /// Wall clock of the slot's first shred, in milliseconds. Absolute rather than
-    /// an offset from the window, which would have to be rebased as the window
-    /// moved.
+    /// Wall clock of the slot's first shred, in milliseconds.
     pub time_millis: u64,
     /// Data shreds in the block, and how many had to be repaired. Nought unless
     /// `HAS_SHREDS`.
     pub shreds: u32,
     pub repaired: u32,
-    /// Milliseconds from the slot's first shred to its last, and from its first
-    /// shred to replay finishing. Saturating into `u32`, which is over a month.
+    /// Milliseconds from the first shred to the last, and to replay finishing, saturating in `u32`.
     /// Nought unless `HAS_SHREDS` and `HAS_REPLAYED` respectively.
     pub full_millis: u32,
     pub replayed_millis: u32,
@@ -56,14 +51,12 @@ pub struct PackedSlot {
     pub left_out: u16,
 }
 
-/// Most slots one range may carry. A row of mainnet-sized figures is about a
-/// hundred and twenty bytes of JSON, so a full span is under half the frame
-/// ceiling, which a test below holds it to. Twenty-five times a screenful.
+/// Most slots one range may carry: a full span of mainnet-sized rows is under half the frame
+/// ceiling, which a test below holds it to.
 pub const MAX_RANGE_SLOTS: usize = 4096;
 
-/// One slot as it goes on the wire, a JSON array in this order: level, flags,
-/// votes, non-votes, compute, fees, priority fees, tips, time, replay, shreds,
-/// repaired, full, replayed, left out. The frontend mirrors it.
+/// One slot on the wire, a JSON array: level, flags, votes, non-votes, compute, fees, priority
+/// fees, tips, time, replay, shreds, repaired, full, replayed, left out. The frontend mirrors it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireRow(
     pub u8,
@@ -126,9 +119,8 @@ fn reward_bits(reward: Option<Reward>) -> u16 {
     }
 }
 
-/// A fixed-size history of packed slots, direct-mapped at `slot % capacity`.
-/// The slot is stored beside its row so a row from a lap ago cannot answer for
-/// a current one.
+/// A fixed-size history of packed slots, direct-mapped at `slot % capacity`. The slot is kept
+/// beside its row so a row from a lap ago cannot answer for a current one.
 pub struct SlotHistory {
     rows: Vec<(Slot, PackedSlot)>,
 }

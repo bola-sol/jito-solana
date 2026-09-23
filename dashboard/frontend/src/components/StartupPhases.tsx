@@ -4,9 +4,8 @@ import { stakeSeen, SUPERMAJORITY_PERCENT } from "../startup";
 import type { StartupProgress } from "../types";
 import { Meter } from "./primitives";
 
-/** The boot sequence in the validator's order, mirroring
- *  `ValidatorStartProgress`. Anything above the current phase is shown as
- *  done or skipped. */
+/** The boot sequence in `ValidatorStartProgress` order; anything above the current phase is done or
+ *  skipped. */
 const PHASES: Array<[string, string]> = [
   ["initializing", "Initializing"],
   ["searching_for_rpc_service", "Searching for an RPC service"],
@@ -45,9 +44,7 @@ export function StartupPhases({
     );
   }
 
-  // Replay measures itself in slots; the supermajority wait measures itself in
-  // stake. They are different things and the bar means something different
-  // under each, so which one is showing is said rather than left to be assumed.
+  // Replay counts slots and the supermajority wait counts stake, so the bar says which it shows.
   const stake = withStake ? stakeSeen(startup) : null;
   const measured = stake
     ? { fraction: stake.fraction, label: "of stake visible in gossip", decimals: stake.decimals }
@@ -60,9 +57,8 @@ export function StartupPhases({
       <ol className="startup-list">
         {PHASES.map(([phase, label], index) => {
           const state = index < current ? "is-done" : index === current ? "is-current" : "is-todo";
-          // A finished phase shows what it took; the current one counts up. A
-          // phase that was skipped has no timing and shows nothing, which is
-          // how a skipped step is told apart from an instant one.
+          // A finished phase shows what it took and the current one counts up; a skipped one shows
+          // nothing.
           const elapsed =
             index === current
               ? startup.phase_elapsed_nanos

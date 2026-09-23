@@ -104,9 +104,8 @@ describe("deflated frames", () => {
 
 describe("the silence watchdog", () => {
   it("reconnects a socket that stops delivering without ever closing", () => {
-    // The failure this exists for: a NAT table drops the flow, the browser
-    // leaves the socket OPEN, no event fires, and the page shows the values it
-    // last received as though they were current.
+    // A NAT table drops the flow and the socket stays OPEN with no event, so the page shows stale
+    // values as current.
     const store = new Store();
     connect(store);
     latest().accept();
@@ -117,9 +116,7 @@ describe("the silence watchdog", () => {
     expect(sockets()).toHaveLength(1);
     expect(store.getConnection()).toBe("open");
 
-    // Past the limit with nothing arriving, and the socket is abandoned.
-    // Stepped to just after the watchdog and before the first retry, or the
-    // reconnect below would already have happened and hidden this.
+    // Just past the watchdog and before the first retry, which would otherwise hide this.
     vi.advanceTimersByTime(2_200);
     expect(store.getConnection()).toBe("closed");
     expect(sockets()[0].closed).toBe(true);

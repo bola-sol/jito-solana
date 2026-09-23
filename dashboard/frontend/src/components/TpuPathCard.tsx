@@ -30,13 +30,8 @@ import type { EpochSpan, ExecutedStage, QuicPaths, QuicPort, VerifyStage } from 
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
 
-/**
- * Everything that happens to a transaction before the scheduler sees it.
- * Present once any QUIC port has ever taken a connection. Two shapes, by
- * whether the advertised TPU is on this host (`Elsewhere` otherwise). Five
- * sections, each against its own total; the last two are summed over the
- * epoch, since they run only while leader.
- */
+/** Everything that happens to a transaction before the scheduler, present once a QUIC port has
+ *  taken a connection. `Elsewhere` where the TPU is off-host. */
 export function TpuPathCard(): ReactElement | null {
   const store = useStore();
   const paths = store.get("summary", "quic_paths");
@@ -201,9 +196,8 @@ function EpochStages({
     <div className="path-epoch">
       <div className="path-span">
         <Explain text="Counted over the epoch rather than the window, since these stages run only while this validator is leader. Counted from part way in means a restart during the epoch.">
-          {/* Published alongside the two stages, so it is only missing if one
-              of them arrived without it. Named rather than left blank in that
-              case: an epoch total under no heading reads as a windowed one. */}
+          {/* Named even if the span is missing, since an epoch total under no heading reads as
+              windowed. */}
           {span ? epochSpanLabel(span) : "This epoch"}
         </Explain>
       </div>
@@ -220,9 +214,8 @@ function others(paths: QuicPaths): QuicPort[] {
   return paths.ports.filter((port) => port.name !== "tpu");
 }
 
-/** The card where the advertised TPU address is answered off-host, behind a
- *  relayer or proxy: the ports fold to a line each, the stages keep the
- *  card, the headline is dropped. */
+/** The card where the advertised TPU is off-host, behind a relayer or proxy: ports fold to a line
+ *  each and the headline is dropped. */
 function Elsewhere({
   paths,
   stages,
@@ -317,9 +310,7 @@ export function Section({ section }: { section: PathSection }): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const cap = narrow ? LOSSES_SHOWN_NARROW : LOSSES_SHOWN;
   const shown = expanded ? section.losses : section.losses.slice(0, cap);
-  // The detail rows never appear in the bar and never appear folded: they are
-  // reasons behind one of the rows above rather than siblings of it, so showing
-  // them alongside would read as another share of the same total.
+  // Detail rows are reasons behind a row above, so they never join the bar or the fold.
   const more = section.losses.length - shown.length + (expanded ? 0 : section.detail.length);
   // Whether there is anything to expand at all, not whether anything is
   // hidden now, or the control would vanish once used.
@@ -332,9 +323,7 @@ export function Section({ section }: { section: PathSection }): ReactElement {
           <span className="path-section-title">{section.title}</span>
         </Explain>
         <span className="path-section-note">{section.note}</span>
-        {/* What went in and what came out, which is the whole section in one
-            line for anyone not reading the rest of it. The word is the
-            section's own: admitted, carried, verified. */}
+        {/* What went in and came out, the section in one line. */}
         <span className="path-section-flow">
           {count(section.total)} in, {count(section.through.count)}{" "}
           {section.through.label}
@@ -349,11 +338,8 @@ export function Section({ section }: { section: PathSection }): ReactElement {
         </div>
       )}
 
-      {/* One bar cut into what got through and what did not, rather than a bar
-          per row. The segments are a single hue stepped by lightness in the
-          order the losses are listed, so the ramp says which is larger and
-          nothing implies a severity that is not there. Tone lives on the
-          figures below, where it can mean something. */}
+      {/* One bar cut into outcomes, a single hue stepped by lightness so no segment implies a
+          severity. */}
       <div className="path-bar" aria-hidden="true">
         <i
           className="path-seg is-through"
@@ -416,9 +402,8 @@ function Loss({ loss, rank }: { loss: PathLoss; rank: number | null }) {
   );
 }
 
-/** One QUIC port folded to a line; unfolded, the two sections the TPU port
- *  gets. The row holds a button rather than being one, since the share's
- *  explanation is a button. */
+/** One QUIC port folded to a line, unfolding to the TPU port's two sections. It holds a button
+ *  rather than being one, since the explanation is one. */
 function OtherPort({
   port,
   open,

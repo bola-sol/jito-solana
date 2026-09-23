@@ -28,9 +28,8 @@ function steady(rate: number): Direction {
 export function NetworkCard(): ReactElement | null {
   const store = useStore();
   const rates = store.get("summary", "network");
-  // Null where the validator was given no XDP config, since the point behind
-  // this is only submitted where it was. Absence is the answer rather than
-  // something to work out.
+  // Null where the validator was given no XDP config, since the point is only submitted where it
+  // was.
   const xdp = store.get("summary", "xdp");
   // Absent until a sender has reported, and never on a validator whose log
   // level keeps it from submitting points at all.
@@ -98,9 +97,8 @@ function named(part: string): boolean {
   return part !== "" && part !== "unknown";
 }
 
-/** The tooltip: what the line is, then the vendor and kernel where known.
- *  The kernel is matched by prefix: a failed `uname` reports "unknown" plus
- *  the error. */
+/** The tooltip: what the line is, then the vendor and kernel where known; a failed `uname` reports
+ *  "unknown" plus the error. */
 export function xdpTooltip(xdp: XdpConfig): string {
   const sentence = "How this validator's XDP transmit path is set up.";
   const parts = [];
@@ -113,9 +111,8 @@ export function xdpTooltip(xdp: XdpConfig): string {
   return `${sentence} ${aside.charAt(0).toUpperCase()}${aside.slice(1)}.`;
 }
 
-/** How the transmit path is set up, where it is at all. Untoned: copy mode
- *  may be intended. The drops are the one toned part: a full channel is the
- *  path not working. */
+/** How the transmit path is set up, untoned since copy mode may be intended. Only the drops are
+ *  toned: a full channel is the path failing. */
 function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   const detail = xdpDetail(xdp);
   const mode = xdp.zero_copy ? "zero-copy" : "copy";
@@ -262,9 +259,7 @@ function Row({
       </span>
       <span className="net-meta">
         <b>avg {decimal(read.average / divisor, 2)}</b>
-        {/* Untoned on purpose. Throughput going up is neither good nor bad on a
-            validator, and a green or red arrow would read as a verdict on an
-            ordinary fluctuation. */}
+        {/* Untoned: throughput going up is neither good nor bad. */}
         <em>
           {arrow} {decimal(Math.abs(read.delta) / divisor, 2)}
         </em>

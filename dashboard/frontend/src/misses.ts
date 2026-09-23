@@ -97,10 +97,8 @@ export function leaderLabel(leader: LostLeader): string {
   return leader.name ?? shortKey(leader.identity);
 }
 
-/** The vote this node sent for the slot and how long after its anchor it
- *  went out: the first shred where votor saw it, else the parent becoming
- *  ready. `none` where votor sent neither, a dash where it has not
- *  reported the slot. */
+/** The vote this node sent and how long after its anchor, the first shred or else the parent
+ *  becoming ready. `none` where votor sent neither, a dash before it reports. */
 export function voteText(vote: VoteSent | null): string {
   if (!vote) return "—";
   const sent: [word: string, micros: number] | null =

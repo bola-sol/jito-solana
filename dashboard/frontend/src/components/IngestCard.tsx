@@ -4,12 +4,8 @@ import type { IngestPath } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 
-/**
- * Packets the kernel discarded before the validator could read them, per
- * port. The QUIC ports are drawn on the TPU path card when that card exists.
- * Where a port's deliveries are counted, drops over deliveries plus drops is
- * the share lost. Absent behind a port forward.
- */
+/** Packets the kernel discarded before the validator read them, per port, as a share of drops plus
+ *  deliveries where those are counted. Absent behind a port forward. */
 export function IngestCard(): ReactElement | null {
   const store = useStore();
   const summary = store.get("summary", "ingest_paths");
@@ -82,9 +78,8 @@ function Share({ of, received }: { of: number; received: number | null }) {
   return <span className="ingest-share">{share === null ? "" : shareLabel(share)}</span>;
 }
 
-/** What fraction of the packets that arrived were dropped. Null with no
- *  denominator, with nothing delivered (usually a count that never arrived),
- *  and with nothing dropped. */
+/** The share of the packets that arrived that were dropped. Null with no denominator, nothing
+ *  delivered, or nothing dropped. */
 export function lossShare(drops: number, received: number | null): number | null {
   if (received === null || received <= 0 || drops <= 0) return null;
   return drops / (drops + received);

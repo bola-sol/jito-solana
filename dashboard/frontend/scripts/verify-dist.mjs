@@ -1,16 +1,5 @@
-/**
- * Checks that the committed `dist/` is what this source tree builds.
- *
- * `dist/` is checked in so that `cargo build` needs no Node toolchain, which
- * means a reviewer is asked to accept a bundle they cannot read. This rebuilds
- * it into a scratch directory and compares the two file by file, so that claim
- * can be checked in one command instead of trusted.
- *
- * A mismatch is not by itself evidence of anything wrong: it usually means the
- * bundle was built from different sources, or from a different Node or
- * dependency version. It does mean the two no longer correspond, which is the
- * thing worth knowing before a review.
- */
+/** Checks that the committed `dist/` is what this source tree builds, by rebuilding it into a
+ *  scratch directory and comparing file by file. */
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";

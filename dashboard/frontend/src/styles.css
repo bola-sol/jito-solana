@@ -885,6 +885,8 @@ body {
   white-space: nowrap;
 }
 
+/* The columns are in em, so the head keeps the row's size and only its cells
+   are set smaller; a smaller row would lay its tracks out narrower. */
 .misses-row.is-head {
   position: sticky;
   top: 0;
@@ -892,8 +894,11 @@ body {
   padding-bottom: 2px;
   border-top: 0;
   background: var(--panel);
-  font-size: 12px;
   color: var(--text-faint);
+}
+
+.misses-row.is-head > span {
+  font-size: 12px;
 }
 
 .misses-slot .copyable,
@@ -5535,8 +5540,11 @@ body {
   padding-bottom: 2px;
   border-top: 0;
   background: var(--panel);
-  font-size: 12px;
   color: var(--text-faint);
+}
+
+.written-row.is-head > span {
+  font-size: 12px;
 }
 
 .written-ours,

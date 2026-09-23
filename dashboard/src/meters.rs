@@ -454,6 +454,14 @@ fn frozen_errors(bank_forks: &BankForks, counted_to: Option<Slot>) -> (u64, Opti
 struct HostPath {
     name: String,
     path: PathBuf,
+    device: Option<String>,
+}
+
+impl HostPath {
+    fn new(name: String, path: PathBuf) -> Self {
+        let device = host_stats::device_for(&path).ok().flatten();
+        Self { name, path, device }
+    }
 }
 
 fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
@@ -463,10 +471,7 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
     let ledger = ctx.blockstore.ledger_path().clone();
     if let Ok(id) = host_stats::filesystem_id(&ledger) {
         seen.insert(id);
-        paths.push(HostPath {
-            name: "ledger".to_owned(),
-            path: ledger,
-        });
+        paths.push(HostPath::new("ledger".to_owned(), ledger));
     }
 
     let mut accounts = Vec::new();
@@ -481,14 +486,12 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
     let numbered = accounts.len() > 1;
     for (index, path) in accounts.into_iter().enumerate() {
         let ordinal = index.saturating_add(1);
-        paths.push(HostPath {
-            name: if numbered {
-                format!("accounts {ordinal}")
-            } else {
-                "accounts".to_owned()
-            },
-            path,
-        });
+        let name = if numbered {
+            format!("accounts {ordinal}")
+        } else {
+            "accounts".to_owned()
+        };
+        paths.push(HostPath::new(name, path));
     }
 
     if let Some(archives) = ctx
@@ -498,10 +501,7 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
         && let Ok(id) = host_stats::filesystem_id(archives)
         && seen.insert(id)
     {
-        paths.push(HostPath {
-            name: "snapshots".to_owned(),
-            path: archives.clone(),
-        });
+        paths.push(HostPath::new("snapshots".to_owned(), archives.clone()));
     }
 
     paths
@@ -516,8 +516,11 @@ fn device_loads(
 ) -> Vec<DeviceLoad> {
     let mut roles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in paths {
-        if let Ok(Some(device)) = host_stats::device_for(&path.path) {
-            roles.entry(device).or_default().push(path.name.clone());
+        if let Some(device) = &path.device {
+            roles
+                .entry(device.clone())
+                .or_default()
+                .push(path.name.clone());
         }
     }
 
@@ -841,10 +844,7 @@ impl HostMeter {
             }
         };
         let now = Instant::now();
-        let paths = self
-            .paths
-            .get_or_insert_with(|| resolve_host_paths(ctx))
-            .clone();
+        let paths = self.paths.get_or_insert_with(|| resolve_host_paths(ctx));
         let snapshot_device = self
             .snapshot_device
             .get_or_insert_with(|| {
@@ -873,11 +873,13 @@ impl HostMeter {
             .filter(|(at, _)| now.duration_since(*at) >= RESIDENT_HOUR_AGO)
             .map(|(_, resident)| *resident);
 
-        let Some((previous, sampled_at)) = self.last.replace((current.clone(), now)) else {
+        let Some((previous, sampled_at)) = self.last.take() else {
+            self.last = Some((current, now));
             return;
         };
         let interval_ms = now.duration_since(sampled_at).as_secs_f64() * 1000.0;
         if interval_ms <= 0.0 {
+            self.last = Some((current, now));
             return;
         }
         let seconds = interval_ms / 1000.0;
@@ -920,8 +922,9 @@ impl HostMeter {
                     })
                 })
                 .collect(),
-            devices: device_loads(&paths, &current, &previous, interval_ms, seconds),
+            devices: device_loads(paths, &current, &previous, interval_ms, seconds),
         };
+        self.last = Some((current, now));
         publisher.publish(TOPIC_SUMMARY, "host", &host);
     }
 }

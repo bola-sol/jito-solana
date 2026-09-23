@@ -3,15 +3,10 @@
 //! the default.
 
 #[cfg(target_os = "linux")]
-use std::os::unix::ffi::OsStrExt;
+use std::{ffi::CString, os::unix::ffi::OsStrExt, path::PathBuf};
 use {
     serde::Serialize,
-    std::{
-        collections::BTreeMap,
-        ffi::CString,
-        io,
-        path::{Path, PathBuf},
-    },
+    std::{collections::BTreeMap, io, path::Path},
 };
 
 /// Always 512, whatever the device's own sector size.

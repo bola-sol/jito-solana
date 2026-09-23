@@ -232,6 +232,40 @@ pub struct MissList {
     pub written: WrittenList,
 }
 
+/// The miss list's two replies, serialised when the list is rebuilt rather
+/// than for each viewer that asks.
+pub struct MissReplies {
+    pub misses: Arc<str>,
+    pub written: Arc<str>,
+}
+
+impl MissReplies {
+    pub fn new(list: &MissList) -> Self {
+        Self {
+            misses: json_or_null(list),
+            written: json_or_null(&list.written),
+        }
+    }
+}
+
+impl Default for MissReplies {
+    fn default() -> Self {
+        Self::new(&MissList::default())
+    }
+}
+
+/// The value as JSON, or null where its `Serialize` impl fails, as
+/// [`crate::proto::encode`] does.
+fn json_or_null<T: Serialize>(value: &T) -> Arc<str> {
+    match serde_json::to_string(value) {
+        Ok(json) => Arc::from(json),
+        Err(err) => {
+            log::error!("dashboard: failed to encode the miss list: {err}");
+            Arc::from("null")
+        }
+    }
+}
+
 /// What this node's certificates carried, per validator, as a viewer asks for
 /// it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -538,7 +572,7 @@ pub struct Collector {
     /// cannot be told apart from one alpenglow was not yet running for.
     certs_walk: Option<(Slot, Slot)>,
     /// Shared with the server, rebuilt on the slow tier.
-    misses: Arc<RwLock<MissList>>,
+    misses: Arc<RwLock<MissReplies>>,
     /// Paid slots per rank in the epoch the walk is in.
     certs_tally: Option<certs::Tally>,
     /// The slots each finished snapshot write spanned, from the write the
@@ -618,7 +652,7 @@ pub struct CollectorShared {
     pub history: Arc<RwLock<SlotHistory>>,
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
     /// The epoch's unpaid slots, answered by the server on request.
-    pub misses: Arc<RwLock<MissList>>,
+    pub misses: Arc<RwLock<MissReplies>>,
     pub startup_progress: StartProgress,
     pub startup: Arc<Mutex<StartupPublisher>>,
     pub metrics_tap: Arc<MetricsTap>,
@@ -1732,7 +1766,7 @@ impl Collector {
             })
             .collect();
         drop(info);
-        *self.misses.write().unwrap() = MissList {
+        let list = MissList {
             epoch: tally.epoch(),
             since_slot: tally.since_slot(),
             rewarded: tally.rewarded(),
@@ -1747,6 +1781,8 @@ impl Collector {
                 rows: written_rows,
             },
         };
+        let replies = MissReplies::new(&list);
+        *self.misses.write().unwrap() = replies;
     }
 
     /// Adds the reward certificate each of our blocks wrote, once the walk has

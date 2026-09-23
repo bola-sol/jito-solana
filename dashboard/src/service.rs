@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        collect::{Collector, CollectorShared, EpochInfo, MissList, system_time_nanos},
+        collect::{Collector, CollectorShared, EpochInfo, MissReplies, system_time_nanos},
         config::DashboardConfig,
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
@@ -73,7 +73,7 @@ pub struct DashboardService {
     /// a query for either out of it.
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
     /// The epoch's unpaid slots, shared with the server the same way.
-    misses: Arc<RwLock<MissList>>,
+    misses: Arc<RwLock<MissReplies>>,
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
@@ -112,7 +112,7 @@ impl DashboardService {
         // boundary.
         let epochs: Arc<RwLock<Vec<EpochInfo>>> = Arc::new(RwLock::new(Vec::new()));
         // The epoch's unpaid slots, answered on request.
-        let misses = Arc::new(RwLock::new(MissList::default()));
+        let misses = Arc::new(RwLock::new(MissReplies::default()));
         let attached = Arc::new(AtomicBool::new(false));
         let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
 

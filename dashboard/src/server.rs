@@ -4,11 +4,11 @@
 
 use {
     crate::{
-        collect::{EpochInfo, MissList},
+        collect::{EpochInfo, MissReplies},
         history::SlotHistory,
         proto::{
             DEFLATE_PROTOCOL, Frame, MAX_MESSAGE, Message, Publisher, Request, coalesce,
-            encode_with_id,
+            encode_json_with_id, encode_with_id,
         },
         validator_info::ValidatorInfoCache,
     },
@@ -18,6 +18,7 @@ use {
         io,
         net::IpAddr,
         sync::{Arc, RwLock},
+        time::Instant,
     },
     thiserror::Error,
     tokio::{
@@ -53,6 +54,11 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Websocket clients served at once. They are the long-lived resource;
 /// generous enough that several tabs never notice it.
 const MAX_WEBSOCKET_CLIENTS: usize = 64;
+
+/// Requests a connection may have answered back to back, and the spacing of
+/// the rest. A page asks for a handful as it opens.
+const REPLY_BURST: u32 = 8;
+const REPLY_SPACING: Duration = Duration::from_millis(250);
 
 /// Pause after a failed accept. Out of descriptors, `accept` fails at once
 /// until one is freed, so retrying straight away spins and floods the log.
@@ -106,7 +112,7 @@ pub async fn serve(
     history: Arc<RwLock<SlotHistory>>,
     info: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissList>>,
+    misses: Arc<RwLock<MissReplies>>,
     allowed_hosts: Arc<[String]>,
 ) {
     let limits = Limits::new();
@@ -151,7 +157,7 @@ async fn handle(
     history: Arc<RwLock<SlotHistory>>,
     info: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissList>>,
+    misses: Arc<RwLock<MissReplies>>,
     limits: Limits,
     allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
@@ -463,7 +469,7 @@ async fn serve_websocket(
     history: Arc<RwLock<SlotHistory>>,
     info: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissList>>,
+    misses: Arc<RwLock<MissReplies>>,
     path: &str,
 ) -> Result<(), ConnectionError> {
     let mut server = Server::new(socket.compat());
@@ -535,6 +541,7 @@ async fn serve_websocket(
     }
 
     let mut incoming = Vec::new();
+    let mut pace = ReplyPace::new(Instant::now());
     loop {
         // soketto's `receive_data` is not cancel safe, so it is polled to
         // completion in an inner loop rather than dropped by `select!`.
@@ -585,11 +592,55 @@ async fn serve_websocket(
         if incoming.len() > MAX_CLIENT_MESSAGE {
             return Err(ConnectionError::Oversized(incoming.len()));
         }
+        let wait = pace.take(Instant::now());
+        if !wait.is_zero() {
+            sleep(wait).await;
+        }
         if let Some(reply) = respond(&incoming, &history, &info, &epochs, &misses) {
             send_or_timeout!(send_frame(&mut sender, &reply, deflate));
             send_or_timeout!(sender.flush());
         }
         incoming.clear();
+    }
+}
+
+/// A token bucket over one connection's requests: a reply spends a token, and
+/// one comes back each [`REPLY_SPACING`], up to [`REPLY_BURST`].
+struct ReplyPace {
+    tokens: u32,
+    refilled: Instant,
+}
+
+impl ReplyPace {
+    fn new(now: Instant) -> Self {
+        Self {
+            tokens: REPLY_BURST,
+            refilled: now,
+        }
+    }
+
+    /// How long to wait before answering the next request, spending its token.
+    fn take(&mut self, now: Instant) -> Duration {
+        let elapsed = now.saturating_duration_since(self.refilled).as_millis();
+        let earned = elapsed
+            .checked_div(REPLY_SPACING.as_millis())
+            .and_then(|earned| u32::try_from(earned).ok())
+            .unwrap_or(u32::MAX);
+        if earned > 0 {
+            self.tokens = self.tokens.saturating_add(earned).min(REPLY_BURST);
+            self.refilled = self
+                .refilled
+                .checked_add(REPLY_SPACING.saturating_mul(earned))
+                .unwrap_or(now);
+        }
+        if let Some(left) = self.tokens.checked_sub(1) {
+            self.tokens = left;
+            return Duration::ZERO;
+        }
+        // None left: the next token is spent as soon as it is earned.
+        let due = self.refilled.checked_add(REPLY_SPACING).unwrap_or(now);
+        self.refilled = due;
+        due.saturating_duration_since(now)
     }
 }
 
@@ -634,7 +685,7 @@ fn respond(
     history: &RwLock<SlotHistory>,
     info: &RwLock<ValidatorInfoCache>,
     epochs: &RwLock<Vec<EpochInfo>>,
-    misses: &RwLock<MissList>,
+    misses: &RwLock<MissReplies>,
 ) -> Option<Message> {
     let request: Request = serde_json::from_slice(payload).ok()?;
     let id = request.id;
@@ -653,20 +704,20 @@ fn respond(
         ("summary", "misses") => {
             // The epoch's unpaid slots, asked for when the list is opened: a few
             // kilobytes on a good node and far more on a bad one.
-            let list = match misses.read() {
-                Ok(list) => list.clone(),
+            let json = match misses.read() {
+                Ok(replies) => replies.misses.clone(),
                 Err(_) => return Some(encode_with_id("summary", "misses", id, &())),
             };
-            Some(encode_with_id("summary", "misses", id, &list))
+            Some(encode_json_with_id("summary", "misses", id, &json))
         }
         ("summary", "written") => {
             // What this node's certificates carried, a row per validator: a
             // few kilobytes, polled by the schedule page while it is open.
-            let written = match misses.read() {
-                Ok(list) => list.written.clone(),
+            let json = match misses.read() {
+                Ok(replies) => replies.written.clone(),
                 Err(_) => return Some(encode_with_id("summary", "written", id, &())),
             };
-            Some(encode_with_id("summary", "written", id, &written))
+            Some(encode_json_with_id("summary", "written", id, &json))
         }
         ("epoch", "query") => {
             let Ok(params) = serde_json::from_value::<EpochParams>(request.params) else {
@@ -765,11 +816,11 @@ mod tests {
     }
 
     /// No unpaid slots, which is a validator under TowerBFT or a lucky one.
-    fn no_misses() -> RwLock<MissList> {
-        RwLock::new(MissList::default())
+    fn no_misses() -> RwLock<MissReplies> {
+        RwLock::new(MissReplies::default())
     }
 
-    fn no_misses_shared() -> Arc<RwLock<MissList>> {
+    fn no_misses_shared() -> Arc<RwLock<MissReplies>> {
         Arc::new(no_misses())
     }
 
@@ -1354,6 +1405,23 @@ mod tests {
         assert!(reply.contains(r#""id":10"#), "{reply}");
         assert!(reply.contains(r#""certificates":0"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_a_burst_of_requests_is_answered_at_once_and_the_rest_spaced() {
+        let start = Instant::now();
+        let mut pace = ReplyPace::new(start);
+        for _ in 0..REPLY_BURST {
+            assert_eq!(pace.take(start), Duration::ZERO);
+        }
+        assert_eq!(pace.take(start), REPLY_SPACING);
+        assert_eq!(pace.take(start), REPLY_SPACING.saturating_mul(2));
+        // Idle long enough and the burst is back, no more.
+        let later = start.checked_add(Duration::from_secs(60)).unwrap();
+        for _ in 0..REPLY_BURST {
+            assert_eq!(pace.take(later), Duration::ZERO);
+        }
+        assert_eq!(pace.take(later), REPLY_SPACING);
     }
 
     #[test]

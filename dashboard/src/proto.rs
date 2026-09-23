@@ -189,6 +189,17 @@ pub fn encode_with_id<T: Serialize>(topic: &str, key: &str, id: Option<u64>, val
     }
 }
 
+/// The envelope [`encode_with_id`] writes, around a value serialised already,
+/// so a reply every viewer may ask for is encoded once.
+pub fn encode_json_with_id(topic: &str, key: &str, id: Option<u64>, value: &str) -> Message {
+    let topic = serde_json::Value::from(topic);
+    let key = serde_json::Value::from(key);
+    let id = id.map(|id| format!(r#""id":{id},"#)).unwrap_or_default();
+    Message::new(format!(
+        r#"{{"topic":{topic},"key":{key},{id}"value":{value}}}"#
+    ))
+}
+
 /// What one key has been sent since the last traffic report.
 #[derive(Clone, Copy, Default)]
 struct Volume {
@@ -387,6 +398,18 @@ mod tests {
             message.text(),
             r#"{"topic":"summary","key":"broken","value":null}"#
         );
+    }
+
+    #[test]
+    fn test_a_value_encoded_ahead_is_enveloped_as_encode_would() {
+        let value = serde_json::json!({ "rows": [1, 2], "name": "a \"quoted\" name" });
+        let json = serde_json::to_string(&value).unwrap();
+        for id in [None, Some(0), Some(u64::MAX)] {
+            assert_eq!(
+                encode_json_with_id("summary", "misses", id, &json).text(),
+                encode_with_id("summary", "misses", id, &value).text(),
+            );
+        }
     }
 
     #[test]

@@ -17,9 +17,10 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_time_utils::timestamp,
     std::{
         collections::HashMap,
-        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant},
     },
 };
 
@@ -55,7 +56,7 @@ pub fn gossip_stake(
     names: &ValidatorInfoCache,
 ) -> GossipStake {
     let shred_version = cluster_info.my_shred_version();
-    let now = unix_millis();
+    let now = timestamp();
     let mut contacts: HashMap<Pubkey, String> = cluster_info
         .tvu_peers(ContactInfo::clone)
         .into_iter()
@@ -132,14 +133,6 @@ pub struct StartupProgress {
 pub struct PhaseTiming {
     pub phase: String,
     pub elapsed_nanos: u64,
-}
-
-fn unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|since| u64::try_from(since.as_millis()).ok())
-        .unwrap_or(u64::MAX)
 }
 
 #[derive(Default)]

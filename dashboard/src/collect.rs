@@ -33,6 +33,7 @@ use {
     },
     solana_rpc_client_types::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
     solana_runtime::bank::{Bank, VATHealthError},
+    solana_time_utils::timestamp,
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -777,7 +778,7 @@ impl Collector {
             (None, Some((writing, fell_behind_slots, from))) => {
                 self.snapshot_last = Some(Written {
                     slot: writing.slot,
-                    took_millis: unix_millis().saturating_sub(writing.since_millis),
+                    took_millis: timestamp().saturating_sub(writing.since_millis),
                     fell_behind_slots,
                 });
                 self.snapshot_spans.push(certs::Span {
@@ -1015,7 +1016,7 @@ impl Collector {
         }
         // Two turns ending on one tick share the reading; the second spans nothing.
         let reading = self.metrics_tap.counters();
-        let drained_millis = unix_millis();
+        let drained_millis = timestamp();
         for (first, last) in ended {
             let produced = self
                 .produced
@@ -1328,7 +1329,7 @@ impl Collector {
     }
 
     fn fill_execution(&mut self) -> bool {
-        let now = unix_millis();
+        let now = timestamp();
         let mut changed = false;
         for slot in std::mem::take(&mut self.execution_pending) {
             if !self.produced.contains(slot) {
@@ -2560,13 +2561,6 @@ fn release_of(version: &str) -> &str {
     }
 }
 
-fn unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 pub(crate) fn system_time_nanos(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -2876,7 +2870,7 @@ mod tests {
         collector.snapshot_writing = Some((
             Writing {
                 slot: 300,
-                since_millis: unix_millis().saturating_sub(90_000),
+                since_millis: timestamp().saturating_sub(90_000),
             },
             0,
             10,

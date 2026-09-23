@@ -9,13 +9,13 @@ use {
     serde::Serialize,
     solana_clock::Slot,
     solana_metrics::datapoint::DataPoint,
+    solana_time_utils::timestamp,
     std::{
         collections::{BTreeMap, BTreeSet, VecDeque},
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         },
-        time::{SystemTime, UNIX_EPOCH},
     },
 };
 
@@ -720,7 +720,7 @@ impl MetricsTap {
             VOTE_TRACKING => self.remember_vote_track(point),
             SHRED_FULL => self.remember_fill(point),
             BUNDLE_SLOT_STATS => self.remember_bundles(point),
-            WORKER_TIMING => self.remember_worker_timing(point, now_millis()),
+            WORKER_TIMING => self.remember_worker_timing(point, timestamp()),
             VOTE_SLOT_TIMING => self.remember_vote_timing(point),
             XDP_NETWORK_CONFIG => self.remember_xdp(point),
             RETRANSMIT_STAGE => self.add_retransmit(point),
@@ -944,7 +944,7 @@ impl MetricsTap {
             return;
         }
 
-        slot.observed_millis = now_millis();
+        slot.observed_millis = timestamp();
         let Ok(mut slots) = self.replay_slots.lock() else {
             return;
         };
@@ -1755,13 +1755,6 @@ fn field_u64(value: &str) -> Option<u64> {
     value.strip_suffix('i')?.parse().ok()
 }
 
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 fn field_str(value: &str) -> String {
     let inner = value
         .strip_prefix('"')
@@ -1927,13 +1920,13 @@ mod tests {
     #[test]
     fn test_a_replay_record_says_when_it_arrived() {
         let tap = MetricsTap::default();
-        let before = now_millis();
+        let before = timestamp();
         tap.observe(&named(
             REPLAY_SLOT_STATS,
             &[("slot", "443895975i"), ("execute_us", "231000i")],
         ));
         let observed = tap.replayed(443_895_975).unwrap().observed_millis;
-        assert!(observed >= before && observed <= now_millis());
+        assert!(observed >= before && observed <= timestamp());
     }
 
     #[test]

@@ -1780,7 +1780,6 @@ impl Collector {
 
         // After a failover the vote account is voted from another machine, whose
         // last vote must not be read as this one's health.
-        let identity = self.ctx.identity();
         let voting = mine.is_some_and(|(_, account)| *account.node_pubkey() == identity);
         self.voting = voting;
 

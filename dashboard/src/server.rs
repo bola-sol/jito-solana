@@ -416,12 +416,13 @@ async fn send_frame(
 
 /// Fails the connection if a send cannot complete promptly. Cancelling a
 /// partly written frame leaves the stream indeterminate, so a timeout is fatal.
-macro_rules! send_or_timeout {
-    ($expr:expr) => {
-        timeout(WRITE_TIMEOUT, $expr)
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket send"))??
-    };
+async fn send_within(
+    send: impl Future<Output = Result<(), soketto::connection::Error>>,
+) -> Result<(), ConnectionError> {
+    timeout(WRITE_TIMEOUT, send)
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket send"))??;
+    Ok(())
 }
 
 async fn serve_websocket(
@@ -492,7 +493,7 @@ async fn serve_websocket(
             );
             return Err(err.into());
         }
-        send_or_timeout!(sender.flush());
+        send_within(sender.flush()).await?;
     }
 
     let mut incoming = Vec::new();
@@ -529,9 +530,9 @@ async fn serve_websocket(
                                 }
                             }
                             for message in coalesce(burst) {
-                                send_or_timeout!(send_frame(&mut sender, &message, deflate));
+                                send_within(send_frame(&mut sender, &message, deflate)).await?;
                             }
-                            send_or_timeout!(sender.flush());
+                            send_within(sender.flush()).await?;
                         }
                         Err(RecvError::Lagged(_)) => return Err(ConnectionError::Lagged),
                         Err(RecvError::Closed) => return Ok(()),
@@ -550,8 +551,8 @@ async fn serve_websocket(
             sleep(wait).await;
         }
         if let Some(reply) = respond(&incoming, &history, &info, &epochs, &misses) {
-            send_or_timeout!(send_frame(&mut sender, &reply, deflate));
-            send_or_timeout!(sender.flush());
+            send_within(send_frame(&mut sender, &reply, deflate)).await?;
+            send_within(sender.flush()).await?;
         }
         incoming.clear();
     }

@@ -984,7 +984,7 @@ struct HostMeter {
     /// than every second.
     unavailable: bool,
     /// Resolved once at the first sample rather than every second: a mount does
-    /// not move, and `statvfs` on a hung filesystem would block the meter.
+    /// not move.
     paths: Option<Vec<HostPath>>,
     /// Resident memory readings over the last hour, oldest first.
     resident: VecDeque<(Instant, u64)>,
@@ -1395,7 +1395,6 @@ fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
     .collect()
 }
 
-/// How much of what arrived had to be asked for.
 /// What the two UDP senders that count their bytes are putting out, in bytes
 /// per second. `None` until a sender has reported once since startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]

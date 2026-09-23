@@ -441,8 +441,6 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
 
 // ---- websocket ----------------------------------------------------------
 
-/// Fails the connection if a send cannot complete promptly. Cancelling a
-/// partly written frame leaves the stream indeterminate, so a timeout is fatal.
 /// Sends one message as the frame this client takes.
 async fn send_frame(
     sender: &mut soketto::Sender<Compat<TcpStream>>,
@@ -455,6 +453,8 @@ async fn send_frame(
     }
 }
 
+/// Fails the connection if a send cannot complete promptly. Cancelling a
+/// partly written frame leaves the stream indeterminate, so a timeout is fatal.
 macro_rules! send_or_timeout {
     ($expr:expr) => {
         timeout(WRITE_TIMEOUT, $expr)
@@ -751,8 +751,6 @@ fn respond(
                     &serde_json::json!({ "error": "range needs a first_slot and a count" }),
                 ));
             };
-            // Poisoned only if a collector thread panicked while holding it, in
-            // which case the validator has larger problems than a blank list.
             let range = match history.read() {
                 Ok(history) => history.range(params.first_slot, params.count),
                 Err(_) => return Some(encode_with_id("slot", "range", id, &())),

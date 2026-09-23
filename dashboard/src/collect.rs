@@ -1,6 +1,5 @@
-//! Samples slot state five times a second and publishes what changed. Locks
-//! are held only long enough to clone an `Arc` out. The once-a-second readings
-//! run on their own thread in [`crate::meters`].
+//! Samples slot state five times a second and publishes what changed. The
+//! once-a-second readings run on their own thread in [`crate::meters`].
 
 use {
     crate::{
@@ -2135,7 +2134,6 @@ impl Collector {
             let (leaders, turns) = self.epoch_turns(epoch, slots_in_epoch);
             let known = !turns.is_empty();
 
-            // Poisoned only if a replay thread panicked while holding it.
             let (block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
                 Ok(tracker) => (tracker.get_block_limit(), tracker.get_account_limit()),
                 Err(_) => (0, 0),
@@ -2328,8 +2326,6 @@ impl Collector {
                     .collect()
             })
     }
-
-    // ---- clock, TPS -----------------------------------------------------
 
     // ---- peers ----------------------------------------------------------
 
@@ -2769,8 +2765,6 @@ fn block_detail(
     tips: Option<u64>,
     replay_micros: Option<u64>,
 ) -> BlockDetail {
-    // Poisoned only if a replay thread panicked while holding it, in which case
-    // the validator has more pressing problems than a missing bar.
     let (block_cost, block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
         Ok(tracker) => (
             tracker.block_cost(),

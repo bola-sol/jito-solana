@@ -710,7 +710,7 @@ pub struct SchedulerCounters {
     pub retried: AtomicU64,
 }
 
-/// A snapshot of [`SchedulerCounters`], sent to the browser as it stands: the
+/// A snapshot of [`AccountsCounters`], sent to the browser as it stands: the
 /// field names are already the panel's vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct AccountsTotals {
@@ -1040,8 +1040,6 @@ impl MetricsTap {
         };
 
         let Ok(mut slots) = self.slot_waterfalls.lock() else {
-            // A panicking observer would have poisoned this. The dashboard
-            // losing a panel is not worth taking the validator down over.
             return;
         };
         // A build running two schedulers reports every leader slot twice; keep
@@ -1241,8 +1239,7 @@ impl MetricsTap {
         }
     }
 
-    /// Records what the bundle stage landed in a leader slot, summed across the
-    /// stage's threads.
+    /// Keeps one consume worker's timing report, stamped with when it arrived.
     fn remember_worker_timing(&self, point: &DataPoint, at_millis: u64) {
         let mut times = StageTimes::default();
         let mut longest_batch = 0;
@@ -1458,7 +1455,6 @@ impl MetricsTap {
         self.shred_fills.lock().ok()?.get(&slot).copied()
     }
 
-    /// What the bundle stage landed in `slot`, while the record is still held.
     /// The workers' reports that arrived in `from..=to`, summed. `None` where
     /// none did.
     pub fn worker_time(&self, from: u64, to: u64) -> Option<WorkerSum> {

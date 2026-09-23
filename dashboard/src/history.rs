@@ -19,8 +19,8 @@ pub const PACKED_SLOTS: usize = 100_000;
 pub struct PackedSlot {
     /// [`crate::slots::SlotLevel`] as its discriminant.
     pub level: u8,
-    /// Bit 0: a block was recorded. Bit 1: the slot's clock is known. Both needed
-    /// because nought is a real reading for every count here.
+    /// Which of the readings below are known, as the `HAS_*` bits: nought is a
+    /// real reading for every count here.
     pub flags: u16,
     pub votes: u32,
     pub non_votes: u32,

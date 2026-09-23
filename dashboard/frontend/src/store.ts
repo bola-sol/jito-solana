@@ -157,8 +157,8 @@ export class Store {
     });
   }
 
-  /** Who leads a slot and what to call them: the key from the epoch's turn
-   *  array, the name and icon from the peer table. */
+  /** Moves when an epoch schedule, the peer table or the name table arrives,
+   *  which is when `leaderOf` can answer differently for other validators. */
   getLeaderRevision = (): number => this.leaderRevision;
 
   /** Fetches an epoch's schedule, once. Only the current one is pushed. */
@@ -178,6 +178,8 @@ export class Store {
     this.touch();
   }
 
+  /** Who leads a slot and what to call them: the key from the epoch's turn
+   *  array, the name and icon from the peer table. */
   leaderOf(slot: number, mine: boolean): LeaderRef {
     // Ours takes no lookup: our own slots are kept past the reach of both
     // sources, and the validator says who we are directly.

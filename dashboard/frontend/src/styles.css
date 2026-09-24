@@ -595,6 +595,16 @@ body {
   line-height: 1.1;
 }
 
+/* Shrinks with the column so the longest countdown, 23h 59m 59s, stays on one line. Both grids
+   have the same column width, so their figures stay the same size. */
+.stat-grid > .stat {
+  container-type: inline-size;
+}
+
+.stat-grid .stat-value {
+  font-size: min(22px, 14.5cqi);
+}
+
 .stat-sub {
   order: 3;
   color: var(--text-faint);

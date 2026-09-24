@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
-import { readoutMean, READOUT_SECONDS } from "../matrix";
+import { MATRIX_WINDOW_SECONDS, readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
 import { creditsShare, participationShare, shareText } from "../credits";
 import { leaderLabel, lostNote, MISS_PLACES, missMarks, missTotal, placeExplain, turnMarks } from "../misses";
@@ -10,6 +10,7 @@ import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import { useBalancesHidden } from "../balances";
 import { useNarrow } from "../narrow";
+import { useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
 import { TpsMatrix } from "./TpsMatrix";
@@ -271,7 +272,16 @@ export function TransactionsCard(): ReactElement {
   const samples = store.getTps();
   const tps = readoutMean(samples);
   const narrow = useNarrow();
-  const peak = samples.length > 0 ? Math.max(...samples.map((sample) => sample.total)) : null;
+  // Drawn behind live on the validator's clock, so the newest column is complete rather than
+  // arriving mid-second. The peak is read from the same window the grid draws.
+  const edge = useChartEdge();
+  const visible = windowed(
+    samples,
+    edge,
+    MATRIX_WINDOW_SECONDS * 1000,
+    (sample) => sample.timestamp_nanos,
+  );
+  const peak = visible.length > 0 ? Math.max(...visible.map((sample) => sample.total)) : null;
 
   const figures = (
     <div className="tps-rows">
@@ -317,7 +327,7 @@ export function TransactionsCard(): ReactElement {
         {!narrow && figures}
       </div>
       <div className="tps-plot">
-        <TpsMatrix samples={samples} short={narrow} />
+        <TpsMatrix samples={visible} short={narrow} />
       </div>
       {narrow && figures}
     </Card>

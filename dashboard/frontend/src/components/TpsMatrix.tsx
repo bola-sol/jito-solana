@@ -3,7 +3,6 @@ import {
   ceilingFor,
   columnRows,
   geometry,
-  MATRIX_WINDOW_SECONDS,
   columnsFor,
   meanSample,
   ROWS_SHORT,
@@ -12,27 +11,22 @@ import {
   slotsFor,
 } from "../matrix";
 import type { TpsSample } from "../types";
-import { useChartEdge, windowed } from "../useNow";
 import { useWidth } from "../useWidth";
 
 const SERIES = ["vote", "failed", "success"] as const;
 
+/** `samples` is the window to draw, already cut to it. */
 export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }): ReactElement {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
-  // Drawn behind live on the validator's clock, so the newest column is
-  // complete rather than arriving mid-second.
-  const edge = useChartEdge();
 
   const rows = short ? ROWS_SHORT : ROWS_TALL;
   const height = rows * (short ? 9 : 12);
-  const windowMs = MATRIX_WINDOW_SECONDS * 1000;
-  const visible = windowed(samples, edge, windowMs, (sample) => sample.timestamp_nanos);
 
   return (
     <div className="matrix" ref={box} style={{ height }}>
       {width === null ? null : (
-        <Grid samples={visible} width={width} height={height} rows={rows} />
+        <Grid samples={samples} width={width} height={height} rows={rows} />
       )}
     </div>
   );

@@ -356,14 +356,52 @@ fn describes_more_work(new: &SchedulerTotals, held: &SchedulerTotals) -> bool {
     (new.scheduled, new.finished, new.buffered) > (held.scheduled, held.finished, held.buffered)
 }
 
-/// Reads are counted in accounts, since nothing on the load path counts bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
-pub struct AccountsTotals {
-    pub loaded_from_write_cache: u64,
-    pub loaded_from_read_cache: u64,
-    pub loaded_from_storage: u64,
-    pub stored_accounts: u64,
-    pub stored_bytes: u64,
+pub trait WindowedCounters: Copy + Default {
+    fn since(&self, previous: &Self) -> Self;
+    fn plus(&self, other: &Self) -> Self;
+}
+
+/// Declares a set's totals and their window arithmetic from one field list, so no field can be
+/// left out of the arithmetic and read nought for ever.
+macro_rules! counter_totals {
+    (
+        $(#[$meta:meta])*
+        pub struct $totals:ident {
+            $($(#[$field_meta:meta])* pub $field:ident: u64,)*
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+        pub struct $totals {
+            $($(#[$field_meta])* pub $field: u64,)*
+        }
+
+        impl WindowedCounters for $totals {
+            /// Saturating: a lower reading means a mid-flight install or a reset counter.
+            fn since(&self, previous: &Self) -> Self {
+                Self {
+                    $($field: self.$field.saturating_sub(previous.$field),)*
+                }
+            }
+
+            fn plus(&self, other: &Self) -> Self {
+                Self {
+                    $($field: self.$field.saturating_add(other.$field),)*
+                }
+            }
+        }
+    };
+}
+
+counter_totals! {
+    /// Reads are counted in accounts, since nothing on the load path counts bytes.
+    pub struct AccountsTotals {
+        pub loaded_from_write_cache: u64,
+        pub loaded_from_read_cache: u64,
+        pub loaded_from_storage: u64,
+        pub stored_accounts: u64,
+        pub stored_bytes: u64,
+    }
 }
 
 /// Levels. The difference between the two storage figures is what shrink reclaims.
@@ -382,19 +420,20 @@ struct AccountsSet {
     levels: AccountsLevels,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct ProgramCacheTotals {
-    pub hits: u64,
-    pub misses: u64,
-    pub evictions: u64,
-    pub reloads: u64,
-    pub insertions: u64,
-    pub lost_insertions: u64,
-    pub replacements: u64,
-    pub one_hit_wonders: u64,
-    pub prunes_orphan: u64,
-    pub prunes_environment: u64,
-    pub empty_entries: u64,
+counter_totals! {
+    pub struct ProgramCacheTotals {
+        pub hits: u64,
+        pub misses: u64,
+        pub evictions: u64,
+        pub reloads: u64,
+        pub insertions: u64,
+        pub lost_insertions: u64,
+        pub replacements: u64,
+        pub one_hit_wonders: u64,
+        pub prunes_orphan: u64,
+        pub prunes_environment: u64,
+        pub empty_entries: u64,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -405,36 +444,37 @@ struct ProgramCacheSet {
     water_level: u64,
 }
 
-/// One window of a QUIC port's counters. They do not partition the offer: the listener drops
-/// uncounted on either side of the handshake.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct QuicTotals {
-    /// Cumulative on the wire; the denominator for the rest.
-    pub offered: u64,
-    pub shed_all: u64,
-    pub shed_address: u64,
-    pub refused_full: u64,
-    pub handshake_timeout: u64,
-    pub handshake_error: u64,
-    pub handshook: u64,
-    /// Four overlapping counters for one event, never summed; see `refusedTable` in `tpuPath.ts`.
-    pub add_failed: u64,
-    pub add_failed_staked: u64,
-    pub add_failed_unstaked: u64,
-    pub add_failed_banned: u64,
-    pub admitted_staked: u64,
-    pub admitted_unstaked: u64,
-    pub streams: u64,
-    pub throttled_staked: u64,
-    pub throttled_unstaked: u64,
-    pub read_timeouts: u64,
-    pub read_errors: u64,
-    pub invalid_size: u64,
-    pub handed_on: u64,
-    pub bytes_handed_on: u64,
-    /// The one row here meaning this validator could not keep up.
-    pub queue_full: u64,
-    pub disconnected: u64,
+counter_totals! {
+    /// One window of a QUIC port's counters. They do not partition the offer: the listener drops
+    /// uncounted on either side of the handshake.
+    pub struct QuicTotals {
+        /// Cumulative on the wire; the denominator for the rest.
+        pub offered: u64,
+        pub shed_all: u64,
+        pub shed_address: u64,
+        pub refused_full: u64,
+        pub handshake_timeout: u64,
+        pub handshake_error: u64,
+        pub handshook: u64,
+        /// Four overlapping counters for one event, never summed; see `refusedTable` in `tpuPath.ts`.
+        pub add_failed: u64,
+        pub add_failed_staked: u64,
+        pub add_failed_unstaked: u64,
+        pub add_failed_banned: u64,
+        pub admitted_staked: u64,
+        pub admitted_unstaked: u64,
+        pub streams: u64,
+        pub throttled_staked: u64,
+        pub throttled_unstaked: u64,
+        pub read_timeouts: u64,
+        pub read_errors: u64,
+        pub invalid_size: u64,
+        pub handed_on: u64,
+        pub bytes_handed_on: u64,
+        /// The one row here meaning this validator could not keep up.
+        pub queue_full: u64,
+        pub disconnected: u64,
+    }
 }
 
 /// Kept apart from the counters so a window cannot sum them.
@@ -451,80 +491,84 @@ struct QuicSet {
     levels: QuicLevels,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct BundleTotals {
-    pub received: u64,
-    pub packets: u64,
+counter_totals! {
+    pub struct BundleTotals {
+        pub received: u64,
+        pub packets: u64,
+    }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct VerifyTotals {
-    pub received: u64,
-    /// Ordinary: the network sends transactions more than once.
-    pub duplicate: u64,
-    pub below_floor: u64,
-    pub verified: u64,
-    /// Batches, not transactions, so never added to a packet count.
-    pub evicted_batches: u64,
+counter_totals! {
+    pub struct VerifyTotals {
+        pub received: u64,
+        /// Ordinary: the network sends transactions more than once.
+        pub duplicate: u64,
+        pub below_floor: u64,
+        pub verified: u64,
+        /// Batches, not transactions, so never added to a packet count.
+        pub evicted_batches: u64,
+    }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct ExecutedTotals {
-    pub attempted: u64,
-    pub cost_throttled: u64,
-    pub retryable: u64,
-    pub expired_bank: u64,
-    pub processed: u64,
-    /// The rest landed having failed, which still costs their fee.
-    pub succeeded: u64,
+counter_totals! {
+    pub struct ExecutedTotals {
+        pub attempted: u64,
+        pub cost_throttled: u64,
+        pub retryable: u64,
+        pub expired_bank: u64,
+        pub processed: u64,
+        /// The rest landed having failed, which still costs their fee.
+        pub succeeded: u64,
 
-    pub too_many_locks: u64,
-    pub account_missing: u64,
-    pub fee_payer_broke: u64,
-    pub fee_payer_invalid: u64,
-    pub blockhash_missing: u64,
-    pub blockhash_old: u64,
-    pub already_processed: u64,
-    pub bad_compute_budget: u64,
-    pub account_data_too_large: u64,
-    pub program_not_executable: u64,
-    pub program_restricted: u64,
+        pub too_many_locks: u64,
+        pub account_missing: u64,
+        pub fee_payer_broke: u64,
+        pub fee_payer_invalid: u64,
+        pub blockhash_missing: u64,
+        pub blockhash_old: u64,
+        pub already_processed: u64,
+        pub bad_compute_budget: u64,
+        pub account_data_too_large: u64,
+        pub program_not_executable: u64,
+        pub program_restricted: u64,
+    }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct SchedulerTotals {
-    pub received: u64,
+counter_totals! {
+    pub struct SchedulerTotals {
+        pub received: u64,
 
-    // Lost at the door, before ever being buffered.
-    /// Not held because the validator was forwarding rather than buffering.
-    pub not_held: u64,
-    pub check_queue_full: u64,
-    pub unparsable: u64,
-    pub bad_locks: u64,
-    pub compute_budget: u64,
-    pub too_old: u64,
-    pub already_processed: u64,
-    pub fee_payer: u64,
-    pub filtered: u64,
-    pub nonce_conflict: u64,
+        // Lost at the door, before ever being buffered.
+        /// Not held because the validator was forwarding rather than buffering.
+        pub not_held: u64,
+        pub check_queue_full: u64,
+        pub unparsable: u64,
+        pub bad_locks: u64,
+        pub compute_budget: u64,
+        pub too_old: u64,
+        pub already_processed: u64,
+        pub fee_payer: u64,
+        pub filtered: u64,
+        pub nonce_conflict: u64,
 
-    pub buffered: u64,
+        pub buffered: u64,
 
-    // Lost from the container, after being buffered.
-    /// Pushed out by something of higher priority when the queue was full.
-    pub queue_full: u64,
-    pub nonce_evicted: u64,
-    pub cleared: u64,
-    pub cleaned: u64,
+        // Lost from the container, after being buffered.
+        /// Pushed out by something of higher priority when the queue was full.
+        pub queue_full: u64,
+        pub nonce_evicted: u64,
+        pub cleared: u64,
+        pub cleaned: u64,
 
-    pub scheduled: u64,
-    /// Held back this pass for account conflicts or busy workers. Pressure, not
-    /// losses.
-    pub blocked_conflicts: u64,
-    pub blocked_threads: u64,
+        pub scheduled: u64,
+        /// Held back this pass for account conflicts or busy workers. Pressure, not
+        /// losses.
+        pub blocked_conflicts: u64,
+        pub blocked_threads: u64,
 
-    pub finished: u64,
-    pub retried: u64,
+        pub finished: u64,
+        pub retried: u64,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1405,133 +1449,6 @@ fn add_to<T: AddPoint>(set: &Mutex<T>, point: &DataPoint) {
 fn copy_of<T: Copy + Default>(set: &Mutex<T>) -> T {
     set.lock().map(|set| *set).unwrap_or_default()
 }
-
-pub trait WindowedCounters: Copy + Default {
-    fn since(&self, previous: &Self) -> Self;
-    fn plus(&self, other: &Self) -> Self;
-}
-
-/// Listed once: a field left out of either would read nought for ever without failing.
-macro_rules! counter_arithmetic {
-    ($totals:ident { $($field:ident),* $(,)? }) => {
-        impl WindowedCounters for $totals {
-            /// Saturating: a lower reading means a mid-flight install or a reset counter.
-            fn since(&self, previous: &Self) -> Self {
-                Self {
-                    $($field: self.$field.saturating_sub(previous.$field),)*
-                }
-            }
-
-            fn plus(&self, other: &Self) -> Self {
-                Self {
-                    $($field: self.$field.saturating_add(other.$field),)*
-                }
-            }
-        }
-    };
-}
-
-counter_arithmetic!(AccountsTotals {
-    loaded_from_write_cache,
-    loaded_from_read_cache,
-    loaded_from_storage,
-    stored_accounts,
-    stored_bytes,
-});
-
-counter_arithmetic!(ProgramCacheTotals {
-    hits,
-    misses,
-    evictions,
-    reloads,
-    insertions,
-    lost_insertions,
-    replacements,
-    one_hit_wonders,
-    prunes_orphan,
-    prunes_environment,
-    empty_entries,
-});
-
-counter_arithmetic!(QuicTotals {
-    offered,
-    shed_all,
-    shed_address,
-    refused_full,
-    handshake_timeout,
-    handshake_error,
-    handshook,
-    add_failed,
-    add_failed_staked,
-    add_failed_unstaked,
-    add_failed_banned,
-    admitted_staked,
-    admitted_unstaked,
-    streams,
-    throttled_staked,
-    throttled_unstaked,
-    read_timeouts,
-    read_errors,
-    invalid_size,
-    handed_on,
-    bytes_handed_on,
-    queue_full,
-    disconnected,
-});
-
-counter_arithmetic!(BundleTotals { received, packets });
-
-counter_arithmetic!(VerifyTotals {
-    received,
-    duplicate,
-    below_floor,
-    verified,
-    evicted_batches,
-});
-
-counter_arithmetic!(ExecutedTotals {
-    attempted,
-    cost_throttled,
-    retryable,
-    expired_bank,
-    processed,
-    succeeded,
-    too_many_locks,
-    account_missing,
-    fee_payer_broke,
-    fee_payer_invalid,
-    blockhash_missing,
-    blockhash_old,
-    already_processed,
-    bad_compute_budget,
-    account_data_too_large,
-    program_not_executable,
-    program_restricted,
-});
-
-counter_arithmetic!(SchedulerTotals {
-    received,
-    not_held,
-    check_queue_full,
-    unparsable,
-    bad_locks,
-    compute_budget,
-    too_old,
-    already_processed,
-    fee_payer,
-    filtered,
-    nonce_conflict,
-    buffered,
-    queue_full,
-    nonce_evicted,
-    cleared,
-    cleaned,
-    scheduled,
-    blocked_conflicts,
-    blocked_threads,
-    finished,
-    retried,
-});
 
 fn add_field(counter: &AtomicU64, value: &str) {
     if let Some(delta) = field_u64(value) {

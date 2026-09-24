@@ -49,10 +49,10 @@ describe("residentTrend", () => {
     expect(residentTrend(host({ process_resident: 400 * GB }))).toBeNull();
   });
 
-  it("is nothing where the move is noise", () => {
+  it("calls a move within the noise steady", () => {
     expect(
       residentTrend(host({ process_resident: 400 * GB, process_resident_hour_ago: 400 * GB - 100 * 1024 ** 2 })),
-    ).toBeNull();
+    ).toEqual({ direction: "steady", label: "steady this hour" });
   });
 });
 

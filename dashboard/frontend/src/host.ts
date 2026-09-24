@@ -101,7 +101,7 @@ export function deviceLabel(device: DeviceLoad): string {
 export const RESIDENT_NOISE = 512 * 1024 ** 2;
 
 export interface ResidentTrend {
-  direction: "rising" | "falling";
+  direction: "rising" | "falling" | "steady";
   label: string;
 }
 
@@ -110,7 +110,7 @@ export function residentTrend(host: Host): ResidentTrend | null {
   const before = host.process_resident_hour_ago;
   if (now === null || before === null) return null;
   const delta = now - before;
-  if (Math.abs(delta) < RESIDENT_NOISE) return null;
+  if (Math.abs(delta) < RESIDENT_NOISE) return { direction: "steady", label: "steady this hour" };
   return {
     direction: delta > 0 ? "rising" : "falling",
     label: `${delta > 0 ? "up" : "down"} ${bytes(Math.abs(delta))} this hour`,

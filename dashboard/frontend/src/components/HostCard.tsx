@@ -142,10 +142,14 @@ export function HostCard(): ReactElement | null {
             , {bytes(memory.reclaimable)} page cache
             {host.process_resident !== null && (
               <>
-                , validator {bytes(host.process_resident)}
-                {resident && (
-                  <span className={`host-trend is-${resident.direction}`}> {resident.label}</span>
-                )}
+                <br />
+                validator {bytes(host.process_resident)}
+                {/* A line of its own, kept even when empty, so the figure does not change height
+                    as the trend comes and goes. */}
+                <br />
+                <span className={`host-trend is-${resident?.direction ?? "steady"}`}>
+                  {resident?.label ?? "\u00a0"}
+                </span>
               </>
             )}
           </div>

@@ -16,7 +16,7 @@ use {
         },
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
-        snapshot::{self, Snapshots, Writing, Written},
+        snapshot::{self, SnapshotTracker, Snapshots},
         startup::StartupPublisher,
         tips::{TipMeter, TipRates},
         turns::{LeaderTurn, TurnTracker},
@@ -473,7 +473,6 @@ pub struct Collector {
     certs_walk: Option<(Slot, Slot)>,
     misses: Arc<RwLock<MissReplies>>,
     certs_tally: Option<certs::Tally>,
-    snapshot_spans: Vec<certs::Span>,
     /// Advances past skipped slots, which never carry a timestamp.
     slot_timed_to: Option<Slot>,
     last_shred_time: Option<(Slot, u64)>,
@@ -506,8 +505,7 @@ pub struct Collector {
     leader_turns: VecDeque<LeaderTurn>,
     overview_dirty: bool,
     overview_retained_at: Instant,
-    snapshot_writing: Option<(Writing, u64, Slot)>,
-    snapshot_last: Option<Written>,
+    snapshots: SnapshotTracker,
 }
 
 pub struct CollectorShared {
@@ -570,7 +568,6 @@ impl Collector {
             certs_walk: None,
             misses,
             certs_tally: None,
-            snapshot_spans: Vec::new(),
             last_shred_time: None,
             slot_time_window: VecDeque::new(),
             caught_up_at: None,
@@ -596,8 +593,7 @@ impl Collector {
             totals: BTreeMap::new(),
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
-            snapshot_writing: None,
-            snapshot_last: None,
+            snapshots: SnapshotTracker::default(),
         }
     }
 
@@ -764,31 +760,10 @@ impl Collector {
     }
 
     fn collect_snapshots(&mut self) {
-        let mut snapshots = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
-        let writing = snapshots.as_ref().and_then(|snapshots| snapshots.writing);
-        match (writing, self.snapshot_writing.take()) {
-            (Some(writing), None) => {
-                self.snapshot_writing = Some((writing, 0, self.last_completed_slot));
-            }
-            (Some(writing), Some((_, fell_behind, from))) => {
-                self.snapshot_writing = Some((writing, fell_behind, from));
-            }
-            (None, Some((writing, fell_behind_slots, from))) => {
-                self.snapshot_last = Some(Written {
-                    slot: writing.slot,
-                    took_millis: timestamp().saturating_sub(writing.since_millis),
-                    fell_behind_slots,
-                });
-                self.snapshot_spans.push(certs::Span {
-                    from,
-                    to: Some(self.last_completed_slot),
-                });
-            }
-            (None, None) => {}
-        }
-        if let Some(snapshots) = snapshots.as_mut() {
-            snapshots.last_written = self.snapshot_last;
-        }
+        let read = self.ctx.snapshot_config.as_ref().and_then(snapshot::read);
+        let snapshots = self
+            .snapshots
+            .observe(read, self.last_completed_slot, timestamp());
         self.debounces
             .snapshots
             .publish(&self.publisher, TOPIC_SUMMARY, "snapshots", snapshots);
@@ -1410,7 +1385,7 @@ impl Collector {
             self.certs_walk = Some((floor, read_to));
         }
         let schedule = root_bank.epoch_schedule();
-        let spans = self.snapshot_spans().collect::<Vec<_>>();
+        let spans = self.snapshots.spans().collect::<Vec<_>>();
         if let Some(tally) = self.certs_tally.as_mut() {
             for (slot, vote) in self.metrics_tap.take_vote_tracks() {
                 tally.note_vote(slot, vote);
@@ -1428,8 +1403,7 @@ impl Collector {
             {
                 self.certs_tally = Some(self.new_tally(root_bank, epoch, mark.slot));
                 let start = schedule.get_first_slot_in_epoch(epoch);
-                self.snapshot_spans
-                    .retain(|span| span.to.is_none_or(|to| to >= start));
+                self.snapshots.forget_before(start);
             }
             let detail = Some(self.miss_detail(root_bank, mark.slot));
             let left_out = self.certs_tally.as_mut().and_then(|tally| {
@@ -1704,13 +1678,6 @@ impl Collector {
         certs::MissDetail { writer, late }
     }
 
-    fn snapshot_spans(&self) -> impl Iterator<Item = certs::Span> + '_ {
-        self.snapshot_spans.iter().copied().chain(
-            self.snapshot_writing
-                .map(|(_, _, from)| certs::Span { from, to: None }),
-        )
-    }
-
     /// Here because no single moment finishes an entry.
     fn publish_slot(&mut self, entry: &SlotEntry) {
         self.history.write().unwrap().record(entry);
@@ -1853,10 +1820,8 @@ impl Collector {
         // Measured against the cluster's tip, not this node's own view, which
         // lags when replay lags.
         let behind_cluster = cluster_tip.map(|tip| tip.saturating_sub(self.last_completed_slot));
-        if let (Some((_, fell_behind, _)), Some(behind)) =
-            (&mut self.snapshot_writing, behind_cluster)
-        {
-            *fell_behind = (*fell_behind).max(behind);
+        if let Some(behind) = behind_cluster {
+            self.snapshots.note_behind(behind);
         }
         self.debounces.behind_cluster.publish(
             &self.publisher,
@@ -2575,6 +2540,7 @@ mod tests {
         super::*,
         crate::{
             fixture::{Fixture, fixture},
+            snapshot::Writing,
             startup::StartupPublisher,
         },
         solana_core::validator::ValidatorStartProgress,
@@ -2871,45 +2837,36 @@ mod tests {
     }
 
     #[test]
-    fn test_a_snapshot_write_is_timed_from_its_staging_to_its_end() {
+    fn test_the_vote_pass_counts_how_far_a_snapshot_write_fell_behind() {
         let harness = fixture();
         let mut collector = harness.collector();
-        collector.snapshot_writing = Some((
-            Writing {
-                slot: 300,
-                since_millis: timestamp().saturating_sub(90_000),
-            },
-            0,
-            10,
-        ));
+        let staged = |writing| {
+            Some(Snapshots {
+                full: None,
+                incremental: None,
+                full_interval: None,
+                incremental_interval: None,
+                writing,
+                last_written: None,
+            })
+        };
+        let writing = Writing {
+            slot: 300,
+            since_millis: 0,
+        };
+        collector.snapshots.observe(staged(Some(writing)), 10, 0);
         harness.advance_to(64);
         harness.set_cluster_tip(100);
         collector.tick();
         let completed = published_number(&harness, "completed_slot").unwrap();
-        assert_eq!(
-            collector
-                .snapshot_writing
-                .as_ref()
-                .map(|(_, behind, _)| *behind),
-            Some(100 - completed)
-        );
-        assert_eq!(
-            collector.snapshot_spans().collect::<Vec<_>>(),
-            vec![certs::Span { from: 10, to: None }]
-        );
 
-        collector.collect_snapshots();
-        let written = collector.snapshot_last.as_ref().expect("the write ended");
-        assert_eq!(written.slot, 300);
-        assert!(written.took_millis >= 90_000);
-        assert_eq!(written.fell_behind_slots, 100 - completed);
-        assert!(collector.snapshot_writing.is_none());
+        let shown = collector
+            .snapshots
+            .observe(staged(None), completed, 0)
+            .unwrap();
         assert_eq!(
-            collector.snapshot_spans,
-            vec![certs::Span {
-                from: 10,
-                to: Some(completed),
-            }]
+            shown.last_written.map(|written| written.fell_behind_slots),
+            Some(100 - completed)
         );
     }
 

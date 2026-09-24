@@ -2,6 +2,7 @@
 //! reads them, and how often new ones are due.
 
 use {
+    crate::certs::Span,
     agave_snapshots::{
         SnapshotInterval, paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_config::SnapshotConfig,
@@ -48,6 +49,68 @@ pub struct Snapshots {
     /// Kind unknown: both kinds stage under the same name.
     pub writing: Option<Writing>,
     pub last_written: Option<Written>,
+}
+
+/// Follows each write from its staging file to its end, and the slots each one spanned.
+#[derive(Debug, Default)]
+pub struct SnapshotTracker {
+    /// The write in progress, the most slots the node fell behind during it, and where it began.
+    writing: Option<(Writing, u64, Slot)>,
+    last: Option<Written>,
+    spans: Vec<Span>,
+}
+
+impl SnapshotTracker {
+    /// Takes what the archive directories show now and returns it with the last write filled in.
+    pub fn observe(
+        &mut self,
+        read: Option<Snapshots>,
+        completed: Slot,
+        now_millis: u64,
+    ) -> Option<Snapshots> {
+        let writing = read.as_ref().and_then(|snapshots| snapshots.writing);
+        match (writing, self.writing.take()) {
+            (Some(writing), None) => self.writing = Some((writing, 0, completed)),
+            (Some(writing), Some((_, fell_behind, from))) => {
+                self.writing = Some((writing, fell_behind, from));
+            }
+            (None, Some((writing, fell_behind_slots, from))) => {
+                self.last = Some(Written {
+                    slot: writing.slot,
+                    took_millis: now_millis.saturating_sub(writing.since_millis),
+                    fell_behind_slots,
+                });
+                self.spans.push(Span {
+                    from,
+                    to: Some(completed),
+                });
+            }
+            (None, None) => {}
+        }
+        read.map(|snapshots| Snapshots {
+            last_written: self.last,
+            ..snapshots
+        })
+    }
+
+    pub fn note_behind(&mut self, slots: u64) {
+        if let Some((_, fell_behind, _)) = &mut self.writing {
+            *fell_behind = (*fell_behind).max(slots);
+        }
+    }
+
+    /// Finished writes, then the one in progress with no end.
+    pub fn spans(&self) -> impl Iterator<Item = Span> + '_ {
+        self.spans
+            .iter()
+            .copied()
+            .chain(self.writing.map(|(_, _, from)| Span { from, to: None }))
+    }
+
+    pub fn forget_before(&mut self, slot: Slot) {
+        self.spans
+            .retain(|span| span.to.is_none_or(|to| to >= slot));
+    }
 }
 
 pub fn read(config: &SnapshotConfig) -> Option<Snapshots> {
@@ -155,6 +218,89 @@ mod tests {
     };
 
     const HASH: &str = "11111111111111111111111111111111";
+
+    fn staged(writing: Option<Writing>) -> Option<Snapshots> {
+        Some(Snapshots {
+            full: None,
+            incremental: None,
+            full_interval: None,
+            incremental_interval: None,
+            writing,
+            last_written: None,
+        })
+    }
+
+    const WRITE: Writing = Writing {
+        slot: 300,
+        since_millis: 1_000,
+    };
+
+    #[test]
+    fn test_a_write_is_timed_from_its_staging_to_its_end() {
+        let mut tracker = SnapshotTracker::default();
+        let shown = tracker.observe(staged(Some(WRITE)), 10, 1_500).unwrap();
+        assert_eq!(shown.last_written, None);
+        assert_eq!(
+            tracker.spans().collect::<Vec<_>>(),
+            [Span { from: 10, to: None }]
+        );
+
+        tracker.note_behind(7);
+        tracker.note_behind(3);
+        tracker.observe(staged(Some(WRITE)), 40, 2_000);
+        let shown = tracker.observe(staged(None), 90, 91_000).unwrap();
+        assert_eq!(
+            shown.last_written,
+            Some(Written {
+                slot: 300,
+                took_millis: 90_000,
+                fell_behind_slots: 7,
+            })
+        );
+        assert_eq!(
+            tracker.spans().collect::<Vec<_>>(),
+            [Span {
+                from: 10,
+                to: Some(90),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_lag_outside_a_write_is_not_counted() {
+        let mut tracker = SnapshotTracker::default();
+        tracker.note_behind(50);
+        tracker.observe(staged(Some(WRITE)), 10, 1_500);
+        let shown = tracker.observe(staged(None), 20, 2_000).unwrap();
+        assert_eq!(shown.last_written.unwrap().fell_behind_slots, 0);
+    }
+
+    #[test]
+    fn test_spans_ended_before_an_epoch_are_forgotten_and_an_open_one_kept() {
+        let mut tracker = SnapshotTracker::default();
+        tracker.observe(staged(Some(WRITE)), 10, 0);
+        tracker.observe(staged(None), 20, 0);
+        tracker.observe(staged(Some(WRITE)), 30, 0);
+        tracker.observe(staged(None), 40, 0);
+        tracker.observe(staged(Some(WRITE)), 50, 0);
+        tracker.forget_before(35);
+        assert_eq!(
+            tracker.spans().collect::<Vec<_>>(),
+            [
+                Span {
+                    from: 30,
+                    to: Some(40),
+                },
+                Span { from: 50, to: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_no_snapshot_config_publishes_nothing() {
+        let mut tracker = SnapshotTracker::default();
+        assert_eq!(tracker.observe(None, 10, 0), None);
+    }
 
     fn config(dir: &TempDir, usage: SnapshotUsage) -> SnapshotConfig {
         SnapshotConfig {

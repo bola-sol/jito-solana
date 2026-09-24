@@ -1,6 +1,6 @@
 //! Counters lifted from the metrics points the validator submits about itself.
-//! The observer runs on the submitting thread: a name match, then atomics; the
-//! per-slot points and the workers' timing reports take a lock for the insert.
+//! The observer runs on the submitting thread: a name match, then an atomic add for a single
+//! counter or one short lock for a set of them, the per-slot points included.
 //! Points carry deltas, accumulated into totals. A few fields are levels,
 //! replaced by the latest reading and never summed.
 
@@ -116,114 +116,6 @@ const SCHEDULER_ID: &str = "id";
 
 const OWN_SCHEDULER_ID: &str = "0";
 
-/// Reads are counted in accounts, since nothing on the load path counts bytes.
-#[derive(Debug, Default)]
-pub struct AccountsCounters {
-    pub loaded_from_write_cache: AtomicU64,
-    pub loaded_from_read_cache: AtomicU64,
-    pub loaded_from_storage: AtomicU64,
-
-    pub stored_accounts: AtomicU64,
-    pub stored_bytes: AtomicU64,
-
-    /// Levels. The difference is what shrink reclaims.
-    pub storage_bytes: AtomicU64,
-    pub storage_alive_bytes: AtomicU64,
-    pub storage_count: AtomicU64,
-    pub cache_bytes: AtomicU64,
-    pub cache_entries: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-pub struct ProgramCacheCounters {
-    pub hits: AtomicU64,
-    pub misses: AtomicU64,
-    pub evictions: AtomicU64,
-    pub reloads: AtomicU64,
-    pub insertions: AtomicU64,
-    pub lost_insertions: AtomicU64,
-    pub replacements: AtomicU64,
-    pub one_hit_wonders: AtomicU64,
-    pub prunes_orphan: AtomicU64,
-    pub prunes_environment: AtomicU64,
-    pub empty_entries: AtomicU64,
-
-    /// Entries loaded when an eviction last ran, reset with each bank, so the panel takes the
-    /// window's peak.
-    pub water_level: AtomicU64,
-}
-
-/// One QUIC port: who was let in, what they sent, and what got through. `offered` arrives
-/// cumulative and the last two are levels; the rest are deltas.
-#[derive(Debug, Default)]
-pub struct QuicCounters {
-    /// Cumulative on the wire; the denominator for the rest.
-    pub offered: AtomicU64,
-    pub shed_all: AtomicU64,
-    pub shed_address: AtomicU64,
-    pub refused_full: AtomicU64,
-    pub handshake_timeout: AtomicU64,
-    pub handshake_error: AtomicU64,
-    pub handshook: AtomicU64,
-    /// Four overlapping counters for one event, never summed; see `refusedTable` in `tpuPath.ts`.
-    pub add_failed: AtomicU64,
-    pub add_failed_staked: AtomicU64,
-    pub add_failed_unstaked: AtomicU64,
-    pub add_failed_banned: AtomicU64,
-    pub admitted_staked: AtomicU64,
-    pub admitted_unstaked: AtomicU64,
-
-    pub streams: AtomicU64,
-    pub throttled_staked: AtomicU64,
-    pub throttled_unstaked: AtomicU64,
-    pub read_timeouts: AtomicU64,
-    pub read_errors: AtomicU64,
-    pub invalid_size: AtomicU64,
-
-    pub handed_on: AtomicU64,
-    pub bytes_handed_on: AtomicU64,
-    /// The one row here meaning this validator could not keep up.
-    pub queue_full: AtomicU64,
-    pub disconnected: AtomicU64,
-
-    pub open: AtomicU64,
-    pub active_streams: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-pub struct VerifyCounters {
-    pub received: AtomicU64,
-    /// Ordinary: the network sends transactions more than once.
-    pub duplicate: AtomicU64,
-    pub below_floor: AtomicU64,
-    pub verified: AtomicU64,
-    /// Batches, not transactions, so never added to a packet count.
-    pub evicted_batches: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-pub struct ExecutedCounters {
-    pub attempted: AtomicU64,
-    pub cost_throttled: AtomicU64,
-    pub retryable: AtomicU64,
-    pub expired_bank: AtomicU64,
-    pub processed: AtomicU64,
-    /// The rest landed having failed, which still costs their fee.
-    pub succeeded: AtomicU64,
-
-    pub too_many_locks: AtomicU64,
-    pub account_missing: AtomicU64,
-    pub fee_payer_broke: AtomicU64,
-    pub fee_payer_invalid: AtomicU64,
-    pub blockhash_missing: AtomicU64,
-    pub blockhash_old: AtomicU64,
-    pub already_processed: AtomicU64,
-    pub bad_compute_budget: AtomicU64,
-    pub account_data_too_large: AtomicU64,
-    pub program_not_executable: AtomicU64,
-    pub program_restricted: AtomicU64,
-}
-
 #[derive(Debug, Default)]
 pub struct MetricsTap {
     pub accounts_cache_hits: AtomicU64,
@@ -249,19 +141,19 @@ pub struct MetricsTap {
     pub repair_sent_bytes: AtomicU64,
     pub repair_sent_millis: AtomicU64,
 
-    pub accounts: AccountsCounters,
+    accounts: Mutex<AccountsSet>,
 
-    pub program_cache: ProgramCacheCounters,
+    program_cache: Mutex<ProgramCacheSet>,
 
     /// Separate sets, since the stages either side of the scheduler do not reconcile.
-    pub quic: QuicCounters,
-    pub quic_forwards: QuicCounters,
-    pub quic_vote: QuicCounters,
-    pub verify: VerifyCounters,
-    pub executed: ExecutedCounters,
-    pub bundles: BundleCounters,
+    quic: Mutex<QuicSet>,
+    quic_forwards: Mutex<QuicSet>,
+    quic_vote: Mutex<QuicSet>,
+    verify: Mutex<VerifyTotals>,
+    executed: Mutex<ExecutedTotals>,
+    bundles: Mutex<BundleTotals>,
 
-    pub scheduler: SchedulerCounters,
+    scheduler: Mutex<SchedulerTotals>,
 
     slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
 
@@ -464,42 +356,7 @@ fn describes_more_work(new: &SchedulerTotals, held: &SchedulerTotals) -> bool {
     (new.scheduled, new.finished, new.buffered) > (held.scheduled, held.finished, held.buffered)
 }
 
-#[derive(Debug, Default)]
-pub struct SchedulerCounters {
-    pub received: AtomicU64,
-
-    // Lost at the door, before ever being buffered.
-    /// Not held because the validator was forwarding rather than buffering.
-    pub not_held: AtomicU64,
-    pub check_queue_full: AtomicU64,
-    pub unparsable: AtomicU64,
-    pub bad_locks: AtomicU64,
-    pub compute_budget: AtomicU64,
-    pub too_old: AtomicU64,
-    pub already_processed: AtomicU64,
-    pub fee_payer: AtomicU64,
-    pub filtered: AtomicU64,
-    pub nonce_conflict: AtomicU64,
-
-    pub buffered: AtomicU64,
-
-    // Lost from the container, after being buffered.
-    /// Pushed out by something of higher priority when the queue was full.
-    pub queue_full: AtomicU64,
-    pub nonce_evicted: AtomicU64,
-    pub cleared: AtomicU64,
-    pub cleaned: AtomicU64,
-
-    pub scheduled: AtomicU64,
-    /// Held back this pass for account conflicts or busy workers. Pressure, not
-    /// losses.
-    pub blocked_conflicts: AtomicU64,
-    pub blocked_threads: AtomicU64,
-
-    pub finished: AtomicU64,
-    pub retried: AtomicU64,
-}
-
+/// Reads are counted in accounts, since nothing on the load path counts bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct AccountsTotals {
     pub loaded_from_write_cache: u64,
@@ -507,6 +364,22 @@ pub struct AccountsTotals {
     pub loaded_from_storage: u64,
     pub stored_accounts: u64,
     pub stored_bytes: u64,
+}
+
+/// Levels. The difference between the two storage figures is what shrink reclaims.
+#[derive(Debug, Clone, Copy, Default)]
+struct AccountsLevels {
+    storage_bytes: u64,
+    storage_alive_bytes: u64,
+    storage_count: u64,
+    cache_bytes: u64,
+    cache_entries: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AccountsSet {
+    totals: AccountsTotals,
+    levels: AccountsLevels,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -524,10 +397,19 @@ pub struct ProgramCacheTotals {
     pub empty_entries: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ProgramCacheSet {
+    totals: ProgramCacheTotals,
+    /// Entries loaded when an eviction last ran, reset with each bank, so the panel takes the
+    /// window's peak.
+    water_level: u64,
+}
+
 /// One window of a QUIC port's counters. They do not partition the offer: the listener drops
 /// uncounted on either side of the handshake.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct QuicTotals {
+    /// Cumulative on the wire; the denominator for the rest.
     pub offered: u64,
     pub shed_all: u64,
     pub shed_address: u64,
@@ -535,6 +417,7 @@ pub struct QuicTotals {
     pub handshake_timeout: u64,
     pub handshake_error: u64,
     pub handshook: u64,
+    /// Four overlapping counters for one event, never summed; see `refusedTable` in `tpuPath.ts`.
     pub add_failed: u64,
     pub add_failed_staked: u64,
     pub add_failed_unstaked: u64,
@@ -549,6 +432,7 @@ pub struct QuicTotals {
     pub invalid_size: u64,
     pub handed_on: u64,
     pub bytes_handed_on: u64,
+    /// The one row here meaning this validator could not keep up.
     pub queue_full: u64,
     pub disconnected: u64,
 }
@@ -560,10 +444,11 @@ pub struct QuicLevels {
     pub active_streams: u64,
 }
 
-#[derive(Debug, Default)]
-pub struct BundleCounters {
-    pub received: AtomicU64,
-    pub packets: AtomicU64,
+/// One QUIC port: who was let in, what they sent, and what got through.
+#[derive(Debug, Clone, Copy, Default)]
+struct QuicSet {
+    totals: QuicTotals,
+    levels: QuicLevels,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -575,9 +460,11 @@ pub struct BundleTotals {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct VerifyTotals {
     pub received: u64,
+    /// Ordinary: the network sends transactions more than once.
     pub duplicate: u64,
     pub below_floor: u64,
     pub verified: u64,
+    /// Batches, not transactions, so never added to a packet count.
     pub evicted_batches: u64,
 }
 
@@ -588,7 +475,9 @@ pub struct ExecutedTotals {
     pub retryable: u64,
     pub expired_bank: u64,
     pub processed: u64,
+    /// The rest landed having failed, which still costs their fee.
     pub succeeded: u64,
+
     pub too_many_locks: u64,
     pub account_missing: u64,
     pub fee_payer_broke: u64,
@@ -605,6 +494,9 @@ pub struct ExecutedTotals {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct SchedulerTotals {
     pub received: u64,
+
+    // Lost at the door, before ever being buffered.
+    /// Not held because the validator was forwarding rather than buffering.
     pub not_held: u64,
     pub check_queue_full: u64,
     pub unparsable: u64,
@@ -615,14 +507,22 @@ pub struct SchedulerTotals {
     pub fee_payer: u64,
     pub filtered: u64,
     pub nonce_conflict: u64,
+
     pub buffered: u64,
+
+    // Lost from the container, after being buffered.
+    /// Pushed out by something of higher priority when the queue was full.
     pub queue_full: u64,
     pub nonce_evicted: u64,
     pub cleared: u64,
     pub cleaned: u64,
+
     pub scheduled: u64,
+    /// Held back this pass for account conflicts or busy workers. Pressure, not
+    /// losses.
     pub blocked_conflicts: u64,
     pub blocked_threads: u64,
+
     pub finished: u64,
     pub retried: u64,
 }
@@ -687,7 +587,7 @@ impl MetricsTap {
     fn observe(&self, point: &DataPoint) {
         match point.name {
             ACCOUNTS_DB_TIMINGS => {
-                self.accounts.add_point(point);
+                add_to(&self.accounts, point);
                 for (name, value) in &point.fields {
                     let counter = match *name {
                         "read_only_accounts_cache_hits" => &self.accounts_cache_hits,
@@ -713,7 +613,7 @@ impl MetricsTap {
                     scheduler_source(point) == SchedulerSource::Bam,
                     Ordering::Relaxed,
                 );
-                self.scheduler.add_point(point)
+                add_to(&self.scheduler, point)
             }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
@@ -727,14 +627,14 @@ impl MetricsTap {
             RETRANSMIT_SLOT_STATS => self.add_turbine_layers(point),
             WFSM_GOSSIP => self.remember_stake_in_gossip(point),
             COST_TRACKER => self.remember_cost(point),
-            ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => self.accounts.add_point(point),
-            PROGRAM_CACHE => self.program_cache.add_point(point),
-            QUIC_TPU => self.quic.add_point(point),
-            QUIC_TPU_FORWARDS => self.quic_forwards.add_point(point),
-            QUIC_TPU_VOTE => self.quic_vote.add_point(point),
-            TPU_VERIFIER => self.verify.add_point(point),
-            BUNDLE_STAGE => self.bundles.add_point(point),
-            WORKER_COUNTS | WORKER_ERROR_METRICS => self.executed.add_point(point),
+            ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => add_to(&self.accounts, point),
+            PROGRAM_CACHE => add_to(&self.program_cache, point),
+            QUIC_TPU => add_to(&self.quic, point),
+            QUIC_TPU_FORWARDS => add_to(&self.quic_forwards, point),
+            QUIC_TPU_VOTE => add_to(&self.quic_vote, point),
+            TPU_VERIFIER => add_to(&self.verify, point),
+            BUNDLE_STAGE => add_to(&self.bundles, point),
+            WORKER_COUNTS | WORKER_ERROR_METRICS => add_to(&self.executed, point),
             _ => (),
         }
     }
@@ -793,12 +693,12 @@ impl MetricsTap {
             return;
         };
 
-        let counters = SchedulerCounters::default();
-        counters.add_point(point);
+        let mut counts = SchedulerTotals::default();
+        counts.add_point(point);
         let waterfall = SlotWaterfall {
             slot,
             source: scheduler_source(point),
-            counts: counters.totals(),
+            counts,
         };
 
         let Ok(mut slots) = self.slot_waterfalls.lock() else {
@@ -1239,6 +1139,13 @@ impl MetricsTap {
     }
 
     pub fn counters(&self) -> TapCounters {
+        let accounts = copy_of(&self.accounts);
+        let program_cache = copy_of(&self.program_cache);
+        let (quic, quic_forwards, quic_vote) = (
+            copy_of(&self.quic),
+            copy_of(&self.quic_forwards),
+            copy_of(&self.quic_vote),
+        );
         TapCounters {
             accounts_cache_hits: self.accounts_cache_hits.load(Ordering::Relaxed),
             accounts_cache_misses: self.accounts_cache_misses.load(Ordering::Relaxed),
@@ -1261,354 +1168,242 @@ impl MetricsTap {
             gossip_sent_millis: self.gossip_sent_millis.load(Ordering::Relaxed),
             repair_sent_bytes: self.repair_sent_bytes.load(Ordering::Relaxed),
             repair_sent_millis: self.repair_sent_millis.load(Ordering::Relaxed),
-            scheduler: self.scheduler.totals(),
-            accounts: self.accounts.totals(),
-            accounts_storage_bytes: self.accounts.storage_bytes.load(Ordering::Relaxed),
-            accounts_storage_alive_bytes: self.accounts.storage_alive_bytes.load(Ordering::Relaxed),
-            accounts_storage_count: self.accounts.storage_count.load(Ordering::Relaxed),
-            accounts_cache_bytes: self.accounts.cache_bytes.load(Ordering::Relaxed),
-            accounts_cache_entries: self.accounts.cache_entries.load(Ordering::Relaxed),
-            program_cache: self.program_cache.totals(),
-            program_cache_water_level: self.program_cache.water_level.load(Ordering::Relaxed),
-            quic: self.quic.totals(),
-            quic_forwards: self.quic_forwards.totals(),
-            quic_vote: self.quic_vote.totals(),
-            quic_levels: self.quic.levels(),
-            quic_forwards_levels: self.quic_forwards.levels(),
-            quic_vote_levels: self.quic_vote.levels(),
-            verify: self.verify.totals(),
-            bundles: self.bundles.totals(),
-            executed: self.executed.totals(),
+            scheduler: copy_of(&self.scheduler),
+            accounts: accounts.totals,
+            accounts_storage_bytes: accounts.levels.storage_bytes,
+            accounts_storage_alive_bytes: accounts.levels.storage_alive_bytes,
+            accounts_storage_count: accounts.levels.storage_count,
+            accounts_cache_bytes: accounts.levels.cache_bytes,
+            accounts_cache_entries: accounts.levels.cache_entries,
+            program_cache: program_cache.totals,
+            program_cache_water_level: program_cache.water_level,
+            quic: quic.totals,
+            quic_forwards: quic_forwards.totals,
+            quic_vote: quic_vote.totals,
+            quic_levels: quic.levels,
+            quic_forwards_levels: quic_forwards.levels,
+            quic_vote_levels: quic_vote.levels,
+            verify: copy_of(&self.verify),
+            bundles: copy_of(&self.bundles),
+            executed: copy_of(&self.executed),
         }
     }
 }
 
-impl AccountsCounters {
-    fn add_point(&self, point: &DataPoint) {
+/// A set of figures one kind of metrics point adds into, under one lock.
+trait AddPoint {
+    fn add_point(&mut self, point: &DataPoint);
+}
+
+impl AddPoint for AccountsSet {
+    fn add_point(&mut self, point: &DataPoint) {
+        let (totals, levels) = (&mut self.totals, &mut self.levels);
         for (name, value) in &point.fields {
-            let gauge = match *name {
-                "total_bytes" => Some(&self.storage_bytes),
-                "total_alive_bytes" => Some(&self.storage_alive_bytes),
-                "total_count" => Some(&self.storage_count),
-                "read_only_accounts_cache_data_size" => Some(&self.cache_bytes),
-                "read_only_accounts_cache_entries" => Some(&self.cache_entries),
+            let level = match *name {
+                "total_bytes" => Some(&mut levels.storage_bytes),
+                "total_alive_bytes" => Some(&mut levels.storage_alive_bytes),
+                "total_count" => Some(&mut levels.storage_count),
+                "read_only_accounts_cache_data_size" => Some(&mut levels.cache_bytes),
+                "read_only_accounts_cache_entries" => Some(&mut levels.cache_entries),
                 _ => None,
             };
-            if let Some(gauge) = gauge {
-                set_field(gauge, value);
+            if let Some(level) = level {
+                set_value(level, value);
                 continue;
             }
 
             let counter = match *name {
-                "num_loaded_from_write_cache" => &self.loaded_from_write_cache,
-                "num_loaded_from_read_cache" => &self.loaded_from_read_cache,
-                "num_loaded_from_index_storage" => &self.loaded_from_storage,
+                "num_loaded_from_write_cache" => &mut totals.loaded_from_write_cache,
+                "num_loaded_from_read_cache" => &mut totals.loaded_from_read_cache,
+                "num_loaded_from_index_storage" => &mut totals.loaded_from_storage,
                 // Two spellings: 4.3 calls stored what 4.2 called flushed.
-                "num_accounts_stored" | "num_accounts_flushed" => &self.stored_accounts,
-                "account_bytes_stored" | "account_bytes_flushed" => &self.stored_bytes,
+                "num_accounts_stored" | "num_accounts_flushed" => &mut totals.stored_accounts,
+                "account_bytes_stored" | "account_bytes_flushed" => &mut totals.stored_bytes,
                 _ => continue,
             };
-            add_field(counter, value);
-        }
-    }
-
-    fn totals(&self) -> AccountsTotals {
-        let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
-        AccountsTotals {
-            loaded_from_write_cache: read(&self.loaded_from_write_cache),
-            loaded_from_read_cache: read(&self.loaded_from_read_cache),
-            loaded_from_storage: read(&self.loaded_from_storage),
-            stored_accounts: read(&self.stored_accounts),
-            stored_bytes: read(&self.stored_bytes),
+            add_value(counter, value);
         }
     }
 }
 
-impl ProgramCacheCounters {
-    fn add_point(&self, point: &DataPoint) {
+impl AddPoint for ProgramCacheSet {
+    fn add_point(&mut self, point: &DataPoint) {
+        let totals = &mut self.totals;
         for (name, value) in &point.fields {
             if *name == "water_level" {
-                set_field(&self.water_level, value);
+                set_value(&mut self.water_level, value);
                 continue;
             }
             let counter = match *name {
-                "hits" => &self.hits,
-                "misses" => &self.misses,
-                "evictions" => &self.evictions,
-                "reloads" => &self.reloads,
-                "insertions" => &self.insertions,
-                "lost_insertions" => &self.lost_insertions,
-                "replace_entry" => &self.replacements,
-                "one_hit_wonders" => &self.one_hit_wonders,
-                "prunes_orphan" => &self.prunes_orphan,
-                "prunes_environment" => &self.prunes_environment,
-                "empty_entries" => &self.empty_entries,
+                "hits" => &mut totals.hits,
+                "misses" => &mut totals.misses,
+                "evictions" => &mut totals.evictions,
+                "reloads" => &mut totals.reloads,
+                "insertions" => &mut totals.insertions,
+                "lost_insertions" => &mut totals.lost_insertions,
+                "replace_entry" => &mut totals.replacements,
+                "one_hit_wonders" => &mut totals.one_hit_wonders,
+                "prunes_orphan" => &mut totals.prunes_orphan,
+                "prunes_environment" => &mut totals.prunes_environment,
+                "empty_entries" => &mut totals.empty_entries,
                 _ => continue,
             };
-            add_field(counter, value);
-        }
-    }
-
-    fn totals(&self) -> ProgramCacheTotals {
-        let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
-        ProgramCacheTotals {
-            hits: read(&self.hits),
-            misses: read(&self.misses),
-            evictions: read(&self.evictions),
-            reloads: read(&self.reloads),
-            insertions: read(&self.insertions),
-            lost_insertions: read(&self.lost_insertions),
-            replacements: read(&self.replacements),
-            one_hit_wonders: read(&self.one_hit_wonders),
-            prunes_orphan: read(&self.prunes_orphan),
-            prunes_environment: read(&self.prunes_environment),
-            empty_entries: read(&self.empty_entries),
+            add_value(counter, value);
         }
     }
 }
 
-impl QuicCounters {
-    fn add_point(&self, point: &DataPoint) {
+impl AddPoint for QuicSet {
+    fn add_point(&mut self, point: &DataPoint) {
+        let (totals, levels) = (&mut self.totals, &mut self.levels);
         for (name, value) in &point.fields {
-            // Cumulative on the wire, unlike the counters beside it: stored, not added.
-            if *name == "total_incoming_connection_attempts" {
-                set_field(&self.offered, value);
-                continue;
-            }
-            // `peak_open_staked_connections` is reset as reported, neither a level nor a count.
-            if *name == "open_connections" {
-                set_field(&self.open, value);
-                continue;
-            }
-            if *name == "active_streams" {
-                set_field(&self.active_streams, value);
+            let set = match *name {
+                // Cumulative on the wire, unlike the counters beside it: stored, not added.
+                "total_incoming_connection_attempts" => Some(&mut totals.offered),
+                // `peak_open_staked_connections` is reset as reported, neither a level nor a count.
+                "open_connections" => Some(&mut levels.open),
+                "active_streams" => Some(&mut levels.active_streams),
+                _ => None,
+            };
+            if let Some(set) = set {
+                set_value(set, value);
                 continue;
             }
             let counter = match *name {
-                "connection_rate_limited_across_all" => &self.shed_all,
-                "connection_rate_limited_per_ipaddr" => &self.shed_address,
-                "refused_connections_too_many_open_connections" => &self.refused_full,
-                "connection_setup_timeout" => &self.handshake_timeout,
-                "connection_setup_error" => &self.handshake_error,
-                "new_connections" => &self.handshook,
-                "connection_add_failed" => &self.add_failed,
-                "connection_add_failed_staked_node" => &self.add_failed_staked,
-                "connection_add_failed_unstaked_node" => &self.add_failed_unstaked,
-                "connection_add_failed_banned" => &self.add_failed_banned,
+                "connection_rate_limited_across_all" => &mut totals.shed_all,
+                "connection_rate_limited_per_ipaddr" => &mut totals.shed_address,
+                "refused_connections_too_many_open_connections" => &mut totals.refused_full,
+                "connection_setup_timeout" => &mut totals.handshake_timeout,
+                "connection_setup_error" => &mut totals.handshake_error,
+                "new_connections" => &mut totals.handshook,
+                "connection_add_failed" => &mut totals.add_failed,
+                "connection_add_failed_staked_node" => &mut totals.add_failed_staked,
+                "connection_add_failed_unstaked_node" => &mut totals.add_failed_unstaked,
+                "connection_add_failed_banned" => &mut totals.add_failed_banned,
                 // `connection_add_failed_on_pruning` is raised on the same refusal as
                 // `..._staked_node` and would count one event twice.
-                "connection_added_from_staked_peer" => &self.admitted_staked,
-                "connection_added_from_unstaked_peer" => &self.admitted_unstaked,
-                "new_streams" => &self.streams,
-                "throttled_staked_streams" => &self.throttled_staked,
-                "throttled_unstaked_streams" => &self.throttled_unstaked,
-                "stream_read_timeouts" => &self.read_timeouts,
-                "stream_read_errors" => &self.read_errors,
-                "invalid_stream_size" => &self.invalid_size,
-                "packets_sent_to_consumer" => &self.handed_on,
-                "bytes_sent_to_consumer" => &self.bytes_handed_on,
-                "total_handle_chunk_to_packet_send_full_err" => &self.queue_full,
-                "total_handle_chunk_to_packet_send_disconnected_err" => &self.disconnected,
+                "connection_added_from_staked_peer" => &mut totals.admitted_staked,
+                "connection_added_from_unstaked_peer" => &mut totals.admitted_unstaked,
+                "new_streams" => &mut totals.streams,
+                "throttled_staked_streams" => &mut totals.throttled_staked,
+                "throttled_unstaked_streams" => &mut totals.throttled_unstaked,
+                "stream_read_timeouts" => &mut totals.read_timeouts,
+                "stream_read_errors" => &mut totals.read_errors,
+                "invalid_stream_size" => &mut totals.invalid_size,
+                "packets_sent_to_consumer" => &mut totals.handed_on,
+                "bytes_sent_to_consumer" => &mut totals.bytes_handed_on,
+                "total_handle_chunk_to_packet_send_full_err" => &mut totals.queue_full,
+                "total_handle_chunk_to_packet_send_disconnected_err" => &mut totals.disconnected,
                 _ => continue,
             };
-            add_field(counter, value);
-        }
-    }
-
-    fn totals(&self) -> QuicTotals {
-        let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
-        QuicTotals {
-            offered: read(&self.offered),
-            shed_all: read(&self.shed_all),
-            shed_address: read(&self.shed_address),
-            refused_full: read(&self.refused_full),
-            handshake_timeout: read(&self.handshake_timeout),
-            handshake_error: read(&self.handshake_error),
-            handshook: read(&self.handshook),
-            add_failed: read(&self.add_failed),
-            add_failed_staked: read(&self.add_failed_staked),
-            add_failed_unstaked: read(&self.add_failed_unstaked),
-            add_failed_banned: read(&self.add_failed_banned),
-            admitted_staked: read(&self.admitted_staked),
-            admitted_unstaked: read(&self.admitted_unstaked),
-            streams: read(&self.streams),
-            throttled_staked: read(&self.throttled_staked),
-            throttled_unstaked: read(&self.throttled_unstaked),
-            read_timeouts: read(&self.read_timeouts),
-            read_errors: read(&self.read_errors),
-            invalid_size: read(&self.invalid_size),
-            handed_on: read(&self.handed_on),
-            bytes_handed_on: read(&self.bytes_handed_on),
-            queue_full: read(&self.queue_full),
-            disconnected: read(&self.disconnected),
-        }
-    }
-
-    fn levels(&self) -> QuicLevels {
-        QuicLevels {
-            open: self.open.load(Ordering::Relaxed),
-            active_streams: self.active_streams.load(Ordering::Relaxed),
+            add_value(counter, value);
         }
     }
 }
 
-impl BundleCounters {
-    fn add_point(&self, point: &DataPoint) {
+impl AddPoint for BundleTotals {
+    fn add_point(&mut self, point: &DataPoint) {
         for (name, value) in &point.fields {
             let counter = match *name {
-                "num_bundles_received" => &self.received,
-                "num_packets_received" => &self.packets,
+                "num_bundles_received" => &mut self.received,
+                "num_packets_received" => &mut self.packets,
                 _ => continue,
             };
-            add_field(counter, value);
-        }
-    }
-
-    fn totals(&self) -> BundleTotals {
-        BundleTotals {
-            received: self.received.load(Ordering::Relaxed),
-            packets: self.packets.load(Ordering::Relaxed),
+            add_value(counter, value);
         }
     }
 }
 
-impl VerifyCounters {
-    fn add_point(&self, point: &DataPoint) {
+impl AddPoint for VerifyTotals {
+    fn add_point(&mut self, point: &DataPoint) {
         for (name, value) in &point.fields {
             let counter = match *name {
-                "total_packets" => &self.received,
-                "total_dedup" => &self.duplicate,
-                "total_dropped_below_priority_floor" => &self.below_floor,
-                "total_valid_packets" => &self.verified,
-                "eviction_drops" => &self.evicted_batches,
+                "total_packets" => &mut self.received,
+                "total_dedup" => &mut self.duplicate,
+                "total_dropped_below_priority_floor" => &mut self.below_floor,
+                "total_valid_packets" => &mut self.verified,
+                "eviction_drops" => &mut self.evicted_batches,
                 _ => continue,
             };
-            add_field(counter, value);
-        }
-    }
-
-    fn totals(&self) -> VerifyTotals {
-        VerifyTotals {
-            received: self.received.load(Ordering::Relaxed),
-            duplicate: self.duplicate.load(Ordering::Relaxed),
-            below_floor: self.below_floor.load(Ordering::Relaxed),
-            verified: self.verified.load(Ordering::Relaxed),
-            evicted_batches: self.evicted_batches.load(Ordering::Relaxed),
+            add_value(counter, value);
         }
     }
 }
 
-impl ExecutedCounters {
-    fn add_point(&self, point: &DataPoint) {
+impl AddPoint for ExecutedTotals {
+    fn add_point(&mut self, point: &DataPoint) {
         for (name, value) in &point.fields {
             let counter = match *name {
-                "transactions_attempted_processing_count" => &self.attempted,
-                "cost_model_throttled_transactions_count" => &self.cost_throttled,
-                "retryable_transaction_count" => &self.retryable,
-                "retryable_expired_bank_count" => &self.expired_bank,
-                "processed_transactions_count" => &self.processed,
-                "processed_with_successful_result_count" => &self.succeeded,
+                "transactions_attempted_processing_count" => &mut self.attempted,
+                "cost_model_throttled_transactions_count" => &mut self.cost_throttled,
+                "retryable_transaction_count" => &mut self.retryable,
+                "retryable_expired_bank_count" => &mut self.expired_bank,
+                "processed_transactions_count" => &mut self.processed,
+                "processed_with_successful_result_count" => &mut self.succeeded,
                 // And from the error point beside it. No name is shared with
                 // the counts point, so both are read here.
-                "too_many_account_locks" => &self.too_many_locks,
-                "account_not_found" => &self.account_missing,
-                "insufficient_funds" => &self.fee_payer_broke,
-                "invalid_account_for_fee" => &self.fee_payer_invalid,
-                "blockhash_not_found" => &self.blockhash_missing,
-                "blockhash_too_old" => &self.blockhash_old,
-                "already_processed" => &self.already_processed,
-                "invalid_compute_budget" => &self.bad_compute_budget,
-                "max_loaded_accounts_data_size_exceeded" => &self.account_data_too_large,
-                "invalid_program_for_execution" => &self.program_not_executable,
-                "program_execution_temporarily_restricted" => &self.program_restricted,
+                "too_many_account_locks" => &mut self.too_many_locks,
+                "account_not_found" => &mut self.account_missing,
+                "insufficient_funds" => &mut self.fee_payer_broke,
+                "invalid_account_for_fee" => &mut self.fee_payer_invalid,
+                "blockhash_not_found" => &mut self.blockhash_missing,
+                "blockhash_too_old" => &mut self.blockhash_old,
+                "already_processed" => &mut self.already_processed,
+                "invalid_compute_budget" => &mut self.bad_compute_budget,
+                "max_loaded_accounts_data_size_exceeded" => &mut self.account_data_too_large,
+                "invalid_program_for_execution" => &mut self.program_not_executable,
+                "program_execution_temporarily_restricted" => &mut self.program_restricted,
                 // `max_queue_len` is a gauge, `num_messages_processed` counts batches, and
                 // `total` sums errors drawn elsewhere.
                 _ => continue,
             };
-            add_field(counter, value);
-        }
-    }
-
-    fn totals(&self) -> ExecutedTotals {
-        ExecutedTotals {
-            attempted: self.attempted.load(Ordering::Relaxed),
-            cost_throttled: self.cost_throttled.load(Ordering::Relaxed),
-            retryable: self.retryable.load(Ordering::Relaxed),
-            expired_bank: self.expired_bank.load(Ordering::Relaxed),
-            processed: self.processed.load(Ordering::Relaxed),
-            succeeded: self.succeeded.load(Ordering::Relaxed),
-            too_many_locks: self.too_many_locks.load(Ordering::Relaxed),
-            account_missing: self.account_missing.load(Ordering::Relaxed),
-            fee_payer_broke: self.fee_payer_broke.load(Ordering::Relaxed),
-            fee_payer_invalid: self.fee_payer_invalid.load(Ordering::Relaxed),
-            blockhash_missing: self.blockhash_missing.load(Ordering::Relaxed),
-            blockhash_old: self.blockhash_old.load(Ordering::Relaxed),
-            already_processed: self.already_processed.load(Ordering::Relaxed),
-            bad_compute_budget: self.bad_compute_budget.load(Ordering::Relaxed),
-            account_data_too_large: self.account_data_too_large.load(Ordering::Relaxed),
-            program_not_executable: self.program_not_executable.load(Ordering::Relaxed),
-            program_restricted: self.program_restricted.load(Ordering::Relaxed),
+            add_value(counter, value);
         }
     }
 }
 
-impl SchedulerCounters {
-    fn add_point(&self, point: &DataPoint) {
+impl AddPoint for SchedulerTotals {
+    fn add_point(&mut self, point: &DataPoint) {
         for (name, value) in &point.fields {
             let counter = match *name {
-                "num_received" => &self.received,
-                "num_dropped_on_receive" => &self.not_held,
-                "num_dropped_on_check_work_queue_full" => &self.check_queue_full,
-                "num_dropped_on_parsing_and_sanitization" => &self.unparsable,
-                "num_dropped_on_validate_locks" => &self.bad_locks,
-                "num_dropped_on_receive_compute_budget" => &self.compute_budget,
-                "num_dropped_on_receive_age" => &self.too_old,
-                "num_dropped_on_receive_already_processed" => &self.already_processed,
-                "num_dropped_on_receive_fee_payer" => &self.fee_payer,
-                "num_dropped_on_filter_key" => &self.filtered,
-                "num_dropped_on_nonce_dedup" => &self.nonce_conflict,
-                "num_buffered" => &self.buffered,
-                "num_dropped_on_capacity" => &self.queue_full,
-                "num_evicted_on_nonce_dedup" => &self.nonce_evicted,
-                "num_dropped_on_clear" => &self.cleared,
-                "num_dropped_on_clean" => &self.cleaned,
-                "num_scheduled" => &self.scheduled,
-                "num_unschedulable_conflicts" => &self.blocked_conflicts,
-                "num_unschedulable_threads" => &self.blocked_threads,
-                "num_finished" => &self.finished,
-                "num_retryable" => &self.retried,
+                "num_received" => &mut self.received,
+                "num_dropped_on_receive" => &mut self.not_held,
+                "num_dropped_on_check_work_queue_full" => &mut self.check_queue_full,
+                "num_dropped_on_parsing_and_sanitization" => &mut self.unparsable,
+                "num_dropped_on_validate_locks" => &mut self.bad_locks,
+                "num_dropped_on_receive_compute_budget" => &mut self.compute_budget,
+                "num_dropped_on_receive_age" => &mut self.too_old,
+                "num_dropped_on_receive_already_processed" => &mut self.already_processed,
+                "num_dropped_on_receive_fee_payer" => &mut self.fee_payer,
+                "num_dropped_on_filter_key" => &mut self.filtered,
+                "num_dropped_on_nonce_dedup" => &mut self.nonce_conflict,
+                "num_buffered" => &mut self.buffered,
+                "num_dropped_on_capacity" => &mut self.queue_full,
+                "num_evicted_on_nonce_dedup" => &mut self.nonce_evicted,
+                "num_dropped_on_clear" => &mut self.cleared,
+                "num_dropped_on_clean" => &mut self.cleaned,
+                "num_scheduled" => &mut self.scheduled,
+                "num_unschedulable_conflicts" => &mut self.blocked_conflicts,
+                "num_unschedulable_threads" => &mut self.blocked_threads,
+                "num_finished" => &mut self.finished,
+                "num_retryable" => &mut self.retried,
                 _ => continue,
             };
-            add_field(counter, value);
+            add_value(counter, value);
         }
     }
+}
 
-    fn totals(&self) -> SchedulerTotals {
-        let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
-        SchedulerTotals {
-            received: read(&self.received),
-            not_held: read(&self.not_held),
-            check_queue_full: read(&self.check_queue_full),
-            unparsable: read(&self.unparsable),
-            bad_locks: read(&self.bad_locks),
-            compute_budget: read(&self.compute_budget),
-            too_old: read(&self.too_old),
-            already_processed: read(&self.already_processed),
-            fee_payer: read(&self.fee_payer),
-            filtered: read(&self.filtered),
-            nonce_conflict: read(&self.nonce_conflict),
-            buffered: read(&self.buffered),
-            queue_full: read(&self.queue_full),
-            nonce_evicted: read(&self.nonce_evicted),
-            cleared: read(&self.cleared),
-            cleaned: read(&self.cleaned),
-            scheduled: read(&self.scheduled),
-            blocked_conflicts: read(&self.blocked_conflicts),
-            blocked_threads: read(&self.blocked_threads),
-            finished: read(&self.finished),
-            retried: read(&self.retried),
-        }
+/// Poisoning cannot happen, since only saturating additions run under these locks; one that did
+/// would drop the point rather than panic on a validator thread.
+fn add_to<T: AddPoint>(set: &Mutex<T>, point: &DataPoint) {
+    if let Ok(mut set) = set.lock() {
+        set.add_point(point);
     }
+}
+
+fn copy_of<T: Copy + Default>(set: &Mutex<T>) -> T {
+    set.lock().map(|set| *set).unwrap_or_default()
 }
 
 pub trait WindowedCounters: Copy + Default {
@@ -1744,9 +1539,15 @@ fn add_field(counter: &AtomicU64, value: &str) {
     }
 }
 
-fn set_field(gauge: &AtomicU64, value: &str) {
+fn add_value(counter: &mut u64, value: &str) {
+    if let Some(delta) = field_u64(value) {
+        *counter = counter.saturating_add(delta);
+    }
+}
+
+fn set_value(level: &mut u64, value: &str) {
     if let Some(latest) = field_u64(value) {
-        gauge.store(latest, Ordering::Relaxed);
+        *level = latest;
     }
 }
 

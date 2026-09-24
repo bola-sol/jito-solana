@@ -2593,6 +2593,27 @@ mod tests {
     }
 
     #[test]
+    fn test_the_bundle_stage_adds_into_one_set() {
+        let tap = MetricsTap::default();
+        for _ in 0..2 {
+            tap.observe(&named(
+                BUNDLE_STAGE,
+                &[
+                    ("num_bundles_received", "3i"),
+                    ("num_packets_received", "11i"),
+                ],
+            ));
+        }
+        assert_eq!(
+            tap.counters().bundles,
+            BundleTotals {
+                received: 6,
+                packets: 22,
+            }
+        );
+    }
+
+    #[test]
     fn test_every_worker_adds_into_the_same_execution_totals() {
         let tap = MetricsTap::default();
         for _ in 0..4 {

@@ -41,6 +41,7 @@ use {
 };
 
 mod certificates;
+mod skip_rate;
 mod slot_clock;
 
 pub use self::certificates::{
@@ -49,6 +50,7 @@ pub use self::certificates::{
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
     certificates::{CertificateWalk, Contacts},
+    skip_rate::SkipRateWalk,
     slot_clock::SlotClock,
 };
 
@@ -328,11 +330,7 @@ pub struct Collector {
     history: Arc<RwLock<SlotHistory>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
     epoch_published: Option<(Epoch, Pubkey, bool)>,
-    skip_leader_slots: Vec<Slot>,
-    skip_epoch: Option<(Epoch, Pubkey)>,
-    skip_next_index: usize,
-    skip_produced: usize,
-    skip_elapsed: usize,
+    skip_rate: SkipRateWalk,
     last_completed_slot: Slot,
     last_completed_at: Instant,
     certificates: CertificateWalk,
@@ -412,12 +410,8 @@ impl Collector {
             execution_pending: BTreeSet::new(),
             history,
             epochs,
-            skip_leader_slots: Vec::new(),
+            skip_rate: SkipRateWalk::default(),
             epoch_published: None,
-            skip_epoch: None,
-            skip_next_index: 0,
-            skip_produced: 0,
-            skip_elapsed: 0,
             last_completed_slot: 0,
             last_completed_at: now,
             completed_window: VecDeque::new(),
@@ -1643,40 +1637,21 @@ impl Collector {
         // Keyed on the identity too, so a validator that boots on a dummy one and
         // swaps counts its real slots.
         let me = self.ctx.identity();
-        if self.skip_epoch != Some((epoch, me)) {
+        if self.skip_rate.epoch != Some((epoch, me)) {
             // Latched only once the schedule is in hand. Taking an unknown schedule as
             // empty would record a permanent zero.
             let Some(leader_slots) = self.leader_slots_in_epoch(root_bank, epoch) else {
                 return;
             };
-            self.skip_epoch = Some((epoch, me));
-            self.skip_leader_slots = leader_slots;
-            self.skip_next_index = 0;
-            self.skip_produced = 0;
-            self.skip_elapsed = 0;
+            self.skip_rate = SkipRateWalk::new(epoch, me, leader_slots);
         }
 
-        // Only slots the root has passed are settled, and only those the blockstore covers count:
-        // after a restart from a snapshot the ledger begins partway through the epoch.
-        let root = root_bank.slot();
-        let floor = self.ctx.blockstore.lowest_slot();
-        while let Some(slot) = self.skip_leader_slots.get(self.skip_next_index).copied() {
-            if slot > root {
-                break;
-            }
-            self.skip_next_index = self.skip_next_index.saturating_add(1);
-            if slot < floor {
-                continue;
-            }
-            if self.ctx.blockstore.is_full(slot) {
-                self.skip_produced = self.skip_produced.saturating_add(1);
-            }
-            self.skip_elapsed = self.skip_elapsed.saturating_add(1);
-        }
-
-        let rate = (self.skip_elapsed > 0).then(|| {
-            self.skip_elapsed.saturating_sub(self.skip_produced) as f64 / self.skip_elapsed as f64
-        });
+        let blockstore = &self.ctx.blockstore;
+        self.skip_rate
+            .advance(root_bank.slot(), blockstore.lowest_slot(), |slot| {
+                blockstore.is_full(slot)
+            });
+        let rate = self.skip_rate.rate();
         self.debounces.skip_rate.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -2193,12 +2168,12 @@ mod tests {
         collector.tick();
 
         let stranger = Pubkey::new_unique();
-        collector.skip_epoch = Some((0, stranger));
-        collector.skip_next_index = 99;
+        collector.skip_rate.epoch = Some((0, stranger));
+        collector.skip_rate.next_index = 99;
         collector.collect_skip_rate(&harness.working_bank());
 
         assert_ne!(
-            collector.skip_epoch,
+            collector.skip_rate.epoch,
             Some((0, stranger)),
             "the latch must not still belong to the identity that has gone"
         );
@@ -2206,10 +2181,10 @@ mod tests {
         let restarted = {
             let mut control = harness.collector();
             control.collect_skip_rate(&harness.working_bank());
-            control.skip_next_index
+            control.skip_rate.next_index
         };
         assert_eq!(
-            collector.skip_next_index, restarted,
+            collector.skip_rate.next_index, restarted,
             "the walk restarts rather than carrying an index into another schedule"
         );
     }

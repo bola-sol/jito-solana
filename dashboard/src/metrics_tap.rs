@@ -844,12 +844,14 @@ impl MetricsTap {
             }
             let field = match *name {
                 "fetch_entries_time" => &mut slot.fetch,
-                "confirmation_without_replay_us" => &mut slot.confirming,
+                // The second spellings are sent when a block's footer already collected the
+                // scheduler's results, as every alpenglow block does; the values are the same.
+                "confirmation_without_replay_us" | "confirmation_time_us" => &mut slot.confirming,
                 "bank_complete_time_us" => &mut slot.completing,
 
                 "entry_poh_verification_time" => &mut slot.poh_verify,
                 "entry_transaction_verification_time" => &mut slot.tx_verify,
-                "task_submission_us" => &mut slot.dispatch,
+                "task_submission_us" | "replay_time" => &mut slot.dispatch,
 
                 "execute_us" => &mut slot.execute,
                 "execute_details_execute_inner_us" => &mut slot.bytecode,
@@ -2085,19 +2087,20 @@ mod tests {
     }
 
     #[test]
-    fn test_the_names_the_unified_scheduler_reports_under() {
-        // The only spellings the unified scheduler sends; the older names would read
-        // nought for ever.
+    fn test_an_alpenglow_slot_reports_the_same_timings_under_its_other_names() {
         let tap = MetricsTap::default();
         tap.observe(&replay_point(&[
+            ("fetch_entries_time", "2034i"),
             ("confirmation_time_us", "17288i"),
+            ("bank_complete_time_us", "443i"),
             ("replay_time", "9828i"),
             ("execute_batches_us", "50000i"),
         ]));
-        assert!(
-            tap.replay_slots().is_empty(),
-            "none of those names are sent by this validator"
-        );
+        let held = tap.replay_slots();
+        assert_eq!(held[0].confirming, 17_288);
+        assert_eq!(held[0].dispatch, 9_828);
+        assert_eq!(held[0].serial(), 2_034 + 17_288 + 443);
+        assert_eq!(held[0].cpu(), 0, "the batch wall clock is not thread time");
     }
 
     #[test]

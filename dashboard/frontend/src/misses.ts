@@ -112,6 +112,20 @@ export function validatorLabel(validator: MissValidator): string {
   return validator.name ?? shortKey(validator.identity);
 }
 
+/** When this node last heard a validator over gossip, against the validator's clock. */
+export function noGossipText(heardMillis: number | null, nowMillis: number | undefined): string {
+  if (heardMillis === null) return "no gossip, not in this node's table";
+  if (nowMillis === undefined) return "no gossip";
+  return `no gossip, last heard ${agoLabel(Math.max(0, nowMillis - heardMillis))}`;
+}
+
+/** The tag a left-out validator carries; silence in gossip outranks not voting. */
+export function validatorTag(validator: Pick<MissValidator, "no_gossip" | "delinquent">): string | null {
+  if (validator.no_gossip) return "no gossip";
+  if (validator.delinquent) return "delinquent";
+  return null;
+}
+
 /** When a delinquent validator last voted, in time where the slot time is known. */
 export function delinquentText(
   lastVote: number | null,
@@ -139,7 +153,8 @@ export function leftOutMost(list: MissList): string | null {
     .flatMap(([at, n]) => {
       const validator = list.validators[at];
       if (!validator) return [];
-      return [`${validatorLabel(validator)}${validator.delinquent ? " (delinquent)" : ""} in ${count(n)}`];
+      const tag = validatorTag(validator);
+      return [`${validatorLabel(validator)}${tag ? ` (${tag})` : ""} in ${count(n)}`];
     });
   if (top.length === 0) return null;
   return `Left out beside us most: ${top.join(", ")}.`;

@@ -5242,11 +5242,25 @@ body {
   color: var(--bad);
 }
 
+/* Wraps rather than cutting off when a validator was last heard or last voted. */
+.written-row .misses-writer > span {
+  white-space: normal;
+}
+
+.written-legend .misses-swatch.is-no-gossip {
+  background: var(--lavender);
+}
+
+.written-no-gossip,
+.misses-out-no-gossip {
+  color: var(--lavender);
+}
+
 /* The rows fit the panel at any width the page allows, stacking where the columns cannot, so
    nothing scrolls sideways. */
 .written .misses-table {
   overflow-x: hidden;
-  container-type: inline-size;
+  container: written / inline-size;
 }
 
 .written-row {
@@ -5316,6 +5330,10 @@ body {
   background: var(--bad);
 }
 
+.written-gap > i.is-no-gossip {
+  background: var(--lavender);
+}
+
 .written-gap > b {
   position: absolute;
   top: -3px;
@@ -5340,8 +5358,9 @@ body {
   color: var(--text-faint);
 }
 
-/* The columns' least width, 53.5em and five 12px gaps. */
-@container (max-width: 58.3em) {
+/* The columns' least width, 53.5em and five 12px gaps. Named, since each validator cell is a
+   container too. */
+@container written (max-width: 58.3em) {
   .written-row {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
@@ -5359,11 +5378,6 @@ body {
 
   .written-row .misses-writer {
     grid-area: writer;
-  }
-
-  /* Wraps rather than cutting off a delinquent validator's last vote. */
-  .written-row .misses-writer > span {
-    white-space: normal;
   }
 
   .written-ours {

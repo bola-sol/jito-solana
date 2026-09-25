@@ -49,7 +49,7 @@ pub use self::certificates::{
 };
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
-    certificates::{CertificateWalk, Contacts, LastVotes},
+    certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     skip_rate::SkipRateWalk,
     slot_clock::SlotClock,
 };
@@ -556,7 +556,15 @@ impl Collector {
             self.collect_snapshots();
             let heard: Contacts = peers
                 .iter()
-                .map(|(contact, _)| (*contact.pubkey(), contact))
+                .map(|(contact, at_millis)| {
+                    (
+                        *contact.pubkey(),
+                        GossipEntry {
+                            contact,
+                            at_millis: *at_millis,
+                        },
+                    )
+                })
                 .collect();
             self.collect_miss_list(&working_bank, &heard, &votes);
             if self.fill_certificates(&working_bank, &heard) {

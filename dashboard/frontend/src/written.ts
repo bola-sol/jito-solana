@@ -8,10 +8,10 @@ export const WORSE_MIN = 10;
 
 export const MISSING_EVERYWHERE = 0.9;
 
-export type WrittenKind = "worse" | "missing" | "delinquent";
+export type WrittenKind = "worse" | "missing" | "delinquent" | "no-gossip";
 
 /** The order the kinds are listed and counted in. */
-export const WRITTEN_KINDS: readonly WrittenKind[] = ["worse", "missing", "delinquent"];
+export const WRITTEN_KINDS: readonly WrittenKind[] = ["worse", "missing", "delinquent", "no-gossip"];
 
 export interface WrittenFigure {
   row: WrittenRow;
@@ -41,8 +41,11 @@ export function writtenFigures(list: WrittenList): WrittenFigure[] {
     ) {
       kind = "worse";
     }
-    // Not voting explains either, so it is named instead.
-    if (kind !== null) figures.push({ row, ours, everywhere, kind: row.delinquent ? "delinquent" : kind });
+    // Silence in gossip or not voting explains either, so it is named instead; the first outranks.
+    if (kind === null) continue;
+    if (row.no_gossip) kind = "no-gossip";
+    else if (row.delinquent) kind = "delinquent";
+    figures.push({ row, ours, everywhere, kind });
   }
   return figures.sort((a, b) => {
     if (a.kind !== b.kind) return WRITTEN_KINDS.indexOf(a.kind) - WRITTEN_KINDS.indexOf(b.kind);
@@ -51,7 +54,7 @@ export function writtenFigures(list: WrittenList): WrittenFigure[] {
 }
 
 export function writtenKinds(figures: WrittenFigure[]): Record<WrittenKind, number> {
-  const kinds: Record<WrittenKind, number> = { worse: 0, missing: 0, delinquent: 0 };
+  const kinds: Record<WrittenKind, number> = { worse: 0, missing: 0, delinquent: 0, "no-gossip": 0 };
   for (const figure of figures) kinds[figure.kind] += 1;
   return kinds;
 }

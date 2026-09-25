@@ -693,6 +693,10 @@ export interface MissValidator {
   ip: string | null;
   last_vote: number | null;
   delinquent: boolean;
+  /** When this node last heard it over gossip, in unix milliseconds. */
+  heard_millis: number | null;
+  /** Unheard for five minutes, or absent from this node's gossip table. */
+  no_gossip: boolean;
 }
 
 export interface MissRow {
@@ -734,6 +738,10 @@ export interface WrittenRow {
   /** The oldest last vote among its staked vote accounts; null where one never voted or it has none. */
   last_vote: number | null;
   delinquent: boolean;
+  /** When this node last heard it over gossip, in unix milliseconds. */
+  heard_millis: number | null;
+  /** Unheard for five minutes, or absent from this node's gossip table. */
+  no_gossip: boolean;
 }
 
 /** A slot in more than one place counts in the first. */

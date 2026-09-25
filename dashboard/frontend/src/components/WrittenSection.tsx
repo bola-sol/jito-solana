@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import { buildLabel, count, percent, shortKey } from "../format";
 import type { WrittenList } from "../types";
 import { useStore } from "../useStore";
-import { delinquentText } from "../misses";
+import { delinquentText, noGossipText } from "../misses";
 import {
   WRITTEN_KINDS,
   writtenFigures,
@@ -24,12 +24,14 @@ const KIND_WORD: Record<WrittenKind, string> = {
   worse: "fare worse in ours",
   missing: "missing everywhere",
   delinquent: "delinquent",
+  "no-gossip": "no gossip",
 };
 
 const KIND_TITLE: Record<WrittenKind, string> = {
   worse: "Left out of our certificates far more often than of everyone's.",
   missing: "Left out of nearly every certificate from any writer.",
   delinquent: "Not voting now, which accounts for being left out.",
+  "no-gossip": "Not heard by this node over gossip in five minutes.",
 };
 
 /** The bar's class for each kind; faring worse keeps the default. */
@@ -37,12 +39,15 @@ const KIND_BAR: Record<WrittenKind, string | undefined> = {
   worse: undefined,
   missing: "is-down",
   delinquent: "is-delinquent",
+  "no-gossip": "is-no-gossip",
 };
 
 export function WrittenSection(): ReactElement {
   const store = useStore();
   const slot = store.get("summary", "completed_slot");
   const slotNanos = store.get("summary", "observed_slot_duration_nanos") ?? undefined;
+  const serverNanos = store.get("summary", "server_time_nanos");
+  const nowMillis = serverNanos === undefined ? undefined : serverNanos / 1e6;
   const [list, setList] = useState<WrittenList | null>(null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -125,6 +130,7 @@ export function WrittenSection(): ReactElement {
               written={list.certificates}
               slot={slot}
               slotNanos={slotNanos}
+              nowMillis={nowMillis}
             />
           ))}
         </div>
@@ -139,11 +145,13 @@ function WrittenRowView({
   written,
   slot,
   slotNanos,
+  nowMillis,
 }: {
   figure: WrittenFigure;
   written: number;
   slot: number | undefined;
   slotNanos: number | undefined;
+  nowMillis: number | undefined;
 }) {
   const { row, ours, everywhere, kind } = figure;
   const build = buildLabel(row.client ?? undefined, row.version ?? undefined);
@@ -153,14 +161,19 @@ function WrittenRowView({
         <WriterName name={row.name} identity={row.identity} />
         <span>
           <Copyable text={row.identity} label={shortKey(row.identity, 8, 8)} className="misses-key" />
-          {row.delinquent ? (
+          {row.no_gossip && (
+            <>
+              {" · "}
+              <span className="written-no-gossip">{noGossipText(row.heard_millis, nowMillis)}</span>
+            </>
+          )}
+          {row.delinquent && (
             <>
               {" · "}
               <span className="written-delinquent">{delinquentText(row.last_vote, slot, slotNanos)}</span>
             </>
-          ) : (
-            build && ` · ${build}`
           )}
+          {!row.no_gossip && !row.delinquent && build && ` · ${build}`}
         </span>
       </span>
       <span className="written-ip">{row.ip ? <Copyable text={row.ip} /> : "—"}</span>

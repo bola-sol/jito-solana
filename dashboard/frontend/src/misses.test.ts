@@ -7,10 +7,12 @@ import {
   MAX_TURN_MARKS,
   missMarks,
   missTotal,
+  noGossipText,
   leftOutMost,
   leftOutText,
   placeExplain,
   turnMarks,
+  validatorTag,
   voteText,
   writerSummary,
 } from "./misses";
@@ -42,6 +44,8 @@ function list(
       ip: null,
       last_vote: 6_699_990,
       delinquent: false,
+      heard_millis: 1_758_800_000_000,
+      no_gossip: false,
     })),
     rows: rows.map(([writer, others], index) => ({
       slot: 6_700_000 + index,
@@ -71,6 +75,33 @@ describe("leftOutMost", () => {
     const misses = list([[0, [0]], [0, [0, 1]]], [["CaraSol", 2, 63]], ["Vyra", "Hamsa"]);
     misses.validators[0].delinquent = true;
     expect(leftOutMost(misses)).toBe("Left out beside us most: Vyra (delinquent) in 2, Hamsa in 1.");
+  });
+
+  it("marks silence in gossip ahead of not voting", () => {
+    const misses = list([[0, [0]], [0, [0, 1]]], [["CaraSol", 2, 63]], ["Vyra", "Hamsa"]);
+    Object.assign(misses.validators[0], { delinquent: true, no_gossip: true });
+    Object.assign(misses.validators[1], { no_gossip: true });
+    expect(leftOutMost(misses)).toBe("Left out beside us most: Vyra (no gossip) in 2, Hamsa (no gossip) in 1.");
+  });
+});
+
+describe("noGossipText", () => {
+  it("says when this node last heard it, against the validator's clock", () => {
+    expect(noGossipText(1_000_000, 1_000_000 + 20 * 3_600_000)).toBe("no gossip, last heard 20h ago");
+    expect(noGossipText(1_000_000, 999_000)).toBe("no gossip, last heard 0s ago");
+  });
+
+  it("says so where it is not in the table or the clock has not arrived", () => {
+    expect(noGossipText(null, 1_000_000)).toBe("no gossip, not in this node's table");
+    expect(noGossipText(1_000_000, undefined)).toBe("no gossip");
+  });
+});
+
+describe("validatorTag", () => {
+  it("prefers silence in gossip to not voting", () => {
+    expect(validatorTag({ no_gossip: true, delinquent: true })).toBe("no gossip");
+    expect(validatorTag({ no_gossip: false, delinquent: true })).toBe("delinquent");
+    expect(validatorTag({ no_gossip: false, delinquent: false })).toBeNull();
   });
 });
 

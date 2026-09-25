@@ -15,6 +15,7 @@ use {
     solana_gossip::contact_info::ContactInfo,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_time_utils::timestamp,
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -33,7 +34,24 @@ pub struct MissList {
     pub written: WrittenList,
 }
 
-pub(super) type Contacts<'a> = HashMap<Pubkey, &'a ContactInfo>;
+/// A peer's contact and when this node last took something new from it over gossip, in unix
+/// milliseconds.
+pub(super) struct GossipEntry<'a> {
+    pub(super) contact: &'a ContactInfo,
+    pub(super) at_millis: u64,
+}
+
+pub(super) type Contacts<'a> = HashMap<Pubkey, GossipEntry<'a>>;
+
+/// A running validator re-signs its contact every 7.5 seconds.
+const NO_GOSSIP_AFTER_MILLIS: u64 = 5 * 60 * 1000;
+
+/// Unheard for five minutes, or absent from the table, as a staked node is two days after it stops.
+fn is_quiet(heard_millis: Option<u64>, now_millis: u64) -> bool {
+    heard_millis
+        .map(|at| now_millis.saturating_sub(at) > NO_GOSSIP_AFTER_MILLIS)
+        .unwrap_or(true)
+}
 
 /// Each staked validator's stalest vote, `None` where one of its accounts never voted.
 pub(super) type LastVotes = HashMap<Pubkey, Option<Slot>>;
@@ -52,10 +70,12 @@ struct Described {
     client: Option<String>,
     version: Option<String>,
     ip: Option<String>,
+    heard_millis: Option<u64>,
 }
 
 fn describe(key: &Pubkey, info: &ValidatorInfoCache, heard: &Contacts) -> Described {
-    let contact = heard.get(key);
+    let entry = heard.get(key);
+    let contact = entry.map(|entry| entry.contact);
     Described {
         name: info.get(key).and_then(|info| info.name.clone()),
         client: contact.map(|contact| contact.version().client().to_string()),
@@ -63,6 +83,7 @@ fn describe(key: &Pubkey, info: &ValidatorInfoCache, heard: &Contacts) -> Descri
         ip: contact
             .and_then(|contact| contact.gossip())
             .map(|addr| addr.ip().to_string()),
+        heard_millis: entry.map(|entry| entry.at_millis),
     }
 }
 
@@ -118,6 +139,9 @@ pub struct WrittenRow {
     pub left_out_everywhere: u64,
     pub last_vote: Option<Slot>,
     pub delinquent: bool,
+    /// When this node last heard it over gossip, in unix milliseconds.
+    pub heard_millis: Option<u64>,
+    pub no_gossip: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -127,6 +151,8 @@ pub struct MissValidator {
     pub ip: Option<String>,
     pub last_vote: Option<Slot>,
     pub delinquent: bool,
+    pub heard_millis: Option<u64>,
+    pub no_gossip: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -246,6 +272,7 @@ impl Collector {
         let mut writer_at: HashMap<Pubkey, u32> = HashMap::new();
         let mut validators: Vec<MissValidator> = Vec::new();
         let mut validator_at: HashMap<u32, u32> = HashMap::new();
+        let now_millis = timestamp();
         let info = self.info_cache.read().unwrap();
         let history = self.history.read().unwrap();
         let rows = records
@@ -271,6 +298,8 @@ impl Collector {
                             ip: described.ip,
                             last_vote,
                             delinquent,
+                            heard_millis: described.heard_millis,
+                            no_gossip: is_quiet(described.heard_millis, now_millis),
                         });
                         let at = u32::try_from(validators.len().saturating_sub(1)).ok()?;
                         validator_at.insert(*rank, at);
@@ -331,6 +360,8 @@ impl Collector {
                     left_out_everywhere: summary.unpaid_everywhere.get(rank).copied().unwrap_or(0),
                     last_vote,
                     delinquent,
+                    heard_millis: described.heard_millis,
+                    no_gossip: is_quiet(described.heard_millis, now_millis),
                 })
             })
             .collect();
@@ -508,6 +539,22 @@ mod tests {
             standing(&gone, &votes, 1_000),
             (None, false),
             "unknown is not delinquent"
+        );
+    }
+
+    #[test]
+    fn test_a_validator_unheard_for_five_minutes_has_no_gossip() {
+        let now = 10 * NO_GOSSIP_AFTER_MILLIS;
+        assert!(!is_quiet(Some(now), now));
+        assert!(
+            !is_quiet(Some(now - NO_GOSSIP_AFTER_MILLIS), now),
+            "exactly at the limit is heard"
+        );
+        assert!(is_quiet(Some(now - NO_GOSSIP_AFTER_MILLIS - 1), now));
+        assert!(is_quiet(None, now), "absent from the table");
+        assert!(
+            !is_quiet(Some(now + 1), now),
+            "a timestamp ahead of the clock is heard"
         );
     }
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WrittenList, WrittenRow } from "./types";
 import { writtenFigures, writtenKinds, writtenLine } from "./written";
 
-function row(identity: string, ours: number, everywhere: number, delinquent = false): WrittenRow {
+function row(identity: string, ours: number, everywhere: number, delinquent = false, noGossip = false): WrittenRow {
   return {
     identity,
     name: null,
@@ -13,6 +13,8 @@ function row(identity: string, ours: number, everywhere: number, delinquent = fa
     left_out_everywhere: everywhere,
     last_vote: null,
     delinquent,
+    heard_millis: null,
+    no_gossip: noGossip,
   };
 }
 
@@ -34,7 +36,7 @@ describe("the written figures", () => {
   it("keeps a validator missing everywhere, after the ones faring worse", () => {
     const figures = writtenFigures(list(100, 60, [row("down", 100, 950), row("a", 30, 20), row("gone", 100, 1000)]));
     expect(figures.map((figure) => figure.row.identity)).toEqual(["a", "gone", "down"]);
-    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 2, delinquent: 0 });
+    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 2, delinquent: 0, "no-gossip": 0 });
   });
 
   it("names a delinquent validator instead of calling it worse or missing, after both", () => {
@@ -47,7 +49,23 @@ describe("the written figures", () => {
       ["gone", "delinquent"],
       ["stopped", "delinquent"],
     ]);
-    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 1, delinquent: 2 });
+    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 1, delinquent: 2, "no-gossip": 0 });
+  });
+
+  it("names a validator gone from gossip ahead of delinquent, listed last", () => {
+    const figures = writtenFigures(
+      list(100, 60, [
+        row("down", 100, 1000, true, true),
+        row("stuck", 100, 1000, true),
+        row("quiet", 38, 281, false, true),
+      ]),
+    );
+    expect(figures.map((figure) => [figure.row.identity, figure.kind])).toEqual([
+      ["stuck", "delinquent"],
+      ["down", "no-gossip"],
+      ["quiet", "no-gossip"],
+    ]);
+    expect(writtenKinds(figures)).toEqual({ worse: 0, missing: 0, delinquent: 1, "no-gossip": 2 });
   });
 
   it("leaves out a delinquent validator it would not have listed", () => {

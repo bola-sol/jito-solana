@@ -91,6 +91,35 @@ const COST_TRACKER: &str = "cost_tracker_stats";
 
 const WFSM_GOSSIP: &str = "wfsm_gossip";
 
+/// Gossip reports itself every two seconds across these points, clearing each count as it sends it.
+const GOSSIP_STATS: [&str; 5] = [
+    "cluster_info_stats",
+    "cluster_info_stats2",
+    "cluster_info_stats3",
+    "cluster_info_stats4",
+    "cluster_info_stats5",
+];
+const GOSSIP_ENTRIES: &str = "cluster_info_crds_stats";
+const GOSSIP_ENTRY_FAILS: &str = "cluster_info_crds_stats_fails";
+
+/// In the order gossip reports them.
+pub const GOSSIP_ENTRY_TYPES: [&str; 14] = [
+    "LegacyContactInfo",
+    "Vote",
+    "LowestSlot",
+    "LegacySnapshotHashes",
+    "AccountsHashes",
+    "EpochSlots",
+    "LegacyVersion",
+    "Version",
+    "NodeInstance",
+    "DuplicateShred",
+    "SnapshotHashes",
+    "ContactInfo",
+    "RestartLastVotedForkSlots",
+    "RestartHeaviestFork",
+];
+
 const IS_LEADER: &str = "is_leader";
 
 const IS_XDP: &str = "is_xdp";
@@ -154,6 +183,8 @@ pub struct MetricsTap {
     bundles: Mutex<BundleTotals>,
 
     scheduler: Mutex<SchedulerTotals>,
+
+    gossip: Mutex<GossipSet>,
 
     slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
 
@@ -571,6 +602,107 @@ counter_totals! {
     }
 }
 
+counter_totals! {
+    /// Messages are counted in packets and the rest in entries; the times are in microseconds.
+    pub struct GossipTotals {
+        pub received_push: u64,
+        pub received_pull_requests: u64,
+        pub received_pull_responses: u64,
+        pub received_ping: u64,
+        pub received_pong: u64,
+        pub received_prune: u64,
+        pub sent_push: u64,
+        pub sent_pull_requests: u64,
+        pub sent_pull_responses: u64,
+        pub sent_ping: u64,
+        pub sent_pong: u64,
+        pub sent_prune: u64,
+
+        pub accepted_push: u64,
+        pub accepted_pull: u64,
+        pub rejected_push: u64,
+        pub rejected_pull: u64,
+        pub duplicate_push: u64,
+        pub redundant_pull: u64,
+        /// Timed out of the table.
+        pub expired: u64,
+        /// Trimmed once the table held more distinct pubkeys than it keeps.
+        pub evicted: u64,
+
+        pub dropped_in: u64,
+        pub dropped_out: u64,
+        pub pull_no_budget: u64,
+        pub pull_scan_exhausted: u64,
+        pub other_shred_version_push: u64,
+        pub other_shred_version_pull_responses: u64,
+        pub other_shred_version_pull_requests: u64,
+        pub ping_check_failed: u64,
+        /// Values whose sender has not yet answered a ping.
+        pub unverified_addresses: u64,
+        pub bad_prune_destination: u64,
+
+        pub push_us: u64,
+        pub pull_requests_us: u64,
+        pub pull_responses_us: u64,
+        pub ping_us: u64,
+        pub pong_us: u64,
+        pub prune_us: u64,
+        pub verify_us: u64,
+        /// Includes the six handling times above.
+        pub process_us: u64,
+
+        /// Points of the first kind seen, so a quiet gossip can be told from a silent one.
+        pub reports: u64,
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GossipLevels {
+    pub table_size: u64,
+    pub pubkeys: u64,
+    pub nodes: u64,
+    pub staked_nodes: u64,
+}
+
+/// Per entry type, in the order of `GOSSIP_ENTRY_TYPES`; rejected is push and pull together.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GossipEntryTotals {
+    pub push: [u64; GOSSIP_ENTRY_TYPES.len()],
+    pub pull: [u64; GOSSIP_ENTRY_TYPES.len()],
+    pub rejected: [u64; GOSSIP_ENTRY_TYPES.len()],
+}
+
+impl WindowedCounters for GossipEntryTotals {
+    fn since(&self, previous: &Self) -> Self {
+        let less = |a: &[u64; GOSSIP_ENTRY_TYPES.len()], b: &[u64; GOSSIP_ENTRY_TYPES.len()]| {
+            std::array::from_fn(|index| a[index].saturating_sub(b[index]))
+        };
+        Self {
+            push: less(&self.push, &previous.push),
+            pull: less(&self.pull, &previous.pull),
+            rejected: less(&self.rejected, &previous.rejected),
+        }
+    }
+
+    fn plus(&self, other: &Self) -> Self {
+        let more = |a: &[u64; GOSSIP_ENTRY_TYPES.len()], b: &[u64; GOSSIP_ENTRY_TYPES.len()]| {
+            std::array::from_fn(|index| a[index].saturating_add(b[index]))
+        };
+        Self {
+            push: more(&self.push, &other.push),
+            pull: more(&self.pull, &other.pull),
+            rejected: more(&self.rejected, &other.rejected),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct GossipSet {
+    totals: GossipTotals,
+    levels: GossipLevels,
+    entries: GossipEntryTotals,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TapCounters {
     pub accounts_cache_hits: u64,
@@ -608,6 +740,9 @@ pub struct TapCounters {
     pub verify: VerifyTotals,
     pub executed: ExecutedTotals,
     pub bundles: BundleTotals,
+    pub gossip: GossipTotals,
+    pub gossip_levels: GossipLevels,
+    pub gossip_entries: GossipEntryTotals,
 }
 
 impl MetricsTap {
@@ -679,6 +814,8 @@ impl MetricsTap {
             TPU_VERIFIER => add_to(&self.verify, point),
             BUNDLE_STAGE => add_to(&self.bundles, point),
             WORKER_COUNTS | WORKER_ERROR_METRICS => add_to(&self.executed, point),
+            GOSSIP_ENTRIES | GOSSIP_ENTRY_FAILS => add_to(&self.gossip, point),
+            name if GOSSIP_STATS.contains(&name) => add_to(&self.gossip, point),
             _ => (),
         }
     }
@@ -1187,6 +1324,7 @@ impl MetricsTap {
     pub fn counters(&self) -> TapCounters {
         let accounts = copy_of(&self.accounts);
         let program_cache = copy_of(&self.program_cache);
+        let gossip = copy_of(&self.gossip);
         let (quic, quic_forwards, quic_vote) = (
             copy_of(&self.quic),
             copy_of(&self.quic_forwards),
@@ -1232,6 +1370,9 @@ impl MetricsTap {
             verify: copy_of(&self.verify),
             bundles: copy_of(&self.bundles),
             executed: copy_of(&self.executed),
+            gossip: gossip.totals,
+            gossip_levels: gossip.levels,
+            gossip_entries: gossip.entries,
         }
     }
 }
@@ -1433,6 +1574,113 @@ impl AddPoint for SchedulerTotals {
                 "num_unschedulable_threads" => &mut self.blocked_threads,
                 "num_finished" => &mut self.finished,
                 "num_retryable" => &mut self.retried,
+                _ => continue,
+            };
+            add_value(counter, value);
+        }
+    }
+}
+
+impl AddPoint for GossipSet {
+    fn add_point(&mut self, point: &DataPoint) {
+        match point.name {
+            GOSSIP_ENTRIES | GOSSIP_ENTRY_FAILS => self.add_entries(point),
+            _ => self.add_stats(point),
+        }
+    }
+}
+
+impl GossipSet {
+    /// Fields are named `<type>-push` and `<type>-pull`, with `all-` for the sum.
+    fn add_entries(&mut self, point: &DataPoint) {
+        let fails = point.name == GOSSIP_ENTRY_FAILS;
+        let totals = &mut self.totals;
+        let entries = &mut self.entries;
+        for (name, value) in &point.fields {
+            let Some((kind, route)) = name.rsplit_once('-') else {
+                continue;
+            };
+            let push = match route {
+                "push" => true,
+                "pull" => false,
+                _ => continue,
+            };
+            let counter = if kind == "all" {
+                match (fails, push) {
+                    (false, true) => &mut totals.accepted_push,
+                    (false, false) => &mut totals.accepted_pull,
+                    (true, true) => &mut totals.rejected_push,
+                    (true, false) => &mut totals.rejected_pull,
+                }
+            } else {
+                let Some(index) = GOSSIP_ENTRY_TYPES.iter().position(|known| *known == kind) else {
+                    continue;
+                };
+                match (fails, push) {
+                    (false, true) => &mut entries.push[index],
+                    (false, false) => &mut entries.pull[index],
+                    (true, _) => &mut entries.rejected[index],
+                }
+            };
+            add_value(counter, value);
+        }
+    }
+
+    fn add_stats(&mut self, point: &DataPoint) {
+        if point.name == GOSSIP_STATS[0] {
+            self.totals.reports = self.totals.reports.saturating_add(1);
+        }
+        let (totals, levels) = (&mut self.totals, &mut self.levels);
+        for (name, value) in &point.fields {
+            let level = match *name {
+                "table_size" => Some(&mut levels.table_size),
+                "num_pubkeys" => Some(&mut levels.pubkeys),
+                "num_nodes" => Some(&mut levels.nodes),
+                "num_nodes_staked" => Some(&mut levels.staked_nodes),
+                _ => None,
+            };
+            if let Some(level) = level {
+                set_value(level, value);
+                continue;
+            }
+            let counter = match *name {
+                "packets_received_push_messages_count" => &mut totals.received_push,
+                "packets_received_pull_requests_count" => &mut totals.received_pull_requests,
+                "packets_received_pull_responses_count" => &mut totals.received_pull_responses,
+                "packets_received_ping_messages_count" => &mut totals.received_ping,
+                "packets_received_pong_messages_count" => &mut totals.received_pong,
+                "packets_received_prune_messages_count" => &mut totals.received_prune,
+                "packets_sent_push_messages_count" => &mut totals.sent_push,
+                "packets_sent_pull_requests_count" => &mut totals.sent_pull_requests,
+                "packets_sent_pull_responses_count" => &mut totals.sent_pull_responses,
+                "packets_sent_ping_messages_count" => &mut totals.sent_ping,
+                "packets_sent_pong_messages_count" => &mut totals.sent_pong,
+                "packets_sent_prune_messages_count" => &mut totals.sent_prune,
+                "num_duplicate_push_messages" => &mut totals.duplicate_push,
+                "num_redundant_pull_responses" => &mut totals.redundant_pull,
+                "purge_count" => &mut totals.expired,
+                "trim_crds_table_purged_values_count" => &mut totals.evicted,
+                "gossip_packets_dropped_count" => &mut totals.dropped_in,
+                "gossip_transmit_packets_dropped_count" => &mut totals.dropped_out,
+                "gossip_pull_request_no_budget" => &mut totals.pull_no_budget,
+                "pull_request_scan_budget_exhausted" => &mut totals.pull_scan_exhausted,
+                "skip_push_message_shred_version" => &mut totals.other_shred_version_push,
+                "skip_pull_response_shred_version" => {
+                    &mut totals.other_shred_version_pull_responses
+                }
+                "skip_pull_shred_version" => &mut totals.other_shred_version_pull_requests,
+                "pull_request_ping_pong_check_failed_count" => &mut totals.ping_check_failed,
+                // Gossip's own spelling.
+                "num_unverifed_gossip_addrs" => &mut totals.unverified_addresses,
+                "bad_prune_destination" => &mut totals.bad_prune_destination,
+                "handle_batch_push_messages_time" => &mut totals.push_us,
+                "handle_batch_pull_requests_time" => &mut totals.pull_requests_us,
+                "handle_batch_pull_responses_time" => &mut totals.pull_responses_us,
+                "handle_batch_ping_messages_time" => &mut totals.ping_us,
+                "handle_batch_pong_messages_time" => &mut totals.pong_us,
+                "handle_batch_prune_messages_time" => &mut totals.prune_us,
+                "verify_gossip_packets_time" => &mut totals.verify_us,
+                "process_gossip_packets_time" => &mut totals.process_us,
                 _ => continue,
             };
             add_value(counter, value);
@@ -2833,5 +3081,135 @@ mod tests {
             ));
         }
         assert_eq!(tap.stake_in_gossip().unwrap().online, 2);
+    }
+
+    #[test]
+    fn test_gossip_reports_add_into_their_totals_and_levels() {
+        let tap = MetricsTap::default();
+        for _ in 0..2 {
+            tap.observe(&named(
+                "cluster_info_stats",
+                &[
+                    ("table_size", "231904i"),
+                    ("num_pubkeys", "4112i"),
+                    ("num_nodes", "4100i"),
+                    ("num_nodes_staked", "1212i"),
+                ],
+            ));
+            tap.observe(&named(
+                "cluster_info_stats2",
+                &[
+                    ("purge_count", "352i"),
+                    ("process_gossip_packets_time", "900i"),
+                    ("handle_batch_push_messages_time", "600i"),
+                ],
+            ));
+            tap.observe(&named(
+                "cluster_info_stats4",
+                &[
+                    ("skip_push_message_shred_version", "14i"),
+                    ("num_duplicate_push_messages", "8i"),
+                ],
+            ));
+            tap.observe(&named(
+                "cluster_info_stats5",
+                &[
+                    ("packets_received_push_messages_count", "23000i"),
+                    ("packets_sent_pong_messages_count", "24i"),
+                    ("num_unverifed_gossip_addrs", "3i"),
+                ],
+            ));
+        }
+        let counters = tap.counters();
+        assert_eq!(
+            counters.gossip_levels,
+            GossipLevels {
+                table_size: 231_904,
+                pubkeys: 4_112,
+                nodes: 4_100,
+                staked_nodes: 1_212
+            }
+        );
+        let gossip = counters.gossip;
+        assert_eq!(gossip.reports, 2);
+        assert_eq!(gossip.expired, 704);
+        assert_eq!((gossip.process_us, gossip.push_us), (1_800, 1_200));
+        assert_eq!(
+            (gossip.other_shred_version_push, gossip.duplicate_push),
+            (28, 16)
+        );
+        assert_eq!(
+            (
+                gossip.received_push,
+                gossip.sent_pong,
+                gossip.unverified_addresses
+            ),
+            (46_000, 48, 6)
+        );
+    }
+
+    #[test]
+    fn test_gossip_entries_count_by_type_and_in_total() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            GOSSIP_ENTRIES,
+            &[
+                ("Vote-push", "3900i"),
+                ("Vote-pull", "41i"),
+                ("ContactInfo-push", "318i"),
+                ("all-push", "4218i"),
+                ("all-pull", "41i"),
+            ],
+        ));
+        tap.observe(&named(
+            GOSSIP_ENTRY_FAILS,
+            &[
+                ("Vote-push", "280i"),
+                ("Vote-pull", "8i"),
+                ("all-push", "280i"),
+                ("all-pull", "8i"),
+            ],
+        ));
+        let counters = tap.counters();
+        let vote = GOSSIP_ENTRY_TYPES
+            .iter()
+            .position(|kind| *kind == "Vote")
+            .unwrap();
+        let contact = GOSSIP_ENTRY_TYPES
+            .iter()
+            .position(|kind| *kind == "ContactInfo")
+            .unwrap();
+        let entries = counters.gossip_entries;
+        assert_eq!(
+            (
+                entries.push[vote],
+                entries.pull[vote],
+                entries.rejected[vote]
+            ),
+            (3_900, 41, 288)
+        );
+        assert_eq!(entries.push[contact], 318);
+        let gossip = counters.gossip;
+        assert_eq!(
+            (
+                gossip.accepted_push,
+                gossip.accepted_pull,
+                gossip.rejected_push,
+                gossip.rejected_pull
+            ),
+            (4_218, 41, 280, 8)
+        );
+    }
+
+    #[test]
+    fn test_gossip_entry_windows_difference_and_sum() {
+        let mut a = GossipEntryTotals::default();
+        let mut b = GossipEntryTotals::default();
+        a.push[1] = 10;
+        b.push[1] = 4;
+        b.rejected[3] = 9;
+        assert_eq!(a.since(&b).push[1], 6);
+        assert_eq!(a.since(&b).rejected[3], 0, "saturates rather than wrapping");
+        assert_eq!(a.plus(&b).push[1], 14);
     }
 }

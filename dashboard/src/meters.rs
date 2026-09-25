@@ -8,9 +8,10 @@ use {
         context::{DashboardContext, StartProgress},
         host_stats::{self, CpuUse, HostSnapshot},
         metrics_tap::{
-            AccountsTotals, BundleTotals, ExecutedTotals, MetricsTap, ProgramCacheTotals,
-            QuicLevels, QuicTotals, ReplaySlotTimes, SchedulerSource, SchedulerTotals, SlotCost,
-            SlotWaterfall, TapCounters, VerifyTotals, WindowedCounters, XdpConfig,
+            AccountsTotals, BundleTotals, ExecutedTotals, GOSSIP_ENTRY_TYPES, GossipEntryTotals,
+            GossipTotals, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals, ReplaySlotTimes,
+            SchedulerSource, SchedulerTotals, SlotCost, SlotWaterfall, TapCounters, VerifyTotals,
+            WindowedCounters, XdpConfig,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -549,6 +550,241 @@ fn num_cpus() -> usize {
         .unwrap_or(1)
 }
 
+/// Gossip reports every two seconds, so rates are read over several reports.
+const GOSSIP_RATE_WINDOW: usize = 10;
+const GOSSIP_MINUTE: usize = 60;
+
+/// Gossip's `CRDS_UNIQUE_PUBKEY_CAPACITY`, which is crate-private: above it the table is trimmed to
+/// staked nodes.
+const GOSSIP_PUBKEY_CAPACITY: u64 = 8192;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Gossip {
+    pub window_seconds: f64,
+    pub table: GossipTable,
+    pub messages: Vec<GossipMessage>,
+    pub entries: GossipEntries,
+    pub pressure: GossipPressure,
+    /// Milliseconds spent per second.
+    pub time: GossipTime,
+    /// Packets dropped either way over the last minute.
+    pub dropped_last_minute: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipTable {
+    pub entries: u64,
+    pub pubkeys: u64,
+    pub pubkey_capacity: u64,
+    pub nodes: u64,
+    pub staked_nodes: u64,
+    pub expired_per_second: f64,
+    pub evicted_last_minute: u64,
+}
+
+/// In packets per second.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipMessage {
+    pub kind: &'static str,
+    pub received: f64,
+    pub sent: f64,
+}
+
+/// Per second.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipEntries {
+    pub accepted_push: f64,
+    pub accepted_pull: f64,
+    pub duplicate_push: f64,
+    pub redundant_pull: f64,
+    pub rejected_push: f64,
+    pub rejected_pull: f64,
+    /// Busiest first.
+    pub types: Vec<GossipEntryType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipEntryType {
+    pub kind: &'static str,
+    pub push: f64,
+    pub pull: f64,
+    pub rejected: f64,
+}
+
+/// Per second.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipPressure {
+    pub dropped_in: f64,
+    pub dropped_out: f64,
+    pub pull_no_budget: f64,
+    pub pull_scan_exhausted: f64,
+    /// Pull requests, pushed entries and pulled entries together.
+    pub other_shred_version: f64,
+    pub ping_check_failed: f64,
+    pub unverified_addresses: f64,
+    pub bad_prune_destination: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GossipTime {
+    pub push: f64,
+    pub pull_requests: f64,
+    pub pull_responses: f64,
+    pub ping_pong_prune: f64,
+    pub verify: f64,
+    pub other: f64,
+}
+
+struct GossipMeter {
+    window: VecDeque<GossipTotals>,
+    entries: VecDeque<GossipEntryTotals>,
+    published: Debounced<Option<Gossip>>,
+}
+
+impl GossipMeter {
+    fn new() -> Self {
+        Self {
+            window: VecDeque::with_capacity(GOSSIP_MINUTE),
+            entries: VecDeque::with_capacity(GOSSIP_RATE_WINDOW),
+            published: Debounced::default(),
+        }
+    }
+
+    /// Publishes nothing while no report has arrived for the rate window: gossip's points are
+    /// info-level, so the page can say why rather than show zeros.
+    fn tick(&mut self, previous: &TapCounters, current: &TapCounters, publisher: &Publisher) {
+        self.window
+            .push_back(current.gossip.since(&previous.gossip));
+        while self.window.len() > GOSSIP_MINUTE {
+            self.window.pop_front();
+        }
+        let entries = sum_window(
+            &mut self.entries,
+            current.gossip_entries.since(&previous.gossip_entries),
+            GOSSIP_RATE_WINDOW,
+        );
+        let recent = self.window.len().min(GOSSIP_RATE_WINDOW);
+        let rates = self
+            .window
+            .iter()
+            .skip(self.window.len().saturating_sub(recent))
+            .fold(GossipTotals::default(), |total, sample| total.plus(sample));
+        let minute = self
+            .window
+            .iter()
+            .fold(GossipTotals::default(), |total, sample| total.plus(sample));
+
+        let gossip = (rates.reports > 0).then(|| {
+            let seconds = recent as f64 * METER_INTERVAL.as_secs_f64();
+            let per_second = |count: u64| count as f64 / seconds;
+            let millis = |micros: u64| micros as f64 / 1_000.0 / seconds;
+            let levels = &current.gossip_levels;
+            let handled = rates
+                .push_us
+                .saturating_add(rates.pull_requests_us)
+                .saturating_add(rates.pull_responses_us)
+                .saturating_add(rates.ping_us)
+                .saturating_add(rates.pong_us)
+                .saturating_add(rates.prune_us);
+            let mut types: Vec<GossipEntryType> = GOSSIP_ENTRY_TYPES
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| GossipEntryType {
+                    kind,
+                    push: per_second(entries.push[index]),
+                    pull: per_second(entries.pull[index]),
+                    rejected: per_second(entries.rejected[index]),
+                })
+                .collect();
+            types.sort_by(|a, b| (b.push + b.pull).total_cmp(&(a.push + a.pull)));
+            Gossip {
+                window_seconds: seconds,
+                table: GossipTable {
+                    entries: levels.table_size,
+                    pubkeys: levels.pubkeys,
+                    pubkey_capacity: GOSSIP_PUBKEY_CAPACITY,
+                    nodes: levels.nodes,
+                    staked_nodes: levels.staked_nodes,
+                    expired_per_second: per_second(rates.expired),
+                    evicted_last_minute: minute.evicted,
+                },
+                messages: vec![
+                    GossipMessage {
+                        kind: "push",
+                        received: per_second(rates.received_push),
+                        sent: per_second(rates.sent_push),
+                    },
+                    GossipMessage {
+                        kind: "pull_request",
+                        received: per_second(rates.received_pull_requests),
+                        sent: per_second(rates.sent_pull_requests),
+                    },
+                    GossipMessage {
+                        kind: "pull_response",
+                        received: per_second(rates.received_pull_responses),
+                        sent: per_second(rates.sent_pull_responses),
+                    },
+                    GossipMessage {
+                        kind: "ping",
+                        received: per_second(rates.received_ping),
+                        sent: per_second(rates.sent_ping),
+                    },
+                    GossipMessage {
+                        kind: "pong",
+                        received: per_second(rates.received_pong),
+                        sent: per_second(rates.sent_pong),
+                    },
+                    GossipMessage {
+                        kind: "prune",
+                        received: per_second(rates.received_prune),
+                        sent: per_second(rates.sent_prune),
+                    },
+                ],
+                entries: GossipEntries {
+                    accepted_push: per_second(rates.accepted_push),
+                    accepted_pull: per_second(rates.accepted_pull),
+                    duplicate_push: per_second(rates.duplicate_push),
+                    redundant_pull: per_second(rates.redundant_pull),
+                    rejected_push: per_second(rates.rejected_push),
+                    rejected_pull: per_second(rates.rejected_pull),
+                    types,
+                },
+                pressure: GossipPressure {
+                    dropped_in: per_second(rates.dropped_in),
+                    dropped_out: per_second(rates.dropped_out),
+                    pull_no_budget: per_second(rates.pull_no_budget),
+                    pull_scan_exhausted: per_second(rates.pull_scan_exhausted),
+                    other_shred_version: per_second(
+                        rates
+                            .other_shred_version_push
+                            .saturating_add(rates.other_shred_version_pull_responses)
+                            .saturating_add(rates.other_shred_version_pull_requests),
+                    ),
+                    ping_check_failed: per_second(rates.ping_check_failed),
+                    unverified_addresses: per_second(rates.unverified_addresses),
+                    bad_prune_destination: per_second(rates.bad_prune_destination),
+                },
+                time: GossipTime {
+                    push: millis(rates.push_us),
+                    pull_requests: millis(rates.pull_requests_us),
+                    pull_responses: millis(rates.pull_responses_us),
+                    ping_pong_prune: millis(
+                        rates
+                            .ping_us
+                            .saturating_add(rates.pong_us)
+                            .saturating_add(rates.prune_us),
+                    ),
+                    verify: millis(rates.verify_us),
+                    other: millis(rates.process_us.saturating_sub(handled)),
+                },
+                dropped_last_minute: minute.dropped_in.saturating_add(minute.dropped_out),
+            }
+        });
+        self.published
+            .publish(publisher, TOPIC_SUMMARY, "gossip", gossip);
+    }
+}
+
 pub struct Meters {
     ctx: DashboardContext,
     publisher: Arc<Publisher>,
@@ -568,6 +804,7 @@ pub struct Meters {
     program_cache: ProgramCacheMeter,
     tpu: TpuMeter,
     threads: ThreadMeter,
+    gossip: GossipMeter,
 }
 
 impl Meters {
@@ -596,6 +833,7 @@ impl Meters {
             program_cache: ProgramCacheMeter::new(),
             tpu: TpuMeter::new(),
             threads: ThreadMeter::default(),
+            gossip: GossipMeter::new(),
         }
     }
 
@@ -665,6 +903,7 @@ impl Meters {
         self.program_cache
             .tick(&previous, &current, &self.publisher);
         self.accounts.tick(&previous, &current, &self.publisher);
+        self.gossip.tick(&previous, &current, &self.publisher);
     }
 
     fn collect_waterfall(&mut self, previous: &TapCounters, current: &TapCounters) {
@@ -2491,5 +2730,65 @@ mod tests {
                 .is_some(),
             "a viewer attached and the thread walk still did not run"
         );
+    }
+
+    fn gossip_tap(reports: u64, received_push: u64, process_us: u64, push_us: u64) -> TapCounters {
+        TapCounters {
+            gossip: GossipTotals {
+                reports,
+                received_push,
+                process_us,
+                push_us,
+                evicted: reports,
+                ..GossipTotals::default()
+            },
+            ..TapCounters::default()
+        }
+    }
+
+    #[test]
+    fn test_no_gossip_figure_until_a_report_arrives() {
+        let publisher = Publisher::new();
+        let mut meter = GossipMeter::new();
+        meter.tick(&TapCounters::default(), &TapCounters::default(), &publisher);
+        let sent = publisher.snapshot().pop().unwrap();
+        assert!(sent.contains(r#""value":null"#), "{sent}");
+    }
+
+    #[test]
+    fn test_gossip_rates_are_read_over_the_window() {
+        let publisher = Publisher::new();
+        let mut meter = GossipMeter::new();
+        // One report every other second, each carrying 2,000 pushes.
+        let mut previous = TapCounters::default();
+        for second in 1..=12u64 {
+            let reports = second / 2;
+            let current = gossip_tap(reports, reports * 2_000, reports * 900, reports * 600);
+            meter.tick(&previous, &current, &publisher);
+            previous = current;
+        }
+        let sent = publisher.snapshot().pop().unwrap();
+        assert!(sent.contains(r#""window_seconds":10.0"#), "{sent}");
+        assert!(
+            sent.contains(r#""kind":"push","received":1000.0"#),
+            "{sent}"
+        );
+        // 600 µs of pushes and 300 more of other processing per report, a report every 2 s.
+        assert!(sent.contains(r#""push":0.3"#), "{sent}");
+        assert!(sent.contains(r#""other":0.15"#), "{sent}");
+        assert!(sent.contains(r#""evicted_last_minute":6"#), "{sent}");
+    }
+
+    #[test]
+    fn test_gossip_that_stops_reporting_is_withdrawn() {
+        let publisher = Publisher::new();
+        let mut meter = GossipMeter::new();
+        let reported = gossip_tap(1, 10, 0, 0);
+        meter.tick(&TapCounters::default(), &reported, &publisher);
+        for _ in 0..GOSSIP_RATE_WINDOW {
+            meter.tick(&reported, &reported, &publisher);
+        }
+        let sent = publisher.snapshot().pop().unwrap();
+        assert!(sent.contains(r#""value":null"#), "{sent}");
     }
 }

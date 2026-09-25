@@ -35,26 +35,49 @@ use {
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, Mutex, RwLock, atomic::AtomicU64},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
 
 mod certificates;
+mod gossip_peers;
 mod skip_rate;
 mod slot_clock;
 
-pub use self::certificates::{
-    MissList, MissReplies, MissRow, MissValidator, MissWriter, WrittenList, WrittenRow,
-};
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     skip_rate::SkipRateWalk,
     slot_clock::SlotClock,
 };
+pub use self::{
+    certificates::{
+        MissList, MissReplies, MissRow, MissValidator, MissWriter, WrittenList, WrittenRow,
+    },
+    gossip_peers::GossipPeers,
+};
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
+
+/// Replies to requests, encoded by the collector and handed out by the server as they stand.
+pub struct Replies {
+    pub misses: RwLock<MissReplies>,
+    pub gossip_peers: RwLock<Arc<str>>,
+    /// Unix milliseconds of the last request for the gossip peers, which are gathered only while
+    /// someone is asking.
+    pub gossip_peers_wanted: AtomicU64,
+}
+
+impl Default for Replies {
+    fn default() -> Self {
+        Self {
+            misses: RwLock::default(),
+            gossip_peers: RwLock::new(Arc::from("null")),
+            gossip_peers_wanted: AtomicU64::new(0),
+        }
+    }
+}
 
 /// Only a connecting client reads the overview, a few hundred kilobytes.
 const OVERVIEW_INTERVAL: Duration = Duration::from_secs(1);
@@ -334,7 +357,7 @@ pub struct Collector {
     last_completed_slot: Slot,
     last_completed_at: Instant,
     certificates: CertificateWalk,
-    misses: Arc<RwLock<MissReplies>>,
+    replies: Arc<Replies>,
     clock: SlotClock,
     /// Whether a tip ahead of replay has been seen since startup, and whether replay has since
     /// drawn level with it. The first tip read after a restart is stale.
@@ -368,7 +391,7 @@ pub struct CollectorShared {
     pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
     pub history: Arc<RwLock<SlotHistory>>,
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    pub misses: Arc<RwLock<MissReplies>>,
+    pub replies: Arc<Replies>,
     pub startup_progress: StartProgress,
     pub startup: Arc<Mutex<StartupPublisher>>,
     pub metrics_tap: Arc<MetricsTap>,
@@ -387,7 +410,7 @@ impl Collector {
             info_cache,
             history,
             epochs,
-            misses,
+            replies,
             startup_progress,
             startup,
             metrics_tap,
@@ -416,7 +439,7 @@ impl Collector {
             last_completed_at: now,
             completed_window: VecDeque::new(),
             certificates: CertificateWalk::default(),
-            misses,
+            replies,
             trailed_cluster: false,
             caught_cluster: false,
             clock: SlotClock::default(),
@@ -552,6 +575,7 @@ impl Collector {
             self.collect_skip_rate(&root_bank);
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
+            self.collect_gossip_peers(&working_bank, root_bank.slot(), &peers, timestamp());
             self.report_tip_residual();
             self.collect_snapshots();
             let heard: Contacts = peers
@@ -2264,6 +2288,48 @@ mod tests {
         assert!(credits.contains(r#""cluster_max":0"#), "{credits}");
         let admission = harness.published_key("summary", "admission").unwrap();
         assert!(admission.contains(r#""value":null"#), "{admission}");
+    }
+
+    #[test]
+    fn test_gossip_peers_are_gathered_only_while_asked_for() {
+        use std::sync::atomic::Ordering;
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let bank = harness.working_bank();
+        let peers = harness.ctx.cluster_info.all_peers();
+        let now = timestamp();
+
+        collector.collect_gossip_peers(&bank, bank.slot(), &peers, now);
+        assert_eq!(&**collector.replies.gossip_peers.read().unwrap(), "null");
+
+        collector
+            .replies
+            .gossip_peers_wanted
+            .store(now, Ordering::Relaxed);
+        collector.collect_gossip_peers(&bank, bank.slot(), &peers, now);
+        let json = collector.replies.gossip_peers.read().unwrap().clone();
+        let me = harness.ctx.identity().to_string();
+        assert!(json.contains(&me), "{json}");
+        let list: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let rows = list["identity"].as_array().unwrap().len();
+        for column in [
+            "name",
+            "stake",
+            "client",
+            "ip",
+            "rpc",
+            "heard_ago",
+            "started",
+            "snapshot_full",
+            "snapshot_incremental",
+            "lowest",
+        ] {
+            assert_eq!(list[column].as_array().unwrap().len(), rows, "{column}");
+        }
+
+        // A client that stopped asking half a minute ago is no longer served fresh lists.
+        collector.collect_gossip_peers(&bank, bank.slot(), &[], now.saturating_add(31_000));
+        assert_eq!(*collector.replies.gossip_peers.read().unwrap(), json);
     }
 
     #[test]

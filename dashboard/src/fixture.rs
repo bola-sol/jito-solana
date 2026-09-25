@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        collect::{Collector, CollectorShared, EpochInfo, MissReplies},
+        collect::{Collector, CollectorShared, EpochInfo, Replies},
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
         meters::Meters,
@@ -162,7 +162,7 @@ impl Fixture {
             info_cache: Arc::new(RwLock::new(ValidatorInfoCache::default())),
             history: self.history.clone(),
             epochs: self.epochs.clone(),
-            misses: Arc::new(RwLock::new(MissReplies::default())),
+            replies: Arc::new(Replies::default()),
             startup_progress: running(),
             startup,
             metrics_tap: Arc::new(MetricsTap::default()),

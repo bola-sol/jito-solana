@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        collect::{Collector, CollectorShared, EpochInfo, MissReplies, system_time_nanos},
+        collect::{Collector, CollectorShared, EpochInfo, Replies, system_time_nanos},
         config::DashboardConfig,
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
@@ -53,7 +53,7 @@ pub struct DashboardService {
     history: Arc<RwLock<SlotHistory>>,
     info_cache: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissReplies>>,
+    replies: Arc<Replies>,
     server: Option<JoinHandle<()>>,
     boot: Option<JoinHandle<()>>,
     collector: Option<JoinHandle<()>>,
@@ -82,7 +82,7 @@ impl DashboardService {
         // The server answers requests out of it and starts first.
         let info_cache = Arc::new(RwLock::new(ValidatorInfoCache::default()));
         let epochs: Arc<RwLock<Vec<EpochInfo>>> = Arc::new(RwLock::new(Vec::new()));
-        let misses = Arc::new(RwLock::new(MissReplies::default()));
+        let replies = Arc::new(Replies::default());
         let attached = Arc::new(AtomicBool::new(false));
         let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
 
@@ -105,14 +105,14 @@ impl DashboardService {
             let history = history.clone();
             let info_cache = info_cache.clone();
             let epochs = epochs.clone();
-            let misses = misses.clone();
+            let replies = replies.clone();
             let exit = exit.clone();
             thread::Builder::new()
                 .name("solDashSrv".to_string())
                 .spawn(move || {
                     runtime.block_on(async move {
                         tokio::select! {
-                            _ = server::serve(listener, publisher, history, info_cache, epochs, misses, allowed_hosts) => {}
+                            _ = server::serve(listener, publisher, history, info_cache, epochs, replies, allowed_hosts) => {}
                             _ = wait_for_exit(exit) => {}
                         }
                     });
@@ -201,7 +201,7 @@ impl DashboardService {
             history,
             info_cache,
             epochs,
-            misses,
+            replies,
             server: Some(server),
             boot: Some(boot),
             collector: None,
@@ -259,7 +259,7 @@ impl DashboardService {
             let publisher = self.publisher.clone();
             let history = self.history.clone();
             let epochs = self.epochs.clone();
-            let misses = self.misses.clone();
+            let replies = self.replies.clone();
             let startup_progress = self.startup_progress.clone();
             let startup = self.startup.clone();
             let metrics_tap = self.metrics_tap.clone();
@@ -273,7 +273,7 @@ impl DashboardService {
                         info_cache,
                         history,
                         epochs,
-                        misses,
+                        replies,
                         startup_progress,
                         startup,
                         metrics_tap,

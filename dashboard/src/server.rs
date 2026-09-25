@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        collect::{EpochInfo, MissReplies},
+        collect::{EpochInfo, Replies},
         history::SlotHistory,
         proto::{
             DEFLATE_PROTOCOL, Frame, MAX_MESSAGE, Message, Publisher, Request, coalesce,
@@ -14,10 +14,11 @@ use {
     },
     soketto::handshake::{Server, server},
     solana_clock::Slot,
+    solana_time_utils::timestamp,
     std::{
         io,
         net::IpAddr,
-        sync::{Arc, RwLock},
+        sync::{Arc, RwLock, atomic::Ordering},
         time::Instant,
     },
     thiserror::Error,
@@ -98,7 +99,7 @@ pub async fn serve(
     history: Arc<RwLock<SlotHistory>>,
     info: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissReplies>>,
+    replies: Arc<Replies>,
     allowed_hosts: Arc<[String]>,
 ) {
     let limits = Limits::new();
@@ -115,7 +116,7 @@ pub async fn serve(
         let history = history.clone();
         let info = info.clone();
         let epochs = epochs.clone();
-        let misses = misses.clone();
+        let replies = replies.clone();
         let limits = limits.clone();
         let allowed_hosts = allowed_hosts.clone();
         tokio::spawn(async move {
@@ -125,7 +126,7 @@ pub async fn serve(
                 history,
                 info,
                 epochs,
-                misses,
+                replies,
                 limits,
                 &allowed_hosts,
             )
@@ -143,7 +144,7 @@ async fn handle(
     history: Arc<RwLock<SlotHistory>>,
     info: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissReplies>>,
+    replies: Arc<Replies>,
     limits: Limits,
     allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
@@ -184,7 +185,7 @@ async fn handle(
             return refuse(socket, head_len, 503, b"too many dashboard clients").await;
         };
         let path = request_path(&head).to_string();
-        serve_websocket(socket, publisher, history, info, epochs, misses, &path).await
+        serve_websocket(socket, publisher, history, info, epochs, replies, &path).await
     } else {
         // Closing with unread data sends RST rather than FIN, which truncates the response.
         let mut consumed = vec![0u8; head_len];
@@ -431,7 +432,7 @@ async fn serve_websocket(
     history: Arc<RwLock<SlotHistory>>,
     info: Arc<RwLock<ValidatorInfoCache>>,
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    misses: Arc<RwLock<MissReplies>>,
+    replies: Arc<Replies>,
     path: &str,
 ) -> Result<(), ConnectionError> {
     let mut server = Server::new(socket.compat());
@@ -550,7 +551,7 @@ async fn serve_websocket(
         if !wait.is_zero() {
             sleep(wait).await;
         }
-        if let Some(reply) = respond(&incoming, &history, &info, &epochs, &misses) {
+        if let Some(reply) = respond(&incoming, &history, &info, &epochs, &replies) {
             send_within(send_frame(&mut sender, &reply, deflate)).await?;
             send_within(sender.flush()).await?;
         }
@@ -629,7 +630,7 @@ fn respond(
     history: &RwLock<SlotHistory>,
     info: &RwLock<ValidatorInfoCache>,
     epochs: &RwLock<Vec<EpochInfo>>,
-    misses: &RwLock<MissReplies>,
+    replies: &Replies,
 ) -> Option<Message> {
     let request: Request = serde_json::from_slice(payload).ok()?;
     let id = request.id;
@@ -643,18 +644,28 @@ fn respond(
             Some(encode_with_id("summary", "displays", id, &displays))
         }
         ("summary", "misses") => {
-            let json = match misses.read() {
-                Ok(replies) => replies.misses.clone(),
+            let json = match replies.misses.read() {
+                Ok(misses) => misses.misses.clone(),
                 Err(_) => return Some(encode_with_id("summary", "misses", id, &())),
             };
             Some(encode_json_with_id("summary", "misses", id, &json))
         }
         ("summary", "written") => {
-            let json = match misses.read() {
-                Ok(replies) => replies.written.clone(),
+            let json = match replies.misses.read() {
+                Ok(misses) => misses.written.clone(),
                 Err(_) => return Some(encode_with_id("summary", "written", id, &())),
             };
             Some(encode_json_with_id("summary", "written", id, &json))
+        }
+        ("peers", "gossip") => {
+            replies
+                .gossip_peers_wanted
+                .store(timestamp(), Ordering::Relaxed);
+            let json = match replies.gossip_peers.read() {
+                Ok(peers) => peers.clone(),
+                Err(_) => return Some(encode_with_id("peers", "gossip", id, &())),
+            };
+            Some(encode_json_with_id("peers", "gossip", id, &json))
         }
         ("epoch", "query") => {
             let Ok(params) = serde_json::from_value::<EpochParams>(request.params) else {
@@ -740,12 +751,12 @@ mod tests {
         Arc::new(no_epochs())
     }
 
-    fn no_misses() -> RwLock<MissReplies> {
-        RwLock::new(MissReplies::default())
+    fn no_replies() -> Replies {
+        Replies::default()
     }
 
-    fn no_misses_shared() -> Arc<RwLock<MissReplies>> {
-        Arc::new(no_misses())
+    fn no_replies_shared() -> Arc<Replies> {
+        Arc::new(no_replies())
     }
 
     fn epoch_record(epoch: u64) -> EpochInfo {
@@ -770,7 +781,7 @@ mod tests {
             &empty(),
             &no_info(),
             &epochs,
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":11"#), "{reply}");
@@ -787,7 +798,7 @@ mod tests {
             &empty(),
             &no_info(),
             &epochs,
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":12"#), "{reply}");
@@ -811,7 +822,7 @@ mod tests {
             &empty(),
             &info,
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":4"#), "{reply}");
@@ -833,7 +844,7 @@ mod tests {
             &empty(),
             &info,
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""keys":[]"#), "{reply}");
@@ -847,7 +858,7 @@ mod tests {
             &history,
             &no_info(),
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":9"#), "{reply}");
@@ -862,7 +873,7 @@ mod tests {
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":3"#), "{reply}");
@@ -1025,7 +1036,7 @@ mod tests {
                     empty_history(),
                     no_info_shared(),
                     no_epochs_shared(),
-                    no_misses_shared(),
+                    no_replies_shared(),
                     limits,
                     &allowed_hosts,
                 )
@@ -1054,7 +1065,7 @@ mod tests {
                 empty_history(),
                 no_info_shared(),
                 no_epochs_shared(),
-                no_misses_shared(),
+                no_replies_shared(),
                 limits,
                 &allowed_hosts,
             )
@@ -1144,7 +1155,7 @@ mod tests {
                     empty_history(),
                     no_info_shared(),
                     no_epochs_shared(),
-                    no_misses_shared(),
+                    no_replies_shared(),
                     limits,
                     &allowed_hosts,
                 )
@@ -1281,11 +1292,34 @@ mod tests {
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":9"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_the_gossip_peers_are_answered_and_the_ask_remembered() {
+        let replies = no_replies();
+        let reply = respond(
+            br#"{"topic":"peers","key":"gossip","id":11}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":11"#), "{reply}");
+        assert!(
+            reply.contains(r#""value":null"#),
+            "not gathered yet: {reply}"
+        );
+        let asked = replies.gossip_peers_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
     }
 
     #[test]
@@ -1295,7 +1329,7 @@ mod tests {
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":10"#), "{reply}");
@@ -1326,7 +1360,7 @@ mod tests {
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":7"#));
@@ -1339,7 +1373,7 @@ mod tests {
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_misses(),
+            &no_replies(),
         )
         .unwrap();
         assert!(reply.contains("unsupported request"));
@@ -1353,7 +1387,7 @@ mod tests {
                 &empty(),
                 &no_info(),
                 &no_epochs(),
-                &no_misses()
+                &no_replies()
             )
             .is_none()
         );
@@ -1448,7 +1482,7 @@ mod tests {
                 empty_history(),
                 no_info_shared(),
                 no_epochs_shared(),
-                no_misses_shared(),
+                no_replies_shared(),
                 Limits::new(),
                 &allowed_hosts,
             )

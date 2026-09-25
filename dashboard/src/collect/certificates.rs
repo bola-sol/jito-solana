@@ -382,7 +382,7 @@ impl Collector {
             },
         };
         let replies = MissReplies::new(&list);
-        *self.misses.write().unwrap() = replies;
+        *self.replies.misses.write().unwrap() = replies;
     }
 
     pub(super) fn fill_certificates(&mut self, bank: &Bank, heard: &Contacts) -> bool {

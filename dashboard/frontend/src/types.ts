@@ -99,6 +99,79 @@ export interface Peer {
   icon: string | null;
 }
 
+export type GossipMessageKind = "push" | "pull_request" | "pull_response" | "ping" | "pong" | "prune";
+
+/** Rates over `window_seconds`, from gossip's own stats points; null while none arrive. */
+export interface Gossip {
+  window_seconds: number;
+  table: {
+    entries: number;
+    pubkeys: number;
+    /** Past this many distinct pubkeys gossip trims its table. */
+    pubkey_capacity: number;
+    nodes: number;
+    staked_nodes: number;
+    expired_per_second: number;
+    evicted_last_minute: number;
+  };
+  /** Packets per second. */
+  messages: { kind: GossipMessageKind; received: number; sent: number }[];
+  /** Entries per second; `types` busiest first. */
+  entries: {
+    accepted_push: number;
+    accepted_pull: number;
+    duplicate_push: number;
+    redundant_pull: number;
+    rejected_push: number;
+    rejected_pull: number;
+    types: { kind: string; push: number; pull: number; rejected: number }[];
+  };
+  /** Per second. */
+  pressure: {
+    dropped_in: number;
+    dropped_out: number;
+    pull_no_budget: number;
+    pull_scan_exhausted: number;
+    other_shred_version: number;
+    ping_check_failed: number;
+    unverified_addresses: number;
+    bad_prune_destination: number;
+  };
+  /** Milliseconds spent per second. */
+  time: {
+    push: number;
+    pull_requests: number;
+    pull_responses: number;
+    ping_pong_prune: number;
+    verify: number;
+    other: number;
+  };
+  dropped_last_minute: number;
+}
+
+/** Every node in gossip, one array per column, most stake first. */
+export interface GossipPeers {
+  root: number;
+  /** Lamports. */
+  total_stake: number;
+  /** `[client, version]`, indexed by `client`. */
+  clients: [string, string][];
+  identity: string[];
+  name: (string | null)[];
+  /** Lamports. */
+  stake: number[];
+  client: number[];
+  ip: (string | null)[];
+  rpc: (number | null)[];
+  /** Milliseconds since its contact record last arrived. */
+  heard_ago: number[];
+  /** Unix milliseconds. */
+  started: number[];
+  snapshot_full: (number | null)[];
+  snapshot_incremental: (number | null)[];
+  lowest: (number | null)[];
+}
+
 /** Published on the slow tier; filter against the completed slot before rendering. */
 export interface UpcomingSlot {
   slot: number;
@@ -825,6 +898,7 @@ export interface Published {
     vote_credits: VoteCredits | null;
     vote_participation: VoteParticipation | null;
     turbine: Turbine | null;
+    gossip: Gossip | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

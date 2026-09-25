@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export type Page = "overview" | "slots" | "schedule";
+export type Page = "overview" | "slots" | "schedule" | "gossip";
 
-const PAGES: Page[] = ["overview", "slots", "schedule"];
+const PAGES: Page[] = ["overview", "slots", "schedule", "gossip"];
 
 export interface Route {
   page: Page;
@@ -36,6 +36,8 @@ export function routeHash(route: Route): string {
       return withSearch(route.slot === null ? "#/slots" : `#/slots/${route.slot}`, route.query, false);
     case "schedule":
       return withSearch("#/schedule", route.query, route.ours);
+    case "gossip":
+      return withSearch("#/gossip", route.query, false);
   }
 }
 

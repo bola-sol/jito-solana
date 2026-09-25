@@ -7,6 +7,7 @@ import type {
   Displays,
   EpochInfo,
   Envelope,
+  GossipPeers,
   MissList,
   NetworkSample,
   Peer,
@@ -24,6 +25,7 @@ export interface Requests {
   "summary.displays": { params: Record<string, never>; reply: Displays };
   "summary.misses": { params: Record<string, never>; reply: MissList };
   "summary.written": { params: Record<string, never>; reply: WrittenList };
+  "peers.gossip": { params: Record<string, never>; reply: GossipPeers | null };
 }
 
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */

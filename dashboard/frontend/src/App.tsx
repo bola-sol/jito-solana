@@ -13,6 +13,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Verdict } from "./components/Verdict";
 import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
+import { GossipPage } from "./components/GossipPage";
 import { GossipStakeCard } from "./components/GossipStakeCard";
 import { MissesPanel } from "./components/MissesPanel";
 import { SlotStrip } from "./components/SlotStrip";
@@ -79,6 +80,7 @@ export function App(): ReactElement {
             onFilter={(query, ours) => go({ ...route, query, ours }, true)}
           />
         )}
+        {page === "gossip" && <GossipPage query={route.query} onQuery={(query) => go({ ...route, query }, true)} />}
       </main>
     </div>
   );
@@ -116,6 +118,7 @@ const PAGES: { page: Page; label: string }[] = [
   { page: "overview", label: "Overview" },
   { page: "slots", label: "Slot details" },
   { page: "schedule", label: "Schedule" },
+  { page: "gossip", label: "Gossip" },
 ];
 
 /** Anchors rather than buttons, so a page can open in a new tab; the click is

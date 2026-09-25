@@ -444,6 +444,8 @@ function Stat({
 function BlockCertificateStrip({ certificate }: { certificate: BlockCertificate }) {
   const verdict = certificateVerdict(certificate);
   const leader = certificate.leader_name ?? shortKey(certificate.leader, 6, 5);
+  const [listOpen, setListOpen] = useState(false);
+  const leftOut = certificate.left_out.length > 0;
   return (
     <div className="sx-cert">
       <div className="sx-strip">
@@ -468,14 +470,28 @@ function BlockCertificateStrip({ certificate }: { certificate: BlockCertificate 
           <span className={certificate.ours_in ? undefined : "is-out"}>
             our vote <b>{certificate.ours_in ? "in" : "out"}</b>
           </span>
-          <span className={verdict.warn ? "is-out" : undefined}>{verdict.text}</span>
+          <span className={verdict.warn ? "is-out" : undefined}>
+            {leftOut ? (
+              <button
+                type="button"
+                className="misses-open"
+                aria-expanded={listOpen}
+                title={listOpen ? "Hide them" : "List them"}
+                onClick={() => setListOpen(!listOpen)}
+              >
+                {verdict.text}
+              </button>
+            ) : (
+              verdict.text
+            )}
+          </span>
         </div>
         <span className="sx-strip-right">
           for slot <Copyable text={String(certificate.rewards)} label={count(certificate.rewards)} /> ·{" "}
           <b>{leader}</b> · {certificate.notarized ? "notarized" : "skipped"}
         </span>
       </div>
-      {certificate.left_out.length > 0 && (
+      {leftOut && listOpen && (
         <div className="misses-out-list">
           {certificate.left_out.map((validator) => (
             <span className="misses-out" key={validator.identity}>

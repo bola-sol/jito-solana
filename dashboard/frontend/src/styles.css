@@ -116,10 +116,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The dynamic viewport, so the column reaches the bottom once a phone browser hides its toolbars. */
 .app {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   height: 100%;
+  height: 100dvh;
 }
 
 /* Collapsed to a rail rather than to nothing, so the control that brings the

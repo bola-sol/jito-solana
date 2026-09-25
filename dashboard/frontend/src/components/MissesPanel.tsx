@@ -12,6 +12,7 @@ import {
 import type { MissList, MissPlace, MissRow, MissValidator, MissWriter } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
+import { WriterName } from "./WriterName";
 
 /** Explanations sit under the legend because a scrolling table clips bubbles. */
 export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement {
@@ -262,7 +263,7 @@ const Row = memo(function Row({
         <span className="misses-writer">
           {writer ? (
             <>
-              <b>{writer.name ?? shortKey(writer.identity, 6, 5)}</b>
+              <WriterName name={writer.name} identity={writer.identity} />
               <span>
                 <Copyable text={writer.identity} label={shortKey(writer.identity, 8, 8)} className="misses-key" />
                 {build && ` · ${build}`}

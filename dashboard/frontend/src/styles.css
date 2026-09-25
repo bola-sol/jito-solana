@@ -849,7 +849,7 @@ body {
 .misses-row {
   display: grid;
   min-width: min-content;
-  grid-template-columns: 8.5em 12.5em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 15.5em;
+  grid-template-columns: 8.5em 12.5em 5em minmax(14em, 1.4fr) 9.5em 7.5em 6.5em 15.5em;
   gap: 12px;
   align-items: baseline;
   padding: 5px 0;
@@ -906,8 +906,29 @@ body {
 }
 
 .misses-writer b {
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 500;
   color: var(--text);
+}
+
+/* An unnamed validator's full address where the cell holds the longest, else the shortened one. */
+.misses-writer {
+  container-type: inline-size;
+}
+
+.writer-key-full {
+  display: none;
+}
+
+@container (min-width: 30em) {
+  .writer-key-full {
+    display: inline;
+  }
+
+  .writer-key-short {
+    display: none;
+  }
 }
 
 .misses-writer > span {
@@ -5212,14 +5233,16 @@ body {
   background: var(--text-faint);
 }
 
-/* The rows fit the panel at any width the page allows, so nothing scrolls sideways. */
+/* The rows fit the panel at any width the page allows, stacking where the columns cannot, so
+   nothing scrolls sideways. */
 .written .misses-table {
   overflow-x: hidden;
+  container-type: inline-size;
 }
 
 .written-row {
   display: grid;
-  grid-template-columns: minmax(14em, 1.4fr) 8em 11em 6em 7.5em 13em;
+  grid-template-columns: minmax(8em, 1.4fr) 9.5em 9.5em 6em 7.5em 13em;
   gap: 12px;
   align-items: baseline;
   padding: 5px 0;
@@ -5304,7 +5327,8 @@ body {
   color: var(--text-faint);
 }
 
-@media (max-width: 700px) {
+/* The columns' least width, 53.5em and five 12px gaps. */
+@container (max-width: 58.3em) {
   .written-row {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:

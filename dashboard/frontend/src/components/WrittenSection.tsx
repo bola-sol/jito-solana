@@ -4,6 +4,7 @@ import type { WrittenList } from "../types";
 import { useStore } from "../useStore";
 import { writtenFigures, writtenKinds, writtenLine, type WrittenFigure, type WrittenKind } from "../written";
 import { Copyable } from "./Copyable";
+import { WriterName } from "./WriterName";
 
 /** The validator rebuilds it every five seconds. */
 const POLL_MS = 15_000;
@@ -115,7 +116,7 @@ function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: n
   return (
     <div className="written-row">
       <span className="misses-writer">
-        <b>{row.name ?? shortKey(row.identity, 6, 5)}</b>
+        <WriterName name={row.name} identity={row.identity} />
         <span>
           <Copyable text={row.identity} label={shortKey(row.identity, 8, 8)} className="misses-key" />
           {build && ` · ${build}`}

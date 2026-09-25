@@ -691,6 +691,8 @@ export interface MissValidator {
   identity: string;
   name: string | null;
   ip: string | null;
+  last_vote: number | null;
+  delinquent: boolean;
 }
 
 export interface MissRow {
@@ -729,6 +731,9 @@ export interface WrittenRow {
   ip: string | null;
   left_out_of_ours: number;
   left_out_everywhere: number;
+  /** The oldest last vote among its staked vote accounts; null where one never voted or it has none. */
+  last_vote: number | null;
+  delinquent: boolean;
 }
 
 /** A slot in more than one place counts in the first. */

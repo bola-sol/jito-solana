@@ -2,7 +2,7 @@
 //! miss and written lists read from that tally.
 
 use {
-    super::Collector,
+    super::{Collector, is_delinquent},
     crate::{
         certs,
         history::HAS_CLOCK,
@@ -34,6 +34,18 @@ pub struct MissList {
 }
 
 pub(super) type Contacts<'a> = HashMap<Pubkey, &'a ContactInfo>;
+
+/// Each staked validator's stalest vote, `None` where one of its accounts never voted.
+pub(super) type LastVotes = HashMap<Pubkey, Option<Slot>>;
+
+/// A validator's stalest vote and whether it is delinquent by it. One missing from the vote
+/// accounts, as when its stake is gone, is neither.
+fn standing(key: &Pubkey, votes: &LastVotes, tip: Slot) -> (Option<Slot>, bool) {
+    match votes.get(key) {
+        Some(last_vote) => (*last_vote, is_delinquent(*last_vote, tip)),
+        None => (None, false),
+    }
+}
 
 struct Described {
     name: Option<String>,
@@ -104,6 +116,8 @@ pub struct WrittenRow {
     pub ip: Option<String>,
     pub left_out_of_ours: u64,
     pub left_out_everywhere: u64,
+    pub last_vote: Option<Slot>,
+    pub delinquent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -111,6 +125,8 @@ pub struct MissValidator {
     pub identity: String,
     pub name: Option<String>,
     pub ip: Option<String>,
+    pub last_vote: Option<Slot>,
+    pub delinquent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -219,7 +235,7 @@ impl Collector {
         }
     }
 
-    pub(super) fn collect_miss_list(&self, bank: &Bank, heard: &Contacts) {
+    pub(super) fn collect_miss_list(&self, bank: &Bank, heard: &Contacts, votes: &LastVotes) {
         let Some(tally) = &self.certificates.tally else {
             return;
         };
@@ -248,10 +264,13 @@ impl Collector {
                             })
                             .map(|entry| entry.node_pubkey)?;
                         let described = describe(&key, &info, heard);
+                        let (last_vote, delinquent) = standing(&key, votes, bank.slot());
                         validators.push(MissValidator {
                             identity: key.to_string(),
                             name: described.name,
                             ip: described.ip,
+                            last_vote,
+                            delinquent,
                         });
                         let at = u32::try_from(validators.len().saturating_sub(1)).ok()?;
                         validator_at.insert(*rank, at);
@@ -301,6 +320,7 @@ impl Collector {
                     .and_then(|map| map.get_pubkey_stake_entry(rank))
                     .map(|entry| entry.node_pubkey)?;
                 let described = describe(&key, &info, heard);
+                let (last_vote, delinquent) = standing(&key, votes, bank.slot());
                 Some(WrittenRow {
                     identity: key.to_string(),
                     name: described.name,
@@ -309,6 +329,8 @@ impl Collector {
                     ip: described.ip,
                     left_out_of_ours: summary.unpaid_by_rank.get(rank).copied().unwrap_or(0),
                     left_out_everywhere: summary.unpaid_everywhere.get(rank).copied().unwrap_or(0),
+                    last_vote,
+                    delinquent,
                 })
             })
             .collect();
@@ -463,5 +485,29 @@ impl Collector {
             _ => false,
         };
         certs::MissDetail { writer, late }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_standing_reads_the_stalest_vote_against_the_tip() {
+        let (voting, behind, silent, gone) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let votes = LastVotes::from([(voting, Some(990)), (behind, Some(10)), (silent, None)]);
+        assert_eq!(standing(&voting, &votes, 1_000), (Some(990), false));
+        assert_eq!(standing(&behind, &votes, 1_000), (Some(10), true));
+        assert_eq!(standing(&silent, &votes, 1_000), (None, true));
+        assert_eq!(
+            standing(&gone, &votes, 1_000),
+            (None, false),
+            "unknown is not delinquent"
+        );
     }
 }

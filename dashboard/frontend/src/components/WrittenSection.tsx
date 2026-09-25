@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import { buildLabel, count, percent, shortKey } from "../format";
 import type { WrittenList } from "../types";
 import { useStore } from "../useStore";
-import { writtenFigures, writtenKinds, writtenLine, type WrittenFigure, type WrittenKind } from "../written";
+import { delinquentText } from "../misses";
+import {
+  WRITTEN_KINDS,
+  writtenFigures,
+  writtenKinds,
+  writtenLine,
+  type WrittenFigure,
+  type WrittenKind,
+} from "../written";
 import { Copyable } from "./Copyable";
 import { WriterName } from "./WriterName";
 
@@ -15,15 +23,26 @@ const LINE_TITLE =
 const KIND_WORD: Record<WrittenKind, string> = {
   worse: "fare worse in ours",
   missing: "missing everywhere",
+  delinquent: "delinquent",
 };
 
 const KIND_TITLE: Record<WrittenKind, string> = {
   worse: "Left out of our certificates far more often than of everyone's.",
   missing: "Left out of nearly every certificate from any writer.",
+  delinquent: "Not voting now, which accounts for being left out.",
+};
+
+/** The bar's class for each kind; faring worse keeps the default. */
+const KIND_BAR: Record<WrittenKind, string | undefined> = {
+  worse: undefined,
+  missing: "is-down",
+  delinquent: "is-delinquent",
 };
 
 export function WrittenSection(): ReactElement {
   const store = useStore();
+  const slot = store.get("summary", "completed_slot");
+  const slotNanos = store.get("summary", "observed_slot_duration_nanos") ?? undefined;
   const [list, setList] = useState<WrittenList | null>(null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -66,8 +85,7 @@ export function WrittenSection(): ReactElement {
         {list !== null && <span title={LINE_TITLE}>{writtenLine(list)}</span>}
         {list !== null && (
           <span className="misses-legend written-legend">
-            {(["worse", "missing"] as const)
-              .filter((kind) => kinds[kind] > 0)
+            {WRITTEN_KINDS.filter((kind) => kinds[kind] > 0)
               .map((kind) => (
                 <button
                   key={kind}
@@ -101,7 +119,13 @@ export function WrittenSection(): ReactElement {
             <span title="Its share of ours as a bar, its share network-wide as the mark.">ours against the network</span>
           </div>
           {shown.map((figure) => (
-            <WrittenRowView key={figure.row.identity} figure={figure} written={list.certificates} />
+            <WrittenRowView
+              key={figure.row.identity}
+              figure={figure}
+              written={list.certificates}
+              slot={slot}
+              slotNanos={slotNanos}
+            />
           ))}
         </div>
       )}
@@ -110,7 +134,17 @@ export function WrittenSection(): ReactElement {
 }
 
 /** Module-level, or it remounts every tick. */
-function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: number }) {
+function WrittenRowView({
+  figure,
+  written,
+  slot,
+  slotNanos,
+}: {
+  figure: WrittenFigure;
+  written: number;
+  slot: number | undefined;
+  slotNanos: number | undefined;
+}) {
   const { row, ours, everywhere, kind } = figure;
   const build = buildLabel(row.client ?? undefined, row.version ?? undefined);
   return (
@@ -119,7 +153,14 @@ function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: n
         <WriterName name={row.name} identity={row.identity} />
         <span>
           <Copyable text={row.identity} label={shortKey(row.identity, 8, 8)} className="misses-key" />
-          {build && ` · ${build}`}
+          {row.delinquent ? (
+            <>
+              {" · "}
+              <span className="written-delinquent">{delinquentText(row.last_vote, slot, slotNanos)}</span>
+            </>
+          ) : (
+            build && ` · ${build}`
+          )}
         </span>
       </span>
       <span className="written-ip">{row.ip ? <Copyable text={row.ip} /> : "—"}</span>
@@ -129,7 +170,7 @@ function WrittenRowView({ figure, written }: { figure: WrittenFigure; written: n
       <span className="written-share">{percent(ours, 1)}</span>
       <span className="written-all">{percent(everywhere, 1)}</span>
       <span className="written-gap" aria-hidden="true">
-        <i className={kind === "missing" ? "is-down" : undefined} style={{ width: `${Math.min(100, (ours ?? 0) * 100)}%` }} />
+        <i className={KIND_BAR[kind]} style={{ width: `${Math.min(100, (ours ?? 0) * 100)}%` }} />
         <b style={{ left: `clamp(0px, calc(${Math.min(100, (everywhere ?? 0) * 100)}% - 1px), calc(100% - 2px))` }} />
       </span>
     </div>

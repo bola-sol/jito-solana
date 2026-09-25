@@ -296,6 +296,7 @@ const Row = memo(function Row({
             return (
               <span className="misses-out" key={at}>
                 <b>{validatorLabel(validator)}</b>
+                {validator.delinquent && <span className="misses-out-delinquent">delinquent</span>}
                 <Copyable text={validator.identity} label={shortKey(validator.identity, 6, 5)} />
                 {validator.ip && <Copyable text={validator.ip} />}
               </span>

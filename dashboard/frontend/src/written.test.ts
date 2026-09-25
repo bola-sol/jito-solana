@@ -2,8 +2,18 @@ import { describe, expect, it } from "vitest";
 import type { WrittenList, WrittenRow } from "./types";
 import { writtenFigures, writtenKinds, writtenLine } from "./written";
 
-function row(identity: string, ours: number, everywhere: number): WrittenRow {
-  return { identity, name: null, client: null, version: null, ip: null, left_out_of_ours: ours, left_out_everywhere: everywhere };
+function row(identity: string, ours: number, everywhere: number, delinquent = false): WrittenRow {
+  return {
+    identity,
+    name: null,
+    client: null,
+    version: null,
+    ip: null,
+    left_out_of_ours: ours,
+    left_out_everywhere: everywhere,
+    last_vote: null,
+    delinquent,
+  };
 }
 
 function list(certificates: number, carried_all: number, rows: WrittenRow[], rewarded = 1000): WrittenList {
@@ -24,7 +34,24 @@ describe("the written figures", () => {
   it("keeps a validator missing everywhere, after the ones faring worse", () => {
     const figures = writtenFigures(list(100, 60, [row("down", 100, 950), row("a", 30, 20), row("gone", 100, 1000)]));
     expect(figures.map((figure) => figure.row.identity)).toEqual(["a", "gone", "down"]);
-    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 2 });
+    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 2, delinquent: 0 });
+  });
+
+  it("names a delinquent validator instead of calling it worse or missing, after both", () => {
+    const figures = writtenFigures(
+      list(100, 60, [row("stopped", 38, 281, true), row("a", 30, 20), row("gone", 100, 1000, true), row("down", 100, 950)]),
+    );
+    expect(figures.map((figure) => [figure.row.identity, figure.kind])).toEqual([
+      ["a", "worse"],
+      ["down", "missing"],
+      ["gone", "delinquent"],
+      ["stopped", "delinquent"],
+    ]);
+    expect(writtenKinds(figures)).toEqual({ worse: 1, missing: 1, delinquent: 2 });
+  });
+
+  it("leaves out a delinquent validator it would not have listed", () => {
+    expect(writtenFigures(list(100, 91, [row("new", 2, 3, true)]))).toEqual([]);
   });
 
   it("does not call a few misses faring worse", () => {

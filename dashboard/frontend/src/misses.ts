@@ -1,5 +1,6 @@
 
 import { count, shortKey } from "./format";
+import { agoLabel } from "./snapshot";
 import type {
   LostLeader,
   MissList,
@@ -111,6 +112,20 @@ export function validatorLabel(validator: MissValidator): string {
   return validator.name ?? shortKey(validator.identity);
 }
 
+/** When a delinquent validator last voted, in time where the slot time is known. */
+export function delinquentText(
+  lastVote: number | null,
+  slot: number | undefined,
+  slotNanos: number | undefined,
+): string {
+  if (lastVote === null) return "delinquent, never voted";
+  if (slot === undefined) return "delinquent";
+  const behind = Math.max(0, slot - lastVote);
+  const slots = `${count(behind)} ${behind === 1 ? "slot" : "slots"}`;
+  if (!slotNanos) return `delinquent, last vote ${slots} ago`;
+  return `delinquent, last vote ${agoLabel((behind * slotNanos) / 1e6)} (${slots})`;
+}
+
 export const LEFT_OUT_MOST = 3;
 
 /** Null where no certificate left out anybody else. */
@@ -123,7 +138,8 @@ export function leftOutMost(list: MissList): string | null {
     .slice(0, LEFT_OUT_MOST)
     .flatMap(([at, n]) => {
       const validator = list.validators[at];
-      return validator ? [`${validatorLabel(validator)} in ${count(n)}`] : [];
+      if (!validator) return [];
+      return [`${validatorLabel(validator)}${validator.delinquent ? " (delinquent)" : ""} in ${count(n)}`];
     });
   if (top.length === 0) return null;
   return `Left out beside us most: ${top.join(", ")}.`;

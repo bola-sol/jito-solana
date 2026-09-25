@@ -5233,6 +5233,15 @@ body {
   background: var(--text-faint);
 }
 
+.written-legend .misses-swatch.is-delinquent {
+  background: var(--bad);
+}
+
+.written-delinquent,
+.misses-out-delinquent {
+  color: var(--bad);
+}
+
 /* The rows fit the panel at any width the page allows, stacking where the columns cannot, so
    nothing scrolls sideways. */
 .written .misses-table {
@@ -5303,6 +5312,10 @@ body {
   background: var(--text-faint);
 }
 
+.written-gap > i.is-delinquent {
+  background: var(--bad);
+}
+
 .written-gap > b {
   position: absolute;
   top: -3px;
@@ -5346,6 +5359,11 @@ body {
 
   .written-row .misses-writer {
     grid-area: writer;
+  }
+
+  /* Wraps rather than cutting off a delinquent validator's last vote. */
+  .written-row .misses-writer > span {
+    white-space: normal;
   }
 
   .written-ours {

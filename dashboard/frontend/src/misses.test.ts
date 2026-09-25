@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  delinquentText,
   leaderLabel,
   leaderTurns,
   lostNote,
@@ -35,7 +36,13 @@ function list(
       certificates,
       misses,
     })),
-    validators: validators.map((name) => ({ identity: `${name}Key111111111111111`, name, ip: null })),
+    validators: validators.map((name) => ({
+      identity: `${name}Key111111111111111`,
+      name,
+      ip: null,
+      last_vote: 6_699_990,
+      delinquent: false,
+    })),
     rows: rows.map(([writer, others], index) => ({
       slot: 6_700_000 + index,
       time_millis: null,
@@ -58,6 +65,24 @@ describe("leftOutMost", () => {
 
   it("says nothing where every certificate left out only us", () => {
     expect(leftOutMost(list([[0, []], [0, []]], [["CaraSol", 2, 63]]))).toBeNull();
+  });
+
+  it("marks a delinquent validator", () => {
+    const misses = list([[0, [0]], [0, [0, 1]]], [["CaraSol", 2, 63]], ["Vyra", "Hamsa"]);
+    misses.validators[0].delinquent = true;
+    expect(leftOutMost(misses)).toBe("Left out beside us most: Vyra (delinquent) in 2, Hamsa in 1.");
+  });
+});
+
+describe("delinquentText", () => {
+  it("says when it last voted, in time where the slot time is known", () => {
+    expect(delinquentText(1_000, 19_240, 400_000_000)).toBe("delinquent, last vote 2h ago (18,240 slots)");
+    expect(delinquentText(1_000, 1_001, undefined)).toBe("delinquent, last vote 1 slot ago");
+  });
+
+  it("says so where it never voted or the slot is not known yet", () => {
+    expect(delinquentText(null, 19_240, 400_000_000)).toBe("delinquent, never voted");
+    expect(delinquentText(1_000, undefined, 400_000_000)).toBe("delinquent");
   });
 });
 

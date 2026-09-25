@@ -49,7 +49,7 @@ pub use self::certificates::{
 };
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
-    certificates::{CertificateWalk, Contacts},
+    certificates::{CertificateWalk, Contacts, LastVotes},
     skip_rate::SkipRateWalk,
     slot_clock::SlotClock,
 };
@@ -547,7 +547,7 @@ impl Collector {
             // the gossip lock.
             let peers = self.ctx.cluster_info.all_peers();
             self.collect_client();
-            self.collect_peers(&working_bank, &peers);
+            let votes = self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
@@ -558,7 +558,7 @@ impl Collector {
                 .iter()
                 .map(|(contact, _)| (*contact.pubkey(), contact))
                 .collect();
-            self.collect_miss_list(&working_bank, &heard);
+            self.collect_miss_list(&working_bank, &heard, &votes);
             if self.fill_certificates(&working_bank, &heard) {
                 self.publisher
                     .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
@@ -1501,7 +1501,8 @@ impl Collector {
             })
     }
 
-    fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
+    /// Returns each validator's stalest vote, which the certificate lists mark delinquency by.
+    fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) -> LastVotes {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
 
@@ -1552,6 +1553,7 @@ impl Collector {
             "versions",
             version_shares(&tally.staked, &versions),
         );
+        tally.stalest_votes
     }
 
     /// The icon is a third-party URL the client fetches itself.
@@ -1723,8 +1725,17 @@ fn classify_slot(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> Sl
 struct StakeTally {
     staked: HashMap<Pubkey, u64>,
     delinquent: HashSet<Pubkey>,
+    /// The oldest last vote among each validator's staked accounts, `None` where one never voted.
+    stalest_votes: LastVotes,
     delinquent_stake: u64,
     non_delinquent_stake: u64,
+}
+
+/// The cluster's rule: no vote yet, or the last one too far behind the tip.
+fn is_delinquent(last_vote: Option<Slot>, tip: Slot) -> bool {
+    last_vote
+        .map(|vote| tip.saturating_sub(vote) > DELINQUENT_VALIDATOR_SLOT_DISTANCE)
+        .unwrap_or(true)
 }
 
 fn tally_stake(
@@ -1737,10 +1748,7 @@ fn tally_stake(
         if stake == 0 {
             continue;
         }
-        let is_delinquent = last_vote
-            .map(|vote| tip.saturating_sub(vote) > DELINQUENT_VALIDATOR_SLOT_DISTANCE)
-            .unwrap_or(true);
-        if is_delinquent {
+        if is_delinquent(last_vote, tip) {
             tally.delinquent.insert(identity);
             tally.delinquent_stake = tally.delinquent_stake.saturating_add(stake);
         } else {
@@ -1748,6 +1756,9 @@ fn tally_stake(
         }
         let total = tally.staked.entry(identity).or_insert(0);
         *total = total.saturating_add(stake);
+        // `None` orders first, so an account that never voted stays the stalest.
+        let stalest = tally.stalest_votes.entry(identity).or_insert(last_vote);
+        *stalest = (*stalest).min(last_vote);
     }
     tally
 }
@@ -2024,6 +2035,35 @@ mod tests {
             1,
             "one slot past it is not"
         );
+    }
+
+    #[test]
+    fn test_a_validator_is_as_stale_as_its_stalest_account() {
+        let tally = tally_stake(
+            [
+                (identity(1), 100, Some(TIP)),
+                (identity(1), 100, Some(40)),
+                (identity(2), 100, Some(TIP)),
+                (identity(2), 100, None),
+                (identity(3), 100, Some(TIP)),
+            ]
+            .into_iter(),
+            TIP,
+        );
+        assert_eq!(tally.stalest_votes[&identity(1)], Some(40));
+        assert_eq!(
+            tally.stalest_votes[&identity(2)],
+            None,
+            "never voting is the stalest"
+        );
+        assert_eq!(tally.stalest_votes[&identity(3)], Some(TIP));
+        for (identity, last_vote) in &tally.stalest_votes {
+            assert_eq!(
+                is_delinquent(*last_vote, TIP),
+                tally.delinquent.contains(identity),
+                "the stalest vote decides as the tally does"
+            );
+        }
     }
 
     #[test]

@@ -8,7 +8,10 @@ export const WORSE_MIN = 10;
 
 export const MISSING_EVERYWHERE = 0.9;
 
-export type WrittenKind = "worse" | "missing";
+export type WrittenKind = "worse" | "missing" | "delinquent";
+
+/** The order the kinds are listed and counted in. */
+export const WRITTEN_KINDS: readonly WrittenKind[] = ["worse", "missing", "delinquent"];
 
 export interface WrittenFigure {
   row: WrittenRow;
@@ -27,25 +30,28 @@ export function writtenFigures(list: WrittenList): WrittenFigure[] {
   for (const row of list.rows) {
     const ours = written > 0 ? row.left_out_of_ours / written : null;
     const everywhere = list.rewarded > 0 ? row.left_out_everywhere / list.rewarded : null;
+    let kind: WrittenKind | null = null;
     if (everywhere !== null && everywhere >= MISSING_EVERYWHERE) {
-      figures.push({ row, ours, everywhere, kind: "missing" });
+      kind = "missing";
     } else if (
       ours !== null &&
       everywhere !== null &&
       row.left_out_of_ours >= WORSE_MIN &&
       ours - everywhere >= WORSE_BY
     ) {
-      figures.push({ row, ours, everywhere, kind: "worse" });
+      kind = "worse";
     }
+    // Not voting explains either, so it is named instead.
+    if (kind !== null) figures.push({ row, ours, everywhere, kind: row.delinquent ? "delinquent" : kind });
   }
   return figures.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "worse" ? -1 : 1;
+    if (a.kind !== b.kind) return WRITTEN_KINDS.indexOf(a.kind) - WRITTEN_KINDS.indexOf(b.kind);
     return a.kind === "worse" ? gap(b) - gap(a) : (b.everywhere ?? 0) - (a.everywhere ?? 0);
   });
 }
 
 export function writtenKinds(figures: WrittenFigure[]): Record<WrittenKind, number> {
-  const kinds: Record<WrittenKind, number> = { worse: 0, missing: 0 };
+  const kinds: Record<WrittenKind, number> = { worse: 0, missing: 0, delinquent: 0 };
   for (const figure of figures) kinds[figure.kind] += 1;
   return kinds;
 }

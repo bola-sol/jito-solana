@@ -844,8 +844,11 @@ body {
   color: var(--text-faint);
 }
 
+/* As wide as its grid, so the head's background and each row's border reach columns scrolled
+   into view, and the rows' containment does not clip them. */
 .misses-row {
   display: grid;
+  min-width: min-content;
   grid-template-columns: 8.5em 12.5em 5em minmax(14em, 1.4fr) 8em 7.5em 6.5em 15.5em;
   gap: 12px;
   align-items: baseline;
@@ -870,6 +873,18 @@ body {
 
 .misses-row.is-head > span {
   font-size: 12px;
+}
+
+/* A table long enough to page is held at full height and contained, so the layout each store
+   update causes stops at its edge; rows out of view skip layout too. */
+.misses-table.is-paged {
+  height: 416px;
+  contain: strict;
+}
+
+.misses-row:not(.is-head) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
 }
 
 .misses-slot .copyable,
@@ -968,6 +983,10 @@ body {
     gap: 3px 12px;
   }
 
+  .misses-row:not(.is-head) {
+    contain-intrinsic-size: auto 133px;
+  }
+
   .misses-row.is-head,
   .misses-ip {
     display: none;
@@ -975,6 +994,10 @@ body {
 
   .misses-table {
     max-height: 60vh;
+  }
+
+  .misses-table.is-paged {
+    height: 60vh;
   }
 
   .misses-hint {

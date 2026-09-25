@@ -72,6 +72,10 @@ the domain in the site block is the name to allow, and nothing else is needed.
   other validators leading the slots on screen. All of that is already public,
   since every node in the cluster holds it, but serving the page publishes it to
   anyone who can reach it.
+- The Gossip page lists every node this validator hears in gossip, with its
+  stake, client, gossip address, RPC port, start time and advertised snapshot
+  and lowest slots. Every node holds the same table, so none of it is private,
+  but the page gathers it in one place.
 - The machine card shows what is not on chain: the host's memory and the
   validator's share of it, each disk's device name and fill, the absolute paths
   of the ledger, accounts and snapshot directories (cut short on the card, in
@@ -148,7 +152,7 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation` |
+| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
 | `epoch`   | `new` |
 | `peers`   | `all` |
 | `slot`    | `overview`, `update`, `upcoming` |
@@ -157,8 +161,9 @@ A client can also send a request carrying an `id`, and the reply goes back to
 that `id` alone: `summary.ping`, `summary.displays` for the whole name table,
 `summary.misses` for the epoch's unrewarded votes one a row, `summary.written`
 for what this node's own certificates left out per validator,
-`epoch.query` for a held epoch's schedule, and `slot.range` for a run of slots
-out of the packed history.
+`epoch.query` for a held epoch's schedule, `slot.range` for a run of slots
+out of the packed history, and `peers.gossip` for every node in gossip, which
+the server gathers only while it is being asked for.
 
 A client that offers the `deflate` websocket subprotocol is sent every message
 of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the

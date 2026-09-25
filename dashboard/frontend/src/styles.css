@@ -539,7 +539,7 @@ body {
 }
 
 /* Four across where four fit, else two, else one: never three, which leaves
-   one card alone on the row below. */
+   one card alone on the row below. Narrower than one card, the card takes the width. */
 .grid {
   --card-min: 300px;
   --four-across: calc(4 * var(--card-min) + 3 * var(--gap));
@@ -547,7 +547,7 @@ body {
   grid-template-columns: repeat(
     auto-fit,
     minmax(
-      max(var(--card-min), min((100% - var(--gap)) / 2, (var(--four-across) - 100%) * 999)),
+      max(min(100%, var(--card-min)), min((100% - var(--gap)) / 2, (var(--four-across) - 100%) * 999)),
       1fr
     )
   );
@@ -4374,6 +4374,22 @@ body {
 
 .ingest-total {
   color: var(--text-faint);
+}
+
+/* A phone leaves the name no room beside the figures, so it takes a line of its own. */
+@media (max-width: 360px) {
+  .ingest-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 2px;
+  }
+
+  .ingest-name {
+    grid-column: 1 / -1;
+  }
+
+  .ingest-row.is-head > :first-child {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {

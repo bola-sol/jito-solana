@@ -6,13 +6,13 @@ import {
   FIRST_SORT,
   gossipPeers,
   gossipVerdict,
-  ledgerText,
+  ledgerParts,
   matchesSearch,
   nextSort,
   rate,
-  snapshotText,
+  snapshotParts,
   sortPeers,
-  span,
+  spanParts,
   stakeText,
   timeParts,
   type PeerColumn,
@@ -106,21 +106,28 @@ describe("sortPeers", () => {
 
 describe("text", () => {
   it("keeps a span to two units", () => {
-    expect(span(74_000)).toBe("74 s");
-    expect(span(840_000)).toBe("14 min");
-    expect(span(19 * 3_600_000)).toBe("19 h");
-    expect(span((6 * 24 + 3) * 3_600_000)).toBe("6 d 3 h");
-    expect(span(41 * 86_400_000)).toBe("41 d");
-    expect(span(undefined)).toBe("—");
+    const text = (millis: number | undefined) => spanParts(millis)?.map((part) => `${part.value}${part.unit}`).join(" ");
+    expect(text(74_000)).toBe("74s");
+    expect(text(840_000)).toBe("14min");
+    expect(text(19 * 3_600_000)).toBe("19h");
+    expect(text((6 * 24 + 3) * 3_600_000)).toBe("6d 3h");
+    expect(text(41 * 86_400_000)).toBe("41d");
+    expect(spanParts(undefined)).toBeNull();
   });
 
   it("describes snapshots and ledger depth", () => {
-    expect(snapshotText(PEERS[0])).toBe("full 3,812 · inc 42");
-    expect(snapshotText(PEERS[1])).toBe("full 3,812 · none");
-    expect(snapshotText(PEERS[2])).toBe("—");
-    expect(ledgerText(1_000, 400)).toBe("6 min");
-    expect(ledgerText(1_000, null)).toBe("1,000 slots");
-    expect(ledgerText(null, 400)).toBe("—");
+    expect(snapshotParts(PEERS[0])).toEqual([
+      { label: "full", value: "3,812" },
+      { label: "inc", value: "42" },
+    ]);
+    expect(snapshotParts(PEERS[1])).toEqual([
+      { label: "full", value: "3,812" },
+      { label: "inc", value: null },
+    ]);
+    expect(snapshotParts(PEERS[2])).toBeNull();
+    expect(ledgerParts(1_000, 400)).toEqual([{ value: "6", unit: "min" }]);
+    expect(ledgerParts(1_000, null)).toEqual([{ value: "1,000", unit: " slots" }]);
+    expect(ledgerParts(null, 400)).toBeNull();
   });
 
   it("keeps two decimals of stake under one SOL", () => {

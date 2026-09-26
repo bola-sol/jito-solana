@@ -177,30 +177,42 @@ export function stakeText(lamports: number): string {
   return sol(lamports, lamports > 0 && lamports < 1e9 ? 2 : 0);
 }
 
-/** At most two units, for a table column; seconds up to two minutes, where a missed refresh shows. */
-export function span(millis: number | null | undefined): string {
-  if (millis === null || millis === undefined || !Number.isFinite(millis) || millis < 0) return "—";
-  const seconds = Math.floor(millis / 1000);
-  if (seconds < 120) return `${seconds} s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} h`;
-  const days = Math.floor(hours / 24);
-  const rest = hours % 24;
-  return days < 10 && rest > 0 ? `${days} d ${rest} h` : `${days} d`;
+/** A figure and its unit, drawn apart so the unit can be dimmed. */
+export interface Part {
+  value: string;
+  unit: string;
 }
 
-export function snapshotText(peer: GossipPeer): string {
-  if (peer.full === null) return peer.incremental === null ? "—" : `inc ${count(peer.incremental)}`;
-  return `full ${count(peer.full)} · ${peer.incremental === null ? "none" : `inc ${count(peer.incremental)}`}`;
+/** At most two units, for a table column; seconds up to two minutes, where a missed refresh shows. */
+export function spanParts(millis: number | null | undefined): Part[] | null {
+  if (millis === null || millis === undefined || !Number.isFinite(millis) || millis < 0) return null;
+  const part = (value: number, unit: string) => ({ value: String(value), unit });
+  const seconds = Math.floor(millis / 1000);
+  if (seconds < 120) return [part(seconds, "s")];
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return [part(minutes, "min")];
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return [part(hours, "h")];
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  return days < 10 && rest > 0 ? [part(days, "d"), part(rest, "h")] : [part(days, "d")];
 }
 
 /** As a time at the slot rate we observe, or in slots without one. */
-export function ledgerText(slots: number | null, slotMillis: number | null | undefined): string {
-  if (slots === null) return "—";
-  if (!slotMillis) return `${count(slots)} slots`;
-  return span(slots * slotMillis);
+export function ledgerParts(slots: number | null, slotMillis: number | null | undefined): Part[] | null {
+  if (slots === null) return null;
+  if (!slotMillis) return [{ value: count(slots), unit: " slots" }];
+  return spanParts(slots * slotMillis);
+}
+
+/** Labelled figures, each label ahead of its figure; an empty value reads as none. */
+export function snapshotParts(peer: GossipPeer): { label: string; value: string | null }[] | null {
+  const incremental = peer.incremental === null ? null : count(peer.incremental);
+  if (peer.full === null) return incremental === null ? null : [{ label: "inc", value: incremental }];
+  return [
+    { label: "full", value: count(peer.full) },
+    { label: "inc", value: incremental },
+  ];
 }
 
 /** Whole numbers from ten up; below that one decimal, so a trickle is not shown as nothing. */

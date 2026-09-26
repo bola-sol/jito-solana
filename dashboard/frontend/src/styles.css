@@ -5708,21 +5708,63 @@ body {
   color: var(--text);
 }
 
+/* Figures in full colour and their units dimmed, with room between columns, so neighbouring
+   figures do not read as one. */
+.gossip-table.is-peers td.is-num {
+  color: var(--text);
+}
+
+.gossip-table.is-peers td.tone-warn {
+  color: var(--warn);
+}
+
+.gossip-table.is-peers th.is-num:not(:first-child),
+.gossip-table.is-peers td.is-num:not(:first-child) {
+  padding-left: 20px;
+}
+
+.gossip-unit {
+  margin-left: 1px;
+  color: var(--text-faint);
+}
+
+.gossip-table td.tone-warn .gossip-unit {
+  color: inherit;
+}
+
+/* The name column takes what the others leave, so a long name is cut before the table scrolls. */
+.gossip-table.is-peers .is-name {
+  width: 100%;
+  max-width: 0;
+  min-width: 9em;
+}
+
 .gossip-who {
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
 
-.gossip-who > span {
+.gossip-name {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
   color: var(--text);
 }
 
-.gossip-who > span.is-dim {
+.gossip-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gossip-name-text.is-dim {
   color: var(--text-faint);
 }
 
 .gossip-ours {
+  flex: none;
   margin-left: 6px;
   font-size: 11px;
   color: var(--ours);

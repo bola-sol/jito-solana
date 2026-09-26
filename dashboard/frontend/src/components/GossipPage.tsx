@@ -8,20 +8,21 @@ import {
   gossipPeers,
   gossipVerdict,
   inFilter,
-  ledgerText,
+  ledgerParts,
   matchesSearch,
   MESSAGE_LABELS,
   nextSort,
   PEER_FILTERS,
   rate,
   SILENT_MILLIS,
-  snapshotText,
+  snapshotParts,
   sortPeers,
-  span,
+  spanParts,
   stakeText,
   timeParts,
   type EntryRow,
   type GossipPeer,
+  type Part,
   type PeerColumn,
   type PeerFilter,
   type PeerSort,
@@ -448,7 +449,7 @@ const PeersTable = memo(function PeersTable({
               return (
                 <th
                   key={heading.column}
-                  className={heading.numeric ? "is-num" : undefined}
+                  className={heading.numeric ? "is-num" : heading.column === "name" ? "is-name" : undefined}
                   aria-sort={order}
                 >
                   <button type="button" className="gossip-sort" onClick={() => onSort(heading.column)}>
@@ -499,10 +500,12 @@ const PeerLine = memo(function PeerLine({
   return (
     <tr className={ours ? "is-ours" : undefined}>
       <td className="is-num">{stakeText(peer.stake)}</td>
-      <td>
+      <td className="is-name">
         <div className="gossip-who">
-          <span className={peer.name ? undefined : "is-dim"}>
-            {peer.name ?? "unnamed"}
+          <span className="gossip-name">
+            <span className={`gossip-name-text${peer.name ? "" : " is-dim"}`} title={peer.name ?? undefined}>
+              {peer.name ?? "unnamed"}
+            </span>
             {ours && <span className="gossip-ours">ours</span>}
           </span>
           <Copyable text={peer.identity} label={shortKey(peer.identity, 4, 4)} className="gossip-key" />
@@ -511,10 +514,49 @@ const PeerLine = memo(function PeerLine({
       <td>{peer.client || "—"}</td>
       <td className="is-mono">{peer.ip ? <Copyable text={peer.ip} /> : "—"}</td>
       <td className="is-num">{peer.rpc ?? "—"}</td>
-      <td className={`is-num${peer.heardAgo > SILENT_MILLIS ? " tone-warn" : ""}`}>{span(peer.heardAgo)}</td>
-      <td className="is-num">{peer.started > 0 ? span(now - peer.started) : "—"}</td>
-      <td className="is-num">{snapshotText(peer)}</td>
-      <td className="is-num">{ledgerText(peer.ledger, slotMillis)}</td>
+      <td className={`is-num${peer.heardAgo > SILENT_MILLIS ? " tone-warn" : ""}`}>
+        <Parts parts={spanParts(peer.heardAgo)} />
+      </td>
+      <td className="is-num">
+        <Parts parts={peer.started > 0 ? spanParts(now - peer.started) : null} />
+      </td>
+      <td className="is-num">
+        <SnapshotAges peer={peer} />
+      </td>
+      <td className="is-num">
+        <Parts parts={ledgerParts(peer.ledger, slotMillis)} />
+      </td>
     </tr>
   );
 });
+
+function Parts({ parts }: { parts: Part[] | null }) {
+  if (parts === null) return <>—</>;
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={index}>
+          {index > 0 && " "}
+          {part.value}
+          <span className="gossip-unit">{part.unit}</span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+function SnapshotAges({ peer }: { peer: GossipPeer }) {
+  const parts = snapshotParts(peer);
+  if (parts === null) return <>—</>;
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={part.label}>
+          {index > 0 && <span className="gossip-unit"> · </span>}
+          <span className="gossip-unit">{part.label} </span>
+          {part.value ?? <span className="gossip-unit">none</span>}
+        </span>
+      ))}
+    </>
+  );
+}

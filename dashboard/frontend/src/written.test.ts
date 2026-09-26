@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { WrittenList, WrittenRow } from "./types";
-import { writtenFigures, writtenKinds, writtenLine } from "./written";
+import type { MissList, MissPlace, MissRow, MissWriter, WrittenList, WrittenRow } from "./types";
+import {
+  averageLeftOut,
+  leftUsOutLine,
+  NO_GOSSIP_AFTER_MILLIS,
+  writerFigures,
+  writerKinds,
+  writtenFigures,
+  writtenKinds,
+  writtenLine,
+} from "./written";
 
 function row(identity: string, ours: number, everywhere: number, delinquent = false, noGossip = false): WrittenRow {
   return {
@@ -83,5 +92,71 @@ describe("the written figures", () => {
 
   it("words the line", () => {
     expect(writtenLine(list(4312, 4140, []))).toBe("4,312 written · 96.0% carried everyone");
+  });
+});
+
+function writer(identity: string, certificates: number, misses: number): MissWriter {
+  return { identity, name: null, client: null, version: null, ip: null, certificates, misses };
+}
+
+function misses(writers: MissWriter[], places: [number, MissPlace][], rewarded: number): MissList {
+  const rows: MissRow[] = places.map(([at, place], slot) => ({
+    slot,
+    time_millis: null,
+    place,
+    paid_ranks: 0,
+    others: [],
+    writer: at,
+    vote: null,
+  }));
+  return {
+    epoch: 1,
+    since_slot: 0,
+    rewarded,
+    ranks: 10,
+    writers,
+    validators: [],
+    rows,
+    written: list(0, 0, []),
+  };
+}
+
+const NOW = 1_790_000_000_000;
+
+describe("the writer figures", () => {
+  // 40 of 1,000 left us out: 4% on average.
+  const writers = [writer("far", 50, 25), writer("near", 100, 8), writer("few", 20, 9), writer("some", 100, 12)];
+  const places: [number, MissPlace][] = [
+    ...Array.from({ length: 25 }, (_, i): [number, MissPlace] => [0, i < 20 ? "lost" : "late"]),
+    ...Array.from({ length: 8 }, (): [number, MissPlace] => [1, "lost"]),
+    ...Array.from({ length: 7 }, (): [number, MissPlace] => [3, "late"]),
+  ];
+  const list40 = misses(writers, places, 1_000);
+  const everyoneHeard = () => NOW;
+
+  it("averages over every certificate read", () => {
+    expect(averageLeftOut(list40)).toBeCloseTo(0.04);
+    expect(leftUsOutLine(list40)).toBe("40 of 1,000 left us out · 4.0% on average");
+    expect(averageLeftOut(misses([], [], 0))).toBeNull();
+  });
+
+  it("keeps writers ten times and five points above the average, widest first", () => {
+    const figures = writerFigures(list40, everyoneHeard, NOW);
+    // near is under five points above, few under ten times.
+    expect(figures.map((figure) => [figure.writer.identity, figure.lost])).toEqual([
+      ["far", 20],
+      ["some", 0],
+    ]);
+    expect(figures[0].share).toBeCloseTo(0.5);
+    expect(figures[1].kind).toBe("worse");
+  });
+
+  it("names a writer gone from gossip once the peer list is in, listed last", () => {
+    const heard = (identity: string) =>
+      identity === "far" ? null : identity === "some" ? NOW - NO_GOSSIP_AFTER_MILLIS - 1 : NOW;
+    const figures = writerFigures(list40, heard, NOW);
+    expect(figures.map((figure) => figure.kind)).toEqual(["no-gossip", "no-gossip"]);
+    expect(writerKinds(figures)).toEqual({ worse: 0, "no-gossip": 2 });
+    expect(writerFigures(list40, () => undefined, NOW).map((figure) => figure.kind)).toEqual(["worse", "worse"]);
   });
 });

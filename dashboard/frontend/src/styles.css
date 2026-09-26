@@ -5225,10 +5225,41 @@ body {
   }
 }
 
-/* ---- our certificates, above the schedule ---- */
+/* ---- our certificates, on the Gossip page ---- */
 
 .written {
   gap: 8px;
+}
+
+.written-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 12.5px;
+}
+
+.written-top > b {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.written-find {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.written-find:hover {
+  text-decoration: underline;
+}
+
+.written-find:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .written-head {

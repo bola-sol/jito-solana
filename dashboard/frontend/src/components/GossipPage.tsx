@@ -26,9 +26,11 @@ import {
   type PeerFilter,
   type PeerSort,
 } from "../gossip";
+import { useAlpenglow } from "../consensus";
 import { unitFor } from "../network";
 import type { Gossip, GossipPeers } from "../types";
 import { useStore } from "../useStore";
+import { CertificatesSection } from "./CertificatesSection";
 import { Copyable } from "./Copyable";
 import { Card, Meter, Stat } from "./primitives";
 
@@ -38,6 +40,8 @@ const POLL_MS = 5_000;
 const FIRST_POLL_MS = 1_000;
 
 const ROWS_PER_PAGE = 200;
+
+const PEER_SEARCH_ID = "gossip-peer-search";
 
 export function GossipPage({ query, onQuery }: { query: string; onQuery: (query: string) => void }): ReactElement {
   const store = useStore();
@@ -50,6 +54,13 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
   const slotMillis = slotNanos ? Math.round(slotNanos / 1e7) * 10 : null;
   const list = useGossipPeers();
   const verdict = gossipVerdict(gossip, list);
+  const alpenglow = useAlpenglow();
+  const [filter, setFilter] = useState<PeerFilter>("all");
+  const findInPeers = (identity: string) => {
+    setFilter("all");
+    onQuery(identity);
+    document.getElementById(PEER_SEARCH_ID)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
 
   return (
     <>
@@ -69,7 +80,16 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
           </div>
         </>
       )}
-      <PeersCard list={list} query={query} onQuery={onQuery} ours={ours} slotMillis={slotMillis} />
+      {alpenglow && <CertificatesSection peers={list} onFind={findInPeers} />}
+      <PeersCard
+        list={list}
+        query={query}
+        onQuery={onQuery}
+        filter={filter}
+        onFilter={setFilter}
+        ours={ours}
+        slotMillis={slotMillis}
+      />
     </>
   );
 }
@@ -293,16 +313,19 @@ function PeersCard({
   list,
   query,
   onQuery,
+  filter,
+  onFilter,
   ours,
   slotMillis,
 }: {
   list: GossipPeers | null;
   query: string;
   onQuery: (query: string) => void;
+  filter: PeerFilter;
+  onFilter: (filter: PeerFilter) => void;
   ours: string | null;
   slotMillis: number | null;
 }) {
-  const [filter, setFilter] = useState<PeerFilter>("all");
   const [sort, setSort] = useState<PeerSort>(FIRST_SORT);
   const onSort = useCallback((column: PeerColumn) => setSort((was) => nextSort(was, column)), []);
   // Read when the list arrives, so the filters and the table agree until the next one.
@@ -336,7 +359,7 @@ function PeersCard({
               type="button"
               className="gossip-chip"
               aria-pressed={filter === entry.filter}
-              onClick={() => setFilter(entry.filter)}
+              onClick={() => onFilter(entry.filter)}
             >
               {entry.label}
               <b>{list ? count(counts[entry.filter]) : "—"}</b>
@@ -344,6 +367,7 @@ function PeersCard({
           ))}
         </div>
         <input
+          id={PEER_SEARCH_ID}
           type="search"
           className="schedule-search"
           value={query}

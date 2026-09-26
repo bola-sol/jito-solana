@@ -24,7 +24,6 @@ import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
 import { SlotLink } from "./SlotLink";
-import { WrittenSection } from "./WrittenSection";
 
 const OLDER_SPAN = 512;
 
@@ -98,7 +97,6 @@ export function SchedulePage({
   const [loading, setLoading] = useState(false);
   const [exhausted, setExhausted] = useState(false);
   const slots = useMemo(() => [...older, ...live], [older, live]);
-  const alpenglow = useAlpenglow();
 
   // The entry eight back carries a slot's certificate.
   const deepBySlot = useMemo(
@@ -211,7 +209,6 @@ export function SchedulePage({
         </div>
       </div>
 
-      {alpenglow && <WrittenSection />}
 
       <div className="schedule-list" ref={list}>
         <ScrollTop scroller={list} />

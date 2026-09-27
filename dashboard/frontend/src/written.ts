@@ -1,6 +1,7 @@
 
 import { count, percent } from "./format";
-import type { MissList, MissWriter, WrittenList, WrittenRow } from "./types";
+import { MISS_PLACES } from "./misses";
+import type { MissList, MissPlace, MissWriter, WrittenList, WrittenRow } from "./types";
 
 export const WORSE_BY = 0.05;
 
@@ -78,8 +79,8 @@ export interface WriterFigure {
   writer: MissWriter;
   /** Its certificates that left us out, over all it wrote. */
   share: number;
-  /** Of those, the ones placed lost. */
-  lost: number;
+  /** Why its certificates left us out, most common first. */
+  causes: { place: MissPlace; count: number }[];
   kind: WriterKind;
   /** When this node last heard it over gossip; null where it is not in the table. */
   heardMillis: number | null;
@@ -99,9 +100,12 @@ export function writerFigures(
 ): WriterFigure[] {
   const average = averageLeftOut(list);
   if (average === null) return [];
-  const lost = new Map<number, number>();
+  const places = new Map<number, Map<MissPlace, number>>();
   for (const row of list.rows) {
-    if (row.writer !== null && row.place === "lost") lost.set(row.writer, (lost.get(row.writer) ?? 0) + 1);
+    if (row.writer === null) continue;
+    const counts = places.get(row.writer) ?? new Map<MissPlace, number>();
+    counts.set(row.place, (counts.get(row.place) ?? 0) + 1);
+    places.set(row.writer, counts);
   }
   const figures: WriterFigure[] = [];
   list.writers.forEach((writer, index) => {
@@ -113,7 +117,10 @@ export function writerFigures(
     figures.push({
       writer,
       share,
-      lost: lost.get(index) ?? 0,
+      causes: MISS_PLACES.flatMap((place) => {
+        const count = places.get(index)?.get(place) ?? 0;
+        return count > 0 ? [{ place, count }] : [];
+      }).sort((a, b) => b.count - a.count),
       kind: quiet ? "no-gossip" : "worse",
       heardMillis: heardMillis ?? null,
     });
@@ -133,4 +140,14 @@ export function leftUsOutLine(list: MissList): string {
   const average = averageLeftOut(list);
   if (average === null) return "none read yet this epoch";
   return `${count(list.rows.length)} of ${count(list.rewarded)} left us out · ${percent(average, 1)} on average`;
+}
+
+/** Why a validator is on our side's list. */
+export const WRITTEN_RULE =
+  `Listed: validators our certificates left out at least ${WORSE_MIN} times and at least ${WORSE_BY * 100} points more often than all certificates did, and those left out of ${MISSING_EVERYWHERE * 100}% or more of all certificates. Delinquent and no gossip say why.`;
+
+/** Why a writer is on the other side's list. */
+export function leftUsOutRule(average: number | null): string {
+  const than = average === null ? "the average" : `our ${percent(average, 1)} average`;
+  return `Listed: writers whose certificates left us out at least ${WORSE_MIN} times and at least ${WORSE_BY * 100} points more often than ${than}. Cause is why, most common first.`;
 }

@@ -3,6 +3,7 @@ import type { MissList, MissPlace, MissRow, MissWriter, WrittenList, WrittenRow 
 import {
   averageLeftOut,
   leftUsOutLine,
+  leftUsOutRule,
   NO_GOSSIP_AFTER_MILLIS,
   writerFigures,
   writerKinds,
@@ -138,14 +139,23 @@ describe("the writer figures", () => {
     expect(averageLeftOut(list40)).toBeCloseTo(0.04);
     expect(leftUsOutLine(list40)).toBe("40 of 1,000 left us out · 4.0% on average");
     expect(averageLeftOut(misses([], [], 0))).toBeNull();
+    expect(leftUsOutRule(0.04)).toBe(
+      "Listed: writers whose certificates left us out at least 10 times and at least 5 points more often than our 4.0% average. Cause is why, most common first.",
+    );
   });
 
   it("keeps writers ten times and five points above the average, widest first", () => {
     const figures = writerFigures(list40, everyoneHeard, NOW);
     // near is under five points above, few under ten times.
-    expect(figures.map((figure) => [figure.writer.identity, figure.lost])).toEqual([
-      ["far", 20],
-      ["some", 0],
+    expect(figures.map((figure) => [figure.writer.identity, figure.causes])).toEqual([
+      [
+        "far",
+        [
+          { place: "lost", count: 20 },
+          { place: "late", count: 5 },
+        ],
+      ],
+      ["some", [{ place: "late", count: 7 }]],
     ]);
     expect(figures[0].share).toBeCloseTo(0.5);
     expect(figures[1].kind).toBe("worse");

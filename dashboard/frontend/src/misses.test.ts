@@ -241,6 +241,9 @@ describe("placeExplain", () => {
     expect(placeExplain("thin", { ...participation(0, []), thin_below: null })).toBe(
       "The certificate paid at least a tenth fewer validators than this epoch's typical certificate.",
     );
+    expect(placeExplain("thin", null)).toBe(
+      "The certificate paid at least a tenth fewer validators than this epoch's typical certificate.",
+    );
   });
 
   it("gives each place a sentence", () => {

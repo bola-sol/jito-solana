@@ -202,7 +202,8 @@ const MissesTable = memo(function MissesTable({
   );
 });
 
-function Hinted({
+/** Shows its hint in a line the caller holds, since a scrolling table clips a bubble. */
+export function Hinted({
   hint,
   onHint,
   onPress,

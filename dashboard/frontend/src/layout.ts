@@ -32,6 +32,17 @@ export function writeBalancesHidden(hidden: boolean): void {
   writeStored(BALANCES_STORAGE_KEY, hidden ? "hidden" : "shown");
 }
 
+/** The certificates panel's list, closed until the viewer opens it. */
+export const CERTIFICATES_STORAGE_KEY = "agave-dashboard-certificates";
+
+export function readCertificatesOpen(): boolean {
+  return readStored(CERTIFICATES_STORAGE_KEY) === "open";
+}
+
+export function writeCertificatesOpen(open: boolean): void {
+  writeStored(CERTIFICATES_STORAGE_KEY, open ? "open" : "closed");
+}
+
 export const FOLDED_STORAGE_KEY = "agave-dashboard-folded";
 
 export function readFolded(): string[] {

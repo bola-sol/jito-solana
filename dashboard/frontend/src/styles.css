@@ -718,27 +718,33 @@ body {
   vertical-align: -0.5px;
 }
 
-.misses .is-boundary {
+.misses .is-boundary,
+.written-causes .is-boundary {
   background: var(--part-1);
 }
 
-.misses .is-leader {
+.misses .is-leader,
+.written-causes .is-leader {
   background: var(--part-2);
 }
 
-.misses .is-snapshot {
+.misses .is-snapshot,
+.written-causes .is-snapshot {
   background: var(--part-5);
 }
 
-.misses .is-thin {
+.misses .is-thin,
+.written-causes .is-thin {
   background: var(--path-3);
 }
 
-.misses .is-late {
+.misses .is-late,
+.written-causes .is-late {
   background: var(--part-4);
 }
 
-.misses .is-lost {
+.misses .is-lost,
+.written-causes .is-lost {
   background: var(--path-4);
 }
 
@@ -5242,6 +5248,48 @@ body {
 .written-top > b {
   font-weight: 500;
   color: var(--text);
+}
+
+/* The rule and a hovered cause's description share one cell, so the table does not move. */
+.written-rule {
+  display: grid;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+.written-rule > span {
+  grid-area: 1 / 1;
+}
+
+.written-rule > .is-held {
+  visibility: hidden;
+}
+
+.written-missing {
+  color: var(--text-dim);
+}
+
+.written-causes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.written-cause {
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+
+.written-cause b {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.written-cause .misses-swatch {
+  margin-right: 5px;
 }
 
 .written-find {

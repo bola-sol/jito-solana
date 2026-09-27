@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { buildLabel, count, percent, shortKey } from "../format";
 import type { Requests } from "../store";
-import type { GossipPeers } from "../types";
+import type { GossipPeers, MissPlace } from "../types";
+import { readCertificatesOpen, writeCertificatesOpen } from "../layout";
 import { useStore } from "../useStore";
-import { delinquentText, noGossipText } from "../misses";
+import { delinquentText, noGossipText, placeExplain } from "../misses";
 import {
   averageLeftOut,
   leftUsOutLine,
+  leftUsOutRule,
   WRITER_KINDS,
   writerFigures,
   writerKinds,
@@ -14,12 +16,14 @@ import {
   writtenFigures,
   writtenKinds,
   writtenLine,
+  WRITTEN_RULE,
   type WriterFigure,
   type WriterKind,
   type WrittenFigure,
   type WrittenKind,
 } from "../written";
 import { Copyable } from "./Copyable";
+import { Hinted } from "./MissesPanel";
 import { WriterName } from "./WriterName";
 
 /** The validator rebuilds both lists every five seconds. */
@@ -71,8 +75,12 @@ export function CertificatesSection({
   onFind: (identity: string) => void;
 }): ReactElement {
   const [side, setSide] = useState<Side>("ours");
-  const [open, setOpen] = useState(false);
-  const toggle = useCallback(() => setOpen((was) => !was), []);
+  const [open, setOpen] = useState(readCertificatesOpen);
+  const toggle = useCallback(() => {
+    const next = !open;
+    setOpen(next);
+    writeCertificatesOpen(next);
+  }, [open]);
 
   return (
     <section className="misses-panel written" aria-label="Certificates this epoch">
@@ -180,6 +188,7 @@ function OursSide({
           </button>
         )}
       </div>
+      {list !== null && <Rule text={WRITTEN_RULE} hint={null} />}
       {open && list !== null && figures.length > 0 && (
         <div className="misses-table">
           <div className="written-row is-head">
@@ -243,7 +252,13 @@ function WrittenRowView({
               <span className="written-delinquent">{delinquentText(row.last_vote, slot, slotNanos)}</span>
             </>
           )}
-          {!row.no_gossip && !row.delinquent && build && ` · ${build}`}
+          {kind === "missing" && (
+            <>
+              {" · "}
+              <span className="written-missing">missing everywhere</span>
+            </>
+          )}
+          {kind === "worse" && build && ` · ${build}`}
           <FindInPeers identity={row.identity} onFind={onFind} />
         </span>
       </span>
@@ -269,8 +284,11 @@ function TheirsSide({
   onToggle: () => void;
   onFind: (identity: string) => void;
 }) {
+  const store = useStore();
+  const participation = store.get("summary", "vote_participation");
   const { value: list, failed } = usePolled("summary.misses");
   const [filter, setFilter] = useState<WriterKind | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
   // Unknown until the peer list is in, so nobody is called gone from gossip before it is read.
   const heard = useMemo(() => {
     if (!peers) return () => undefined;
@@ -312,6 +330,7 @@ function TheirsSide({
           </button>
         )}
       </div>
+      {list !== null && <Rule text={leftUsOutRule(average)} hint={hint} />}
       {open && list !== null && figures.length > 0 && (
         <div className="misses-table">
           <div className="written-row is-head">
@@ -319,13 +338,18 @@ function TheirsSide({
             <span>ip</span>
             <span title="Its certificates this epoch that did not pay us.">left us out</span>
             <span>share</span>
-            <span title="Of those, the ones not explained by the epoch's start, our slot, a snapshot, a thin certificate or our late replay.">
-              lost
-            </span>
+            <span>cause</span>
             <span title="Its share as a bar, our average over every certificate as the mark.">against our average</span>
           </div>
           {shown.map((figure) => (
-            <WriterRowView key={figure.writer.identity} figure={figure} average={average} onFind={onFind} />
+            <WriterRowView
+              key={figure.writer.identity}
+              figure={figure}
+              average={average}
+              explain={(place) => placeExplain(place, participation)}
+              onHint={setHint}
+              onFind={onFind}
+            />
           ))}
         </div>
       )}
@@ -336,13 +360,17 @@ function TheirsSide({
 function WriterRowView({
   figure,
   average,
+  explain,
+  onHint,
   onFind,
 }: {
   figure: WriterFigure;
   average: number | null;
+  explain: (place: MissPlace) => string;
+  onHint: (hint: string | null) => void;
   onFind: (identity: string) => void;
 }) {
-  const { writer, share, lost, kind, heardMillis } = figure;
+  const { writer, share, causes, kind, heardMillis } = figure;
   const build = buildLabel(writer.client ?? undefined, writer.version ?? undefined);
   return (
     <div className="written-row">
@@ -366,7 +394,17 @@ function WriterRowView({
         {count(writer.misses)} of {count(writer.certificates)}
       </span>
       <span className="written-share">{percent(share, 1)}</span>
-      <span className="written-all">{count(lost)} lost</span>
+      <span className="written-all written-causes">
+        {causes.slice(0, 2).map((cause) => (
+          <Hinted key={cause.place} className="written-cause" hint={explain(cause.place)} onHint={onHint}>
+            {/* One child, so the trigger's flex layout keeps the space before the count. */}
+            <span>
+              <i className={`misses-swatch is-${cause.place}`} />
+              {cause.place} <b>{count(cause.count)}</b>
+            </span>
+          </Hinted>
+        ))}
+      </span>
       <Against share={share} mark={average} bar={kind === "no-gossip" ? "is-no-gossip" : undefined} />
     </div>
   );
@@ -389,5 +427,15 @@ function Against({ share, mark, bar }: { share: number | null; mark: number | nu
       <i className={bar} style={{ width: `${Math.min(100, (share ?? 0) * 100)}%` }} />
       <b style={{ left: `clamp(0px, calc(${Math.min(100, (mark ?? 0) * 100)}% - 1px), calc(100% - 2px))` }} />
     </span>
+  );
+}
+
+/** The rule for the list, or a hovered cause's description in its place, held at the taller of the two. */
+function Rule({ text, hint }: { text: string; hint: string | null }) {
+  return (
+    <p className="written-rule">
+      <span className={hint === null ? undefined : "is-held"}>{text}</span>
+      {hint !== null && <span>{hint}</span>}
+    </p>
   );
 }

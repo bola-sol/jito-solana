@@ -60,11 +60,11 @@ export function missTotal(misses: Misses): number {
   return MISS_PLACES.reduce((total, place) => total + misses[place], 0);
 }
 
-export function placeExplain(place: MissPlace, participation: VoteParticipation): string {
+export function placeExplain(place: MissPlace, participation: VoteParticipation | null | undefined): string {
   const text = PLACE_EXPLAIN[place];
   if (place !== "thin") return text;
+  if (!participation || participation.thin_below === null) return `${text}.`;
   const { thin_below, ranks } = participation;
-  if (thin_below === null) return `${text}.`;
   return `${text}, now under ${count(thin_below)} of ${count(ranks)}.`;
 }
 

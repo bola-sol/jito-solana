@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  followingRun,
   certificateAt,
   certificateText,
   certificateTitle,
@@ -213,5 +214,23 @@ describe("the certificate column", () => {
     expect(certificateText(null)).toEqual(["—", "unknown"]);
     expect(certificateText(undefined)).toEqual(["—", "unknown"]);
     expect(certificateTitle(7)).toContain("left out 7");
+  });
+});
+
+describe("followingRun", () => {
+  it("skips the turns back to back with the next one", () => {
+    const slots = [100, 101, 102, 103, 104, 105, 106, 107, 500, 501, 502, 503, 900, 901, 902, 903];
+    expect(followingRun(slots, 100)).toBe(500);
+    expect(followingRun(slots, 500)).toBe(900);
+  });
+
+  it("finds the run from a slot inside or before it", () => {
+    expect(followingRun([100, 101, 102, 103, 500, 501], 102)).toBe(500);
+    expect(followingRun([100, 101, 102, 103, 500, 501], 40)).toBe(500);
+  });
+
+  it("has nothing after the epoch's last run", () => {
+    expect(followingRun([100, 101, 102, 103], 100)).toBeNull();
+    expect(followingRun([100, 101], 200)).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 import { count, duration, percent } from "../format";
+import { followingRun } from "../schedule";
 import { agoLabel, snapshotLine } from "../snapshot";
 import { catchUpClause, verdictOf } from "../verdict";
 import { useStore } from "../useStore";
@@ -58,14 +59,22 @@ function Leader() {
   const slot = store.get("summary", "completed_slot");
   const nextLeader = store.get("summary", "next_leader_slot");
   const slotDurationNanos = store.get("summary", "estimated_slot_duration_nanos");
+  const epoch = store.get("epoch", "new");
 
   if (nextLeader === null) return <>No leader slots left this epoch. </>;
   if (nextLeader === undefined || slot === undefined || !slotDurationNanos) return null;
   const untilMs = Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6));
   if (untilMs === 0) return <>Leader now. </>;
+  const following = epoch ? followingRun(epoch.my_leader_slots, nextLeader) : null;
+  const then =
+    following === null
+      ? epoch
+        ? " The last this epoch."
+        : ""
+      : ` Following turn in ${duration((following - slot) * (slotDurationNanos / 1e6))}, slot ${count(following)}.`;
   return (
     <>
-      <Explain text={`Slot ${count(nextLeader)}.`}>Leader again</Explain> in{" "}
+      <Explain text={`Slot ${count(nextLeader)}.${then}`}>Leader again</Explain> in{" "}
       <b>{duration(untilMs)}</b>.{" "}
     </>
   );

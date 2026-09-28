@@ -34,6 +34,20 @@ export function leaderSlotsLeft(slots: number[], completed: number): number {
   return slots.filter((slot) => slot > completed).length;
 }
 
+/** The first of our slots after the run that holds `next`, turns back to back being one run; null
+ *  where that run is the epoch's last. */
+export function followingRun(slots: readonly number[], next: number): number | null {
+  let at = slots.findIndex((slot) => slot >= next);
+  if (at === -1) return null;
+  for (at += 1; at < slots.length; at++) {
+    const slot = slots[at];
+    const before = slots[at - 1];
+    if (slot === undefined || before === undefined) return null;
+    if (slot !== before + 1) return slot;
+  }
+  return null;
+}
+
 export interface TurnSlot {
   slot: number;
   entry: SlotEntry | null;

@@ -33,6 +33,12 @@ function list(certificates: number, carried_all: number, rows: WrittenRow[], rew
 }
 
 describe("the written figures", () => {
+  it("lists from 2.5 points above the network-wide share", () => {
+    // Of 1,000 we wrote and 10,000 seen: q at 3.0% of ours against 0.2%, r at 2.5% against 0.2%.
+    const figures = writtenFigures(list(1000, 900, [row("q", 30, 20), row("r", 25, 20)], 10_000));
+    expect(figures.map((figure) => figure.row.identity)).toEqual(["q"]);
+  });
+
   it("keeps the validators faring worse in ours, widest gap first", () => {
     // Of 100 we wrote and 1,000 seen: a left out of 30 and 20, b of 20 and 200 (the same share), c
     // of 50 and 10.
@@ -126,7 +132,7 @@ const NOW = 1_790_000_000_000;
 
 describe("the writer figures", () => {
   // 40 of 1,000 left us out: 4% on average.
-  const writers = [writer("far", 50, 25), writer("near", 100, 8), writer("few", 20, 9), writer("some", 100, 12)];
+  const writers = [writer("far", 50, 25), writer("near", 200, 12), writer("few", 20, 9), writer("some", 100, 12)];
   const places: [number, MissPlace][] = [
     ...Array.from({ length: 25 }, (_, i): [number, MissPlace] => [0, i < 20 ? "lost" : "late"]),
     ...Array.from({ length: 8 }, (): [number, MissPlace] => [1, "lost"]),
@@ -140,13 +146,13 @@ describe("the writer figures", () => {
     expect(leftUsOutLine(list40)).toBe("40 of 1,000 left us out · 4.0% on average");
     expect(averageLeftOut(misses([], [], 0))).toBeNull();
     expect(leftUsOutRule(0.04)).toBe(
-      "Listed: writers whose certificates left us out at least 10 times and at least 5 points more often than our 4.0% average. Cause is why, most common first.",
+      "Listed: writers whose certificates left us out at least 10 times and at least 2.5% more often than our 4.0% average. Cause is why, most common first.",
     );
   });
 
-  it("keeps writers ten times and five points above the average, widest first", () => {
+  it("keeps writers ten times and 2.5 points above the average, widest first", () => {
     const figures = writerFigures(list40, everyoneHeard, NOW);
-    // near is under five points above, few under ten times.
+    // near is 2 points above, few under ten times; some is 8 above.
     expect(figures.map((figure) => [figure.writer.identity, figure.causes])).toEqual([
       [
         "far",

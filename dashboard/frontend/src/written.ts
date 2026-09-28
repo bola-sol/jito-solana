@@ -3,7 +3,7 @@ import { count, percent } from "./format";
 import { MISS_PLACES } from "./misses";
 import type { MissList, MissPlace, MissWriter, WrittenList, WrittenRow } from "./types";
 
-export const WORSE_BY = 0.05;
+export const WORSE_BY = 0.025;
 
 export const WORSE_MIN = 10;
 
@@ -144,10 +144,10 @@ export function leftUsOutLine(list: MissList): string {
 
 /** Why a validator is on our side's list. */
 export const WRITTEN_RULE =
-  `Listed: validators our certificates left out at least ${WORSE_MIN} times and at least ${WORSE_BY * 100} points more often than all certificates did, and those left out of ${MISSING_EVERYWHERE * 100}% or more of all certificates. Delinquent and no gossip say why.`;
+  `Listed: validators our certificates left out at least ${WORSE_MIN} times and at least ${WORSE_BY * 100}% more often than all certificates did, and those left out of ${MISSING_EVERYWHERE * 100}% or more of all certificates. Delinquent and no gossip say why.`;
 
 /** Why a writer is on the other side's list. */
 export function leftUsOutRule(average: number | null): string {
   const than = average === null ? "the average" : `our ${percent(average, 1)} average`;
-  return `Listed: writers whose certificates left us out at least ${WORSE_MIN} times and at least ${WORSE_BY * 100} points more often than ${than}. Cause is why, most common first.`;
+  return `Listed: writers whose certificates left us out at least ${WORSE_MIN} times and at least ${WORSE_BY * 100}% more often than ${than}. Cause is why, most common first.`;
 }

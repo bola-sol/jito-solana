@@ -1383,16 +1383,30 @@ body {
   margin-top: -3px;
 }
 
-/* Sits on the key row rather than in a row of its own, so showing detail
-   costs no height and the strip does not shift when it appears. */
+/* Takes what room the key row leaves and cuts off at its end, one line tall, so pointing at a slot
+   never changes the card's height; a row too narrow to share gives it a line of its own. */
 .slot-detail {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 16px;
+  overflow: hidden;
   font-size: 12px;
+  line-height: 16px;
   color: var(--text-dim);
+  text-align: right;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.slot-detail > * + * {
+  margin-left: 10px;
+}
+
+@container slot-key (max-width: 760px) {
+  .slot-detail {
+    flex-basis: 100%;
+    text-align: left;
+  }
 }
 
 .slot-detail b {
@@ -1407,10 +1421,12 @@ body {
 }
 
 .slot-detail-leader {
-  display: flex;
-  align-items: center;
-  gap: 5px;
   color: var(--text);
+}
+
+.slot-detail-leader .logo {
+  margin-right: 5px;
+  vertical-align: -2px;
 }
 
 .slot-detail-mine {
@@ -1666,8 +1682,7 @@ body {
   align-items: center;
   gap: 6px 16px;
   margin-top: 10px;
-  /* Pinned, so the card does not grow when the larger hover detail appears. */
-  min-height: 16px;
+  container: slot-key / inline-size;
 }
 
 .slot-key-item {

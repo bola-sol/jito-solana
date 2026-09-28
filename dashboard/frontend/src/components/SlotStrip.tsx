@@ -219,19 +219,19 @@ export function SlotStrip(): ReactElement {
           <i className="slot-key-swatch slot-key-mine" />
           ours{ours > 0 && `, ${ours} in window`}
         </Explain>
-        {pinned !== null && (
-          <SlotDetail
-            entry={active}
-            leader={store.leaderOf(active?.slot ?? 0, active?.mine ?? false)}
-          />
-        )}
+        <SlotDetail
+          entry={pinned === null ? undefined : active}
+          leader={store.leaderOf(active?.slot ?? 0, active?.mine ?? false)}
+        />
       </div>
     </section>
   );
 }
 
-function SlotDetail({ entry, leader }: { entry: SlotEntry | null; leader: LeaderRef }) {
-  if (!entry) {
+/** Always on the row, empty until a slot is pointed at, so it never changes the card's height. */
+function SlotDetail({ entry, leader }: { entry: SlotEntry | null | undefined; leader: LeaderRef }) {
+  if (entry === undefined) return <span className="slot-detail" role="status" />;
+  if (entry === null) {
     return (
       <span className="slot-detail is-idle" role="status">
         paused, tap or arrow to a slot

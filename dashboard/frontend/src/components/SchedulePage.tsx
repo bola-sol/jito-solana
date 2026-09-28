@@ -7,8 +7,6 @@ import {
   matchesQuery,
   rewardTitle,
   SLOTS_PER_TURN,
-  turnKey,
-  turnsOf,
   type Certificate,
   type Turn,
   type TurnSlot,
@@ -17,6 +15,7 @@ import { entriesOf } from "../slotHistory";
 import type { Store } from "../store";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
+import { TurnIndex } from "../turnIndex";
 import type { EpochInfo, Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
@@ -24,15 +23,18 @@ import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
 import { SlotLink } from "./SlotLink";
+import { VirtualList } from "./VirtualList";
 
-const OLDER_SPAN = 512;
+/** The most the validator answers at once, `MAX_RANGE_SLOTS` on its side. */
+const SPAN_SLOTS = 4096;
 
-/** About fifty DOM elements each; a thousand is thirty milliseconds of layout per scroll. */
-const MAX_TURNS = 1000;
+/** A four-row turn's height on a desktop, used until one is measured. */
+const TURN_HEIGHT_GUESS = 170;
 
-const DEPTH_SLOTS = 100_000;
+/** How long a failed fetch waits before scrolling may ask again. */
+const RETRY_AFTER_MS = 5000;
 
-const DEPTH_SPAN = 4096;
+const NO_CERTIFICATES: readonly Certificate[] = [];
 
 async function fetchSpan(
   store: Store,
@@ -45,23 +47,30 @@ async function fetchSpan(
   return entriesOf(range, epoch, identity);
 }
 
-/** An empty span is older than the validator has kept, and so is everything below it. */
-async function fetchDepth(
-  store: Store,
-  newest: number,
-  epoch: EpochInfo | undefined,
-  identity: string | undefined,
-): Promise<SlotEntry[]> {
-  const spans: SlotEntry[][] = [];
-  const floor = Math.max(0, newest - DEPTH_SLOTS);
-  for (let end = newest; end > floor; ) {
-    const first = Math.max(floor, end - DEPTH_SPAN);
-    const got = await fetchSpan(store, first, end - first, epoch, identity);
-    if (got.length === 0) break;
-    spans.unshift(got);
-    end = first;
-  }
-  return spans.flat();
+function samePeer(a: Peer, b: Peer): boolean {
+  return (
+    a.stake === b.stake &&
+    a.version === b.version &&
+    a.client === b.client &&
+    a.ip === b.ip &&
+    a.name === b.name &&
+    a.icon === b.icon
+  );
+}
+
+/** The peer table by identity, a peer keeping its object while unchanged, so a republished table
+ *  redraws only the cards whose leader changed. */
+function useStablePeers(peers: Peer[] | undefined): Map<string, Peer> {
+  const held = useRef(new Map<string, Peer>());
+  return useMemo(() => {
+    const next = new Map<string, Peer>();
+    for (const peer of peers ?? []) {
+      const was = held.current.get(peer.identity);
+      next.set(peer.identity, was && samePeer(was, peer) ? was : peer);
+    }
+    held.current = next;
+    return next;
+  }, [peers]);
 }
 
 export function SchedulePage({
@@ -74,6 +83,7 @@ export function SchedulePage({
   onFilter: (query: string, ours: boolean) => void;
 }): ReactElement {
   const store = useStore();
+  const alpenglow = useAlpenglow();
   const list = useRef<HTMLDivElement>(null);
 
   const stake = store.get("summary", "stake");
@@ -82,111 +92,105 @@ export function SchedulePage({
   const identity = store.get("summary", "identity_key");
   const rates = store.get("summary", "tip_rates");
   const live = store.getSlots();
-
-  // Filtering to ours counts as searching: only sixty-four of our own slots
-  // are pushed, the rest are in the packed history.
-  const searching = query.trim().length > 0 || oursOnly;
-
-  // Kept apart from the live list so `turnsOf` over it runs once.
-  const [deep, setDeep] = useState<SlotEntry[] | null>(null);
-  const [deepLoading, setDeepLoading] = useState(false);
-  // Moves whenever a leader could newly resolve, so the memo below re-runs.
+  // Moves whenever a leader could newly resolve.
   const leaderRevision = store.getLeaderRevision();
 
-  const [older, setOlder] = useState<SlotEntry[]>([]);
+  // Filtering to ours counts as searching: only sixty-four of our own slots are pushed, the rest are
+  // in the history.
+  const searching = query.trim().length > 0 || oursOnly;
+
+  const [index] = useState(() => new TurnIndex());
+  const [fetched, setFetched] = useState(0);
   const [loading, setLoading] = useState(false);
   const [exhausted, setExhausted] = useState(false);
-  const slots = useMemo(() => [...older, ...live], [older, live]);
+  const busy = useRef(false);
+  const failedAt = useRef(0);
+  const leaderOf = useCallback((slot: number, mine: boolean) => store.leaderOf(slot, mine), [store]);
 
-  // The entry eight back carries a slot's certificate.
-  const deepBySlot = useMemo(
-    () => new Map((deep ?? []).map((entry) => [entry.slot, entry] as const)),
-    [deep],
-  );
-  const nearBySlot = useMemo(() => new Map(slots.map((entry) => [entry.slot, entry] as const)), [slots]);
-  const entryOf = useCallback(
-    (slot: number) => nearBySlot.get(slot) ?? deepBySlot.get(slot),
-    [nearBySlot, deepBySlot],
-  );
+  // Changed here rather than in an effect, which would cost a second render per update; merging the
+  // same slots again changes nothing. `fetched` re-reads the numbers after a span lands.
+  const numbers = useMemo(() => {
+    index.mergeLive(live, leaderOf);
+    return index.numbers();
+  }, [index, live, leaderOf, fetched]);
+  useMemo(() => index.relabel(leaderOf), [index, leaderOf, leaderRevision]);
 
-  const loadDepth = async () => {
-    if (deep !== null || deepLoading) return;
-    const newest = live[live.length - 1]?.slot;
-    if (newest === undefined) return;
-    setDeepLoading(true);
-    try {
-      const all = await fetchDepth(store, newest, epoch, identity);
-      setDeep(all);
+  // An index started again, as after a reconnect, has its history still to read.
+  const generation = index.generation;
+  useEffect(() => {
+    setExhausted(false);
+    failedAt.current = 0;
+  }, [generation]);
 
-      // The history crosses an epoch boundary about a quarter of the time,
-      // and the far side needs the previous epoch to name its leaders.
-      const oldest = all[0]?.slot;
-      if (oldest !== undefined && epoch && oldest < epoch.start_slot) {
-        await store.loadEpoch(epoch.epoch - 1);
-      }
-    } catch {
-      // Left unset, so the next search tries again rather than searching a
-      // window it cannot see the end of and calling that the answer.
-    } finally {
-      setDeepLoading(false);
+  const loadOlder = useCallback(async (): Promise<void> => {
+    const floor = index.floor();
+    if (busy.current || exhausted || floor === null) return;
+    if (Date.now() - failedAt.current < RETRY_AFTER_MS) return;
+    if (floor <= 0) {
+      setExhausted(true);
+      return;
     }
-  };
+    busy.current = true;
+    setLoading(true);
+    const started = index.generation;
+    try {
+      // Aligned down to a turn boundary so a span never begins mid-turn.
+      const first = Math.max(0, Math.floor((floor - SPAN_SLOTS) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
+      const got = await fetchSpan(store, first, floor - first, epoch, identity);
+      if (started !== index.generation) return;
+      // An empty span is older than the validator keeps.
+      if (got.length === 0) {
+        setExhausted(true);
+        return;
+      }
+      index.addHistory(first, got, leaderOf);
+      setFetched((was) => was + 1);
+      // The far side of an epoch boundary needs the previous schedule to name its leaders.
+      if (epoch && first < epoch.start_slot) await store.loadEpoch(epoch.epoch - 1);
+    } catch {
+      failedAt.current = Date.now();
+    } finally {
+      busy.current = false;
+      setLoading(false);
+    }
+  }, [index, exhausted, store, epoch, identity, leaderOf]);
 
   useEffect(() => {
     if (!searching) return;
     void store.loadDisplays().catch(() => {});
-    void loadDepth();
-    // Deliberately only the flag: this runs on the first keystroke and not on
-    // every one after it, and `loadDepth` guards itself besides.
-  }, [searching]);
+  }, [searching, store]);
 
-  const loadOlder = async () => {
-    if (loading) return;
-    const earliest = slots[0]?.slot;
-    if (earliest === undefined) return;
-    setLoading(true);
-    try {
-      // Aligned down to a turn boundary so a span never begins mid-turn, and
-      // clamped at nought for a cluster young enough that it could go below.
-      const first = Math.max(0, Math.floor((earliest - OLDER_SPAN) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
-      const fetched = await fetchSpan(store, first, earliest - first, epoch, identity);
-      if (fetched.length === 0) setExhausted(true);
-      else setOlder((held) => [...fetched, ...held]);
-    } catch {
-    } finally {
-      setLoading(false);
-    }
-  };
+  // A search looks through everything the validator keeps, a span at a time.
+  useEffect(() => {
+    if (searching && !exhausted && !loading) void loadOlder();
+  });
 
-  const byIdentity = useMemo(
-    () => new Map((peers ?? []).map((peer) => [peer.identity, peer])),
-    [peers],
-  );
+  const shown = useMemo(() => {
+    if (!searching) return numbers;
+    return numbers.filter((number) => {
+      const turn = index.turn(number);
+      return turn !== undefined && matchesQuery(turn, query) && (!oursOnly || turn.mine);
+    });
+  }, [index, numbers, leaderRevision, searching, query, oursOnly]);
 
-  const deepTurns = useMemo(
-    () => (deep === null ? [] : turnsOf(deep, (slot, mine) => store.leaderOf(slot, mine))),
-    // The peer table is left out: it changes every few seconds and would
-    // rebuild a hundred thousand entries for a handful of names.
-    [deep, store, leaderRevision],
-  );
+  const byIdentity = useStablePeers(peers);
+  const entryOf = useCallback((slot: number) => index.entry(slot), [index]);
+  const sizeClass = useCallback((number: number) => index.turn(number)?.slots.length ?? SLOTS_PER_TURN, [index]);
+  const nearEnd = useCallback(() => void loadOlder(), [loadOlder]);
 
-  const matched = useMemo(() => {
-    const wanted = (turn: Turn) => matchesQuery(turn, query) && (!oursOnly || turn.mine);
-    const near = turnsOf(slots, (slot, mine) => store.leaderOf(slot, mine)).filter(wanted);
-    if (!searching || deep === null) return near;
-
-    const seen = new Set(near.map(turnKey));
-    const far = deepTurns.filter((turn) => !seen.has(turnKey(turn)) && wanted(turn));
-    return [...near, ...far].sort(
-      (a, b) => (b.slots[0]?.slot ?? 0) - (a.slots[0]?.slot ?? 0),
+  const renderTurn = (number: number): ReactElement | null => {
+    const turn = index.turn(number);
+    if (!turn) return null;
+    return (
+      <TurnCard
+        turn={turn}
+        peer={turn.leader ? byIdentity.get(turn.leader) : undefined}
+        totalStake={stake?.total_stake}
+        rates={rates}
+        certificates={alpenglow ? turn.slots.map((slot) => certificateAt(slot.slot, entryOf)) : NO_CERTIFICATES}
+      />
     );
-    // `slots` is a fresh array every render, so this recomputes with the
-    // page. Affordable here because the cap bounds it.
-  }, [store, slots, deep, deepTurns, searching, query, oursOnly]);
-
-  const turns = matched.slice(0, MAX_TURNS);
-  const beyondCap = matched.length - turns.length;
-  const atCeiling = slots.length >= MAX_TURNS * SLOTS_PER_TURN;
+  };
 
   return (
     <section className="schedule">
@@ -209,51 +213,21 @@ export function SchedulePage({
         </div>
       </div>
 
-
       <div className="schedule-list" ref={list}>
-        <ScrollTop scroller={list} />
-        {turns.length === 0 && (
-          <div className="sidebar-empty">
-            {slots.length === 0 ? "waiting for slots…" : "nothing matches that"}
-          </div>
+        <ScrollTop scroller={list} hold={false} />
+        {shown.length === 0 && !loading && (
+          <div className="sidebar-empty">{live.length === 0 ? "waiting for slots…" : "nothing matches that"}</div>
         )}
-        {turns.map((turn) => (
-          <TurnCard
-            key={turnKey(turn)}
-            turn={turn}
-            peer={turn.leader ? byIdentity.get(turn.leader) : undefined}
-            totalStake={stake?.total_stake}
-            rates={rates}
-            entryOf={entryOf}
-          />
-        ))}
-        {deepLoading && (
-          <div className="schedule-capped">
-            reading back through what the validator has kept…
-          </div>
-        )}
-        {beyondCap > 0 && (
-          <div className="schedule-capped">
-            {count(turns.length)} of {count(matched.length)} matching turns shown.
-            Narrow the search to see the rest.
-          </div>
-        )}
-        {slots.length > 0 && !exhausted && !atCeiling && (
-          <button
-            type="button"
-            className="schedule-older"
-            disabled={loading}
-            onClick={() => void loadOlder()}
-          >
-            {loading ? "loading…" : "load earlier turns"}
-          </button>
-        )}
-        {atCeiling && beyondCap === 0 && !searching && (
-          <div className="schedule-capped">
-            As far back as this list goes. The validator keeps a great deal more;
-            search a name, a key or a slot number to reach it.
-          </div>
-        )}
+        <VirtualList
+          keys={shown}
+          sizeClass={sizeClass}
+          fallback={TURN_HEIGHT_GUESS}
+          render={renderTurn}
+          scroller={list}
+          onNearEnd={searching ? undefined : nearEnd}
+        />
+        {loading && <div className="schedule-capped">reading back through what the validator has kept…</div>}
+        {exhausted && <div className="schedule-capped">As far back as the validator keeps.</div>}
       </div>
     </section>
   );
@@ -265,13 +239,14 @@ const TurnCard = memo(
     peer,
     totalStake,
     rates,
-    entryOf,
+    certificates,
   }: {
     turn: Turn;
     peer: Peer | undefined;
     totalStake: number | undefined;
     rates: TipRates | undefined;
-    entryOf: (slot: number) => SlotEntry | undefined;
+    /** Each row's certificate, in the rows' order; empty before alpenglow. */
+    certificates: readonly Certificate[];
   }) {
     const alpenglow = useAlpenglow();
     return (
@@ -301,28 +276,22 @@ const TurnCard = memo(
             </span>
             <span>Compute</span>
           </div>
-          {turn.slots.map((slot) => (
-            <SlotRow
-              key={slot.slot}
-              slot={slot}
-              rates={rates}
-              certificate={alpenglow ? certificateAt(slot.slot, entryOf) : undefined}
-            />
+          {turn.slots.map((slot, row) => (
+            <SlotRow key={slot.slot} slot={slot} rates={rates} certificate={certificates[row]} />
           ))}
         </div>
       </div>
     );
   },
+  // A turn keeps its object until one of its slots changes; a slot's certificate sits on another
+  // turn's entry, so it is compared apart.
   (before, after) =>
+    before.turn === after.turn &&
     before.peer === after.peer &&
     before.totalStake === after.totalStake &&
     before.rates === after.rates &&
-    before.turn.slots.length === after.turn.slots.length &&
-    before.turn.slots.every((slot, index) => slot.entry === after.turn.slots[index]?.entry) &&
-    // A slot's certificate sits on another turn's entry.
-    before.turn.slots.every(
-      (slot) => certificateAt(slot.slot, before.entryOf) === certificateAt(slot.slot, after.entryOf),
-    ),
+    before.certificates.length === after.certificates.length &&
+    before.certificates.every((certificate, row) => certificate === after.certificates[row]),
 );
 
 function TurnLeader({

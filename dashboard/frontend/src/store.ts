@@ -63,6 +63,8 @@ export class Store {
   /** Latest value for each `topic.key`, exactly as published. */
   private values = new Map<string, unknown>();
   private slots = new Map<number, SlotEntry>();
+  /** `slots` in order, until they next change. */
+  private sorted: readonly SlotEntry[] | null = null;
   private tps: TpsSample[] = [];
   private network: NetworkSample[] = [];
   private threads: ThreadsSample[] = [];
@@ -262,9 +264,10 @@ export class Store {
     return this.peerIndex;
   }
 
-  /** Slots in ascending order. */
-  getSlots(): SlotEntry[] {
-    return [...this.slots.values()].sort((a, b) => a.slot - b.slot);
+  /** Slots in ascending order; the same array until they change. */
+  getSlots(): readonly SlotEntry[] {
+    this.sorted ??= [...this.slots.values()].sort((a, b) => a.slot - b.slot);
+    return this.sorted;
   }
 
   getSlot(slot: number): SlotEntry | undefined {
@@ -316,10 +319,12 @@ export class Store {
       if (!Array.isArray(value)) return;
       this.slots.clear();
       for (const entry of value as SlotEntry[]) this.slots.set(entry.slot, entry);
+      this.sorted = null;
       this.trimSlots();
     } else if (topic === "slot" && key === "update") {
       const entry = value as SlotEntry;
       this.slots.set(entry.slot, entry);
+      this.sorted = null;
       this.trimSlots();
     } else if (topic === "summary" && key === "network_history") {
       if (!Array.isArray(value)) return;
@@ -362,6 +367,7 @@ export class Store {
     const own = ordered.filter((entry) => entry.mine).slice(-MAX_OWN_SLOTS);
     const rest = ordered.filter((entry) => !entry.mine).slice(-MAX_SLOTS);
     this.slots = new Map([...rest, ...own].map((entry) => [entry.slot, entry]));
+    this.sorted = null;
   }
 
   private touch(): void {

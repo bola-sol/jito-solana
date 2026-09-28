@@ -4611,7 +4611,9 @@ body {
   min-height: 0;
 }
 
+/* Positioned, so the virtual list inside can read its own top. */
 .schedule-list {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -4619,6 +4621,21 @@ body {
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
+}
+
+/* As tall as every item would be, with only those near the view drawn. */
+.virtual-list {
+  position: relative;
+  flex: none;
+}
+
+/* Padded rather than gapped, so the gap is part of the height each item is measured at. */
+.virtual-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding-bottom: var(--gap);
 }
 
 /* Where the list stops, as prose rather than a disabled button, in the place the button was. */
@@ -4631,35 +4648,6 @@ body {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-faint);
-}
-
-/* A control rather than a scroll trigger: the list is not virtualised, so the reader decides. */
-.schedule-older {
-  align-self: center;
-  margin: 4px 0 var(--gap);
-  padding: 7px 14px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.schedule-older:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--text-faint);
-}
-
-.schedule-older:disabled {
-  color: var(--text-faint);
-  cursor: default;
-}
-
-.schedule-older:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .schedule-list::-webkit-scrollbar {

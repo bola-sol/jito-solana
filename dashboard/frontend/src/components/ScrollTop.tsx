@@ -1,14 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type ReactElement } from "react";
 import { heldScrollTop } from "../scroll";
 
-const LIVE_EDGE_PX = 120;
+/** Within this of the top, a list follows new items in rather than holding its place. */
+export const LIVE_EDGE_PX = 120;
 
-export function ScrollTop({ scroller }: { scroller: RefObject<HTMLElement | null> }): ReactElement {
+export function ScrollTop({
+  scroller,
+  hold = true,
+}: {
+  scroller: RefObject<HTMLElement | null>;
+  /** Off where the list holds its own place, as a virtual list does. */
+  hold?: boolean;
+}): ReactElement {
   const [away, setAway] = useState(false);
   // Shared with the hook below: it needs to know where the list was left, to
   // tell its own correction apart from one the browser already made.
   const top = useRef(0);
-  useHeldScroll(scroller, top);
+  useHeldScroll(scroller, top, hold);
 
   useEffect(() => {
     const element = scroller.current;
@@ -55,6 +63,7 @@ function useHeldScroll(
   // A plain box rather than `RefObject`, whose `current` React types as
   // read-only; this one is written on both sides.
   top: { current: number },
+  hold: boolean,
 ): void {
   // Undefined until the first measurement rather than zero, which would read as
   // the list having grown its whole length on the first render.
@@ -62,7 +71,7 @@ function useHeldScroll(
 
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (!element) return;
+    if (!element || !hold) return;
 
     const previous = height.current;
     height.current = element.scrollHeight;

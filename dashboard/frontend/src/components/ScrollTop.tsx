@@ -42,15 +42,15 @@ export function ScrollTop({
           onClick={() =>
             scroller.current?.scrollTo({
               top: 0,
-              // Not `scroll-behavior` on the list, which would animate the
-              // corrections below too.
-              behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-                ? "auto"
-                : "smooth",
+              // A list holding its own place moves the scroll as items arrive, which would cut a
+              // smooth scroll short, so it jumps. Not `scroll-behavior` on the list, which would
+              // animate the corrections below too.
+              behavior:
+                !hold || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
             })
           }
         >
-          Top <span aria-hidden="true">↑</span>
+          <span aria-hidden="true">↑</span> Back to top
         </button>
       )}
     </div>

@@ -50,6 +50,65 @@ const LEVELS: SlotLevel[] = [
   "skipped",
 ];
 
+/** One row as a schedule entry; `previousTime` is the last earlier slot's clock, for the gap. */
+export function entryFromRow(
+  slot: number,
+  row: WireRow,
+  previousTime: number | null,
+  epoch: EpochInfo | undefined,
+  identity: string | undefined,
+): SlotEntry {
+  const [
+    level,
+    flags,
+    votes,
+    nonVotes,
+    compute,
+    fees,
+    priorityFees,
+    tips,
+    timeMillis,
+    replay,
+    shreds,
+    repaired,
+    fullMillis,
+    replayedMillis,
+    leftOut,
+  ] = row;
+  const leader = leaderAt(epoch, slot);
+  const timed = (flags & HAS_CLOCK) !== 0;
+  const reward = REWARDS[(flags & REWARD_MASK) >> REWARD_SHIFT] ?? null;
+  return {
+    slot,
+    level: LEVELS[level] ?? "incomplete",
+    mine: leader !== null && leader === identity,
+    block:
+      (flags & HAS_BLOCK) === 0
+        ? null
+        : {
+            transactions: votes + nonVotes,
+            non_vote_transactions: nonVotes,
+            // Not carried by the packed row. Nought here means "not
+            // measured", and no schedule row reads them.
+            failed_transactions: 0,
+            entries: 0,
+            block_cost: compute,
+            block_cost_limit: epoch?.block_cost_limit ?? 0,
+            account_cost_limit: epoch?.account_cost_limit ?? 0,
+            total_fees: fees,
+            priority_fees: priorityFees,
+            tips: (flags & HAS_TIPS) === 0 ? null : tips,
+            replay_micros: (flags & HAS_REPLAY) === 0 ? null : replay,
+          },
+    duration_nanos: timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,
+    time_millis: timed ? timeMillis : null,
+    shreds: (flags & HAS_SHREDS) === 0 ? null : { count: shreds, repaired, full_millis: fullMillis },
+    replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
+    reward,
+    left_out: reward === "paid" || reward === "unpaid" ? leftOut : null,
+  };
+}
+
 /** Holes are dropped; `turnsOf` draws the gap from the slots either side. */
 export function entriesOf(
   range: SlotRange,
@@ -60,67 +119,10 @@ export function entriesOf(
   // The gap to the previous slot with a clock, as the validator measures it, so a skipped slot is
   // one long interval.
   let previousTime: number | null = null;
-
   range.rows.forEach((row, index) => {
     if (row === null) return;
-    const slot = range.first_slot + index;
-    const [
-      level,
-      flags,
-      votes,
-      nonVotes,
-      compute,
-      fees,
-      priorityFees,
-      tips,
-      timeMillis,
-      replay,
-      shreds,
-      repaired,
-      fullMillis,
-      replayedMillis,
-      leftOut,
-    ] = row;
-    const leader = leaderAt(epoch, slot);
-    const timed = (flags & HAS_CLOCK) !== 0;
-    const reward = REWARDS[(flags & REWARD_MASK) >> REWARD_SHIFT] ?? null;
-
-    entries.push({
-      slot,
-      level: LEVELS[level] ?? "incomplete",
-      mine: leader !== null && leader === identity,
-      block:
-        (flags & HAS_BLOCK) === 0
-          ? null
-          : {
-              transactions: votes + nonVotes,
-              non_vote_transactions: nonVotes,
-              // Not carried by the packed row. Nought here means "not
-              // measured", and no schedule row reads them.
-              failed_transactions: 0,
-              entries: 0,
-              block_cost: compute,
-              block_cost_limit: epoch?.block_cost_limit ?? 0,
-              account_cost_limit: epoch?.account_cost_limit ?? 0,
-              total_fees: fees,
-              priority_fees: priorityFees,
-              tips: (flags & HAS_TIPS) === 0 ? null : tips,
-              replay_micros: (flags & HAS_REPLAY) === 0 ? null : replay,
-            },
-      duration_nanos:
-        timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,
-      time_millis: timed ? timeMillis : null,
-      shreds:
-        (flags & HAS_SHREDS) === 0
-          ? null
-          : { count: shreds, repaired, full_millis: fullMillis },
-      replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
-      reward,
-      left_out: reward === "paid" || reward === "unpaid" ? leftOut : null,
-    });
-
-    if (timed) previousTime = timeMillis;
+    entries.push(entryFromRow(range.first_slot + index, row, previousTime, epoch, identity));
+    if ((row[1] & HAS_CLOCK) !== 0) previousTime = row[8];
   });
-
   return entries;
 }

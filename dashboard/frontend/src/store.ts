@@ -21,6 +21,10 @@ import type {
 /** Each request the server answers, as `topic.key`, with its parameters and reply. */
 export interface Requests {
   "slot.range": { params: { first_slot: number; count: number }; reply: SlotRange };
+  "slot.search": {
+    params: { query: string; ours: boolean; before: number };
+    reply: { turns: SlotRange[]; next: number | null };
+  };
   "epoch.query": { params: { epoch: number }; reply: EpochInfo | null };
   "summary.displays": { params: Record<string, never>; reply: Displays };
   "summary.misses": { params: Record<string, never>; reply: MissList };

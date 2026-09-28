@@ -16,6 +16,7 @@ pub mod metrics_tap;
 pub mod net_stats;
 pub mod produced;
 pub mod proto;
+pub mod search;
 pub mod server;
 pub mod service;
 pub mod slots;

@@ -11,12 +11,12 @@ import {
   type Turn,
   type TurnSlot,
 } from "../schedule";
-import { entriesOf } from "../slotHistory";
+import type { SlotRange } from "../slotHistory";
 import type { Store } from "../store";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
-import { TurnIndex } from "../turnIndex";
-import type { EpochInfo, Peer, Reward, SlotEntry, TipRates } from "../types";
+import { FoundTurns, TurnIndex, turnNumberOf } from "../turnIndex";
+import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import { Copyable } from "./Copyable";
@@ -34,17 +34,13 @@ const TURN_HEIGHT_GUESS = 170;
 /** How long a failed fetch waits before scrolling may ask again. */
 const RETRY_AFTER_MS = 5000;
 
+/** A search is sent once typing pauses this long. */
+const SEARCH_PAUSE_MS = 250;
+
 const NO_CERTIFICATES: readonly Certificate[] = [];
 
-async function fetchSpan(
-  store: Store,
-  first: number,
-  count: number,
-  epoch: EpochInfo | undefined,
-  identity: string | undefined,
-): Promise<SlotEntry[]> {
-  const range = await store.request("slot.range", { first_slot: first, count });
-  return entriesOf(range, epoch, identity);
+function fetchSpan(store: Store, first: number, count: number): Promise<SlotRange> {
+  return store.request("slot.range", { first_slot: first, count });
 }
 
 function samePeer(a: Peer, b: Peer): boolean {
@@ -107,13 +103,14 @@ export function SchedulePage({
   const failedAt = useRef(0);
   const leaderOf = useCallback((slot: number, mine: boolean) => store.leaderOf(slot, mine), [store]);
 
-  // Changed here rather than in an effect, which would cost a second render per update; merging the
-  // same slots again changes nothing. `fetched` re-reads the numbers after a span lands.
+  // The index and its turns are changed here rather than in effects, which would cost a second
+  // render per update; repeating any of them with the same inputs changes nothing.
+  useMemo(() => index.setContext(epoch, identity, leaderOf), [index, epoch, identity, leaderOf]);
   const numbers = useMemo(() => {
-    index.mergeLive(live, leaderOf);
+    index.mergeLive(live);
     return index.numbers();
-  }, [index, live, leaderOf, fetched]);
-  useMemo(() => index.relabel(leaderOf), [index, leaderOf, leaderRevision]);
+    // `fetched` re-reads the numbers after a span lands.
+  }, [index, live, fetched]);
 
   // An index started again, as after a reconnect, has its history still to read.
   const generation = index.generation;
@@ -136,14 +133,14 @@ export function SchedulePage({
     try {
       // Aligned down to a turn boundary so a span never begins mid-turn.
       const first = Math.max(0, Math.floor((floor - SPAN_SLOTS) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
-      const got = await fetchSpan(store, first, floor - first, epoch, identity);
+      const range = await fetchSpan(store, first, floor - first);
       if (started !== index.generation) return;
-      // An empty span is older than the validator keeps.
-      if (got.length === 0) {
+      // A span with nothing in it is older than the validator keeps.
+      if (range.rows.every((row) => row === null)) {
         setExhausted(true);
         return;
       }
-      index.addHistory(first, got, leaderOf);
+      index.addHistory(first, range.rows);
       setFetched((was) => was + 1);
       // The far side of an epoch boundary needs the previous schedule to name its leaders.
       if (epoch && first < epoch.start_slot) await store.loadEpoch(epoch.epoch - 1);
@@ -153,33 +150,99 @@ export function SchedulePage({
       busy.current = false;
       setLoading(false);
     }
-  }, [index, exhausted, store, epoch, identity, leaderOf]);
+  }, [index, exhausted, store, epoch]);
+
+  // What the validator is asked, once typing pauses; the live window is matched here as typed.
+  const [asked, setAsked] = useState({ query: query.trim(), ours: oursOnly });
+  useEffect(() => {
+    const timer = setTimeout(() => setAsked({ query: query.trim(), ours: oursOnly }), SEARCH_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [query, oursOnly]);
 
   useEffect(() => {
     if (!searching) return;
     void store.loadDisplays().catch(() => {});
   }, [searching, store]);
 
-  // A search looks through everything the validator keeps, a span at a time.
+  const [found, setFound] = useState<FoundTurns | null>(null);
+  const [foundPages, setFoundPages] = useState(0);
+  const liveStart = index.liveStart();
+  const liveStartTurn = liveStart === null ? null : turnNumberOf(liveStart);
+
+  const loadFound = useCallback(
+    async (results: FoundTurns): Promise<void> => {
+      if (results.loading || results.next === null) return;
+      if (Date.now() - failedAt.current < RETRY_AFTER_MS) return;
+      results.loading = true;
+      setFoundPages((was) => was + 1);
+      try {
+        const reply = await store.request("slot.search", {
+          query: results.query,
+          ours: results.ours,
+          before: results.next,
+        });
+        results.add(reply.turns, reply.next, epoch, identity);
+      } catch {
+        failedAt.current = Date.now();
+      } finally {
+        results.loading = false;
+        setFoundPages((was) => was + 1);
+      }
+    },
+    [store, epoch, identity],
+  );
+
+  // A new search starts below the live window's first turn and reads down a page at a time.
   useEffect(() => {
-    if (searching && !exhausted && !loading) void loadOlder();
-  });
+    if ((!asked.query && !asked.ours) || liveStartTurn === null) {
+      setFound(null);
+      return;
+    }
+    const results = new FoundTurns(asked.query, asked.ours, liveStartTurn * SLOTS_PER_TURN);
+    setFound(results);
+    void loadFound(results);
+  }, [asked, liveStartTurn, loadFound]);
+
+  // Turns keep their objects while their leader answers the same.
+  useMemo(() => {
+    index.relabel();
+    found?.relabel(leaderOf);
+  }, [index, found, leaderOf, leaderRevision]);
 
   const shown = useMemo(() => {
     if (!searching) return numbers;
-    return numbers.filter((number) => {
+    const live = index.liveNumbers().filter((number) => {
       const turn = index.turn(number);
       return turn !== undefined && matchesQuery(turn, query) && (!oursOnly || turn.mine);
     });
-  }, [index, numbers, leaderRevision, searching, query, oursOnly]);
+    return [...live, ...(found?.numbers() ?? [])];
+    // `foundPages` stands for the results, which change in place.
+  }, [index, numbers, found, foundPages, leaderRevision, searching, query, oursOnly]);
 
   const byIdentity = useStablePeers(peers);
-  const entryOf = useCallback((slot: number) => index.entry(slot), [index]);
-  const sizeClass = useCallback((number: number) => index.turn(number)?.slots.length ?? SLOTS_PER_TURN, [index]);
-  const nearEnd = useCallback(() => void loadOlder(), [loadOlder]);
+  const turnOf = useCallback(
+    (number: number) =>
+      searching && found && liveStartTurn !== null && number < liveStartTurn
+        ? found.turn(number, leaderOf)
+        : index.turn(number),
+    [searching, found, liveStartTurn, index, leaderOf],
+  );
+  const entryOf = useCallback((slot: number) => index.entry(slot) ?? found?.entry(slot), [index, found]);
+  const sizeClass = useCallback(
+    (number: number) =>
+      searching && found && liveStartTurn !== null && number < liveStartTurn ? found.rowCount(number) : index.rowCount(number),
+    [searching, found, liveStartTurn, index],
+  );
+  const nearEnd = useCallback(() => {
+    if (searching) {
+      if (found) void loadFound(found);
+    } else {
+      void loadOlder();
+    }
+  }, [searching, found, loadFound, loadOlder]);
 
   const renderTurn = (number: number): ReactElement | null => {
-    const turn = index.turn(number);
+    const turn = turnOf(number);
     if (!turn) return null;
     return (
       <TurnCard
@@ -191,6 +254,9 @@ export function SchedulePage({
       />
     );
   };
+
+  const reading = searching ? (found?.loading ?? false) : loading;
+  const finished = searching ? found?.next === null : exhausted;
 
   return (
     <section className="schedule">
@@ -215,7 +281,7 @@ export function SchedulePage({
 
       <div className="schedule-list" ref={list}>
         <ScrollTop scroller={list} hold={false} />
-        {shown.length === 0 && !loading && (
+        {shown.length === 0 && !reading && (searching ? found !== null : true) && (
           <div className="sidebar-empty">{live.length === 0 ? "waiting for slots…" : "nothing matches that"}</div>
         )}
         <VirtualList
@@ -224,10 +290,14 @@ export function SchedulePage({
           fallback={TURN_HEIGHT_GUESS}
           render={renderTurn}
           scroller={list}
-          onNearEnd={searching ? undefined : nearEnd}
+          onNearEnd={nearEnd}
         />
-        {loading && <div className="schedule-capped">reading back through what the validator has kept…</div>}
-        {exhausted && <div className="schedule-capped">As far back as the validator keeps.</div>}
+        {reading && <div className="schedule-capped">reading back through what the validator has kept…</div>}
+        {finished && (
+          <div className="schedule-capped">
+            {searching ? "Every match the validator keeps." : "As far back as the validator keeps."}
+          </div>
+        )}
       </div>
     </section>
   );

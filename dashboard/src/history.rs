@@ -1,5 +1,5 @@
 //! A flat history of what each recent slot contained: fixed-size rows with
-//! only the columns the schedule page draws, a hundred thousand deep.
+//! only the columns the schedule page draws, an epoch deep.
 
 use {
     crate::{certs::Reward, slots::SlotEntry},
@@ -7,9 +7,9 @@ use {
     solana_clock::Slot,
 };
 
-/// About eleven hours in eight megabytes, allocated by the service since the server answers range
-/// queries before the collector exists.
-pub const PACKED_SLOTS: usize = 100_000;
+/// An epoch, two days at 400 ms, in thirty-five megabytes, allocated by the service since the
+/// server answers range queries before the collector exists.
+pub const PACKED_SLOTS: usize = 432_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PackedSlot {
@@ -99,6 +99,10 @@ impl SlotHistory {
         }
     }
 
+    pub fn capacity(&self) -> usize {
+        self.rows.len()
+    }
+
     pub fn get(&self, slot: Slot) -> Option<&PackedSlot> {
         let (held, row) = self.rows.get(self.index(slot))?;
         // Unfilled rows hold slot 0, so slot 0 itself is never reported.
@@ -174,6 +178,28 @@ impl SlotHistory {
         let row = self.row(slot);
         row.flags |= HAS_CLOCK;
         row.time_millis = millis;
+    }
+
+    /// Every figure as large as a real slot's gets, for the tests that bound a reply's size.
+    #[cfg(test)]
+    pub(crate) fn record_worst_case(&mut self, slot: Slot) {
+        *self.row(slot) = PackedSlot {
+            level: 4,
+            flags: HAS_BLOCK | HAS_CLOCK | HAS_TIPS | HAS_REPLAY | HAS_SHREDS | HAS_REPLAYED,
+            votes: 99_999,
+            non_votes: 99_999,
+            compute: u32::MAX,
+            fees: 9_999_999_999_999,
+            priority_fees: 9_999_999_999_999,
+            tips: 9_999_999_999_999,
+            replay_micros: 9_999_999,
+            time_millis: 1_999_999_999_999,
+            shreds: 99_999,
+            repaired: 99_999,
+            full_millis: 999_999,
+            replayed_millis: 999_999,
+            left_out: 9_999,
+        };
     }
 
     fn row(&mut self, slot: Slot) -> &mut PackedSlot {

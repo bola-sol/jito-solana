@@ -10,6 +10,7 @@ use {
             DEFLATE_PROTOCOL, Frame, MAX_MESSAGE, Message, Publisher, Request, coalesce,
             encode_json_with_id, encode_with_id,
         },
+        search::{SearchParams, search},
         validator_info::ValidatorInfoCache,
     },
     soketto::handshake::{Server, server},
@@ -30,12 +31,16 @@ use {
             Semaphore,
             broadcast::error::{RecvError, TryRecvError},
         },
+        task::spawn_blocking,
         time::{Duration, sleep, timeout},
     },
     tokio_util::compat::{Compat, TokioAsyncReadCompatExt},
 };
 
 const WEBSOCKET_PATH: &str = "/websocket";
+
+/// One search at a time across every connection, since each can read the whole history.
+static SEARCHES: Semaphore = Semaphore::const_new(1);
 
 const MAX_REQUEST_HEAD: usize = 8192;
 
@@ -551,7 +556,11 @@ async fn serve_websocket(
         if !wait.is_zero() {
             sleep(wait).await;
         }
-        if let Some(reply) = respond(&incoming, &history, &info, &epochs, &replies) {
+        let reply = match search_request(&incoming) {
+            Some((id, params)) => Some(answer_search(id, params, &history, &info, &epochs).await),
+            None => respond(&incoming, &history, &info, &epochs, &replies),
+        };
+        if let Some(reply) = reply {
             send_within(send_frame(&mut sender, &reply, deflate)).await?;
             send_within(sender.flush()).await?;
         }
@@ -622,6 +631,49 @@ struct SlotRangeParams {
     first_slot: Slot,
     /// Clamped by the history rather than refused.
     count: usize,
+}
+
+/// A search request's id and parameters; `None` inside for parameters that do not parse, which
+/// are still answered.
+fn search_request(payload: &[u8]) -> Option<(Option<u64>, Option<SearchParams>)> {
+    let request: Request = serde_json::from_slice(payload).ok()?;
+    if request.topic != "slot" || request.key != "search" {
+        return None;
+    }
+    Some((request.id, serde_json::from_value(request.params).ok()))
+}
+
+/// Run on the blocking pool and one at a time, so a scan of the history holds up no other
+/// client's updates and at most one core.
+async fn answer_search(
+    id: Option<u64>,
+    params: Option<SearchParams>,
+    history: &Arc<RwLock<SlotHistory>>,
+    info: &Arc<RwLock<ValidatorInfoCache>>,
+    epochs: &Arc<RwLock<Vec<EpochInfo>>>,
+) -> Message {
+    let Some(params) = params else {
+        return encode_with_id(
+            "slot",
+            "search",
+            id,
+            &serde_json::json!({ "error": "search needs a before slot" }),
+        );
+    };
+    let Ok(_permit) = SEARCHES.acquire().await else {
+        return encode_with_id("slot", "search", id, &());
+    };
+    let (history, info, epochs) = (Arc::clone(history), Arc::clone(info), Arc::clone(epochs));
+    let found = spawn_blocking(move || {
+        // Held for the scan; the collector writes the epoch records once an epoch.
+        let epochs = epochs.read().ok()?;
+        Some(search(&history, &info, &epochs, &params))
+    })
+    .await;
+    match found {
+        Ok(Some(reply)) => encode_with_id("slot", "search", id, &reply),
+        _ => encode_with_id("slot", "search", id, &()),
+    }
 }
 
 /// Even unknown requests get an answer, so no client waits on an id that never comes back.
@@ -1283,6 +1335,50 @@ mod tests {
         for line in head.split("\r\n").skip(1) {
             assert!(line.contains(':'), "malformed header line: {line:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_a_search_is_answered_with_its_id() {
+        let (id, params) = search_request(
+            br#"{"topic":"slot","key":"search","id":7,"params":{"query":"x","before":64}}"#,
+        )
+        .expect("a search");
+        let reply = answer_search(
+            id,
+            params,
+            &empty_history(),
+            &no_info_shared(),
+            &no_epochs_shared(),
+        )
+        .await;
+        assert!(reply.contains(r#""id":7"#), "{reply}");
+        assert!(reply.contains(r#""turns":[]"#), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn test_a_search_without_a_before_slot_is_told_so() {
+        let (id, params) =
+            search_request(br#"{"topic":"slot","key":"search","id":8,"params":{"query":"x"}}"#)
+                .expect("a search");
+        assert!(params.is_none());
+        let reply = answer_search(
+            id,
+            params,
+            &empty_history(),
+            &no_info_shared(),
+            &no_epochs_shared(),
+        )
+        .await;
+        assert!(
+            reply.contains(r#""id":8"#) && reply.contains("error"),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn test_other_requests_are_not_searches() {
+        assert!(search_request(br#"{"topic":"slot","key":"range","id":1}"#).is_none());
+        assert!(search_request(b"not json").is_none());
     }
 
     #[test]

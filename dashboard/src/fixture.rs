@@ -6,7 +6,7 @@ use {
     crate::{
         collect::{Collector, CollectorShared, EpochInfo, Replies},
         context::{DashboardContext, StartProgress},
-        history::{PACKED_SLOTS, SlotHistory},
+        history::{MAX_RANGE_SLOTS, SlotHistory},
         meters::Meters,
         metrics_tap::MetricsTap,
         proto::Publisher,
@@ -251,7 +251,8 @@ pub fn fixture() -> Fixture {
         identity,
         vote_account,
         mint: mint_keypair,
-        history: Arc::new(RwLock::new(SlotHistory::new(PACKED_SLOTS))),
+        // An epoch's ring is thirty-five megabytes written per fixture; no test reaches past this.
+        history: Arc::new(RwLock::new(SlotHistory::new(MAX_RANGE_SLOTS))),
         epochs: Arc::new(RwLock::new(Vec::new())),
         _ledger: ledger,
     }

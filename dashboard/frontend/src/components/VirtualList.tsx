@@ -133,11 +133,11 @@ export function VirtualList({
     [sizeClass, fallback],
   );
 
-  const { offsets, indexOf } = useMemo(() => {
-    const heights = keys.map((key) => measured.current.get(key)?.height ?? estimate(key));
-    return { offsets: offsetsOf(heights), indexOf: new Map(keys.map((key, index) => [key, index])) };
+  const offsets = useMemo(
+    () => offsetsOf(keys.map((key) => measured.current.get(key)?.height ?? estimate(key))),
     // `revision` stands for the measurements, which live in a ref.
-  }, [keys, estimate, revision]);
+    [keys, estimate, revision],
+  );
 
   // The list's own top within the scroller, below whatever sits above it.
   const start = container.current?.offsetTop ?? 0;
@@ -156,8 +156,8 @@ export function VirtualList({
     if (!element) return;
     const held = anchor.current;
     if (held && element.scrollTop > LIVE_EDGE_PX) {
-      const index = indexOf.get(held.key);
-      const offset = index === undefined ? undefined : offsets[index];
+      const index = keys.indexOf(held.key);
+      const offset = index === -1 ? undefined : offsets[index];
       if (offset !== undefined && offset !== held.offset) element.scrollTop += offset - held.offset;
     }
     const [inView] = visibleRange(offsets, element.scrollTop - start, 0, 0);

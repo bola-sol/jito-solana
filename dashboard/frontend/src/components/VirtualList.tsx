@@ -149,20 +149,30 @@ export function VirtualList({
   );
   const total = offsets[keys.length] ?? 0;
 
-  // Holds the first item in view where it was, when the list is away from its top.
-  const anchor = useRef<{ key: number; offset: number } | null>(null);
+  // Holds the first item in view where the reader left it, when the list is away from its top. The
+  // place is kept exact and each correction aimed at it, so the browser's rounding of `scrollTop`
+  // cannot add up; it is taken again only when the reader scrolls.
+  const anchor = useRef<{ key: number; place: number } | null>(null);
+  const settled = useRef<number | null>(null);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
     const held = anchor.current;
-    if (held && element.scrollTop > LIVE_EDGE_PX) {
-      const index = keys.indexOf(held.key);
-      const offset = index === -1 ? undefined : offsets[index];
-      if (offset !== undefined && offset !== held.offset) element.scrollTop += offset - held.offset;
+    const current = element.scrollTop;
+    const moved = settled.current === null ? null : current - settled.current;
+    const index = held && current > LIVE_EDGE_PX ? keys.indexOf(held.key) : -1;
+    const offset = offsets[index];
+    if (held && moved !== null && offset !== undefined) {
+      // What the reader scrolled is kept; what arrived or grew above is taken back out.
+      const target = start + offset - held.place + moved;
+      if (Math.abs(current - target) >= 0.5) element.scrollTop = target;
     }
-    const [inView] = visibleRange(offsets, element.scrollTop - start, 0, 0);
-    const key = keys[inView];
-    anchor.current = key === undefined ? null : { key, offset: offsets[inView] ?? 0 };
+    if (!held || moved !== 0 || offset === undefined) {
+      const [inView] = visibleRange(offsets, element.scrollTop - start, 0, 0);
+      const key = keys[inView];
+      anchor.current = key === undefined ? null : { key, place: start + (offsets[inView] ?? 0) - element.scrollTop };
+    }
+    settled.current = element.scrollTop;
   });
 
   // Observes what is drawn and lets go of what no longer is.

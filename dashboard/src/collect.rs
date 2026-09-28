@@ -1680,11 +1680,13 @@ impl Collector {
             self.skip_rate = SkipRateWalk::new(epoch, me, leader_slots);
         }
 
-        let blockstore = &self.ctx.blockstore;
-        self.skip_rate
-            .advance(root_bank.slot(), blockstore.lowest_slot(), |slot| {
-                blockstore.is_full(slot)
-            });
+        let root = root_bank.slot();
+        // Read only when a leader slot has come due: the sysvar is a 128 KB bitmap.
+        if self.skip_rate.due(root)
+            && let Some(history) = root_bank.get_slot_history()
+        {
+            self.skip_rate.advance(root, |slot| history.check(slot));
+        }
         let rate = self.skip_rate.rate();
         self.debounces.skip_rate.publish(
             &self.publisher,

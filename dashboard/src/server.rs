@@ -52,6 +52,10 @@ const MAX_CLIENT_MESSAGE: usize = 4096;
 /// Otherwise a viewer that stops reading holds a slot until TCP notices.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Unsent bytes the kernel holds for a websocket. A slow viewer's backlog then waits in the
+/// update queue, where a burst is coalesced, rather than in a socket buffer that is sent as is.
+const UNSENT_LIMIT: u32 = 16 * 1024;
+
 const MAX_WEBSOCKET_CLIENTS: usize = 64;
 
 const REPLY_BURST: u32 = 8;
@@ -431,6 +435,17 @@ async fn send_within(
     Ok(())
 }
 
+/// Limits unsent data only, so a fast link keeps its full window in flight.
+#[cfg(target_os = "linux")]
+fn limit_unsent(socket: &TcpStream) {
+    if let Err(err) = socket2::SockRef::from(socket).set_tcp_notsent_lowat(UNSENT_LIMIT) {
+        log::debug!("dashboard: could not limit a websocket's unsent bytes: {err}");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn limit_unsent(_socket: &TcpStream) {}
+
 async fn serve_websocket(
     socket: TcpStream,
     publisher: Arc<Publisher>,
@@ -440,6 +455,7 @@ async fn serve_websocket(
     replies: Arc<Replies>,
     path: &str,
 ) -> Result<(), ConnectionError> {
+    limit_unsent(&socket);
     let mut server = Server::new(socket.compat());
     // Only a protocol the server lists is reported back from the request.
     server.add_protocol(DEFLATE_PROTOCOL);
@@ -1757,6 +1773,68 @@ mod tests {
                 .any(|frame| frame.contains(r#""key":"root_slot""#)),
             "the snapshot was missing a retained key: {frames:?}"
         );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_a_websocket_limits_what_the_kernel_holds_unsent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        limit_unsent(&socket);
+        assert_eq!(
+            socket2::SockRef::from(&socket).tcp_notsent_lowat().unwrap(),
+            UNSENT_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_client_that_stops_reading_gets_each_slot_once_it_resumes() {
+        const FILLER: u64 = 128;
+        const WATCHED: u64 = FILLER;
+        const REVISIONS: u64 = 50;
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+
+        // More than the socket buffers hold while the client is not reading, so the server's
+        // sends stall and later updates queue behind them.
+        let pad = "x".repeat(4096);
+        for slot in 0..FILLER {
+            publisher.publish_slot_update(slot, &(slot, &pad));
+            sleep(Duration::from_millis(1)).await;
+        }
+        for revision in 0..REVISIONS {
+            publisher.publish_slot_update(WATCHED, &(WATCHED, revision));
+            sleep(Duration::from_millis(1)).await;
+        }
+        publisher.publish("summary", "done", &true);
+
+        let mut revisions = Vec::new();
+        loop {
+            let mut data = Vec::new();
+            receiver.receive_data(&mut data).await.unwrap();
+            let frame: serde_json::Value = serde_json::from_slice(&data).unwrap();
+            if frame["key"] == "done" {
+                break;
+            }
+            if frame["key"] == "update" && frame["value"][0] == WATCHED {
+                revisions.push(frame["value"][1].as_u64().unwrap());
+            }
+        }
+        assert!(
+            revisions.len() < REVISIONS as usize,
+            "every revision was sent: {revisions:?}"
+        );
+        assert_eq!(revisions.last(), Some(&(REVISIONS - 1)));
 
         sender.close().await.unwrap();
         server.await.unwrap().unwrap();

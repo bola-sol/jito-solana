@@ -6,6 +6,7 @@
 use {
     flate2::{Compression, write::ZlibEncoder},
     serde::{Deserialize, Serialize},
+    solana_clock::Slot,
     std::{
         collections::BTreeMap,
         io::Write,
@@ -55,6 +56,14 @@ pub struct Request {
     pub params: serde_json::Value,
 }
 
+/// What a queued message can be dropped for: a newer value of the same retained key, or a newer
+/// update to the same slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Supersedes {
+    Key(&'static str, &'static str),
+    Slot(Slot),
+}
+
 /// Serialized once, on the publishing thread, and shared by every client.
 #[derive(Clone)]
 pub struct Message {
@@ -62,7 +71,7 @@ pub struct Message {
     /// Made the first time a client that takes it is sent the message, and shared by every copy.
     deflated: Arc<OnceLock<Option<Box<[u8]>>>>,
     /// So an older value still queued for a slow client can be dropped in its favour.
-    supersedes: Option<(&'static str, &'static str)>,
+    supersedes: Option<Supersedes>,
 }
 
 pub enum Frame<'a> {
@@ -108,7 +117,7 @@ impl Message {
         }
     }
 
-    pub fn supersedes(&self) -> Option<(&'static str, &'static str)> {
+    pub fn supersedes(&self) -> Option<Supersedes> {
         self.supersedes
     }
 }
@@ -134,8 +143,8 @@ fn deflate(bytes: &[u8]) -> Option<Vec<u8>> {
     encoder.finish().ok()
 }
 
-/// A burst of queued messages with each retained key sent once, with its newest value, in the
-/// newest one's place. Everything else keeps its order.
+/// A burst of queued messages with each retained key and each slot sent once, with its newest
+/// value, in the newest one's place. Everything else keeps its order.
 pub fn coalesce(burst: Vec<Message>) -> Vec<Message> {
     let mut seen = std::collections::HashSet::new();
     let mut kept: Vec<Message> = burst
@@ -260,7 +269,7 @@ impl Publisher {
 
     pub fn publish<T: Serialize>(&self, topic: &'static str, key: &'static str, value: &T) {
         let mut message = encode(topic, key, value);
-        message.supersedes = Some((topic, key));
+        message.supersedes = Some(Supersedes::Key(topic, key));
         self.retained
             .lock()
             .unwrap()
@@ -272,10 +281,26 @@ impl Publisher {
 
     /// Not encoded at all while nobody is connected.
     pub fn publish_ephemeral<T: Serialize>(&self, topic: &'static str, key: &str, value: &T) {
+        self.broadcast(topic, key, value, None);
+    }
+
+    /// A slot's whole entry, so an older one still queued for a slow client can be dropped.
+    pub fn publish_slot_update<T: Serialize>(&self, slot: Slot, value: &T) {
+        self.broadcast(TOPIC_SLOT, "update", value, Some(Supersedes::Slot(slot)));
+    }
+
+    fn broadcast<T: Serialize>(
+        &self,
+        topic: &'static str,
+        key: &str,
+        value: &T,
+        supersedes: Option<Supersedes>,
+    ) {
         if self.sender.receiver_count() == 0 {
             return;
         }
-        let message = encode(topic, key, value);
+        let mut message = encode(topic, key, value);
+        message.supersedes = supersedes;
         self.note(topic, key, &message);
         let _ = self.sender.send(message);
     }
@@ -548,6 +573,32 @@ mod tests {
                 r#"{"topic":"summary","key":"root_slot","value":2}"#,
                 r#"{"topic":"slot","key":"update","value":11}"#,
                 r#"{"topic":"summary","key":"cluster","value":"testnet"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_burst_sends_each_slot_once_with_its_newest_entry() {
+        let publisher = Publisher::new();
+        let mut receiver = publisher.subscribe();
+        publisher.publish_slot_update(7, &"7 first shred");
+        publisher.publish_slot_update(8, &"8 first shred");
+        publisher.publish_ephemeral(TOPIC_SUMMARY, "tps_sample", &1u64);
+        publisher.publish_slot_update(7, &"7 rooted");
+        publisher.publish_ephemeral(TOPIC_SUMMARY, "tps_sample", &2u64);
+        let mut burst = Vec::new();
+        while let Ok(message) = receiver.try_recv() {
+            burst.push(message);
+        }
+        let kept = coalesce(burst);
+        let sent: Vec<&str> = kept.iter().map(Message::text).collect();
+        assert_eq!(
+            sent,
+            [
+                r#"{"topic":"slot","key":"update","value":"8 first shred"}"#,
+                r#"{"topic":"summary","key":"tps_sample","value":1}"#,
+                r#"{"topic":"slot","key":"update","value":"7 rooted"}"#,
+                r#"{"topic":"summary","key":"tps_sample","value":2}"#,
             ]
         );
     }

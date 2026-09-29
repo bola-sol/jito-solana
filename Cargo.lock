@@ -150,6 +150,7 @@ dependencies = [
  "nix",
  "serde",
  "serde_json",
+ "socket2 0.6.5",
  "soketto",
  "solana-account 4.5.0",
  "solana-accounts-db",

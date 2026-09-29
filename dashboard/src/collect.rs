@@ -1198,8 +1198,7 @@ impl Collector {
     /// Here because no single moment finishes an entry.
     fn publish_slot(&mut self, entry: &SlotEntry) {
         self.history.write().unwrap().record(entry);
-        self.publisher
-            .publish_ephemeral(TOPIC_SLOT, "update", entry);
+        self.publisher.publish_slot_update(entry.slot, entry);
         self.overview_dirty = true;
     }
 

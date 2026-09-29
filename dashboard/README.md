@@ -171,10 +171,11 @@ is being asked for.
 A client that offers the `deflate` websocket subprotocol is sent every message
 of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the
 page inflates with the browser's `DecompressionStream`; shorter messages, and
-everything to a client that did not offer it, go as text. When a client falls
-behind, a burst of queued updates carries each retained key once, at its newest
-value. With the crate's log at debug, the server reports the bytes published per
-key once a minute.
+everything to a client that did not offer it, go as text. The kernel holds at
+most 16 KB unsent for each websocket, so a client on a slow link falls behind in
+the server's queue, and a burst from that queue carries each retained key and
+each slot once, at its newest value. With the crate's log at debug, the server
+reports the bytes published per key once a minute.
 
 ## Building the frontend
 

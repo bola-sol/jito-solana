@@ -11,6 +11,7 @@ import type {
   MissList,
   NetworkSample,
   Peer,
+  ProducedBlock,
   Published,
   SlotEntry,
   ThreadsSample,
@@ -39,6 +40,9 @@ const MAX_SLOTS = 512;
  *  sidebar rail. Matches `OWN_SLOTS_KEPT` on the server. */
 const MAX_OWN_SLOTS = 64;
 
+/** Our blocks kept for the slot page. Matches `PRODUCED_BLOCKS` on the server. */
+const MAX_PRODUCED_BLOCKS = 500;
+
 /** TPS samples kept for the chart. */
 const MAX_TPS_SAMPLES = 300;
 /** Clock readings kept for the offset: a minute, so a clock step ages out. */
@@ -54,6 +58,14 @@ export type ConnectionState = "connecting" | "open" | "closed";
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+}
+
+/** `held` with `block` in its slot's place, replacing an older copy, capped at `cap` newest. */
+function withBlock(held: readonly ProducedBlock[], block: ProducedBlock, cap: number): ProducedBlock[] {
+  const next = held.filter((kept) => kept.slot !== block.slot);
+  const at = next.findIndex((kept) => kept.slot > block.slot);
+  next.splice(at === -1 ? next.length : at, 0, block);
+  return next.slice(-cap);
 }
 
 /** `held` with `sample` appended where it is newer than the last, capped at
@@ -343,6 +355,10 @@ export class Store {
     } else if (topic === "summary" && key === "tps_history") {
       if (!Array.isArray(value)) return;
       this.tps = (value as TpsSample[]).slice(-MAX_TPS_SAMPLES);
+    } else if (topic === "summary" && key === "produced_block") {
+      // The whole list comes only on connecting; after that, each block that changed.
+      const held = this.get("summary", "produced_blocks") ?? [];
+      this.values.set("summary.produced_blocks", withBlock(held, value as ProducedBlock, MAX_PRODUCED_BLOCKS));
     } else if (topic === "summary" && key === "tps_sample") {
       this.tps = appendNewer(this.tps, value as TpsSample, (sample) => sample.slot, MAX_TPS_SAMPLES);
     } else {

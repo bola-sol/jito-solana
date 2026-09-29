@@ -152,10 +152,14 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
+| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_block`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
 | `epoch`   | `new` |
 | `peers`   | `all` |
 | `slot`    | `overview`, `update`, `upcoming` |
+
+`summary.produced_blocks` is sent whole only to a client that is connecting;
+after that, each of our blocks that is added or filled in arrives alone as
+`summary.produced_block`.
 
 A client can also send a request carrying an `id`, and the reply goes back to
 that `id` alone: `summary.ping`, `summary.displays` for the whole name table,

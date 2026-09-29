@@ -592,8 +592,7 @@ impl Collector {
                 .collect();
             self.collect_miss_list(&working_bank, &heard, &votes);
             if self.fill_certificates(&working_bank, &heard) {
-                self.publisher
-                    .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
+                self.publish_produced();
             }
         }
 
@@ -1108,8 +1107,18 @@ impl Collector {
         let read = self.fill_versions();
         let timed = self.fill_execution();
         if captured || filled || read || timed {
+            self.publish_produced();
+        }
+    }
+
+    /// The whole list is for a client connecting; one already connected is sent each block that
+    /// changed. Retained first, so a client connecting in between misses neither.
+    fn publish_produced(&mut self) {
+        self.publisher
+            .retain_only(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
+        for block in self.produced.take_changed() {
             self.publisher
-                .publish(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
+                .publish_update(TOPIC_SUMMARY, "produced_block", block.slot, &block);
         }
     }
 
@@ -1198,7 +1207,8 @@ impl Collector {
     /// Here because no single moment finishes an entry.
     fn publish_slot(&mut self, entry: &SlotEntry) {
         self.history.write().unwrap().record(entry);
-        self.publisher.publish_slot_update(entry.slot, entry);
+        self.publisher
+            .publish_update(TOPIC_SLOT, "update", entry.slot, entry);
         self.overview_dirty = true;
     }
 
@@ -2259,6 +2269,42 @@ mod tests {
         assert_eq!(
             collector.skip_rate.next_index, restarted,
             "the walk restarts rather than carrying an index into another schedule"
+        );
+    }
+
+    #[test]
+    fn test_a_produced_block_is_sent_alone_and_the_list_kept_for_a_connecting_client() {
+        let harness = fixture();
+        let mut updates = harness.publisher.subscribe();
+        let mut collector = harness.collector();
+        collector.tick();
+        harness.advance_to(8);
+        collector.tick();
+
+        let mut sent = Vec::new();
+        while let Ok(message) = updates.try_recv() {
+            assert!(
+                !message.contains(r#""key":"produced_blocks""#),
+                "the whole list went to a live client"
+            );
+            if message.contains(r#""key":"produced_block""#) {
+                let frame: serde_json::Value = serde_json::from_str(&message).unwrap();
+                sent.push(frame["value"]["slot"].as_u64().unwrap());
+            }
+        }
+        assert!(!sent.is_empty(), "the fixture leads its own slots");
+
+        let held = harness.published_key("summary", "produced_blocks").unwrap();
+        let held: serde_json::Value = serde_json::from_str(&held).unwrap();
+        let held: Vec<u64> = held["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["slot"].as_u64().unwrap())
+            .collect();
+        assert!(
+            sent.iter().all(|slot| held.contains(slot)),
+            "{sent:?} {held:?}"
         );
     }
 

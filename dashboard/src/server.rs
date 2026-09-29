@@ -789,7 +789,7 @@ fn respond(
 mod tests {
     use {
         super::*,
-        crate::proto::DEFLATE_FROM,
+        crate::proto::{DEFLATE_FROM, TOPIC_SLOT},
         flate2::read::ZlibDecoder,
         soketto::handshake::{Client, ServerResponse},
         std::io::Read,
@@ -1809,11 +1809,11 @@ mod tests {
         // sends stall and later updates queue behind them.
         let pad = "x".repeat(4096);
         for slot in 0..FILLER {
-            publisher.publish_slot_update(slot, &(slot, &pad));
+            publisher.publish_update(TOPIC_SLOT, "update", slot, &(slot, &pad));
             sleep(Duration::from_millis(1)).await;
         }
         for revision in 0..REVISIONS {
-            publisher.publish_slot_update(WATCHED, &(WATCHED, revision));
+            publisher.publish_update(TOPIC_SLOT, "update", WATCHED, &(WATCHED, revision));
             sleep(Duration::from_millis(1)).await;
         }
         publisher.publish("summary", "done", &true);

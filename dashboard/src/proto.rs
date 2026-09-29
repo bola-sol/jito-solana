@@ -57,11 +57,11 @@ pub struct Request {
 }
 
 /// What a queued message can be dropped for: a newer value of the same retained key, or a newer
-/// update to the same slot.
+/// update under the same key to the same slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Supersedes {
     Key(&'static str, &'static str),
-    Slot(Slot),
+    Slot(&'static str, &'static str, Slot),
 }
 
 /// Serialized once, on the publishing thread, and shared by every client.
@@ -284,9 +284,15 @@ impl Publisher {
         self.broadcast(topic, key, value, None);
     }
 
-    /// A slot's whole entry, so an older one still queued for a slow client can be dropped.
-    pub fn publish_slot_update<T: Serialize>(&self, slot: Slot, value: &T) {
-        self.broadcast(TOPIC_SLOT, "update", value, Some(Supersedes::Slot(slot)));
+    /// Everything held for one slot, so an older one still queued for a slow client can be dropped.
+    pub fn publish_update<T: Serialize>(
+        &self,
+        topic: &'static str,
+        key: &'static str,
+        slot: Slot,
+        value: &T,
+    ) {
+        self.broadcast(topic, key, value, Some(Supersedes::Slot(topic, key, slot)));
     }
 
     fn broadcast<T: Serialize>(
@@ -581,10 +587,10 @@ mod tests {
     fn test_a_burst_sends_each_slot_once_with_its_newest_entry() {
         let publisher = Publisher::new();
         let mut receiver = publisher.subscribe();
-        publisher.publish_slot_update(7, &"7 first shred");
-        publisher.publish_slot_update(8, &"8 first shred");
+        publisher.publish_update(TOPIC_SLOT, "update", 7, &"7 first shred");
+        publisher.publish_update(TOPIC_SLOT, "update", 8, &"8 first shred");
         publisher.publish_ephemeral(TOPIC_SUMMARY, "tps_sample", &1u64);
-        publisher.publish_slot_update(7, &"7 rooted");
+        publisher.publish_update(TOPIC_SLOT, "update", 7, &"7 rooted");
         publisher.publish_ephemeral(TOPIC_SUMMARY, "tps_sample", &2u64);
         let mut burst = Vec::new();
         while let Ok(message) = receiver.try_recv() {
@@ -601,6 +607,19 @@ mod tests {
                 r#"{"topic":"summary","key":"tps_sample","value":2}"#,
             ]
         );
+    }
+
+    #[test]
+    fn test_updates_under_different_keys_to_one_slot_are_all_sent() {
+        let publisher = Publisher::new();
+        let mut receiver = publisher.subscribe();
+        publisher.publish_update(TOPIC_SLOT, "update", 7, &1u64);
+        publisher.publish_update(TOPIC_SUMMARY, "produced_block", 7, &2u64);
+        let mut burst = Vec::new();
+        while let Ok(message) = receiver.try_recv() {
+            burst.push(message);
+        }
+        assert_eq!(coalesce(burst).len(), 2);
     }
 
     #[test]

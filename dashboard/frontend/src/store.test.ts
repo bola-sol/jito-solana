@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Store } from "./store";
-import type { Envelope, SlotEntry, TpsSample } from "./types";
+import type { Envelope, ProducedBlock, SlotEntry, TpsSample } from "./types";
 
 beforeAll(() => {
   // The store coalesces notifications onto an animation frame, which node has
@@ -409,6 +409,40 @@ describe("tps samples", () => {
 
     store.apply(envelope("summary", "tps_sample", sample(4)));
     expect(store.getTps().map((entry) => entry.slot)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("produced blocks", () => {
+  // Only the fields the store reads; the page reads the rest.
+  const block = (number: number, blockhash = `hash${number}`): ProducedBlock =>
+    ({ slot: number, blockhash }) as ProducedBlock;
+  const held = (store: Store) =>
+    (store.get("summary", "produced_blocks") ?? []).map((kept) => `${kept.slot}:${kept.blockhash}`);
+
+  it("replaces a block's older copy and slots a new one into order", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "produced_blocks", [block(10), block(12)]));
+    store.apply(envelope("summary", "produced_block", block(12, "filled")));
+    store.apply(envelope("summary", "produced_block", block(11)));
+    expect(held(store)).toEqual(["10:hash10", "11:hash11", "12:filled"]);
+  });
+
+  it("starts a list from updates alone, and a fresh list replaces it", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "produced_block", block(5)));
+    expect(held(store)).toEqual(["5:hash5"]);
+    store.apply(envelope("summary", "produced_blocks", [block(7)]));
+    expect(held(store)).toEqual(["7:hash7"]);
+  });
+
+  it("keeps the newest five hundred", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "produced_blocks", Array.from({ length: 500 }, (_, index) => block(index))));
+    store.apply(envelope("summary", "produced_block", block(500)));
+    const slots = (store.get("summary", "produced_blocks") ?? []).map((kept) => kept.slot);
+    expect(slots.length).toBe(500);
+    expect(slots[0]).toBe(1);
+    expect(slots.at(-1)).toBe(500);
   });
 });
 

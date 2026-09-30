@@ -21,7 +21,7 @@ use {
     arc_swap::ArcSwap,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{bounded, unbounded},
     log::*,
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
@@ -831,7 +831,7 @@ pub fn execute(
     });
     // The handles the supermajority wait reads, sent before it starts, so the
     // page can show the wait per validator.
-    let dashboard_gossip = dashboard_config.is_some().then(unbounded);
+    let dashboard_gossip = dashboard_config.is_some().then(|| bounded(1));
 
     let block_engine_config = Arc::new(ArcSwap::from_pointee(BlockEngineConfig {
         block_engine_url: value_of(matches, "block_engine_url").unwrap_or_default(),

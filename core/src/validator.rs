@@ -1608,7 +1608,7 @@ impl Validator {
         };
 
         if let Some(sender) = &config.gossip_ready_sender {
-            let _ = sender.send((cluster_info.clone(), bank_forks.clone()));
+            let _ = sender.try_send((cluster_info.clone(), bank_forks.clone()));
         }
 
         let waited_for_supermajority = wait_for_supermajority(

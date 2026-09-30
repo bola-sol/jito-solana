@@ -444,6 +444,27 @@ describe("produced blocks", () => {
     expect(slots[0]).toBe(1);
     expect(slots.at(-1)).toBe(500);
   });
+
+  it("merges waterfalls and costs sent one slot at a time", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "slot_waterfalls", [{ slot: 10 }, { slot: 12 }]));
+    store.apply(envelope("summary", "slot_waterfall", { slot: 11 }));
+    store.apply(envelope("summary", "slot_cost", { slot: 12, costliest_account: "A" }));
+    expect((store.get("summary", "slot_waterfalls") ?? []).map((kept) => kept.slot)).toEqual([10, 11, 12]);
+    expect((store.get("summary", "slot_costs") ?? []).map((kept) => kept.slot)).toEqual([12]);
+  });
+
+  it("drops what falls below the validator's floor", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "produced_blocks", [block(10), block(20)]));
+    store.apply(envelope("summary", "slot_costs", [{ slot: 10 }, { slot: 20 }]));
+    store.apply(envelope("summary", "produced_turns", [{ first: 8, last: 11 }, { first: 20, last: 23 }]));
+    store.apply(envelope("summary", "produced_floor", 16));
+    expect(held(store)).toEqual(["20:hash20"]);
+    expect((store.get("summary", "slot_costs") ?? []).map((kept) => kept.slot)).toEqual([20]);
+    expect((store.get("summary", "produced_turns") ?? []).map((kept) => kept.first)).toEqual([20]);
+    expect(store.get("summary", "produced_floor")).toBe(16);
+  });
 });
 
 describe("isReady", () => {

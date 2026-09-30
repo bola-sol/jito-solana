@@ -885,6 +885,8 @@ export interface Published {
     slot_waterfalls: SlotWaterfall[];
     slot_costs: SlotCost[];
     produced_turns: LeaderTurn[];
+    /** The oldest of our slots the validator holds. */
+    produced_floor: number;
     tip_rates: TipRates;
     replay: ReplayWindow | null;
     host: Host | null;

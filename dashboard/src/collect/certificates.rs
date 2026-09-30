@@ -389,13 +389,7 @@ impl Collector {
         let Some(tally) = &self.certificates.tally else {
             return false;
         };
-        let pending: Vec<Slot> = self
-            .produced
-            .blocks()
-            .iter()
-            .filter(|block| block.certificate.is_none())
-            .map(|block| block.slot)
-            .collect();
+        let pending = self.replies.produced.read().unwrap().without_certificate();
         if pending.is_empty() {
             return false;
         }
@@ -471,9 +465,10 @@ impl Collector {
             ));
         }
         drop(info);
+        let mut store = self.replies.produced.write().unwrap();
         let mut changed = false;
         for (slot, certificate) in found {
-            changed |= self.produced.set_certificate(slot, certificate);
+            changed |= store.set_certificate(slot, certificate);
         }
         changed
     }

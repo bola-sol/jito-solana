@@ -11,7 +11,7 @@ use {
             BundleLanding, MetricsTap, ShredFill, StageTimes, TapCounters, WindowedCounters,
             WorkerSum,
         },
-        produced::{Bundles, Execution, ProducedBlock, ProducedRing},
+        produced::{Bundles, Execution, ProducedBlock, ProducedStore, held_from},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         snapshot::{self, SnapshotTracker, Snapshots},
@@ -63,6 +63,8 @@ const SLOW_TICK: Duration = Duration::from_secs(5);
 /// Replies to requests, encoded by the collector and handed out by the server as they stand.
 pub struct Replies {
     pub misses: RwLock<MissReplies>,
+    /// Written by the collector; the server pages through it for the slot details page.
+    pub produced: RwLock<ProducedStore>,
     pub gossip_peers: RwLock<Arc<str>>,
     /// Unix milliseconds of the last request for the gossip peers, which are gathered only while
     /// someone is asking.
@@ -73,6 +75,7 @@ impl Default for Replies {
     fn default() -> Self {
         Self {
             misses: RwLock::default(),
+            produced: RwLock::default(),
             gossip_peers: RwLock::new(Arc::from("null")),
             gossip_peers_wanted: AtomicU64::new(0),
         }
@@ -107,6 +110,7 @@ const NEXT_LEADER_LOOKAHEAD: u64 = 20_000;
 
 const UPCOMING_SLOTS: u64 = 32;
 
+/// Sent to a connecting client; older blocks are asked for.
 const PRODUCED_BLOCKS: usize = 500;
 
 const WORKER_REPORT_MILLIS: u64 = 20;
@@ -347,7 +351,6 @@ pub struct Collector {
     /// watched, so they are neither tracked nor counted as skipped.
     first_observed_slot: Option<Slot>,
     completed_window: VecDeque<(Instant, Slot)>,
-    produced: ProducedRing,
     versions_pending: BTreeSet<Slot>,
     execution_pending: BTreeSet<Slot>,
     history: Arc<RwLock<SlotHistory>>,
@@ -380,7 +383,7 @@ pub struct Collector {
     turns_scanned_to: Slot,
     turn_reference: TapCounters,
     turn_drained: Option<u64>,
-    leader_turns: VecDeque<LeaderTurn>,
+    held_from: Slot,
     overview_dirty: bool,
     overview_retained_at: Instant,
     snapshots: SnapshotTracker,
@@ -428,7 +431,6 @@ impl Collector {
             leaders_resolved_to: 0,
             info_scanned_to: 0,
             first_observed_slot: None,
-            produced: ProducedRing::new(PRODUCED_BLOCKS),
             versions_pending: BTreeSet::new(),
             execution_pending: BTreeSet::new(),
             history,
@@ -456,7 +458,7 @@ impl Collector {
             turns_scanned_to: 0,
             turn_reference: TapCounters::default(),
             turn_drained: None,
-            leader_turns: VecDeque::new(),
+            held_from: 0,
             frozen_banks,
             totals: BTreeMap::new(),
             overview_dirty: false,
@@ -524,6 +526,7 @@ impl Collector {
             .unwrap_or_default();
 
         self.collect_slot_positions(&root_bank, highest_slot, completed);
+        self.hold_produced_from(&root_bank);
         // Read once: before Alpenglow it opens a blockstore iterator, and two
         // readers want it every tick.
         let cluster_tip = self.ctx.cluster_tip();
@@ -824,14 +827,10 @@ impl Collector {
         // Two turns ending on one tick share the reading; the second spans nothing.
         let reading = self.metrics_tap.counters();
         let drained_millis = timestamp();
+        let mut store = self.replies.produced.write().unwrap();
         for (first, last) in ended {
-            let produced = self
-                .produced
-                .blocks()
-                .iter()
-                .filter(|block| (first..=last).contains(&block.slot))
-                .count() as u64;
-            self.leader_turns.push_back(LeaderTurn {
+            let produced = store.produced_in(first, last);
+            store.add_turn(LeaderTurn {
                 first,
                 last,
                 produced,
@@ -849,11 +848,41 @@ impl Collector {
             self.turn_reference = reading;
             self.turn_drained = Some(drained_millis);
         }
-        while self.leader_turns.len() > LEADER_TURNS {
-            self.leader_turns.pop_front();
-        }
+        drop(store);
+        self.publish_turns();
+    }
+
+    fn publish_turns(&self) {
+        let recent = self
+            .replies
+            .produced
+            .read()
+            .unwrap()
+            .recent_turns(LEADER_TURNS);
         self.publisher
-            .publish(TOPIC_SUMMARY, "produced_turns", &self.leader_turns);
+            .publish(TOPIC_SUMMARY, "produced_turns", &recent);
+    }
+
+    /// This epoch's blocks, and the previous epoch's until a share of this one has passed.
+    fn hold_produced_from(&mut self, root_bank: &Bank) {
+        let schedule = root_bank.epoch_schedule();
+        let (epoch, index) = schedule.get_epoch_and_slot_index(root_bank.slot());
+        let floor = held_from(
+            schedule.get_first_slot_in_epoch(epoch),
+            schedule.get_first_slot_in_epoch(epoch.saturating_sub(1)),
+            index,
+            schedule.get_slots_in_epoch(epoch),
+        );
+        if floor == self.held_from {
+            return;
+        }
+        self.held_from = floor;
+        self.replies.produced.write().unwrap().hold_from(floor);
+        self.metrics_tap.hold_slots_from(floor);
+        self.publisher
+            .publish(TOPIC_SUMMARY, "produced_floor", &floor);
+        self.publish_produced();
+        self.publish_turns();
     }
 
     fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<Pubkey> {
@@ -1060,7 +1089,7 @@ impl Collector {
                 && mine
             {
                 let block = self.capture_block(slot, bank, detail);
-                if self.produced.insert(block) {
+                if self.replies.produced.write().unwrap().insert(block) {
                     self.versions_pending.insert(slot);
                     self.execution_pending.insert(slot);
                     captured = true;
@@ -1102,7 +1131,10 @@ impl Collector {
         // The bundle stage reports a slot after its bank freezes.
         let tap = &self.metrics_tap;
         let filled = self
+            .replies
             .produced
+            .write()
+            .unwrap()
             .fill_bundles(|slot| tap.bundles_landed(slot).map(Bundles::from));
         let read = self.fill_versions();
         let timed = self.fill_execution();
@@ -1114,9 +1146,13 @@ impl Collector {
     /// The whole list is for a client connecting; one already connected is sent each block that
     /// changed. Retained first, so a client connecting in between misses neither.
     fn publish_produced(&mut self) {
+        let (recent, changed) = {
+            let mut store = self.replies.produced.write().unwrap();
+            (store.recent(PRODUCED_BLOCKS), store.take_changed())
+        };
         self.publisher
-            .retain_only(TOPIC_SUMMARY, "produced_blocks", &self.produced.blocks());
-        for block in self.produced.take_changed() {
+            .retain_only(TOPIC_SUMMARY, "produced_blocks", &recent);
+        for block in changed {
             self.publisher
                 .publish_update(TOPIC_SUMMARY, "produced_block", block.slot, &block);
         }
@@ -1127,7 +1163,7 @@ impl Collector {
         let floor = blockstore.lowest_slot();
         let mut changed = false;
         for slot in std::mem::take(&mut self.versions_pending) {
-            if slot < floor || !self.produced.contains(slot) {
+            if slot < floor || !self.replies.produced.read().unwrap().contains(slot) {
                 continue;
             }
             if !blockstore.is_full(slot) {
@@ -1138,7 +1174,13 @@ impl Collector {
                 continue;
             };
             let tally = versions::tally(entries.iter().flat_map(|entry| &entry.transactions));
-            if self.produced.set_versions(slot, tally) {
+            if self
+                .replies
+                .produced
+                .write()
+                .unwrap()
+                .set_versions(slot, tally)
+            {
                 changed = true;
             }
         }
@@ -1149,7 +1191,7 @@ impl Collector {
         let now = timestamp();
         let mut changed = false;
         for slot in std::mem::take(&mut self.execution_pending) {
-            if !self.produced.contains(slot) {
+            if !self.replies.produced.read().unwrap().contains(slot) {
                 continue;
             }
             let window = self
@@ -1174,7 +1216,13 @@ impl Collector {
             let Some(execution) = build_execution(workers, votes, full_millis) else {
                 continue;
             };
-            if self.produced.set_execution(slot, execution) {
+            if self
+                .replies
+                .produced
+                .write()
+                .unwrap()
+                .set_execution(slot, execution)
+            {
                 changed = true;
             }
         }

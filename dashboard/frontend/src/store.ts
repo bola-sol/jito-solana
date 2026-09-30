@@ -13,7 +13,9 @@ import type {
   Peer,
   ProducedBlock,
   Published,
+  SlotCost,
   SlotEntry,
+  SlotWaterfall,
   ThreadsSample,
   TpsSample,
   WrittenList,
@@ -40,7 +42,8 @@ const MAX_SLOTS = 512;
  *  sidebar rail. Matches `OWN_SLOTS_KEPT` on the server. */
 const MAX_OWN_SLOTS = 64;
 
-/** Our blocks kept for the slot page. Matches `PRODUCED_BLOCKS` on the server. */
+/** Our blocks, waterfalls and costs kept for the slot page. Matches `PRODUCED_BLOCKS` on the
+ *  server. */
 const MAX_PRODUCED_BLOCKS = 500;
 
 /** TPS samples kept for the chart. */
@@ -61,7 +64,7 @@ interface Pending {
 }
 
 /** `held` with `block` in its slot's place, replacing an older copy, capped at `cap` newest. */
-function withBlock(held: readonly ProducedBlock[], block: ProducedBlock, cap: number): ProducedBlock[] {
+function withBlock<T extends { slot: number }>(held: readonly T[], block: T, cap: number): T[] {
   const next = held.filter((kept) => kept.slot !== block.slot);
   const at = next.findIndex((kept) => kept.slot > block.slot);
   next.splice(at === -1 ? next.length : at, 0, block);
@@ -359,6 +362,26 @@ export class Store {
       // The whole list comes only on connecting; after that, each block that changed.
       const held = this.get("summary", "produced_blocks") ?? [];
       this.values.set("summary.produced_blocks", withBlock(held, value as ProducedBlock, MAX_PRODUCED_BLOCKS));
+    } else if (topic === "summary" && key === "slot_waterfall") {
+      const held = this.get("summary", "slot_waterfalls") ?? [];
+      this.values.set("summary.slot_waterfalls", withBlock(held, value as SlotWaterfall, MAX_PRODUCED_BLOCKS));
+    } else if (topic === "summary" && key === "slot_cost") {
+      const held = this.get("summary", "slot_costs") ?? [];
+      this.values.set("summary.slot_costs", withBlock(held, value as SlotCost, MAX_PRODUCED_BLOCKS));
+    } else if (topic === "summary" && key === "produced_floor") {
+      if (typeof value !== "number") return;
+      this.values.set("summary.produced_floor", value);
+      // The lists kept for a connecting client are replaced; a connected one drops the rest here.
+      const above = <T extends { slot: number }>(held: readonly T[] | undefined) =>
+        held?.filter((kept) => kept.slot >= value);
+      const blocks = above(this.get("summary", "produced_blocks"));
+      if (blocks) this.values.set("summary.produced_blocks", blocks);
+      const waterfalls = above(this.get("summary", "slot_waterfalls"));
+      if (waterfalls) this.values.set("summary.slot_waterfalls", waterfalls);
+      const costs = above(this.get("summary", "slot_costs"));
+      if (costs) this.values.set("summary.slot_costs", costs);
+      const turns = this.get("summary", "produced_turns")?.filter((turn) => turn.first >= value);
+      if (turns) this.values.set("summary.produced_turns", turns);
     } else if (topic === "summary" && key === "tps_sample") {
       this.tps = appendNewer(this.tps, value as TpsSample, (sample) => sample.slot, MAX_TPS_SAMPLES);
     } else {

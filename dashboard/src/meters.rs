@@ -10,8 +10,8 @@ use {
         metrics_tap::{
             AccountsTotals, BundleTotals, ExecutedTotals, GOSSIP_ENTRY_TYPES, GossipEntryTotals,
             GossipTotals, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals, ReplaySlotTimes,
-            SchedulerSource, SchedulerTotals, SlotCost, SlotWaterfall, TapCounters, VerifyTotals,
-            WindowedCounters, XdpConfig,
+            SchedulerSource, SchedulerTotals, TapCounters, VerifyTotals, WindowedCounters,
+            XdpConfig,
         },
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
@@ -39,6 +39,9 @@ const LOCK_ATTEMPTS: u32 = 5;
 const LOCK_RETRY: Duration = Duration::from_millis(5);
 
 const CHART_HISTORY: usize = 300;
+
+/// Leader slots' waterfalls and costs sent to a connecting client, as many as its blocks.
+const SLOT_LISTS_SENT: usize = 500;
 
 const THREADS_HISTORY: usize = 60;
 
@@ -1709,8 +1712,6 @@ struct TpuMeter {
     verify: Debounced<Option<VerifyTotals>>,
     executed: Debounced<Option<ExecutedTotals>>,
     bundles: Debounced<Option<BundleTotals>>,
-    slot_waterfalls: Debounced<Vec<SlotWaterfall>>,
-    slot_costs: Debounced<Vec<SlotCost>>,
     slot_lists_seen: Option<u64>,
     replay: Debounced<Option<ReplayWindow>>,
 }
@@ -1734,8 +1735,6 @@ impl TpuMeter {
             verify: Debounced::default(),
             executed: Debounced::default(),
             bundles: Debounced::default(),
-            slot_waterfalls: Debounced::default(),
-            slot_costs: Debounced::default(),
             slot_lists_seen: None,
             replay: Debounced::default(),
         }
@@ -1894,19 +1893,33 @@ impl TpuMeter {
             );
         }
 
-        // Sent as lists joined by slot in the browser, since the produced block is captured on
-        // another thread. Copied only when the tap's revision says a list moved.
+        // Joined by slot in the browser, since the produced block is captured on another thread.
+        // The newest few are kept for a connecting client; a connected one is sent each slot that
+        // changed. Read only when the tap's revision says a list moved.
         let revision = tap.slot_lists_revision();
         if self.slot_lists_seen != Some(revision) {
             self.slot_lists_seen = Some(revision);
-            self.slot_waterfalls.publish(
-                publisher,
+            publisher.retain_only(
                 TOPIC_SUMMARY,
                 "slot_waterfalls",
-                tap.slot_waterfalls(),
+                &tap.recent_waterfalls(SLOT_LISTS_SENT),
             );
-            self.slot_costs
-                .publish(publisher, TOPIC_SUMMARY, "slot_costs", tap.slot_costs());
+            publisher.retain_only(
+                TOPIC_SUMMARY,
+                "slot_costs",
+                &tap.recent_costs(SLOT_LISTS_SENT),
+            );
+            for waterfall in tap.take_changed_waterfalls() {
+                publisher.publish_update(
+                    TOPIC_SUMMARY,
+                    "slot_waterfall",
+                    waterfall.slot,
+                    &waterfall,
+                );
+            }
+            for cost in tap.take_changed_costs() {
+                publisher.publish_update(TOPIC_SUMMARY, "slot_cost", cost.slot, &cost);
+            }
         }
 
         self.replay.publish(

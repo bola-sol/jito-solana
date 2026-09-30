@@ -137,7 +137,11 @@ const VOTE_TRACKS: usize = 4096;
 /// Read when replay freezes a slot; during a catch-up the blockstore fills far ahead of replay.
 const SHRED_FILLS: usize = 4096;
 
-const SLOT_WATERFALLS: usize = 500;
+/// Reports held until the collector copies them into one of our blocks.
+const PENDING_SLOTS: usize = 500;
+
+/// Well past 1.2 epochs of the largest stake's slots; a guard for a floor never set.
+const MAX_HELD_SLOTS: usize = 32_768;
 
 const WORKER_TIMINGS: usize = 2048;
 
@@ -186,11 +190,11 @@ pub struct MetricsTap {
 
     gossip: Mutex<GossipSet>,
 
-    slot_waterfalls: Mutex<VecDeque<SlotWaterfall>>,
+    slot_waterfalls: Mutex<HeldSlots<SlotWaterfall>>,
 
     scheduler_is_bam: AtomicBool,
 
-    slot_costs: Mutex<VecDeque<SlotCost>>,
+    slot_costs: Mutex<HeldSlots<SlotCost>>,
 
     slot_lists_revision: AtomicU64,
 
@@ -250,6 +254,64 @@ pub struct SlotCost {
     pub contended: u64,
     pub new_account_data: u64,
     pub in_flight: u64,
+}
+
+/// Our leader slots' reports from the produced store's floor on, and which changed since taken.
+#[derive(Debug)]
+struct HeldSlots<T> {
+    held: BTreeMap<Slot, T>,
+    changed: BTreeSet<Slot>,
+    floor: Slot,
+}
+
+impl<T> Default for HeldSlots<T> {
+    fn default() -> Self {
+        Self {
+            held: BTreeMap::new(),
+            changed: BTreeSet::new(),
+            floor: 0,
+        }
+    }
+}
+
+impl<T: Clone> HeldSlots<T> {
+    /// Kept unless below the floor, or held already and `replaces` says no.
+    fn put(&mut self, slot: Slot, value: T, replaces: impl FnOnce(&T) -> bool) -> bool {
+        if slot < self.floor {
+            return false;
+        }
+        match self.held.get_mut(&slot) {
+            Some(held) if replaces(held) => *held = value,
+            Some(_) => return false,
+            None => {
+                self.held.insert(slot, value);
+                while self.held.len() > MAX_HELD_SLOTS {
+                    self.held.pop_first();
+                }
+            }
+        }
+        self.changed.insert(slot);
+        true
+    }
+
+    fn recent(&self, count: usize) -> Vec<T> {
+        let mut recent: Vec<T> = self.held.values().rev().take(count).cloned().collect();
+        recent.reverse();
+        recent
+    }
+
+    fn take_changed(&mut self) -> Vec<T> {
+        std::mem::take(&mut self.changed)
+            .into_iter()
+            .filter_map(|slot| self.held.get(&slot).cloned())
+            .collect()
+    }
+
+    fn hold_from(&mut self, floor: Slot) {
+        self.floor = floor;
+        self.held = self.held.split_off(&floor);
+        self.changed = self.changed.split_off(&floor);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -887,18 +949,11 @@ impl MetricsTap {
         };
         // A build running two schedulers reports every leader slot twice; keep
         // the report that did the work.
-        if let Some(held) = slots.iter_mut().find(|held| held.slot == slot) {
-            if describes_more_work(&waterfall.counts, &held.counts) {
-                *held = waterfall;
-                self.note_slot_lists_changed();
-            }
-            return;
+        if slots.put(slot, waterfall, |held| {
+            describes_more_work(&waterfall.counts, &held.counts)
+        }) {
+            self.note_slot_lists_changed();
         }
-        slots.push_back(waterfall);
-        while slots.len() > SLOT_WATERFALLS {
-            slots.pop_front();
-        }
-        self.note_slot_lists_changed();
     }
 
     fn note_slot_lists_changed(&self) {
@@ -1124,7 +1179,7 @@ impl MetricsTap {
             return;
         };
         slots.insert(slot, times);
-        while slots.len() > SLOT_WATERFALLS {
+        while slots.len() > PENDING_SLOTS {
             slots.pop_first();
         }
     }
@@ -1157,7 +1212,7 @@ impl MetricsTap {
         });
         landing.sanitized = landing.sanitized.saturating_add(sanitized);
         landing.executed = landing.executed.saturating_add(executed);
-        while slots.len() > SLOT_WATERFALLS {
+        while slots.len() > PENDING_SLOTS {
             slots.pop_first();
         }
     }
@@ -1206,28 +1261,45 @@ impl MetricsTap {
         let Ok(mut costs) = self.slot_costs.lock() else {
             return;
         };
-        // Replaced if already held, so a repeat cannot push a real row off the end.
-        if let Some(held) = costs.iter_mut().find(|held| held.slot == slot_number) {
-            *held = cost;
+        if costs.put(slot_number, cost, |_| true) {
             self.note_slot_lists_changed();
-            return;
         }
-        costs.push_back(cost);
-        while costs.len() > SLOT_WATERFALLS {
-            costs.pop_front();
-        }
-        self.note_slot_lists_changed();
     }
 
     pub fn slot_lists_revision(&self) -> u64 {
         self.slot_lists_revision.load(Ordering::Relaxed)
     }
 
-    pub fn slot_costs(&self) -> Vec<SlotCost> {
+    /// The newest `count`, oldest first.
+    pub fn recent_costs(&self, count: usize) -> Vec<SlotCost> {
         self.slot_costs
             .lock()
-            .map(|costs| costs.iter().cloned().collect())
+            .map(|costs| costs.recent(count))
             .unwrap_or_default()
+    }
+
+    /// Those recorded or replaced since the last call, oldest first.
+    pub fn take_changed_costs(&self) -> Vec<SlotCost> {
+        self.slot_costs
+            .lock()
+            .map(|mut costs| costs.take_changed())
+            .unwrap_or_default()
+    }
+
+    /// Our leader slots' reports older than `floor` are dropped and refused from then on.
+    pub fn hold_slots_from(&self, floor: Slot) {
+        if let Ok(mut slots) = self.slot_waterfalls.lock() {
+            slots.hold_from(floor);
+        }
+        if let Ok(mut costs) = self.slot_costs.lock() {
+            costs.hold_from(floor);
+        }
+        self.note_slot_lists_changed();
+    }
+
+    #[cfg(test)]
+    pub fn slot_costs(&self) -> Vec<SlotCost> {
+        self.recent_costs(usize::MAX)
     }
 
     fn remember_stake_in_gossip(&self, point: &DataPoint) {
@@ -1314,11 +1386,25 @@ impl MetricsTap {
         }
     }
 
-    pub fn slot_waterfalls(&self) -> Vec<SlotWaterfall> {
+    /// The newest `count`, oldest first.
+    pub fn recent_waterfalls(&self, count: usize) -> Vec<SlotWaterfall> {
         self.slot_waterfalls
             .lock()
-            .map(|slots| slots.iter().copied().collect())
+            .map(|slots| slots.recent(count))
             .unwrap_or_default()
+    }
+
+    /// Those recorded or replaced since the last call, oldest first.
+    pub fn take_changed_waterfalls(&self) -> Vec<SlotWaterfall> {
+        self.slot_waterfalls
+            .lock()
+            .map(|mut slots| slots.take_changed())
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub fn slot_waterfalls(&self) -> Vec<SlotWaterfall> {
+        self.recent_waterfalls(usize::MAX)
     }
 
     pub fn counters(&self) -> TapCounters {
@@ -2529,15 +2615,44 @@ mod tests {
     }
 
     #[test]
-    fn test_only_the_newest_leader_slots_are_kept() {
+    fn test_leader_slots_below_the_floor_are_dropped_and_refused() {
         let tap = MetricsTap::default();
-        for slot in 0..u64::try_from(SLOT_WATERFALLS).unwrap().saturating_add(10) {
+        for slot in 0..8 {
             tap.observe(&slot_point(slot, &[("num_received", "1i")]));
+            tap.observe(&cost_point(true, &[("bank_slot", &format!("{slot}i"))]));
         }
+        tap.take_changed_waterfalls();
+        tap.hold_slots_from(5);
+        assert_eq!(tap.slot_waterfalls().first().map(|w| w.slot), Some(5));
+        assert_eq!(tap.slot_costs().first().map(|c| c.slot), Some(5));
+        tap.observe(&slot_point(2, &[("num_received", "1i")]));
+        assert_eq!(tap.slot_waterfalls().len(), 3);
+        assert!(tap.take_changed_waterfalls().is_empty());
+    }
 
-        let held = tap.slot_waterfalls();
-        assert_eq!(held.len(), SLOT_WATERFALLS);
-        assert_eq!(held[0].slot, 10);
+    #[test]
+    fn test_each_slot_changed_is_taken_once() {
+        let tap = MetricsTap::default();
+        tap.observe(&slot_point(20, &[("num_received", "1i")]));
+        tap.observe(&slot_point(21, &[("num_received", "1i")]));
+        assert_eq!(
+            tap.take_changed_waterfalls()
+                .iter()
+                .map(|w| w.slot)
+                .collect::<Vec<_>>(),
+            [20, 21]
+        );
+        assert!(tap.take_changed_waterfalls().is_empty());
+        tap.observe(&slot_point(20, &[("num_buffered", "9i")]));
+        assert_eq!(tap.take_changed_waterfalls().len(), 1, "more work replaces");
+        tap.observe(&slot_point(20, &[("num_buffered", "2i")]));
+        assert!(
+            tap.take_changed_waterfalls().is_empty(),
+            "less work does not"
+        );
+        tap.observe(&cost_point(true, &[("bank_slot", "20i")]));
+        assert_eq!(tap.take_changed_costs().len(), 1);
+        assert_eq!(tap.recent_costs(8).len(), 1);
     }
 
     #[test]

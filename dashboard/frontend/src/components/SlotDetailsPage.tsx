@@ -1,12 +1,13 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, blockTime, bytes, count, micros, percent, shortKey, sol, units } from "../format";
-import { recurrence } from "../cost";
 import {
   blockSummary,
   certificateVerdict,
   earnedOf,
   sortBlocks,
   type BlockFigures,
+  type BlockHead,
+  type BlockSummary,
   type Earned,
   type SortDir,
   type SortKey,
@@ -16,8 +17,9 @@ import { jitoShare, ourShare } from "../tips";
 import type {
   BlockCertificate,
   Execution,
-  LeaderTurn,
   ProducedBlock,
+  ProducedDetail,
+  Recurrence,
   SlotCost,
   SlotWaterfall,
   TipRates,
@@ -40,6 +42,12 @@ import { Copyable } from "./Copyable";
 import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
 import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
+import { ProducedIndex, type TurnHead } from "../producedIndex";
+import { ScrollTop } from "./ScrollTop";
+import { VirtualList } from "./VirtualList";
+
+/** Guessed before a row is measured: a closed row and its gap. */
+const ROW_HEIGHT_GUESS = 44;
 
 export function SlotDetailsPage({
   slot: open,
@@ -53,61 +61,146 @@ export function SlotDetailsPage({
   onQuery: (query: string) => void;
 }): ReactElement {
   const store = useStore();
-  const blocks = store.get("summary", "produced_blocks");
-  const waterfalls = store.get("summary", "slot_waterfalls");
-  const costs = store.get("summary", "slot_costs");
+  const live = store.get("summary", "produced_blocks");
+  const liveTurns = store.get("summary", "produced_turns");
+  const floor = store.get("summary", "produced_floor");
   const rates = store.get("summary", "tip_rates");
-  const turns = store.get("summary", "produced_turns");
+  const epoch = store.get("epoch", "new");
+  const connection = store.getConnection();
   const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
+  const [index] = useState(() => new ProducedIndex());
+  const [, setPages] = useState(0);
+  const list = useRef<HTMLDivElement>(null);
 
-  // Joined by slot rather than nested on the block, since the two are built on different threads.
-  const bySlot = useMemo(
-    () => new Map((waterfalls ?? []).map((slot) => [slot.slot, slot])),
-    [waterfalls],
-  );
-  const costBySlot = useMemo(
-    () => new Map((costs ?? []).map((cost) => [cost.slot, cost])),
-    [costs],
-  );
-  const turnBySlot = useMemo(() => turnOf(turns ?? []), [turns]);
-
-  // Brought into view once, when reached by link; a row opened by a click stays where it is.
-  const scrolledTo = useRef<number | null>(null);
+  // Everything held is read once per connection; the live feed keeps it current after that.
   useEffect(() => {
-    if (open === null || scrolledTo.current === open) return;
-    const row = document.getElementById(`block-${open}`);
-    if (!row) return;
-    scrolledTo.current = open;
-    const top = row.getBoundingClientRect().top;
-    if (top < 0 || top > window.innerHeight * 0.7) row.scrollIntoView({ block: "start" });
-  }, [open, blocks]);
-
-  if (!blocks || blocks.length === 0) {
-    return (
-      <section className="slot-details">
-        <div className="sidebar-empty">
-          nothing produced yet. Blocks appear here as this validator leads.
-        </div>
-      </section>
+    if (connection !== "open") return;
+    index.reset();
+    void index.readAll(
+      (before) => store.request("produced.figures", before === undefined ? {} : { before }),
+      () => setPages((was) => was + 1),
     );
-  }
+    return () => index.reset();
+  }, [connection, index, store]);
 
-  const ordered = sort ? sortBlocks(blocks, sort.key, sort.dir, rates) : [...blocks].reverse();
+  // Idempotent, so safe in a memo: the index only takes what differs.
+  useMemo(() => {
+    if (floor !== undefined) index.setFloor(floor);
+    index.mergeLive(live ?? [], liveTurns ?? []);
+  }, [index, floor, live, liveTurns]);
+  const revision = index.revision;
+
+  const heads = useMemo(() => [...index.heads.values()], [index, revision]);
+  const summary = useMemo(() => blockSummary(heads, rates), [heads, rates]);
+  const turnBySlot = useMemo(() => turnOf(index.turns.values()), [index, revision]);
+  const ordered = useMemo(
+    () =>
+      sort
+        ? sortBlocks(heads, sort.key, sort.dir, rates).map((head) => head.slot)
+        : heads.map((head) => head.slot).sort((a, b) => b - a),
+    [heads, sort, rates],
+  );
   const needle = query.replace(/,/g, "").trim();
-  const listed = needle ? ordered.filter((block) => String(block.slot).includes(needle)) : ordered;
+  const keys = useMemo(
+    () => (needle ? ordered.filter((slot) => String(slot).includes(needle)) : ordered),
+    [ordered, needle],
+  );
+  const position = useMemo(() => new Map(keys.map((slot, at) => [slot, at])), [keys]);
+
+  // Memoised: the page redraws on every store tick, and a whole epoch of heads is walked.
+  const [oldest, newest] = useMemo(() => {
+    let low: number | null = null;
+    let high: number | null = null;
+    for (const head of heads) {
+      if (low === null || head.slot < low) low = head.slot;
+      if (high === null || head.slot > high) high = head.slot;
+    }
+    return [low, high];
+  }, [heads]);
+  const firstEpoch = oldest === null ? null : epochOf(epoch, oldest);
+  const lastEpoch = newest === null ? null : epochOf(epoch, newest);
+  // Dividers only newest first, and only when the blocks held span more than one epoch.
+  const divided = !sort && firstEpoch !== null && lastEpoch !== null && firstEpoch !== lastEpoch;
+  const epochs =
+    firstEpoch === null || lastEpoch === null
+      ? null
+      : firstEpoch === lastEpoch
+        ? `epoch ${count(lastEpoch)}`
+        : `epochs ${count(firstEpoch)}–${count(lastEpoch)}`;
+
+  // What sits above a row, from its place in the list; read by the sizing and the drawing alike.
+  const shape = (slot: number) => {
+    const at = position.get(slot) ?? 0;
+    const previous = keys[at - 1];
+    const blockEpoch = epochOf(epoch, slot);
+    const epochDivider =
+      divided && blockEpoch !== null && (previous === undefined || epochOf(epoch, previous) !== blockEpoch);
+    const turn = sort ? undefined : turnBySlot.get(slot);
+    const turnDivider = turn !== undefined && (previous === undefined || turnBySlot.get(previous) !== turn);
+    return { blockEpoch, epochDivider, turn, turnDivider };
+  };
+
+  const sizeClass = (slot: number) => {
+    const { epochDivider, turn, turnDivider } = shape(slot);
+    return (
+      (turnDivider ? 1 : 0) +
+      (epochDivider ? 2 : 0) +
+      (open === slot ? 4 : 0) +
+      (turnDivider && turn && openTurn === turn.first ? 8 : 0)
+    );
+  };
+
   const toggle = (key: SortKey) => {
     // A sort scatters a turn's blocks, so its divider and drawer go with it.
     setOpenTurn(null);
     setSort(sort?.key === key ? { key, dir: sort.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
   };
 
-  // Dividers only newest first, and only when the blocks held span more than one epoch.
-  const epoch = store.get("epoch", "new");
-  const numbered = listed.map((block) => ({ block, epoch: epochOf(epoch, block.slot) }));
-  const divided = !sort && new Set(numbered.map((entry) => entry.epoch)).size > 1;
-  const turnAt = (index: number): LeaderTurn | undefined =>
-    sort ? undefined : turnBySlot.get(numbered[index]?.block.slot ?? -1);
+  const renderRow = (slot: number) => {
+    const head = index.heads.get(slot);
+    if (!head) return null;
+    const { blockEpoch, epochDivider, turn, turnDivider } = shape(slot);
+    return (
+      <>
+        {epochDivider && blockEpoch !== null && <div className="produced-epoch">Epoch {count(blockEpoch)}</div>}
+        {turnDivider && turn && (
+          <TurnDivider
+            turn={turn}
+            heads={index.heads}
+            open={openTurn === turn.first}
+            onToggle={() => setOpenTurn(openTurn === turn.first ? null : turn.first)}
+          />
+        )}
+        <BlockRow
+          head={head}
+          epoch={blockEpoch}
+          rates={rates}
+          inTurn={turn !== undefined}
+          open={open === slot}
+          onToggle={() => onSlot(open === slot ? null : slot)}
+        />
+      </>
+    );
+  };
+
+  const reading = !index.complete && !index.failed;
+  if (heads.length === 0) {
+    return (
+      <section className="slot-details">
+        <div className="sidebar-empty">
+          {reading
+            ? "reading the blocks this validator holds…"
+            : "nothing produced yet. Blocks appear here as this validator leads."}
+        </div>
+      </section>
+    );
+  }
+
+  const held = count(heads.length);
+  const scope = reading
+    ? `the ${held} blocks read so far`
+    : `the ${held} blocks held${epochs === null ? "" : `, ${epochs}`}`;
 
   return (
     <section className="slot-details">
@@ -123,73 +216,68 @@ export function SlotDetailsPage({
       </div>
       <div className="produced">
         <SummaryRows
-          blocks={blocks}
-          rates={rates}
+          summary={summary}
+          scope={scope}
           sort={sort}
           onSort={toggle}
           onClear={() => setSort(null)}
         />
-        {numbered.map(({ block, epoch: at }, index) => {
-          const turn = turnAt(index);
-          return (
-            <Fragment key={block.slot}>
-              {divided && at !== null && at !== numbered[index - 1]?.epoch && (
-                <div className="produced-epoch">Epoch {count(at)}</div>
-              )}
-              {turn && turn !== turnAt(index - 1) && (
-                <TurnDivider
-                  turn={turn}
-                  blocks={blocks}
-                  waterfalls={waterfalls ?? []}
-                  open={openTurn === turn.first}
-                  onToggle={() => setOpenTurn(openTurn === turn.first ? null : turn.first)}
-                />
-              )}
-              <BlockRow
-                block={block}
-                epoch={at}
-                waterfall={bySlot.get(block.slot)}
-                cost={costBySlot.get(block.slot)}
-                costs={costs ?? []}
-                rates={rates}
-                open={open === block.slot}
-                onToggle={() => onSlot(open === block.slot ? null : block.slot)}
-              />
-            </Fragment>
-          );
-        })}
+      </div>
+      <div className="produced-list" ref={list}>
+        <ScrollTop scroller={list} hold={false} />
+        <VirtualList
+          keys={keys}
+          sizeClass={sizeClass}
+          fallback={ROW_HEIGHT_GUESS}
+          render={renderRow}
+          scroller={list}
+          reveal={open}
+        />
       </div>
       <div className="card-footnote">
-        {open !== null && !blocks.some((block) => block.slot === open) && (
-          <>Slot {count(open)} is not among the blocks held. </>
-        )}
-        {needle && `${count(listed.length)} of ${count(blocks.length)} blocks match. `}
+        {open !== null && !index.heads.has(open) && !reading && <>Slot {count(open)} is not among the blocks held. </>}
+        {needle && `${count(keys.length)} of ${held} blocks match. `}
+        {reading && index.held !== null && `Reading back ${held} of ${count(index.held)}. `}
+        {index.failed && "The validator stopped answering before every block was read. "}
         {sort
           ? `Sorted by ${SORT_WORD[sort.key]}, ${sort.dir === "desc" ? "highest" : "lowest"} first.`
-          : `Captured as each block froze. ${count(blocks.length)} kept, oldest first to fall off.`}
+          : "This epoch's blocks, and the last epoch's until a fifth of this one has passed."}
       </div>
     </section>
   );
 }
 
+/** One request per opened span; `undefined` while it is out, `null` if nothing came back. */
+function useDetail(first: number | null, last: number | null): ProducedDetail | null | undefined {
+  const store = useStore();
+  const [answer, setAnswer] = useState<{ span: string; detail: ProducedDetail | null } | null>(null);
+  const span = first === null || last === null ? null : `${first}-${last}`;
+  useEffect(() => {
+    if (first === null || last === null) return;
+    let current = true;
+    store.request("produced.detail", { first, last }).then(
+      (detail) => current && setAnswer({ span: `${first}-${last}`, detail }),
+      () => current && setAnswer({ span: `${first}-${last}`, detail: null }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [store, first, last]);
+  return answer !== null && answer.span === span ? answer.detail : undefined;
+}
+
 function TurnDivider({
   turn,
-  blocks,
-  waterfalls,
+  heads,
   open,
   onToggle,
 }: {
-  turn: LeaderTurn;
-  blocks: ProducedBlock[];
-  waterfalls: SlotWaterfall[];
+  turn: TurnHead;
+  heads: ReadonlyMap<number, BlockHead>;
   open: boolean;
   onToggle: () => void;
 }) {
   const slots = turn.last - turn.first + 1;
-  const own = waterfalls.filter((w) => w.slot >= turn.first && w.slot <= turn.last);
-  const landed = blocks
-    .filter((block) => block.slot >= turn.first && block.slot <= turn.last)
-    .reduce((sum, block) => sum + block.transactions, 0);
   return (
     <div className={`turn${open ? " is-open" : ""}`}>
       <button type="button" className="turn-head" onClick={onToggle} aria-expanded={open}>
@@ -202,13 +290,28 @@ function TurnDivider({
         </span>
         <span className="turn-more">{open ? "TPU path ▾" : "TPU path"}</span>
       </button>
-      {open && (
-        <div className="turn-drawer">
-          {turnSections(turn, own, landed).map((section) => (
-            <Section key={section.key} section={section} />
-          ))}
-        </div>
-      )}
+      {open && <TurnDrawer turn={turn} heads={heads} />}
+    </div>
+  );
+}
+
+function TurnDrawer({ turn, heads }: { turn: TurnHead; heads: ReadonlyMap<number, BlockHead> }) {
+  const store = useStore();
+  const liveTurn = store.get("summary", "produced_turns")?.find((held) => held.first === turn.first);
+  const liveWaterfalls = store.get("summary", "slot_waterfalls");
+  const detail = useDetail(turn.first, turn.last);
+  const full = liveTurn ?? detail?.turns.find((held) => held.first === turn.first);
+  if (!full) {
+    return <div className="turn-drawer sx-loading">{detail === undefined ? "reading this turn…" : "this turn is no longer held"}</div>;
+  }
+  const own = (detail?.waterfalls ?? liveWaterfalls ?? []).filter((w) => w.slot >= turn.first && w.slot <= turn.last);
+  let landed = 0;
+  for (let slot = turn.first; slot <= turn.last; slot += 1) landed += heads.get(slot)?.transactions ?? 0;
+  return (
+    <div className="turn-drawer">
+      {turnSections(full, own, landed).map((section) => (
+        <Section key={section.key} section={section} />
+      ))}
     </div>
   );
 }
@@ -251,20 +354,18 @@ const SORT_WORD: Record<SortKey, string> = {
 };
 
 function SummaryRows({
-  blocks,
-  rates,
+  summary,
+  scope,
   sort,
   onSort,
   onClear,
 }: {
-  blocks: ProducedBlock[];
-  rates: TipRates | undefined;
+  summary: BlockSummary;
+  scope: string;
   sort: { key: SortKey; dir: SortDir } | null;
   onSort: (key: SortKey) => void;
   onClear: () => void;
 }) {
-  const summary = blockSummary(blocks, rates);
-  const held = count(summary.blocks);
   const { mean } = summary;
   return (
     <>
@@ -272,7 +373,7 @@ function SummaryRows({
         <span className="produced-id">
           <Explain
             className="produced-avg-label"
-            text={`Mean of each column over the ${held} blocks held. A block missing a figure is left out of that column.`}
+            text={`Mean of each column over ${scope}. A block missing a figure is left out of that column.`}
           >
             Mean
           </Explain>
@@ -295,14 +396,10 @@ function SummaryRows({
           {millis(mean.durationMillis)}
         </SortButton>
       </div>
-      <FiguresRow
-        label="Median"
-        explain={`The middle block of each column over the ${held} held.`}
-        figures={summary.median}
-      />
+      <FiguresRow label="Median" explain={`The middle block of each column over ${scope}.`} figures={summary.median} />
       <FiguresRow
         label="Worst 5%"
-        explain={`The fifth percentile of transactions, fill and earnings, and the ninety fifth of duration, over the ${held} blocks held.`}
+        explain={`The fifth percentile of transactions, fill and earnings, and the ninety fifth of duration, over ${scope}.`}
         figures={summary.worst}
       />
     </>
@@ -347,70 +444,86 @@ const solFigure = (value: number | null) =>
   );
 
 function BlockRow({
-  block,
+  head,
   epoch,
-  waterfall,
-  cost,
-  costs,
   rates,
+  inTurn,
   open,
   onToggle,
 }: {
-  block: ProducedBlock;
+  head: BlockHead;
   epoch: number | null;
-  waterfall: SlotWaterfall | undefined;
-  cost: SlotCost | undefined;
-  costs: SlotCost[];
   rates: TipRates | undefined;
+  inTurn: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
-  const filled = block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : 0;
-  const earned = earnedOf(block, rates);
+  const filled = head.block_cost_limit > 0 ? head.block_cost / head.block_cost_limit : 0;
+  const earned = earnedOf(head, rates);
 
   return (
-    <div className={`produced-block${open ? " is-open" : ""}`} id={`block-${block.slot}`}>
+    <div
+      className={`produced-block${open ? " is-open" : ""}${inTurn ? " is-in-turn" : ""}`}
+      id={`block-${head.slot}`}
+    >
       <button type="button" className="produced-head" onClick={onToggle} aria-expanded={open}>
         {/* One cell for slot and stamp, so the grid stays five columns and a narrow screen just
             hides the stamp. */}
         <span className="produced-id">
-          <span className="produced-slot">{count(block.slot)}</span>
-          <span className="produced-when">{blockStamp(block.slot_time_millis)}</span>
+          <span className="produced-slot">{count(head.slot)}</span>
+          <span className="produced-when">{blockStamp(head.slot_time_millis)}</span>
         </span>
-        <span className="produced-txns">{count(block.transactions)} txns</span>
+        <span className="produced-txns">{count(head.transactions)} txns</span>
         <span className="produced-fill">{percent(filled, 1)} full</span>
         <span className="produced-fees" title={earnedTitle(earned)}>
           {sol(earned.total, 5)}
           <span className="produced-fees-unit"> SOL</span>
         </span>
         <span className="produced-ms">
-          {block.duration_nanos === null
-            ? "—"
-            : `${Math.round(block.duration_nanos / 1e6)} ms`}
+          {head.duration_nanos === null ? "—" : `${Math.round(head.duration_nanos / 1e6)} ms`}
         </span>
       </button>
 
-      {open && (
-        <div className="produced-detail">
-          <BlockCompute block={block} cost={cost} rates={rates} />
-          {cost && <BlockAccount block={block} cost={cost} costs={costs} />}
-          {waterfall && <BlockScheduler waterfall={waterfall} />}
-          {cost && <BlockFigures cost={cost} />}
-          {block.certificate && <BlockCertificateStrip certificate={block.certificate} />}
+      {open && <BlockDrawer slot={head.slot} epoch={epoch} rates={rates} />}
+    </div>
+  );
+}
 
-          <div className="produced-foot">
-            <Copyable
-              text={String(block.slot)}
-              label={count(block.slot)}
-              className="produced-foot-slot"
-            />
-            <span className="produced-time">{blockTime(block.slot_time_millis)}</span>
-            {epoch !== null && <span className="produced-time">epoch {count(epoch)}</span>}
-            {/* The blockhash, the hash of the block's last entry, not a transaction signature. */}
-            <Copyable text={block.blockhash} className="produced-hash" />
-          </div>
-        </div>
-      )}
+/** The live block where it is still among the newest, so late figures show as they land; asked for
+ *  otherwise. The costliest account's recurrence always comes from the validator, over every block. */
+function BlockDrawer({ slot, epoch, rates }: { slot: number; epoch: number | null; rates: TipRates | undefined }) {
+  const store = useStore();
+  const detail = useDetail(slot, slot);
+  const block =
+    store.get("summary", "produced_blocks")?.find((held) => held.slot === slot) ??
+    detail?.blocks.find((held) => held.slot === slot);
+  const waterfall =
+    store.get("summary", "slot_waterfalls")?.find((held) => held.slot === slot) ??
+    detail?.waterfalls.find((held) => held.slot === slot);
+  const asked = detail?.costs.find((held) => held.slot === slot);
+  const cost = store.get("summary", "slot_costs")?.find((held) => held.slot === slot) ?? asked;
+  if (!block) {
+    return (
+      <div className="produced-detail sx-loading">
+        {detail === undefined ? "reading this block…" : "this block is no longer held"}
+      </div>
+    );
+  }
+  return (
+    <div className="produced-detail">
+      <BlockCompute block={block} cost={cost} rates={rates} />
+      {cost && <BlockAccount block={block} cost={cost} recurrence={asked?.recurrence ?? null} />}
+      {waterfall && <BlockScheduler waterfall={waterfall} />}
+      {cost && <BlockFigures cost={cost} />}
+      {block.certificate && <BlockCertificateStrip certificate={block.certificate} />}
+
+      <div className="produced-foot">
+        <Copyable text={String(block.slot)} label={count(block.slot)} className="produced-foot-slot" />
+        <span className="produced-time">{blockTime(block.slot_time_millis)}</span>
+        {epoch !== null && <span className="produced-time">epoch {count(epoch)}</span>}
+        {/* The blockhash, the hash of the block's last entry, not a transaction signature. */}
+        <Copyable text={block.blockhash} className="produced-hash" />
+      </div>
     </div>
   );
 }
@@ -625,16 +738,16 @@ function CapacityBar({ cap }: { cap: Capacity }) {
 function BlockAccount({
   block,
   cost,
-  costs,
+  recurrence,
 }: {
   block: ProducedBlock;
   cost: SlotCost;
-  costs: SlotCost[];
+  recurrence: Recurrence | null;
 }) {
   const ofLimit =
     block.account_cost_limit > 0 ? cost.costliest_cost / block.account_cost_limit : null;
   const ofBlock = cost.block_cost > 0 ? cost.costliest_cost / cost.block_cost : null;
-  const seen = recurrence(costs, cost.costliest_account);
+  const seen = recurrence;
 
   return (
     <div className="sx-acct">
@@ -667,12 +780,12 @@ function BlockAccount({
         <div className="sx-acct-note">
           Costliest in{" "}
           <b>
-            {seen.blocks} of the last {seen.of} blocks
+            {count(seen.blocks)} of the {count(seen.of)} blocks held
           </b>
-          , peaking at {units(seen.peakCost)} CU in slot{" "}
+          , peaking at {units(seen.peak_cost)} CU in slot{" "}
           <Copyable
-            text={String(seen.peakSlot)}
-            label={count(seen.peakSlot)}
+            text={String(seen.peak_slot)}
+            label={count(seen.peak_slot)}
             className="cost-again-slot"
           />
         </div>

@@ -13,8 +13,22 @@ export interface Earned {
   total: number;
 }
 
+/** What the list, its sort and its summary read of a block; the rest is fetched when one opens. */
+export type BlockHead = Pick<
+  ProducedBlock,
+  | "slot"
+  | "slot_time_millis"
+  | "transactions"
+  | "block_cost"
+  | "block_cost_limit"
+  | "total_fees"
+  | "priority_fees"
+  | "tips"
+  | "duration_nanos"
+>;
+
 /** By the runtime's own arithmetic: the burn floored, the rest kept. */
-export function earnedOf(block: ProducedBlock, rates: TipRates | undefined): Earned {
+export function earnedOf(block: BlockHead, rates: TipRates | undefined): Earned {
   const gross = block.total_fees - block.priority_fees;
   const base = gross - Math.floor((gross * BASE_FEE_BURN_PERCENT) / 100);
   const tips = rates && block.tips !== null ? ourShare(block.tips, rates) : null;
@@ -37,9 +51,9 @@ export interface BlockSummary {
   worst: BlockFigures;
 }
 
-type Figure = (block: ProducedBlock) => number | null;
+type Figure = (block: BlockHead) => number | null;
 
-function valuesOf(blocks: ProducedBlock[], of: Figure): number[] {
+function valuesOf(blocks: readonly BlockHead[], of: Figure): number[] {
   const values: number[] = [];
   for (const block of blocks) {
     const value = of(block);
@@ -66,7 +80,7 @@ function quantileOf(values: number[], q: number): number | null {
 export type SortKey = "transactions" | "filled" | "earned" | "duration";
 export type SortDir = "desc" | "asc";
 
-const SORT_VALUE: Record<SortKey, (block: ProducedBlock, rates: TipRates | undefined) => number | null> = {
+const SORT_VALUE: Record<SortKey, (block: BlockHead, rates: TipRates | undefined) => number | null> = {
   transactions: (block) => block.transactions,
   filled: (block) => (block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null),
   earned: (block, rates) => earnedOf(block, rates).total,
@@ -74,23 +88,26 @@ const SORT_VALUE: Record<SortKey, (block: ProducedBlock, rates: TipRates | undef
 };
 
 /** A block with no figure for the column sorts last either way. */
-export function sortBlocks(
-  blocks: ProducedBlock[],
+export function sortBlocks<T extends BlockHead>(
+  blocks: readonly T[],
   key: SortKey,
   dir: SortDir,
   rates?: TipRates,
-): ProducedBlock[] {
+): T[] {
   const value = SORT_VALUE[key];
   const sign = dir === "desc" ? -1 : 1;
-  return [...blocks].sort((a, b) => {
-    const left = value(a, rates);
-    const right = value(b, rates);
+  // Each value read once: a whole epoch of blocks is sorted.
+  const keyed = blocks.map((block) => ({ block, value: value(block, rates) }));
+  keyed.sort((a, b) => {
+    const left = a.value;
+    const right = b.value;
     if (left === null || right === null) return left === null ? (right === null ? 0 : 1) : -1;
     return sign * (left - right);
   });
+  return keyed.map((entry) => entry.block);
 }
 
-export function blockSummary(blocks: ProducedBlock[] | undefined, rates?: TipRates): BlockSummary {
+export function blockSummary(blocks: readonly BlockHead[] | undefined, rates?: TipRates): BlockSummary {
   const held = blocks ?? [];
   const transactions = valuesOf(held, (block) => block.transactions);
   const filled = valuesOf(held, (block) =>

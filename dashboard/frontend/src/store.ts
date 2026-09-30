@@ -7,11 +7,13 @@ import type {
   Displays,
   EpochInfo,
   Envelope,
+  FiguresPage,
   GossipPeers,
   MissList,
   NetworkSample,
   Peer,
   ProducedBlock,
+  ProducedDetail,
   Published,
   SlotCost,
   SlotEntry,
@@ -33,6 +35,8 @@ export interface Requests {
   "summary.misses": { params: Record<string, never>; reply: MissList };
   "summary.written": { params: Record<string, never>; reply: WrittenList };
   "peers.gossip": { params: Record<string, never>; reply: GossipPeers | null };
+  "produced.figures": { params: { before?: number }; reply: FiguresPage | null };
+  "produced.detail": { params: { first: number; last: number }; reply: ProducedDetail | null };
 }
 
 /** Slots kept for the strip and sidebar. Matches the server's overview length. */
@@ -42,8 +46,8 @@ const MAX_SLOTS = 512;
  *  sidebar rail. Matches `OWN_SLOTS_KEPT` on the server. */
 const MAX_OWN_SLOTS = 64;
 
-/** Our blocks, waterfalls and costs kept for the slot page. Matches `PRODUCED_BLOCKS` on the
- *  server. */
+/** Our newest blocks, waterfalls and costs kept live; the slot page asks for the rest. Matches
+ *  `PRODUCED_BLOCKS` on the server. */
 const MAX_PRODUCED_BLOCKS = 500;
 
 /** TPS samples kept for the chart. */

@@ -35,6 +35,7 @@ export function VirtualList({
   render,
   scroller,
   onNearEnd,
+  reveal,
 }: {
   keys: readonly number[];
   sizeClass: (key: number) => number;
@@ -43,6 +44,8 @@ export function VirtualList({
   render: (key: number) => ReactNode;
   scroller: RefObject<HTMLElement | null>;
   onNearEnd?: () => void;
+  /** Brought to the top of the view once, when it first appears among the keys. */
+  reveal?: number | null;
 }): ReactElement {
   const container = useRef<HTMLDivElement>(null);
   // Each drawn item's height and the size class it was measured in.
@@ -154,6 +157,19 @@ export function VirtualList({
   // cannot add up; it is taken again only when the reader scrolls.
   const anchor = useRef<{ key: number; place: number } | null>(null);
   const settled = useRef<number | null>(null);
+
+  // Before the anchor below, which then holds the item there as those above it are measured.
+  const revealed = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element || reveal === undefined || reveal === null || revealed.current === reveal) return;
+    const index = keys.indexOf(reveal);
+    const offset = offsets[index];
+    if (index < 0 || offset === undefined) return;
+    revealed.current = reveal;
+    element.scrollTop = start + offset;
+  });
+
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;

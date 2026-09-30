@@ -596,6 +596,52 @@ export interface SlotCost {
   in_flight: number;
 }
 
+/** How often an account was a block's costliest, over the blocks the validator holds. */
+export interface Recurrence {
+  blocks: number;
+  of: number;
+  peak_cost: number;
+  peak_slot: number;
+}
+
+export interface CostDetail extends SlotCost {
+  recurrence: Recurrence | null;
+}
+
+/** One block as the list draws it: slot, time, transactions, block cost, cost limit, total fees,
+ *  priority fees, tips and duration. */
+export type FigureRow = [
+  number,
+  number | null,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number | null,
+  number | null,
+];
+
+/** First slot, last slot, produced, drained and the previous drain. */
+export type TurnHeadRow = [number, number, number, number, number | null];
+
+/** A page of the blocks held, newest first; `next` is where the following page starts. */
+export interface FiguresPage {
+  figures: FigureRow[];
+  turns: TurnHeadRow[];
+  held: number;
+  floor: number;
+  next: number | null;
+}
+
+/** Everything drawn for a span of our slots once opened. */
+export interface ProducedDetail {
+  blocks: ProducedBlock[];
+  turns: LeaderTurn[];
+  waterfalls: SlotWaterfall[];
+  costs: CostDetail[];
+}
+
 export interface IngestSummary {
   window_seconds: number;
   paths: IngestPath[];

@@ -9,20 +9,20 @@ import {
 import type { LeaderTurn, SlotWaterfall, Waterfall } from "./types";
 import { waterfallRows } from "./waterfall";
 
-export function turnOf(turns: LeaderTurn[]): Map<number, LeaderTurn> {
-  const map = new Map<number, LeaderTurn>();
+export function turnOf<T extends Pick<LeaderTurn, "first" | "last">>(turns: Iterable<T>): Map<number, T> {
+  const map = new Map<number, T>();
   for (const turn of turns) {
     for (let slot = turn.first; slot <= turn.last; slot += 1) map.set(slot, turn);
   }
   return map;
 }
 
-export function turnRangeLabel(turn: LeaderTurn): string {
+export function turnRangeLabel(turn: Pick<LeaderTurn, "first" | "last">): string {
   if (turn.first === turn.last) return count(turn.first);
   return `${count(turn.first)}–${count(turn.last)}`;
 }
 
-export function turnSpanLabel(turn: LeaderTurn): string {
+export function turnSpanLabel(turn: Pick<LeaderTurn, "drained_millis" | "since_millis">): string {
   if (turn.since_millis === null) return "since the dashboard started";
   return `${duration(turn.drained_millis - turn.since_millis)} since the previous turn drained`;
 }

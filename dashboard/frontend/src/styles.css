@@ -2358,16 +2358,55 @@ body {
 
 /* ---- produced blocks ---- */
 
+/* Fills the column like the schedule, so the list below the averages scrolls on its own. */
 .slot-details {
   display: flex;
   flex-direction: column;
+  flex: 1;
   gap: 12px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .produced {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Positioned, so the virtual list inside can read its own top. */
+.produced-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.produced-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* The rows' own spacing, measured with each row. */
+.produced-list .virtual-item {
+  padding-bottom: 4px;
+}
+
+/* On a phone the header and averages leave the list a sliver, so it takes most of a screen and
+   the page scrolls to it. */
+@media (max-width: 700px) {
+  .produced-list {
+    flex: none;
+    height: 80dvh;
+  }
+}
+
+.sx-loading {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
 /* Columns sized to the figures with a sort arrow in front, shared with the averages row so the two
@@ -2558,7 +2597,7 @@ body {
   margin-top: 8px;
 }
 
-.turn ~ .produced-block {
+.produced-block.is-in-turn {
   margin-left: 14px;
 }
 

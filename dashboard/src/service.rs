@@ -82,7 +82,10 @@ impl DashboardService {
         // The server answers requests out of it and starts first.
         let info_cache = Arc::new(RwLock::new(ValidatorInfoCache::default()));
         let epochs: Arc<RwLock<Vec<EpochInfo>>> = Arc::new(RwLock::new(Vec::new()));
-        let replies = Arc::new(Replies::default());
+        let replies = Arc::new(Replies {
+            tap: metrics_tap.clone(),
+            ..Replies::default()
+        });
         let attached = Arc::new(AtomicBool::new(false));
         let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
 

@@ -11,7 +11,7 @@ use {
     solana_metrics::datapoint::DataPoint,
     solana_time_utils::timestamp,
     std::{
-        collections::{BTreeMap, BTreeSet, VecDeque},
+        collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -254,6 +254,15 @@ pub struct SlotCost {
     pub contended: u64,
     pub new_account_data: u64,
     pub in_flight: u64,
+}
+
+/// How often an account was a block's costliest, over the blocks held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Recurrence {
+    pub blocks: u64,
+    pub of: u64,
+    pub peak_cost: u64,
+    pub peak_slot: Slot,
 }
 
 /// Our leader slots' reports from the produced store's floor on, and which changed since taken.
@@ -1286,6 +1295,39 @@ impl MetricsTap {
             .unwrap_or_default()
     }
 
+    pub fn cost(&self, slot: Slot) -> Option<SlotCost> {
+        self.slot_costs.lock().ok()?.held.get(&slot).cloned()
+    }
+
+    /// How often each of `accounts` was a held block's costliest, and its costliest block, in
+    /// one pass over the blocks held.
+    pub fn costliest_recurrences(&self, accounts: &[&str]) -> HashMap<String, Recurrence> {
+        let Ok(costs) = self.slot_costs.lock() else {
+            return HashMap::new();
+        };
+        let of = costs.held.len() as u64;
+        let mut found: HashMap<String, Recurrence> = HashMap::new();
+        for cost in costs.held.values() {
+            if !accounts.contains(&cost.costliest_account.as_str()) {
+                continue;
+            }
+            let seen = found
+                .entry(cost.costliest_account.clone())
+                .or_insert(Recurrence {
+                    blocks: 0,
+                    of,
+                    peak_cost: cost.costliest_cost,
+                    peak_slot: cost.slot,
+                });
+            seen.blocks = seen.blocks.saturating_add(1);
+            if cost.costliest_cost > seen.peak_cost {
+                seen.peak_cost = cost.costliest_cost;
+                seen.peak_slot = cost.slot;
+            }
+        }
+        found
+    }
+
     /// Our leader slots' reports older than `floor` are dropped and refused from then on.
     pub fn hold_slots_from(&self, floor: Slot) {
         if let Ok(mut slots) = self.slot_waterfalls.lock() {
@@ -1399,6 +1441,20 @@ impl MetricsTap {
         self.slot_waterfalls
             .lock()
             .map(|mut slots| slots.take_changed())
+            .unwrap_or_default()
+    }
+
+    /// Those held in `first..=last`.
+    pub fn waterfalls_in(&self, first: Slot, last: Slot) -> Vec<SlotWaterfall> {
+        self.slot_waterfalls
+            .lock()
+            .map(|slots| {
+                slots
+                    .held
+                    .range(first..=last)
+                    .map(|(_, waterfall)| *waterfall)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -2653,6 +2709,32 @@ mod tests {
         tap.observe(&cost_point(true, &[("bank_slot", "20i")]));
         assert_eq!(tap.take_changed_costs().len(), 1);
         assert_eq!(tap.recent_costs(8).len(), 1);
+    }
+
+    #[test]
+    fn test_the_costliest_account_is_counted_over_the_blocks_held() {
+        let tap = MetricsTap::default();
+        for (slot, account, cost) in [(1, "A", "5i"), (2, "B", "9i"), (3, "A", "7i")] {
+            tap.observe(&cost_point(
+                true,
+                &[
+                    ("bank_slot", &format!("{slot}i")),
+                    ("costliest_account", account),
+                    ("costliest_account_cost", cost),
+                ],
+            ));
+        }
+        let found = tap.costliest_recurrences(&["A", "C"]);
+        assert_eq!(
+            found.get("A"),
+            Some(&Recurrence {
+                blocks: 2,
+                of: 3,
+                peak_cost: 7,
+                peak_slot: 3,
+            })
+        );
+        assert_eq!(found.get("C"), None);
     }
 
     #[test]

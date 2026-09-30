@@ -3,7 +3,11 @@
 //! the bank when it is dropped after rooting.
 
 use {
-    crate::{metrics_tap::StageTimes, turns::LeaderTurn, versions::TxVersions},
+    crate::{
+        metrics_tap::{Recurrence, SlotCost, SlotWaterfall, StageTimes},
+        turns::LeaderTurn,
+        versions::TxVersions,
+    },
     serde::Serialize,
     solana_clock::Slot,
     std::collections::{BTreeMap, BTreeSet},
@@ -88,6 +92,12 @@ const MAX_HELD_BLOCKS: usize = 32_768;
 /// The bundle stage reports within a few slots, and the tap keeps its reports about this long.
 const BUNDLE_REACH: usize = 512;
 
+/// Blocks in one page of figures, a few tens of kilobytes on the wire.
+pub const FIGURES_PAGE: usize = 1024;
+
+/// The widest span one detail request covers.
+pub const MAX_DETAIL_SLOTS: u64 = 64;
+
 /// The oldest slot kept, given the epoch's first slot, the previous epoch's, and how far in the
 /// newest root is.
 pub fn held_from(first: Slot, previous_first: Slot, index: u64, slots_in_epoch: u64) -> Slot {
@@ -99,6 +109,80 @@ pub fn held_from(first: Slot, previous_first: Slot, index: u64, slots_in_epoch: 
     } else {
         previous_first
     }
+}
+
+/// The figures the list, its sort and its summary need, as one array per block: slot, time,
+/// transactions, block cost, cost limit, total fees, priority fees, tips and duration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct BlockFigures(
+    Slot,
+    Option<u64>,
+    u64,
+    u64,
+    u64,
+    u64,
+    u64,
+    Option<u64>,
+    Option<u64>,
+);
+
+impl From<&ProducedBlock> for BlockFigures {
+    fn from(block: &ProducedBlock) -> Self {
+        Self(
+            block.slot,
+            block.slot_time_millis,
+            block.transactions,
+            block.block_cost,
+            block.block_cost_limit,
+            block.total_fees,
+            block.priority_fees,
+            block.tips,
+            block.duration_nanos,
+        )
+    }
+}
+
+/// A turn as the list's divider shows it: first, last, produced, drained and the previous drain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TurnHead(Slot, Slot, u64, u64, Option<u64>);
+
+impl From<&LeaderTurn> for TurnHead {
+    fn from(turn: &LeaderTurn) -> Self {
+        Self(
+            turn.first,
+            turn.last,
+            turn.produced,
+            turn.drained_millis,
+            turn.since_millis,
+        )
+    }
+}
+
+/// Newest first. `next` is where the following page starts, `None` once the oldest is sent.
+#[derive(Debug, Serialize)]
+pub struct FiguresPage {
+    pub figures: Vec<BlockFigures>,
+    pub turns: Vec<TurnHead>,
+    pub held: usize,
+    pub floor: Slot,
+    pub next: Option<Slot>,
+}
+
+/// A held block's cost, with how often its costliest account was the costliest over the blocks held.
+#[derive(Debug, Serialize)]
+pub struct CostDetail {
+    #[serde(flatten)]
+    pub cost: SlotCost,
+    pub recurrence: Option<Recurrence>,
+}
+
+/// Everything the page draws for a span of our slots once opened.
+#[derive(Debug, Serialize)]
+pub struct ProducedDetail {
+    pub blocks: Vec<ProducedBlock>,
+    pub turns: Vec<LeaderTurn>,
+    pub waterfalls: Vec<SlotWaterfall>,
+    pub costs: Vec<CostDetail>,
 }
 
 /// Our blocks and leader turns for the current epoch, and the previous one for a while after the
@@ -250,6 +334,63 @@ impl ProducedStore {
         let mut recent: Vec<LeaderTurn> = self.turns.values().rev().take(count).cloned().collect();
         recent.reverse();
         recent
+    }
+
+    /// Up to [`FIGURES_PAGE`] blocks below `before`, or from the newest, with the turns they fall in.
+    pub fn figures(&self, before: Option<Slot>) -> FiguresPage {
+        let below = before.unwrap_or(Slot::MAX);
+        let figures: Vec<BlockFigures> = self
+            .blocks
+            .range(..below)
+            .rev()
+            .take(FIGURES_PAGE)
+            .map(|(_, block)| BlockFigures::from(block))
+            .collect();
+        let next = (figures.len() == FIGURES_PAGE)
+            .then(|| figures.last().map(|oldest| oldest.0))
+            .flatten()
+            .filter(|oldest| self.blocks.range(..oldest).next().is_some());
+        let turns = match (figures.last(), figures.first()) {
+            (Some(oldest), Some(newest)) => self
+                .turns
+                .range(..=newest.0)
+                .rev()
+                .take_while(|(_, turn)| turn.last >= oldest.0)
+                .map(|(_, turn)| TurnHead::from(turn))
+                .collect(),
+            _ => Vec::new(),
+        };
+        FiguresPage {
+            figures,
+            turns,
+            held: self.blocks.len(),
+            floor: self.floor,
+            next,
+        }
+    }
+
+    /// The blocks and turns in `first..=last`, clamped to [`MAX_DETAIL_SLOTS`].
+    pub fn detail(&self, first: Slot, last: Slot) -> (Vec<ProducedBlock>, Vec<LeaderTurn>) {
+        let last = last.min(first.saturating_add(MAX_DETAIL_SLOTS.saturating_sub(1)));
+        if last < first {
+            return (Vec::new(), Vec::new());
+        }
+        let blocks = self
+            .blocks
+            .range(first..=last)
+            .map(|(_, block)| block.clone())
+            .collect();
+        let turns = self
+            .turns
+            .range(..=last)
+            .rev()
+            .take_while(|(_, turn)| turn.last >= first)
+            .map(|(_, turn)| turn.clone())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        (blocks, turns)
     }
 }
 
@@ -482,6 +623,60 @@ mod tests {
         assert!(!ring.insert(block(10)), "below the floor");
         ring.add_turn(turn(10, 11));
         assert_eq!(ring.recent_turns(8).len(), 1);
+    }
+
+    #[test]
+    fn test_figures_come_newest_first_in_pages_with_their_turns() {
+        let mut ring = ProducedStore::default();
+        let count = FIGURES_PAGE as u64 + 3;
+        for slot in 0..count {
+            ring.insert(block(slot));
+        }
+        ring.add_turn(turn(0, 3));
+        ring.add_turn(turn(count - 4, count - 1));
+        let first = ring.figures(None);
+        assert_eq!(first.figures.len(), FIGURES_PAGE);
+        assert_eq!(first.figures[0].0, count - 1);
+        assert_eq!(first.held, count as usize);
+        assert_eq!(first.next, Some(3));
+        // Slot 3 is the page's oldest, so the turn it falls in comes with it too.
+        assert_eq!(
+            first.turns,
+            [
+                TurnHead(count - 4, count - 1, 0, 0, None),
+                TurnHead(0, 3, 0, 0, None)
+            ]
+        );
+        let second = ring.figures(first.next);
+        assert_eq!(
+            second.figures.iter().map(|f| f.0).collect::<Vec<_>>(),
+            [2, 1, 0]
+        );
+        assert_eq!(second.next, None);
+        assert_eq!(second.turns, [TurnHead(0, 3, 0, 0, None)]);
+    }
+
+    #[test]
+    fn test_a_full_last_page_has_no_next() {
+        let mut ring = ProducedStore::default();
+        for slot in 0..FIGURES_PAGE as u64 {
+            ring.insert(block(slot));
+        }
+        assert_eq!(ring.figures(None).next, None);
+    }
+
+    #[test]
+    fn test_detail_is_clamped_and_carries_the_turns_it_touches() {
+        let mut ring = ProducedStore::default();
+        for slot in 0..200 {
+            ring.insert(block(slot));
+        }
+        ring.add_turn(turn(4, 7));
+        ring.add_turn(turn(8, 11));
+        let (blocks, turns) = ring.detail(6, 500);
+        assert_eq!(blocks.len(), MAX_DETAIL_SLOTS as usize);
+        assert_eq!(turns.iter().map(|t| t.first).collect::<Vec<_>>(), [4, 8]);
+        assert!(ring.detail(9, 8).0.is_empty());
     }
 
     #[test]

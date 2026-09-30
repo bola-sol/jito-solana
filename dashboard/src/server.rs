@@ -643,6 +643,18 @@ struct EpochParams {
 }
 
 #[derive(serde::Deserialize)]
+struct FiguresParams {
+    /// The page below this slot; the newest without it.
+    before: Option<Slot>,
+}
+
+#[derive(serde::Deserialize)]
+struct DetailParams {
+    first: Slot,
+    last: Slot,
+}
+
+#[derive(serde::Deserialize)]
 struct SlotRangeParams {
     first_slot: Slot,
     /// Clamped by the history rather than refused.
@@ -752,6 +764,33 @@ fn respond(
                 Err(_) => None,
             };
             Some(encode_with_id("epoch", "query", id, &found))
+        }
+        ("produced", "figures") => {
+            let Ok(params) = serde_json::from_value::<FiguresParams>(request.params) else {
+                return Some(encode_with_id(
+                    "produced",
+                    "figures",
+                    id,
+                    &serde_json::json!({ "error": "figures takes an optional before slot" }),
+                ));
+            };
+            let page = match replies.produced.read() {
+                Ok(store) => store.figures(params.before),
+                Err(_) => return Some(encode_with_id("produced", "figures", id, &())),
+            };
+            Some(encode_with_id("produced", "figures", id, &page))
+        }
+        ("produced", "detail") => {
+            let Ok(params) = serde_json::from_value::<DetailParams>(request.params) else {
+                return Some(encode_with_id(
+                    "produced",
+                    "detail",
+                    id,
+                    &serde_json::json!({ "error": "detail needs a first and a last slot" }),
+                ));
+            };
+            let detail = replies.produced_detail(params.first, params.last);
+            Some(encode_with_id("produced", "detail", id, &detail))
         }
         ("slot", "range") => {
             // A client waiting on an id cannot tell silence from slowness.
@@ -932,6 +971,70 @@ mod tests {
         assert!(reply.contains(r#""id":9"#), "{reply}");
         assert!(reply.contains(r#""first_slot":4"#), "{reply}");
         assert!(reply.contains(r#""rows":[null,null]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_figures_are_paged_newest_first() {
+        let replies = no_replies();
+        for slot in [40, 41, 42] {
+            replies
+                .produced
+                .write()
+                .unwrap()
+                .insert(crate::produced::sample_block(slot));
+        }
+        let reply = respond(
+            br#"{"topic":"produced","key":"figures","id":6,"params":{"before":42}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":6"#), "{reply}");
+        assert!(reply.contains(r#""figures":[[41,"#), "{reply}");
+        assert!(reply.contains(r#""held":3"#), "{reply}");
+        assert!(reply.contains(r#""next":null"#), "{reply}");
+
+        let newest = respond(
+            br#"{"topic":"produced","key":"figures","id":7,"params":{}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(newest.contains(r#""figures":[[42,"#), "{newest}");
+    }
+
+    #[test]
+    fn test_detail_carries_the_blocks_asked_for() {
+        let replies = no_replies();
+        replies
+            .produced
+            .write()
+            .unwrap()
+            .insert(crate::produced::sample_block(40));
+        let reply = respond(
+            br#"{"topic":"produced","key":"detail","id":2,"params":{"first":40,"last":40}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":2"#), "{reply}");
+        assert!(reply.contains(r#""blockhash":"hash40""#), "{reply}");
+
+        let bad = respond(
+            br#"{"topic":"produced","key":"detail","id":3,"params":{"first":40}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(bad.contains("error"), "{bad}");
     }
 
     #[test]

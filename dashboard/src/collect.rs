@@ -8,10 +8,12 @@ use {
         history::SlotHistory,
         meters::QuicPort,
         metrics_tap::{
-            BundleLanding, MetricsTap, ShredFill, StageTimes, TapCounters, WindowedCounters,
-            WorkerSum,
+            BundleLanding, MetricsTap, ShredFill, SlotCost, StageTimes, TapCounters,
+            WindowedCounters, WorkerSum,
         },
-        produced::{Bundles, Execution, ProducedBlock, ProducedStore, held_from},
+        produced::{
+            Bundles, CostDetail, Execution, ProducedBlock, ProducedDetail, ProducedStore, held_from,
+        },
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         snapshot::{self, SnapshotTracker, Snapshots},
@@ -65,10 +67,49 @@ pub struct Replies {
     pub misses: RwLock<MissReplies>,
     /// Written by the collector; the server pages through it for the slot details page.
     pub produced: RwLock<ProducedStore>,
+    /// For the waterfall and costs of a slot asked about.
+    pub tap: Arc<MetricsTap>,
     pub gossip_peers: RwLock<Arc<str>>,
     /// Unix milliseconds of the last request for the gossip peers, which are gathered only while
     /// someone is asking.
     pub gossip_peers_wanted: AtomicU64,
+}
+
+impl Replies {
+    /// The blocks, turns, waterfalls and costs in `first..=last`, clamped as the store clamps.
+    pub fn produced_detail(&self, first: Slot, last: Slot) -> Option<ProducedDetail> {
+        let (blocks, turns) = self.produced.read().ok()?.detail(first, last);
+        // A turn's drawer sums the waterfalls of every slot in it.
+        let from = turns.first().map_or(first, |turn| turn.first.min(first));
+        let to = turns
+            .iter()
+            .map(|turn| turn.last)
+            .chain(blocks.last().map(|block| block.slot))
+            .max()
+            .unwrap_or(first);
+        let costs: Vec<SlotCost> = blocks
+            .iter()
+            .filter_map(|block| self.tap.cost(block.slot))
+            .collect();
+        let accounts: Vec<&str> = costs
+            .iter()
+            .map(|cost| cost.costliest_account.as_str())
+            .collect();
+        let recurrences = self.tap.costliest_recurrences(&accounts);
+        let costs = costs
+            .into_iter()
+            .map(|cost| {
+                let recurrence = recurrences.get(&cost.costliest_account).copied();
+                CostDetail { cost, recurrence }
+            })
+            .collect();
+        Some(ProducedDetail {
+            waterfalls: self.tap.waterfalls_in(from, to),
+            blocks,
+            turns,
+            costs,
+        })
+    }
 }
 
 impl Default for Replies {
@@ -76,6 +117,7 @@ impl Default for Replies {
         Self {
             misses: RwLock::default(),
             produced: RwLock::default(),
+            tap: Arc::default(),
             gossip_peers: RwLock::new(Arc::from("null")),
             gossip_peers_wanted: AtomicU64::new(0),
         }
@@ -2354,6 +2396,23 @@ mod tests {
             sent.iter().all(|slot| held.contains(slot)),
             "{sent:?} {held:?}"
         );
+    }
+
+    #[test]
+    fn test_captured_blocks_can_be_paged_by_the_server() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+        harness.advance_to(8);
+        collector.tick();
+
+        let page = collector.replies.produced.read().unwrap().figures(None);
+        assert!(!page.figures.is_empty(), "the fixture leads its own slots");
+        let detail = collector
+            .replies
+            .produced_detail(0, 8)
+            .expect("the store is readable");
+        assert_eq!(detail.blocks.len(), page.figures.len());
     }
 
     #[test]

@@ -134,6 +134,9 @@ const VOTE_TRACKING: &str = "event_handler_slot_tracking";
 
 const VOTE_TRACKS: usize = 4096;
 
+/// A leader window's first slot at a time, so several minutes of them.
+const FINALITY_SAMPLES: usize = 1024;
+
 /// Read when replay freezes a slot; during a catch-up the blockstore fills far ahead of replay.
 const SHRED_FILLS: usize = 4096;
 
@@ -201,6 +204,9 @@ pub struct MetricsTap {
     /// Kept one by one because the panel wants the worst slot as well as the mean.
     replay_slots: Mutex<BTreeMap<Slot, ReplaySlotTimes>>,
     vote_tracks: Mutex<BTreeMap<Slot, VoteSent>>,
+
+    /// Microseconds from a slot's last shred to its finalization, stamped when votor reported it.
+    finality: Mutex<VecDeque<(u64, u64)>>,
 
     shred_fills: Mutex<BTreeMap<Slot, ShredFill>>,
 
@@ -1016,6 +1022,11 @@ impl MetricsTap {
             notarize_us: field("vote_notarize"),
             skip_us: field("vote_skip"),
         };
+        if let (Some(first_shred_us), Some(finalized_us)) =
+            (vote.first_shred_us, field("finalized"))
+        {
+            self.remember_finality(slot, first_shred_us, finalized_us);
+        }
         let Ok(mut tracks) = self.vote_tracks.lock() else {
             return;
         };
@@ -1023,6 +1034,40 @@ impl MetricsTap {
         while tracks.len() > VOTE_TRACKS {
             tracks.pop_first();
         }
+    }
+
+    /// Both times count from votor's start on the slot, and the block's arrival from its first
+    /// shred, so the gap after the last shred needs no clock of its own.
+    fn remember_finality(&self, slot: Slot, first_shred_us: u64, finalized_us: u64) {
+        let Some(full_millis) = self.shred_fill(slot).map(|fill| fill.full_millis) else {
+            return;
+        };
+        let Some(micros) = finalized_us
+            .checked_sub(first_shred_us)
+            .and_then(|since| since.checked_sub(full_millis.saturating_mul(1_000)))
+        else {
+            return;
+        };
+        let Ok(mut samples) = self.finality.lock() else {
+            return;
+        };
+        samples.push_back((timestamp(), micros));
+        while samples.len() > FINALITY_SAMPLES {
+            samples.pop_front();
+        }
+    }
+
+    /// The median time from last shred to finalization over the samples reported in the window.
+    pub fn finality_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
+        let samples = self.finality.lock().ok()?;
+        let mut recent: Vec<u64> = samples
+            .iter()
+            .filter(|(at, _)| now_millis.saturating_sub(*at) <= window_millis)
+            .map(|(_, micros)| *micros)
+            .collect();
+        drop(samples);
+        recent.sort_unstable();
+        recent.get(recent.len().checked_div(2)?).copied()
     }
 
     pub fn take_vote_tracks(&self) -> Vec<(Slot, VoteSent)> {
@@ -2448,6 +2493,90 @@ mod tests {
         );
         assert_eq!(tracks[1].1.parent_ready_us, Some(90));
         assert!(tap.take_vote_tracks().is_empty(), "taken once");
+    }
+
+    fn full_block(tap: &MetricsTap, slot: &str, total_time_ms: &str) {
+        tap.observe(&named(
+            SHRED_FULL,
+            &[
+                ("slot", slot),
+                ("total_time_ms", total_time_ms),
+                ("last_index", "40i"),
+            ],
+        ));
+    }
+
+    #[test]
+    fn test_finality_is_timed_from_the_last_shred() {
+        let tap = MetricsTap::default();
+        full_block(&tap, "100i", "180i");
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "100i"),
+                ("first_shred", "1000i"),
+                ("vote_notarize", "230000i"),
+                ("finalized", "270000i"),
+            ],
+        ));
+
+        assert_eq!(tap.finality_micros(timestamp(), 60_000), Some(89_000));
+        assert_eq!(
+            tap.finality_micros(timestamp().saturating_add(120_000), 60_000),
+            None,
+            "outside the window"
+        );
+    }
+
+    #[test]
+    fn test_finality_needs_the_first_shred_and_the_full_block() {
+        let tap = MetricsTap::default();
+        full_block(&tap, "101i", "100i");
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "101i"),
+                ("vote_notarize", "5i"),
+                ("finalized", "45000i"),
+            ],
+        ));
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "102i"),
+                ("first_shred", "1000i"),
+                ("finalized", "270000i"),
+            ],
+        ));
+        full_block(&tap, "103i", "300i");
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "103i"),
+                ("first_shred", "1000i"),
+                ("finalized", "200000i"),
+            ],
+        ));
+
+        assert_eq!(tap.finality_micros(timestamp(), 60_000), None);
+    }
+
+    #[test]
+    fn test_finality_is_the_median_sample() {
+        let tap = MetricsTap::default();
+        for (slot, finalized) in [("104i", "30000i"), ("108i", "10000i"), ("112i", "20000i")] {
+            full_block(&tap, slot, "0i");
+            tap.observe(&named(
+                VOTE_TRACKING,
+                &[
+                    ("slot", slot),
+                    ("first_shred", "0i"),
+                    ("finalized", finalized),
+                ],
+            ));
+        }
+
+        assert_eq!(tap.finality_micros(timestamp(), 60_000), Some(20_000));
     }
 
     #[test]

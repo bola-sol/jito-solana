@@ -915,6 +915,8 @@ export interface Published {
     versions: VersionShare[];
     estimated_slot_duration_nanos: number;
     observed_slot_duration_nanos: number | null;
+    /** Alpenglow only: median microseconds from a block's last shred to its finalization. */
+    finality_micros: number | null;
     epoch_remaining_nanos: number;
     skip_rate: SkipRate;
     health: Health;

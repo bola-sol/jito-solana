@@ -130,6 +130,9 @@ const OVERVIEW_INTERVAL: Duration = Duration::from_secs(1);
 const NANOS_PER_DAY: u128 = 86_400_000_000_000;
 
 const REPLAY_RATE_WINDOW: Duration = Duration::from_secs(30);
+
+/// Matches the slot time beside it in the strip's head.
+const FINALITY_WINDOW_MILLIS: u64 = 60_000;
 const REPLAY_RATE_MIN_SPAN: Duration = Duration::from_secs(5);
 
 const TOTALS_KEPT: u64 = 64;
@@ -358,6 +361,7 @@ struct Debounces {
     block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
+    finality_micros: Debounced<Option<u64>>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
     health: Debounced<Health>,
@@ -763,6 +767,14 @@ impl Collector {
             TOPIC_SUMMARY,
             "observed_slot_duration_nanos",
             self.clock.observed_nanos(),
+        );
+
+        self.debounces.finality_micros.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "finality_micros",
+            self.metrics_tap
+                .finality_micros(timestamp(), FINALITY_WINDOW_MILLIS),
         );
     }
 

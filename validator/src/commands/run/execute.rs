@@ -891,7 +891,6 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        gossip_ready_sender: dashboard_gossip.as_ref().map(|(sender, _)| sender.clone()),
         require_tower: matches.is_present("require_tower"),
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
@@ -1018,6 +1017,7 @@ pub fn execute(
             "snapshot_packager_niceness_adj",
             i8
         ),
+        gossip_ready_sender: dashboard_gossip.as_ref().map(|(sender, _)| sender.clone()),
         // jito config
         relayer_config,
         block_engine_config,

@@ -780,6 +780,7 @@ body {
   padding: 14px 16px 16px;
   background: var(--panel);
   border-radius: var(--radius);
+  scroll-margin-top: 16px;
 }
 
 .misses-panel-head {

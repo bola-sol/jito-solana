@@ -25,10 +25,20 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const [hint, setHint] = useState<string | null>(null);
   const panel = useRef<HTMLElement>(null);
 
-  // On a phone the section opens below two more cards, out of sight.
+  // On a phone the section opens below two more cards, out of sight: its head
+  // is brought in at once, and the whole section once the list has filled it.
   useEffect(() => {
     panel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, []);
+  const settled = list !== null || failed;
+  const placed = useRef(false);
+  useEffect(() => {
+    const node = panel.current;
+    if (!settled || placed.current || !node) return;
+    placed.current = true;
+    const { top, bottom } = node.getBoundingClientRect();
+    if (top < 0 || bottom > window.innerHeight) node.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [settled]);
 
   // Asked for on open and on the refresh control; a reply that lands after
   // the panel closed is dropped.

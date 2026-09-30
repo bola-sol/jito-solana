@@ -14,7 +14,7 @@ use {
         env,
         fmt::Write,
         panic::PanicHookInfo,
-        sync::{Arc, Barrier, Mutex, Once, RwLock},
+        sync::{Arc, Barrier, Mutex, Once, OnceLock, RwLock},
         thread,
         time::{Duration, Instant, UNIX_EPOCH},
     },
@@ -416,7 +416,7 @@ pub fn get_host_id() -> String {
 /// Called with every point submitted, in the order they are submitted.
 pub type DataPointObserver = Box<dyn Fn(&DataPoint) + Send + Sync>;
 
-static OBSERVER: std::sync::OnceLock<DataPointObserver> = std::sync::OnceLock::new();
+static OBSERVER: OnceLock<DataPointObserver> = OnceLock::new();
 
 /// Installs a hook that sees every point, on the submitting thread; returns
 /// false if one is set. It must be cheap and must not block or panic.

@@ -5673,6 +5673,40 @@ body {
   min-width: 40px;
 }
 
+/* Widths from the columns, not the figures, so a wider figure moves nothing. */
+.gossip-table.is-fixed {
+  table-layout: fixed;
+}
+
+.gossip-table.is-fixed td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* "Pull response", the longest message type. */
+.gossip-col-label {
+  width: 7em;
+}
+
+/* Six figures in the monospace, "12,345", and the cell's padding. */
+.gossip-col-num {
+  width: 4.6em;
+}
+
+/* Wide enough for the "Rejected" heading. */
+.gossip-col-wide-num {
+  width: 5.25em;
+}
+
+/* Below these the tables scroll sideways rather than squeezing the bars or the entry types. */
+.gossip-table.is-messages.is-fixed {
+  min-width: 23em;
+}
+
+.gossip-table.is-entries.is-fixed {
+  min-width: 23.5em;
+}
+
 .gossip-bar {
   display: block;
   height: 6px;

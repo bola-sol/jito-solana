@@ -158,7 +158,15 @@ function MessagesCard({ messages, egress }: { messages: Gossip["messages"]; egre
   return (
     <Card title="Messages" aside="packets per second" className="gossip-card">
       <div className="gossip-scroll">
-        <table className="gossip-table is-messages">
+        <table className="gossip-table is-messages is-fixed">
+          {/* Fixed, so the bars start in the same place whatever the figures. */}
+          <colgroup>
+            <col className="gossip-col-label" />
+            <col className="gossip-col-num" />
+            <col />
+            <col className="gossip-col-num" />
+            <col />
+          </colgroup>
           <thead>
             <tr>
               <th>Type</th>
@@ -212,7 +220,13 @@ function EntriesCard({ entries }: { entries: Gossip["entries"] }) {
         />
       </div>
       <div className="gossip-scroll">
-        <table className="gossip-table">
+        <table className="gossip-table is-entries is-fixed">
+          <colgroup>
+            <col />
+            <col className="gossip-col-num" />
+            <col className="gossip-col-num" />
+            <col className="gossip-col-wide-num" />
+          </colgroup>
           <thead>
             <tr>
               <th>Entry type</th>
@@ -243,7 +257,7 @@ function EntriesCard({ entries }: { entries: Gossip["entries"] }) {
 function EntryLine({ row, dim }: { row: EntryRow; dim?: boolean }) {
   return (
     <tr className={dim ? "is-dim" : undefined}>
-      <td>{row.label}</td>
+      <td title={row.label}>{row.label}</td>
       <td className="is-num">{rate(row.push)}</td>
       <td className="is-num">{rate(row.pull)}</td>
       <td className="is-num">{rate(row.rejected)}</td>

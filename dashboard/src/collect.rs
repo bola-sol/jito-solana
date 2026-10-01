@@ -43,6 +43,7 @@ use {
 };
 
 mod certificates;
+mod finalization;
 mod gossip_peers;
 mod skip_rate;
 mod slot_clock;
@@ -50,6 +51,7 @@ mod slot_clock;
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
+    finalization::{FinalizationShare, FinalizationTally},
     skip_rate::SkipRateWalk,
     slot_clock::SlotClock,
 };
@@ -362,6 +364,7 @@ struct Debounces {
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
     finality_micros: Debounced<Option<u64>>,
+    finalization_share: Debounced<Option<FinalizationShare>>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
     health: Debounced<Health>,
@@ -403,6 +406,7 @@ pub struct Collector {
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
     epoch_published: Option<(Epoch, Pubkey, bool)>,
     skip_rate: SkipRateWalk,
+    finalization: FinalizationTally,
     last_completed_slot: Slot,
     last_completed_at: Instant,
     certificates: CertificateWalk,
@@ -482,6 +486,7 @@ impl Collector {
             history,
             epochs,
             skip_rate: SkipRateWalk::default(),
+            finalization: FinalizationTally::default(),
             epoch_published: None,
             last_completed_slot: 0,
             last_completed_at: now,
@@ -622,6 +627,7 @@ impl Collector {
             let votes = self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
+            self.collect_finalization_share(&working_bank);
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.collect_gossip_peers(&working_bank, root_bank.slot(), &peers, timestamp());
@@ -1070,6 +1076,7 @@ impl Collector {
         let mut changed = Vec::new();
         let mut captured = false;
         for bank in &banks {
+            self.observe_finalization(bank);
             let slot = bank.slot();
             // Counts are cumulative along a fork; a block's own is the difference
             // from its parent, off the parent's totals or the parent itself.

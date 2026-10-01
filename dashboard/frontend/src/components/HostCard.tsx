@@ -9,7 +9,9 @@ import {
   fullnessTone,
   loadTrend,
   memoryUse,
+  PERFORMANCE_GOVERNOR,
   residentTrend,
+  slowGovernor,
   swapTone,
   waitTone,
 } from "../host";
@@ -72,6 +74,12 @@ export function HostCard(): ReactElement | null {
 
   return (
     <Fold id="machine" title="Machine" summary={summary}>
+      {slowGovernor(host.cpu_governor) && (
+        <p className="host-governor">
+          <span className="tone-warn">CPU governor {host.cpu_governor}.</span> Voting nodes run{" "}
+          {PERFORMANCE_GOVERNOR}: slower clocks delay each vote.
+        </p>
+      )}
       <div className="host-body">
       <div className="host-top">
         <div className="host-figure">

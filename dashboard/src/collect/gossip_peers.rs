@@ -40,6 +40,8 @@ pub struct GossipPeers {
     pub heard_ago: Vec<u64>,
     /// When the peer's process started, in unix milliseconds.
     pub started: Vec<u64>,
+    /// Under alpenglow, the share of recent blocks whose finalization certificate carried its vote.
+    pub finalization: Vec<Option<f32>>,
     pub snapshot_full: Vec<Option<Slot>>,
     pub snapshot_incremental: Vec<Option<Slot>>,
     pub lowest: Vec<Option<Slot>>,
@@ -88,6 +90,7 @@ impl Collector {
             total = total.saturating_add(*stake);
         }
         let stake_of = |key: &Pubkey| stakes.get(key).copied().unwrap_or(0);
+        let finalization = self.finalization_by_node(bank, now_millis);
         let mut rows: Vec<&(ContactInfo, u64)> = peers.iter().collect();
         rows.sort_by(|(a, _), (b, _)| {
             stake_of(b.pubkey())
@@ -149,6 +152,8 @@ impl Collector {
             list.heard_ago.push(now_millis.saturating_sub(*heard_at));
             list.started
                 .push(contact.outset().checked_div(1_000).unwrap_or(0));
+            list.finalization
+                .push(finalization.get(key).map(|share| *share as f32));
             list.snapshot_full.push(full);
             list.snapshot_incremental.push(incremental);
             list.lowest.push(lowest);

@@ -32,6 +32,7 @@ import { unitFor } from "../network";
 import type { Gossip, GossipPeers } from "../types";
 import { useStore } from "../useStore";
 import { CertificatesSection } from "./CertificatesSection";
+import { FinalizationCard } from "./FinalizationCard";
 import { Copyable } from "./Copyable";
 import { Card, Meter, Stat } from "./primitives";
 
@@ -81,6 +82,7 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
           </div>
         </>
       )}
+      {alpenglow && <FinalizationCard />}
       {alpenglow && <CertificatesSection peers={list} onFind={findInPeers} />}
       <PeersCard
         list={list}
@@ -298,9 +300,13 @@ function TimeCard({ time }: { time: Gossip["time"] }) {
   );
 }
 
+/** Under this share the column marks a validator's votes as usually late to the certificate. */
+const LOW_FINALIZATION = 0.5;
+
 const HEADINGS: { column: PeerColumn; label: string; numeric: boolean }[] = [
   { column: "stake", label: "Stake, SOL", numeric: true },
   { column: "name", label: "Validator", numeric: false },
+  { column: "finalization", label: "Finalization", numeric: true },
   { column: "client", label: "Client", numeric: false },
   { column: "ip", label: "IP", numeric: false },
   { column: "rpc", label: "RPC", numeric: true },
@@ -420,6 +426,9 @@ const PeersTable = memo(function PeersTable({
   searched: boolean;
 }) {
   const [limit, setLimit] = useState(ROWS_PER_PAGE);
+  // Only under Alpenglow, where the shares exist.
+  const finalization = useMemo(() => rows.some((row) => row.finalization !== null), [rows]);
+  const headings = finalization ? HEADINGS : HEADINGS.filter((heading) => heading.column !== "finalization");
   const scroller = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLTableRowElement>(null);
   const more = limit < rows.length;
@@ -444,7 +453,7 @@ const PeersTable = memo(function PeersTable({
       <table className="gossip-table is-peers">
         <thead>
           <tr>
-            {HEADINGS.map((heading) => {
+            {headings.map((heading) => {
               const order = ariaSort(sort, heading.column);
               return (
                 <th
@@ -470,11 +479,12 @@ const PeersTable = memo(function PeersTable({
               ours={peer.identity === ours}
               now={now}
               slotMillis={slotMillis}
+              finalization={finalization}
             />
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={HEADINGS.length} className="gossip-none">
+              <td colSpan={headings.length} className="gossip-none">
                 {searched ? "No peer matches that name, client, IP or identity." : "No peer in this group."}
               </td>
             </tr>
@@ -491,11 +501,13 @@ const PeerLine = memo(function PeerLine({
   ours,
   now,
   slotMillis,
+  finalization,
 }: {
   peer: GossipPeer;
   ours: boolean;
   now: number;
   slotMillis: number | null;
+  finalization: boolean;
 }) {
   return (
     <tr className={ours ? "is-ours" : undefined}>
@@ -511,6 +523,13 @@ const PeerLine = memo(function PeerLine({
           <Copyable text={peer.identity} label={shortKey(peer.identity, 4, 4)} className="gossip-key" />
         </div>
       </td>
+      {finalization && (
+        <td
+          className={`is-num${peer.finalization !== null && peer.finalization < LOW_FINALIZATION ? " tone-warn" : ""}`}
+        >
+          {percent(peer.finalization, 0)}
+        </td>
+      )}
       <td>{peer.client || "—"}</td>
       <td className="is-mono">{peer.ip ? <Copyable text={peer.ip} /> : "—"}</td>
       <td className="is-num">{peer.rpc ?? "—"}</td>

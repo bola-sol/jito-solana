@@ -9,6 +9,7 @@ import {
   loadTrend,
   memoryUse,
   residentTrend,
+  slowGovernor,
   swapTone,
   waitTone,
 } from "./host";
@@ -25,6 +26,7 @@ function host(over: Partial<Host> = {}): Host {
     threads: 1847,
     running: 14,
     cpu: { busy: 0.31, user: 0.24, system: 0.06, iowait: 0.01, steal: 0 },
+    cpu_governor: "performance",
     memory_total: 384 * GB,
     memory_available: 88 * GB,
     memory_reclaimable: 64 * GB,
@@ -173,5 +175,14 @@ describe("deviceLabel", () => {
 
   it("names both where two mounts share a disk", () => {
     expect(deviceLabel(device({ roles: ["ledger", "accounts"] }))).toBe("ledger and accounts");
+  });
+});
+
+describe("slowGovernor", () => {
+  it("flags any governor but performance, and nothing where there is none", () => {
+    expect(slowGovernor(host().cpu_governor)).toBe(false);
+    expect(slowGovernor(host({ cpu_governor: "schedutil" }).cpu_governor)).toBe(true);
+    expect(slowGovernor(host({ cpu_governor: "powersave" }).cpu_governor)).toBe(true);
+    expect(slowGovernor(host({ cpu_governor: null }).cpu_governor)).toBe(false);
   });
 });

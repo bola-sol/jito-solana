@@ -170,6 +170,8 @@ export interface GossipPeers {
   snapshot_full: (number | null)[];
   snapshot_incremental: (number | null)[];
   lowest: (number | null)[];
+  /** Under Alpenglow, the share of recent blocks whose finalization certificate carried its vote. */
+  finalization: (number | null)[];
 }
 
 /** Published on the slow tier; filter against the completed slot before rendering. */
@@ -498,6 +500,29 @@ export interface CpuUse {
   steal: number;
 }
 
+/** How often blocks' finalization certificates carried each validator's vote, over ten minutes. */
+export interface FinalizationShare {
+  blocks: number;
+  validators: number;
+  /** Null when our vote account was not staked in the window. */
+  ours: number | null;
+  median: number | null;
+  /** Share of the other validators ours is above. */
+  above: number | null;
+  /** Validators per tenth of the share, lowest first. */
+  bands: number[];
+  /** Finished minutes over the last hour, oldest first. */
+  trend: FinalizationMinute[];
+  /** Median from a block's last shred to our notarize vote, over the last minute. */
+  vote_micros: number | null;
+}
+
+export interface FinalizationMinute {
+  start_millis: number;
+  ours: number | null;
+  median: number | null;
+}
+
 export interface Host {
   cores: number;
   load_one: number;
@@ -506,6 +531,8 @@ export interface Host {
   threads: number;
   running: number;
   cpu: CpuUse | null;
+  /** The first core's frequency governor; null where the kernel exposes none. */
+  cpu_governor: string | null;
 
   memory_total: number;
   memory_available: number;
@@ -917,6 +944,8 @@ export interface Published {
     observed_slot_duration_nanos: number | null;
     /** Alpenglow only: median microseconds from a block's last shred to its finalization. */
     finality_micros: number | null;
+    /** Alpenglow only; null before a block has been seen. */
+    finalization_share: FinalizationShare | null;
     epoch_remaining_nanos: number;
     skip_rate: SkipRate;
     health: Health;

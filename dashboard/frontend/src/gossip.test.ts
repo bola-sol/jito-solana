@@ -39,6 +39,7 @@ const LIST: GossipPeers = {
   snapshot_full: [6_188, 6_188, null, 0],
   snapshot_incremental: [9_958, null, null, null],
   lowest: [9_000, 9_900, 9_990, null],
+  finalization: [0.98, 0.25, null, 0.93],
 };
 
 const PEERS = gossipPeers(LIST);
@@ -87,6 +88,11 @@ describe("sortPeers", () => {
     expect(order("name", true)).toEqual(["Old4444", "Big1111", "Mid2222", "Rpc3333"]);
     expect(order("rpc")[0]).toBe("Rpc3333");
     expect(order("rpc", true)[0]).toBe("Rpc3333");
+  });
+
+  it("puts the highest finalization share first and a node without one last", () => {
+    expect(order("finalization")).toEqual(["Big1111", "Old4444", "Mid2222", "Rpc3333"]);
+    expect(order("finalization", true)).toEqual(["Mid2222", "Old4444", "Big1111", "Rpc3333"]);
   });
 
   it("sorts addresses by value and no snapshot as the oldest", () => {

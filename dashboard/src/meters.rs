@@ -171,6 +171,7 @@ pub struct Host {
     pub threads: u64,
     pub running: u64,
     pub cpu: Option<CpuUse>,
+    pub cpu_governor: Option<String>,
 
     pub memory_total: u64,
     pub memory_available: u64,
@@ -1141,6 +1142,7 @@ impl HostMeter {
                 .cpu
                 .zip(previous.cpu)
                 .and_then(|(now, before)| now.since(&before)?.shares()),
+            cpu_governor: host_stats::cpu_governor(),
             memory_total: current.memory.total,
             memory_available: current.memory.available,
             memory_reclaimable: current.memory.reclaimable,

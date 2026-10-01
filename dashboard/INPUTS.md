@@ -31,7 +31,7 @@ Each of these points carries a slot and describes one block.
 | `bundle_stage-stats` (jito only) | `slot`, `num_sanitized_ok`, `execution_results_ok` | Bundles sanitised and landed per produced block |
 | `banking_stage_worker_timing` | tag `id`; `cost_model_us`, `load_execute_us`, `load_execute_us_max`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | Execution time on a produced block: the reports that arrived between the block's first shred and its last, summed across the workers |
 | `banking_stage-leader_slot_vote_execute_and_commit_timings` | `slot`, `load_execute_us`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | The vote worker's part of the same figure |
-| `event_handler_slot_tracking` | `slot`, `first_shred`, `parent_ready`, `vote_notarize`, `vote_skip`, `finalized` | When this node's vote for a slot went out, after the first shred or the parent becoming ready, on the list of unrewarded votes (alpenglow only). The first shred is reported for the first slot of a leader window only. With `shred_insert_is_full`, the time from a block's last shred to its finalization, whose median over a minute is the slot strip's finality. |
+| `event_handler_slot_tracking` | `slot`, `first_shred`, `parent_ready`, `vote_notarize`, `vote_skip`, `finalized` | When this node's vote for a slot went out, after the first shred or the parent becoming ready, on the list of unrewarded votes (alpenglow only). The first shred is reported for the first slot of a leader window only. With `shred_insert_is_full`, the time from a block's last shred to its finalization, whose median over a minute is the slot strip's finality, and to our notarize vote, the Gossip tab's time to vote. |
 
 ### Per second
 
@@ -86,6 +86,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | `get_collector_fee_details`: total and priority fees | Base and priority fees per block, and with the tips what the block earned this validator |
 | `get_balance` of the eight tip accounts | Tips per block, as the difference from the parent (jito only) |
 | `last_blockhash` | The blockhash of our own blocks, on the block panel |
+| `vote_accounts`, each staked account's `last_voted_slot` (alpenglow only) | Whether the block's finalization certificate carried each validator's vote: a last vote within three slots of the newest in the bank. The Gossip tab's finalization share, its cluster median and bands, and the peers table's Finalization column. |
 
 An event with these fields, sent when a block completes, would mean the dashboard never holds a bank.
 
@@ -136,7 +137,7 @@ The certificate walk is the one place where the dashboard parses ledger bytes. A
 
 ## The host
 
-The validator does not own these inputs. They are here for completeness: `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, `/proc/diskstats`, `/proc/net/dev`, `/proc/net/udp` and `udp6` for socket drops and queues, `statvfs` on the ledger, accounts and snapshot paths, `/sys/dev/block/<major>:<minor>` and its `partition` marker to find the disk under each of those paths, `/proc/self/status` for the validator's resident memory, and each thread's `comm`, `schedstat` and `status` under `/proc/self/task` for the validator's own threads. The socket rows need one fact that only the validator has: how many packets each receiver delivered. The kernel counts drops but not deliveries. The delivered count comes from the datapoints above.
+The validator does not own these inputs. They are here for completeness: `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, `/proc/diskstats`, `/proc/net/dev`, `/proc/net/udp` and `udp6` for socket drops and queues, `statvfs` on the ledger, accounts and snapshot paths, `/sys/dev/block/<major>:<minor>` and its `partition` marker to find the disk under each of those paths, `/proc/self/status` for the validator's resident memory, `/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor` for the CPU governor note, and each thread's `comm`, `schedstat` and `status` under `/proc/self/task` for the validator's own threads. The socket rows need one fact that only the validator has: how many packets each receiver delivered. The kernel counts drops but not deliveries. The delivered count comes from the datapoints above.
 
 ## What the dashboard could not read
 

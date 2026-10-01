@@ -24,6 +24,8 @@ export interface GossipPeer {
   incremental: number | null;
   /** Slots from the peer's lowest slot to our root. */
   ledger: number | null;
+  /** Under Alpenglow, the share of recent blocks whose finalization certificate carried its vote. */
+  finalization: number | null;
   haystack: string;
 }
 
@@ -49,6 +51,7 @@ export function gossipPeers(list: GossipPeers): GossipPeer[] {
       full: behind(list.root, list.snapshot_full[index]),
       incremental: behind(list.root, list.snapshot_incremental[index]),
       ledger: behind(list.root, list.lowest[index]),
+      finalization: list.finalization[index] ?? null,
       haystack: [name ?? "", client, ip ?? "", identity].join(" ").toLowerCase(),
     };
   });
@@ -102,7 +105,8 @@ export type PeerColumn =
   | "heard"
   | "up"
   | "snapshot"
-  | "ledger";
+  | "ledger"
+  | "finalization";
 
 export interface PeerSort {
   column: PeerColumn;
@@ -142,6 +146,7 @@ const COLUMNS: Record<PeerColumn, { key: Key; ascending: boolean }> = {
   up: { key: (peer, now) => (peer.started > 0 ? now - peer.started : null), ascending: false },
   snapshot: { key: snapshotAge, ascending: false },
   ledger: { key: (peer) => peer.ledger, ascending: false },
+  finalization: { key: (peer) => peer.finalization, ascending: false },
 };
 
 function compareKeys(a: number | string, b: number | string): number {

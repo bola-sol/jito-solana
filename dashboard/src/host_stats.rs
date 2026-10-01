@@ -200,6 +200,20 @@ pub fn read() -> io::Result<HostSnapshot> {
     ))
 }
 
+/// The first core's frequency governor; `None` where the kernel exposes no cpufreq, as on most
+/// virtual machines.
+#[cfg(target_os = "linux")]
+pub fn cpu_governor() -> Option<String> {
+    let governor =
+        std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").ok()?;
+    Some(governor.trim().to_string()).filter(|governor| !governor.is_empty())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn cpu_governor() -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "linux")]
 pub fn filesystem(path: &Path) -> io::Result<Filesystem> {
     let stat = nix::sys::statvfs::statvfs(path)?;

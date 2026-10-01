@@ -116,3 +116,11 @@ export function residentTrend(host: Host): ResidentTrend | null {
     label: `${delta > 0 ? "up" : "down"} ${bytes(Math.abs(delta))} this hour`,
   };
 }
+
+/** The governor voting nodes run; any other lets idle cores slow and clock back up as each block arrives. */
+export const PERFORMANCE_GOVERNOR = "performance";
+
+/** Null where the kernel exposes no frequency governor, as on most virtual machines. */
+export function slowGovernor(governor: string | null): boolean {
+  return governor !== null && governor !== PERFORMANCE_GOVERNOR;
+}

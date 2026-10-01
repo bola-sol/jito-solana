@@ -152,6 +152,34 @@ const SCHEDULER_ID: &str = "id";
 
 const OWN_SCHEDULER_ID: &str = "0";
 
+/// Values stamped with when they arrived, for a median over a recent window.
+#[derive(Debug, Default)]
+struct TimedSamples(Mutex<VecDeque<(u64, u64)>>);
+
+impl TimedSamples {
+    fn push(&self, at_millis: u64, value: u64) {
+        let Ok(mut samples) = self.0.lock() else {
+            return;
+        };
+        samples.push_back((at_millis, value));
+        while samples.len() > FINALITY_SAMPLES {
+            samples.pop_front();
+        }
+    }
+
+    fn median(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
+        let samples = self.0.lock().ok()?;
+        let mut recent: Vec<u64> = samples
+            .iter()
+            .filter(|(at, _)| now_millis.saturating_sub(*at) <= window_millis)
+            .map(|(_, value)| *value)
+            .collect();
+        drop(samples);
+        recent.sort_unstable();
+        recent.get(recent.len().checked_div(2)?).copied()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MetricsTap {
     pub accounts_cache_hits: AtomicU64,
@@ -206,7 +234,10 @@ pub struct MetricsTap {
     vote_tracks: Mutex<BTreeMap<Slot, VoteSent>>,
 
     /// Microseconds from a slot's last shred to its finalization, stamped when votor reported it.
-    finality: Mutex<VecDeque<(u64, u64)>>,
+    finality: TimedSamples,
+
+    /// Microseconds from a slot's last shred to our notarize vote, stamped the same way.
+    vote_lag: TimedSamples,
 
     shred_fills: Mutex<BTreeMap<Slot, ShredFill>>,
 
@@ -1022,10 +1053,13 @@ impl MetricsTap {
             notarize_us: field("vote_notarize"),
             skip_us: field("vote_skip"),
         };
-        if let (Some(first_shred_us), Some(finalized_us)) =
-            (vote.first_shred_us, field("finalized"))
-        {
-            self.remember_finality(slot, first_shred_us, finalized_us);
+        if let Some(first_shred_us) = vote.first_shred_us {
+            self.remember_after_last_shred(
+                slot,
+                first_shred_us,
+                field("finalized"),
+                vote.notarize_us,
+            );
         }
         let Ok(mut tracks) = self.vote_tracks.lock() else {
             return;
@@ -1036,38 +1070,36 @@ impl MetricsTap {
         }
     }
 
-    /// Both times count from votor's start on the slot, and the block's arrival from its first
-    /// shred, so the gap after the last shred needs no clock of its own.
-    fn remember_finality(&self, slot: Slot, first_shred_us: u64, finalized_us: u64) {
+    /// Every time counts from votor's start on the slot, and the block's arrival from its first
+    /// shred, so the gaps after the last shred need no clock of their own.
+    fn remember_after_last_shred(
+        &self,
+        slot: Slot,
+        first_shred_us: u64,
+        finalized_us: Option<u64>,
+        notarize_us: Option<u64>,
+    ) {
         let Some(full_millis) = self.shred_fill(slot).map(|fill| fill.full_millis) else {
             return;
         };
-        let Some(micros) = finalized_us
-            .checked_sub(first_shred_us)
-            .and_then(|since| since.checked_sub(full_millis.saturating_mul(1_000)))
-        else {
-            return;
-        };
-        let Ok(mut samples) = self.finality.lock() else {
-            return;
-        };
-        samples.push_back((timestamp(), micros));
-        while samples.len() > FINALITY_SAMPLES {
-            samples.pop_front();
+        let last_shred_us = first_shred_us.saturating_add(full_millis.saturating_mul(1_000));
+        let now_millis = timestamp();
+        if let Some(micros) = finalized_us.and_then(|at| at.checked_sub(last_shred_us)) {
+            self.finality.push(now_millis, micros);
+        }
+        if let Some(micros) = notarize_us.and_then(|at| at.checked_sub(last_shred_us)) {
+            self.vote_lag.push(now_millis, micros);
         }
     }
 
     /// The median time from last shred to finalization over the samples reported in the window.
     pub fn finality_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
-        let samples = self.finality.lock().ok()?;
-        let mut recent: Vec<u64> = samples
-            .iter()
-            .filter(|(at, _)| now_millis.saturating_sub(*at) <= window_millis)
-            .map(|(_, micros)| *micros)
-            .collect();
-        drop(samples);
-        recent.sort_unstable();
-        recent.get(recent.len().checked_div(2)?).copied()
+        self.finality.median(now_millis, window_millis)
+    }
+
+    /// The median time from last shred to our notarize vote over the samples reported in the window.
+    pub fn vote_lag_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
+        self.vote_lag.median(now_millis, window_millis)
     }
 
     pub fn take_vote_tracks(&self) -> Vec<(Slot, VoteSent)> {
@@ -2525,6 +2557,27 @@ mod tests {
             tap.finality_micros(timestamp().saturating_add(120_000), 60_000),
             None,
             "outside the window"
+        );
+    }
+
+    #[test]
+    fn test_our_vote_is_timed_from_the_last_shred() {
+        let tap = MetricsTap::default();
+        full_block(&tap, "100i", "180i");
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "100i"),
+                ("first_shred", "1000i"),
+                ("vote_notarize", "193000i"),
+            ],
+        ));
+
+        assert_eq!(tap.vote_lag_micros(timestamp(), 60_000), Some(12_000));
+        assert_eq!(
+            tap.finality_micros(timestamp(), 60_000),
+            None,
+            "not finalized yet"
         );
     }
 

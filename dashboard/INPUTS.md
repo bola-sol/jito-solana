@@ -26,7 +26,7 @@ Each of these points carries a slot and describes one block.
 | `replay-slot-stats` | `slot`, `fetch_entries_time`, `confirmation_without_replay_us` or `confirmation_time_us`, `bank_complete_time_us`, `entry_poh_verification_time`, `entry_transaction_verification_time`, `task_submission_us` or `replay_time`, `execute_us`, `execute_details_execute_inner_us`, `execute_details_serialize_us`, `execute_details_deserialize_us`, `execute_details_create_vm_us`, `execute_details_create_executor_load_elf_us`, `execute_details_create_executor_verify_code_us`, `execute_details_create_executor_jit_compile_us`, `load_us`, `store_us`, `program_cache_us`, `validate_transactions_us`, `validate_fees_us`, `filter_executable_us`, `collect_balances_us`, `collect_logs_us`, `update_stakes_cache_us`, `update_transaction_statuses`, `check_block_limits_us`, `total_transactions` | The replay card: time per slot, its three spans, and the verify and execute breakdowns. The schedule page's replay column and its received to replayed timeline. |
 | `shred_insert_is_full` | `slot`, `last_index`, `num_repaired`, `total_time_ms` | Shreds and repaired shreds per slot. The first shred to full block span on the timeline, and the finality figure's last shred. |
 | `retransmit-stage-slot-stats` | `num_shreds_received_root`, `num_shreds_received_1st_layer`, `num_shreds_received_2nd_layer`, `num_shreds_received_3rd_layer` | Network card: shreds by the turbine layer they arrived from, over five minutes |
-| `cost_tracker_stats` | tag `is_leader`; `bank_slot`, `block_cost`, `costliest_account`, `costliest_account_cost`, `number_of_accounts`, `number_of_contended_accounts`, `allocated_accounts_data_size`, `inflight_transaction_count` | Slot details for our own blocks: compute used, and the costliest account against its own limit. Points without the leader tag are dropped. |
+| `cost_tracker_stats` | tag `is_leader`; `bank_slot`, `block_cost`, `costliest_account`, `costliest_account_cost`, `number_of_accounts`, `number_of_contended_accounts`, `allocated_accounts_data_size`, `inflight_transaction_count` | Slot details for our own blocks: compute used, and the costliest account against its own limit and how often it was the costliest over the blocks held. Points without the leader tag are dropped. |
 | `banking_stage_scheduler_slot_counts` | `slot` and the scheduler counters listed under per second | Slot details: the waterfall for one of our own leader slots |
 | `bundle_stage-stats` (jito only) | `slot`, `num_sanitized_ok`, `execution_results_ok` | Bundles sanitised and landed per produced block |
 | `banking_stage_worker_timing` | tag `id`; `cost_model_us`, `load_execute_us`, `load_execute_us_max`, `freeze_lock_us`, `record_us`, `commit_us`, `find_and_send_votes_us` | Execution time on a produced block: the reports that arrived between the block's first shred and its last, summed across the workers |
@@ -88,7 +88,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | `last_blockhash` | The blockhash of our own blocks, on the block panel |
 | `vote_accounts`, each staked account's `last_voted_slot` (alpenglow only) | Whether the block's finalization certificate carried each validator's vote: a last vote within three slots of the newest in the bank. The Gossip tab's finalization share, its cluster median and bands, and the peers table's Finalization column. |
 
-An event with these fields, sent when a block completes, would mean the dashboard never holds a bank.
+The figures of our own blocks, with their costs and waterfalls from the per slot points above, are kept for the current epoch, and for the previous one until a fifth of the new one has passed. An event with these fields, sent when a block completes, would mean the dashboard never holds a bank.
 
 ## Gossip and bank forks before the wait
 
@@ -107,7 +107,8 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `Bank::vote_accounts`, with each account's `vote_state_view` | Our stake and commission, whether our vote account has a BLS key, and our vote credits this epoch (lamports of reward under alpenglow, in the same field). The validators card's counts and delinquency, and each validator's delinquency and stalest last vote in the certificate lists. The peer table's stake. The wait's validator list. |
 | `Bank::get_rank_map` for this epoch and the next, `get_vat_health_for_next_epoch` | Under alpenglow, whether this vote account holds a seat in the admitted set now and next epoch, and how far the vote account is short of the ticket after that. The header's "no seat" figure and the epoch card's stat in place of the vote figure. |
 | `Bank::get_lamports_per_signature`, `minimum_vote_account_balance_for_vat`, `get_minimum_balance_for_rent_exemption` | What voting costs: a day of vote fees under TowerBFT, and under alpenglow the admission ticket and the balance the vote account must hold at the epoch's turn. The header's balance warnings. |
-| `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | The epoch card, block height, and the configured slot time |
+| `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | The epoch card, block height, and the configured slot time. From the root bank, the oldest of our own blocks still kept. |
+| `Bank::get_slot_history` on the root bank | The epoch's skip rate: whether each of our leader slots the root has passed holds a block. Read only when one has come due, and unlike the ledger it survives a restart. |
 | `Bank::cluster_type` on the root bank | The cluster's name in the header |
 | `Bank::clock` | The epoch's measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | This node's rank in the BLS rank map, to find its bit in a certificate |
@@ -122,7 +123,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `ClusterInfo::all_peers`, with each contact's `rpc`, `outset` and local timestamp, and `gossip.crds` read with `get` for each peer's `SnapshotHashes` and `LowestSlot` | The Gossip page's peers table: RPC port, when this node last heard the peer, when the peer started, how far its snapshots are behind our root, and how far back its ledger goes. Gathered on the five-second tier only while a page has asked for it in the last thirty seconds, under one short hold of the gossip table's read lock. |
 | `ClusterInfo::rpc_peers` | The RPC node count |
 | `ClusterInfo::tvu_peers`, with each contact's wallclock | Who counts as seen during the supermajority wait |
-| `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times for slot durations, skipped slots, the skip rate's window, and which filesystem holds the ledger |
+| `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times for slot durations, skipped slots, how far back our own blocks can still be read for their transaction versions, and which filesystem holds the ledger |
 | `Blockstore::get_slot_components_with_shred_info` on a block's last two FEC sets | The block footer's reward certificates, read against the rank map. Under alpenglow, if this node's vote was paid for each slot, and how many slots each rank was paid for this epoch, against which the epoch card measures this vote. The vote account's own figure is lamports there and counts leader slots too, so it cannot be compared across validators. The count starts where the dashboard did, not at the epoch's start. Each unpaid slot is also placed, first match winning: within the epoch's first thousand slots; in one of this node's leader slots; during a snapshot write (a span from the slot replay was at when the staging file was first seen, on the five-second tier, to the slot it was at when the file went); thin, the certificate paying at least a tenth fewer ranks than the median of the epoch's certificates so far, once a hundred are in; late, this node finishing replay of the slot after the first shred of the certificate writer's slot arrived; else lost, with the writers of the lost ones counted from the leader schedule and named from the validator info cache. The thin cutoff and the rank count go out with the counts. On request, each unpaid slot is listed with its writer, the regulars the certificate left out beside this node, and when this node's vote went out, and each writer with the number of certificates it wrote, from which the Gossip page lists the writers whose certificates left us out far more often than the average, each with the places of those misses. |
 | `Blockstore::get_slot_entries` on our own slots, once full | The block's non-vote transactions by message version: legacy, v0, v1 |
 | `Blockstore::get_latest_optimistic_slots`, `highest_slot` | The cluster's tip under TowerBFT, for the distance behind it: the last confirmed slot, floored by the highest slot shreds have arrived for, since the confirmed slot predates the snapshot after a restart |
@@ -134,6 +135,21 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `solana_version::Version::this_build` | The client name, version and commit in the header |
 
 The certificate walk is the one place where the dashboard parses ledger bytes. A per slot event that names the validators each reward certificate paid would replace it. The leader already knows this when it writes the footer.
+
+## What the pages ask for
+
+Besides the live feed, a page can ask the validator for what is too large or too rarely read to push. None of these reads anything new. Each answers from what the dashboard already keeps.
+
+| Request | Answers with |
+| --- | --- |
+| `slot.range` | Up to 4,096 rows of the slot history, which keeps one epoch's length of slots, 432,000 |
+| `slot.search` | Up to 128 leader turns in the slot history matching a leader's name, key or a slot number, or this node's own turns. Run on a blocking thread, one search at a time. |
+| `epoch.query` | An epoch's record: its slots, its leader turns, our leader slots, and its cost limits |
+| `summary.displays` | Validator names and icons |
+| `summary.misses`, `summary.written` | The unrewarded votes and the certificates this node wrote |
+| `peers.gossip` | The Gossip page's peers table, gathered only while a page asks |
+| `produced.figures` | Every one of our own blocks kept, newest first in pages of 1,024: nine numbers a block, enough to list, sort and summarise them, with the leader turns they fall in |
+| `produced.detail` | Up to 64 slots of our own blocks, with their turns, waterfalls and costs, and how often each costliest account was the costliest over every block kept |
 
 ## The host
 

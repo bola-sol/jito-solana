@@ -1,0 +1,236 @@
+import { describe, expect, it } from "vitest";
+import {
+  followingRun,
+  certificateAt,
+  certificateText,
+  certificateTitle,
+  epochOf,
+  leaderSlotsLeft,
+  matchesQuery,
+  turnKey,
+  turnsOf,
+  type LeaderRef,
+} from "./schedule";
+import type { SlotEntry } from "./types";
+
+function held(slot: number): SlotEntry {
+  return {
+    slot,
+    level: "completed",
+    mine: false,
+    block: null,
+    duration_nanos: null,
+    time_millis: null,
+    shreds: null,
+    replayed_millis: null,
+    reward: null,
+    left_out: null,
+  };
+}
+
+function resolver(
+  leaders: Record<number, LeaderRef> = {},
+  fallback: LeaderRef = { key: "alice", name: null, icon: null },
+): (slot: number) => LeaderRef {
+  return (slot) => leaders[slot] ?? fallback;
+}
+
+describe("turnsOf", () => {
+  it("draws a turn whole from its first slot alone", () => {
+    const [turn] = turnsOf([held(100)], resolver());
+    expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102, 101, 100]);
+    expect(turn.slots.map((slot) => slot.entry !== null)).toEqual([false, false, false, true]);
+  });
+
+  it("fills the rows where they stand as the slots arrive", () => {
+    const [turn] = turnsOf([held(100), held(101)], resolver());
+    expect(turn.slots).toHaveLength(4);
+    expect(turn.slots.map((slot) => slot.entry !== null)).toEqual([false, false, true, true]);
+  });
+
+  it("splits a leader drawn twice in a row into two turns", () => {
+    const slots = [96, 97, 98, 99, 100, 101, 102, 103].map((slot) => held(slot));
+    const turns = turnsOf(slots, resolver());
+    expect(turns.map((turn) => turn.slots.length)).toEqual([4, 4]);
+    expect(turns[0].slots.map((slot) => slot.slot)).toEqual([103, 102, 101, 100]);
+  });
+
+  it("puts the newest turn first", () => {
+    const turns = turnsOf([held(100), held(200)], resolver());
+    expect(turns.map((turn) => turn.slots.at(-1)?.slot)).toEqual([200, 100]);
+  });
+
+  it("invents no rows for slots older than the window", () => {
+    const [turn] = turnsOf([held(102), held(103)], resolver());
+    expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102]);
+  });
+
+  it("asks for the leader once per turn, at the turn's own first slot", () => {
+    const asked: number[] = [];
+    const [turn] = turnsOf([held(101), held(102)], (slot) => {
+      asked.push(slot);
+      return { key: "bob", name: "Bob Co", icon: null };
+    });
+    expect(asked).toEqual([100]);
+    expect(turn.leader).toBe("bob");
+    expect(turn.leader_name).toBe("Bob Co");
+  });
+
+  it("tells the resolver whether the turn was ours", () => {
+    // Ours is resolved from what the validator says of itself, the only route to a turn beyond the
+    // peer table or the held epoch.
+    const asked: Array<[number, boolean]> = [];
+    const resolve = (slot: number, mine: boolean) => {
+      asked.push([slot, mine]);
+      return { key: "us", name: "Lantern", icon: null };
+    };
+    turnsOf([{ ...held(100), mine: true }, held(200)], resolve);
+    expect(asked).toEqual([
+      [200, false],
+      [100, true],
+    ]);
+  });
+
+  it("names nobody for a turn whose epoch the page has no schedule for", () => {
+    // Deep history can reach past the epoch whose arrays the page holds. Better
+    // an unknown leader than a confident wrong one.
+    const [turn] = turnsOf([held(100)], resolver({}, { key: null, name: null, icon: null }));
+    expect(turn.leader).toBeNull();
+  });
+
+  it("has nothing to say about an empty list", () => {
+    expect(turnsOf([], resolver())).toEqual([]);
+  });
+});
+
+describe("matchesQuery", () => {
+  const [turn] = turnsOf(
+    [held(430789128)],
+    resolver({}, { key: "J7v9KQ8s", name: "Staking Facilities", icon: null }),
+  );
+
+  it("matches a name whatever its case", () => {
+    expect(matchesQuery(turn, "staking")).toBe(true);
+    expect(matchesQuery(turn, "STAKING")).toBe(true);
+  });
+
+  it("matches part of the leader key", () => {
+    expect(matchesQuery(turn, "J7v9")).toBe(true);
+  });
+
+  it("matches a slot in the turn", () => {
+    expect(matchesQuery(turn, "430789128")).toBe(true);
+  });
+
+  it("matches everything when nothing was asked", () => {
+    expect(matchesQuery(turn, "")).toBe(true);
+    expect(matchesQuery(turn, "   ")).toBe(true);
+  });
+
+  it("does not match something absent", () => {
+    expect(matchesQuery(turn, "nansen")).toBe(false);
+  });
+});
+
+describe("turnKey", () => {
+  it("names a turn by its own first slot, not its position", () => {
+    const [turn] = turnsOf([held(100), held(101)], resolver());
+    expect(turnKey(turn)).toBe("turn:100");
+  });
+});
+
+describe("epochOf", () => {
+  // Epoch 900 runs 432,000 slots from 388,800,000.
+  const current = {
+    epoch: 900,
+    start_slot: 388_800_000,
+    end_slot: 389_231_999,
+    slots_in_epoch: 432_000,
+    my_leader_slots: [],
+    leaders: [],
+    turns: [],
+    block_cost_limit: 0,
+    account_cost_limit: 0,
+  };
+
+  it("places a slot in the current epoch by its bounds", () => {
+    expect(epochOf(current, 388_800_000)).toBe(900);
+    expect(epochOf(current, 389_231_999)).toBe(900);
+  });
+
+  it("counts whole epochs back for older slots", () => {
+    expect(epochOf(current, 388_799_999)).toBe(899);
+    expect(epochOf(current, 388_800_000 - 432_000 * 3)).toBe(897);
+  });
+
+  it("counts forward as well, for a slot past the end", () => {
+    expect(epochOf(current, 389_232_000)).toBe(901);
+  });
+
+  it("has no answer without an epoch, or before the chain", () => {
+    expect(epochOf(undefined, 5)).toBeNull();
+    expect(epochOf({ ...current, epoch: 0, start_slot: 0 }, -1)).toBeNull();
+  });
+});
+
+describe("leaderSlotsLeft", () => {
+  const slots = [100, 101, 102, 103, 900, 901, 902, 903];
+
+  it("counts the slots the completed one has not passed", () => {
+    expect(leaderSlotsLeft(slots, 50)).toBe(8);
+    expect(leaderSlotsLeft(slots, 500)).toBe(4);
+    expect(leaderSlotsLeft(slots, 903)).toBe(0);
+  });
+
+  it("counts the slot being led until it is completed", () => {
+    expect(leaderSlotsLeft(slots, 99)).toBe(8);
+    expect(leaderSlotsLeft(slots, 100)).toBe(7);
+  });
+});
+
+describe("the certificate column", () => {
+  const seen = new Map<number, SlotEntry>();
+  const entryOf = (slot: number) => seen.get(slot);
+  const at = (slot: number, reward: SlotEntry["reward"], left_out: number | null) =>
+    seen.set(slot, { ...held(slot), reward, left_out });
+
+  it("reads the slot eight back, whose reward the certificate carries", () => {
+    at(992, "paid", 3);
+    expect(certificateAt(1000, entryOf)).toBe(3);
+    expect(certificateAt(1001, entryOf)).toBeUndefined();
+  });
+
+  it("tells a certificate not yet read from a leader that wrote none", () => {
+    at(992, null, null);
+    at(993, "no_certificate", null);
+    expect(certificateAt(1000, entryOf)).toBeNull();
+    expect(certificateAt(1001, entryOf)).toBe("none");
+  });
+
+  it("words each case", () => {
+    expect(certificateText(0)).toEqual(["all", "all"]);
+    expect(certificateText(7)).toEqual(["left out 7", "out"]);
+    expect(certificateText("none")).toEqual(["none", "none"]);
+    expect(certificateText(null)).toEqual(["—", "unknown"]);
+    expect(certificateText(undefined)).toEqual(["—", "unknown"]);
+    expect(certificateTitle(7)).toContain("left out 7");
+  });
+});
+
+describe("followingRun", () => {
+  it("skips the turns back to back with the next one", () => {
+    const slots = [100, 101, 102, 103, 104, 105, 106, 107, 500, 501, 502, 503, 900, 901, 902, 903];
+    expect(followingRun(slots, 100)).toBe(500);
+    expect(followingRun(slots, 500)).toBe(900);
+  });
+
+  it("finds the run from a slot inside or before it", () => {
+    expect(followingRun([100, 101, 102, 103, 500, 501], 102)).toBe(500);
+    expect(followingRun([100, 101, 102, 103, 500, 501], 40)).toBe(500);
+  });
+
+  it("has nothing after the epoch's last run", () => {
+    expect(followingRun([100, 101, 102, 103], 100)).toBeNull();
+    expect(followingRun([100, 101], 200)).toBeNull();
+  });
+});

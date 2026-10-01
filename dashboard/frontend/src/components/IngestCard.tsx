@@ -1,0 +1,96 @@
+import type { ReactElement } from "react";
+import { bytes, count, percent } from "../format";
+import type { IngestPath } from "../types";
+import { useStore } from "../useStore";
+import { Card, Explain } from "./primitives";
+
+export function IngestCard(): ReactElement | null {
+  const store = useStore();
+  const summary = store.get("summary", "ingest_paths");
+  // Only where that card will draw them: it is absent on a validator logging below info.
+  const elsewhere = store.get("summary", "quic_paths") !== null;
+  const paths = (summary?.paths ?? []).filter((path) => !path.quic || !elsewhere);
+  if (!summary || paths.length === 0) return null;
+
+  return (
+    <Card title="Socket ingest" aside="dropped by the kernel, per UDP port" className="ingest-body">
+      <div className="ingest">
+        <div className="ingest-row is-head">
+          <span>socket</span>
+          <Explain text="Bytes waiting unread at the moment of the sample.">
+            queued
+          </Explain>
+          <Explain text="Drops in the window, and their share of what arrived on the port.">
+            {windowLabel(summary.window_seconds)}
+          </Explain>
+          <Explain text="Drops since the validator finished starting, and their share of what arrived since.">
+            total
+          </Explain>
+        </div>
+        {paths.map((path) => (
+          <IngestRow key={path.name} path={path} />
+        ))}
+      </div>
+      <div className="card-footnote">
+        Dropped packets per UDP port, shown as a share of everything that
+        arrived wherever the traffic is counted in whole packets.{" "}
+        {elsewhere
+          ? "Serve repair is the one row without that share, and the QUIC ports are on the TPU path card instead."
+          : "Serve repair and the QUIC ports have no such count, and their rows are drop figures alone."}{" "}
+        <Explain text="The kernel counts what a socket discarded but not what it delivered, so the delivered count comes from the validator's own receivers. Serve repair never reports one, and the QUIC ports count transactions rather than datagrams.">
+          Why?
+        </Explain>
+      </div>
+    </Card>
+  );
+}
+
+/** Uncoloured: the paths differ too much in consequence for one threshold,
+ *  and some rows have no share at all. */
+function IngestRow({ path }: { path: IngestPath }) {
+  return (
+    <div className="ingest-row">
+      <span className="ingest-name" title={socketTitle(path)}>
+        {path.name}
+      </span>
+      <span className="ingest-queued">
+        {path.queued_bytes > 0 ? bytes(path.queued_bytes) : "—"}
+      </span>
+      <span className="ingest-recent">
+        {count(path.drops_recent)}
+        <Share of={path.drops_recent} received={path.received_recent} />
+      </span>
+      <span className="ingest-total">
+        {count(path.drops_total)}
+        <Share of={path.drops_total} received={path.received_total} />
+      </span>
+    </div>
+  );
+}
+
+/** The share of a port's traffic lost, rendered empty rather than omitted so
+ *  the rows keep their height. */
+function Share({ of, received }: { of: number; received: number | null }) {
+  const share = lossShare(of, received);
+  return <span className="ingest-share">{share === null ? "" : shareLabel(share)}</span>;
+}
+
+export function lossShare(drops: number, received: number | null): number | null {
+  if (received === null || received <= 0 || drops <= 0) return null;
+  return drops / (drops + received);
+}
+
+export function shareLabel(share: number): string {
+  return share < 0.0001 ? "<0.01%" : percent(share, 2);
+}
+
+function socketTitle(path: IngestPath): string {
+  const socket = `udp/${path.port}`;
+  if (path.received_recent === null) return socket;
+  return `${socket} · ${count(path.received_recent)} received in the window`;
+}
+
+export function windowLabel(seconds: number): string {
+  if (seconds >= 55) return "last min";
+  return `last ${Math.max(5, Math.round(seconds / 5) * 5)}s`;
+}

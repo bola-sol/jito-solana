@@ -1,0 +1,316 @@
+import { memo, useState, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
+import { count, shortKey, slotDelta } from "../format";
+import type { LeaderRef } from "../schedule";
+import { barHeight } from "../slotScale";
+import type { SlotEntry, SlotLevel } from "../types";
+import { useStore } from "../useStore";
+import { useAlpenglow } from "../consensus";
+import { Logo } from "./Logo";
+import { Explain, PeakLine } from "./primitives";
+
+const STRIP_LENGTH = 64;
+
+const LEVELS: Array<[SlotLevel, string, string]> = [
+  ["incomplete", "pending", "Received but not yet replayed, or still arriving"],
+  ["completed", "processed", "Replayed and frozen by this validator"],
+  ["optimistically_confirmed", "confirmed", "The cluster has voted to confirm it"],
+  ["rooted", "rooted", "This validator has rooted it"],
+  ["finalized", "finalized", "Rooted by a supermajority of stake"],
+  ["skipped", "skipped", "The leader produced no block, or it did not arrive in time"],
+];
+
+const LEVEL_NAMES = new Map<SlotLevel, string>(
+  LEVELS.map(([level, label]) => [level, label]),
+);
+
+export function SlotStrip(): ReactElement {
+  const store = useStore();
+  const alpenglow = useAlpenglow();
+  const processed = store.get("summary", "completed_slot");
+  const observedSlotNanos = store.get(
+    "summary",
+    "observed_slot_duration_nanos",
+  );
+  const finalityMicros = store.get("summary", "finality_micros");
+
+  // The strip advances a bar every slot, so entering it pins what is on screen and leaving jumps
+  // back to live.
+  const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
+  // By number rather than position, so it survives the strip scrolling and the bars stay memoised.
+  const [cursor, setCursor] = useState<number | null>(null);
+  const live = store.getSlots().slice(-STRIP_LENGTH);
+  const slots = pinned ?? live;
+  const active =
+    cursor === null ? null : (slots.find((entry) => entry.slot === cursor) ?? null);
+  // Bars are drawn against what the cluster is configured for, so a nominal
+  // slot lands at half height and anything at twice nominal fills the bar.
+  const nominalMs =
+    (store.get("summary", "estimated_slot_duration_nanos") ?? 400_000_000) / 1e6;
+
+  const peakMs = slots.reduce<number | null>((peak, entry) => {
+    if (entry.duration_nanos === null) return peak;
+    const ms = entry.duration_nanos / 1e6;
+    return peak === null || ms > peak ? ms : peak;
+  }, null);
+
+  // Most settled first, as deltas from Processed, this validator's own tip. Under alpenglow
+  // confirmed, root and finalized coincide.
+  const positions: Array<[string, number | undefined, string]> = [
+    [
+      "Finalized",
+      store.get("summary", "finalized_slot"),
+      alpenglow
+        ? "Highest slot with a finalization certificate"
+        : "Highest slot a supermajority of stake has rooted",
+    ],
+    [
+      "Root",
+      store.get("summary", "root_slot"),
+      "Highest slot this validator has rooted",
+    ],
+    ...(alpenglow
+      ? []
+      : [
+          [
+            "Confirmed",
+            store.get("summary", "optimistically_confirmed_slot"),
+            "Highest slot the cluster has voted to confirm",
+          ] as [string, number | undefined, string],
+        ]),
+    [
+      "Voted",
+      store.get("summary", "vote_slot") ?? undefined,
+      alpenglow
+        ? "Last slot a certificate carrying this node's vote landed"
+        : "The slot this validator last voted on",
+    ],
+    ["Processed", processed, "Highest slot this validator has replayed and frozen"],
+    [
+      "Highest",
+      store.get("summary", "estimated_slot"),
+      "Highest slot this validator holds a bank for, whether or not it has been replayed",
+    ],
+    ["Block height", store.get("summary", "block_height"), "Blocks in the chain to Processed, which is slots less skips"],
+  ];
+
+  const levels = alpenglow
+    ? LEVELS.filter(([level]) => level !== "optimistically_confirmed")
+    : LEVELS;
+  const ours = slots.filter((entry) => entry.mine).length;
+
+  const release = () => {
+    setPinned(null);
+    setCursor(null);
+  };
+
+  // The pointer leaving does not release a strip the keyboard holds, as when a click focuses it and
+  // moves off.
+  const onMouseLeave = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(document.activeElement)) return;
+    release();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const last = slots.length - 1;
+    if (last < 0) return;
+    // Movement is by position even though the cursor is a slot number: the
+    // arrows mean "the bar beside this one", which is a position.
+    const at = slots.findIndex((entry) => entry.slot === cursor);
+    const from = at === -1 ? last : at;
+    let next: number;
+    switch (event.key) {
+      case "ArrowLeft":
+        next = from - 1;
+        break;
+      case "ArrowRight":
+        next = from + 1;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = last;
+        break;
+      case "Escape":
+        event.currentTarget.blur();
+        return;
+      default:
+        return;
+    }
+    // Otherwise the arrows scroll the page out from under the strip.
+    event.preventDefault();
+    setCursor(slots[Math.min(last, Math.max(0, next))].slot);
+  };
+
+  return (
+    <section className="slot-strip">
+      <div className="slot-strip-head">
+        <span className="slot-strip-title">Slots</span>
+        {/* In the head, not on the strip: a minute covers more slots than
+            the strip holds. */}
+        <span>
+          <Explain text="Mean time between slots arriving here over the last minute: the cluster's rate as seen from this node.">
+            slot time
+          </Explain>{" "}
+          <b>
+            {observedSlotNanos === null || observedSlotNanos === undefined
+              ? "—"
+              : `${Math.round(observedSlotNanos / 1e6)} ms`}
+          </b>
+          {alpenglow && (
+            <>
+              ,{" "}
+              <Explain text="Median time from receiving a block's last shred to finalizing it, over the last minute.">
+                finality
+              </Explain>{" "}
+              <b>
+                {finalityMicros === null || finalityMicros === undefined
+                  ? "—"
+                  : `${Math.round(finalityMicros / 1e3)} ms`}
+              </b>
+            </>
+          )}{" "}
+          over the last minute
+        </span>
+      </div>
+
+      <div
+        className="slot-bars"
+        tabIndex={0}
+        role="group"
+        aria-label="Recent slots. Use the arrow keys to inspect them."
+        onMouseEnter={() => setPinned(live)}
+        onMouseLeave={onMouseLeave}
+        onFocus={() => {
+          setPinned((current) => current ?? live);
+          // Only when nothing is chosen yet. A click focuses the strip as well
+          // as hovering a bar, and the hovered bar is the one that was meant.
+          setCursor((current) => current ?? (slots[slots.length - 1]?.slot ?? null));
+        }}
+        onBlur={release}
+        onKeyDown={onKeyDown}
+      >
+        {peakMs !== null && (
+          <PeakLine
+            fraction={barHeight(peakMs, nominalMs) / 100}
+            label={`${Math.round(peakMs)} ms peak`}
+          />
+        )}
+        {slots.map((entry) => (
+          <SlotBar
+            key={entry.slot}
+            entry={entry}
+            leader={store.leaderOf(entry.slot, entry.mine)}
+            active={entry.slot === cursor}
+            nominalMs={nominalMs}
+            onPoint={setCursor}
+          />
+        ))}
+      </div>
+
+      <div className="slot-axis">
+        {positions.map(([label, slot, explanation]) => (
+          <div className="slot-position" key={label}>
+            <div className="slot-position-label">
+              <Explain text={explanation}>{label}</Explain>
+              {label !== "Block height" && (
+                <span className="slot-position-delta">{slotDelta(slot, processed)}</span>
+              )}
+            </div>
+            <div className="slot-position-value">{count(slot)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="slot-key">
+        {levels.map(([level, label, explanation]) => (
+          <Explain className="slot-key-item" text={explanation} key={level}>
+            <i className={`slot-key-swatch level-${level}`} />
+            {label}
+          </Explain>
+        ))}
+        <Explain className="slot-key-item" text="A slot this validator was scheduled to lead">
+          <i className="slot-key-swatch slot-key-mine" />
+          ours{ours > 0 && `, ${ours} in window`}
+        </Explain>
+        <SlotDetail
+          entry={pinned === null ? undefined : active}
+          leader={store.leaderOf(active?.slot ?? 0, active?.mine ?? false)}
+        />
+      </div>
+    </section>
+  );
+}
+
+/** Always on the row, empty until a slot is pointed at, so it never changes the card's height. */
+function SlotDetail({ entry, leader }: { entry: SlotEntry | null | undefined; leader: LeaderRef }) {
+  if (entry === undefined) return <span className="slot-detail" role="status" />;
+  if (entry === null) {
+    return (
+      <span className="slot-detail is-idle" role="status">
+        paused, tap or arrow to a slot
+      </span>
+    );
+  }
+  const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
+  const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : null);
+  return (
+    <span className="slot-detail" role="status">
+      <b>{count(entry.slot)}</b>
+      <span>{LEVEL_NAMES.get(entry.level) ?? entry.level}</span>
+      {durationMs !== null && <span>{Math.round(durationMs)} ms</span>}
+      {name && (
+        <span className="slot-detail-leader">
+          <Logo url={leader.icon} size={12} />
+          {name}
+        </span>
+      )}
+      {entry.block && <span>{count(entry.block.transactions)} txns</span>}
+      {entry.mine && <span className="slot-detail-mine">ours</span>}
+    </span>
+  );
+}
+
+/** Memoised on the entry, which the store keeps stable for slots that did
+ *  not change. `onPoint` is the raw setState. */
+const SlotBar = memo(function SlotBar({
+  entry,
+  leader,
+  active,
+  nominalMs,
+  onPoint,
+}: {
+  entry: SlotEntry;
+  leader: LeaderRef;
+  active: boolean;
+  nominalMs: number;
+  onPoint: (slot: number) => void;
+}) {
+  const durationMs = entry.duration_nanos === null ? null : entry.duration_nanos / 1e6;
+  const height = barHeight(durationMs, nominalMs);
+  const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : null);
+  const title = [
+    `slot ${entry.slot}`,
+    LEVEL_NAMES.get(entry.level) ?? entry.level,
+    durationMs === null ? null : `${Math.round(durationMs)} ms`,
+    name,
+    entry.block === null ? null : `${count(entry.block.transactions)} txns`,
+    entry.mine ? "our leader slot" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    // Labelled rather than titled: the detail row carries this visually, and a
+    // native tooltip on top of it would only repeat itself over the bars.
+    <div
+      className={`slot-bar level-${entry.level}${entry.mine ? " mine" : ""}${
+        active ? " is-active" : ""
+      }`}
+      aria-label={title}
+      onMouseEnter={() => onPoint(entry.slot)}
+    >
+      <div className="slot-bar-fill" style={{ height: `${height}%` }} />
+    </div>
+  );
+});

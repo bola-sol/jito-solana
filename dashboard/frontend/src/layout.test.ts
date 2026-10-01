@@ -1,0 +1,114 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  BALANCES_STORAGE_KEY,
+  CERTIFICATES_STORAGE_KEY,
+  readBalancesHidden,
+  readCertificatesOpen,
+  readSidebarCollapsed,
+  SIDEBAR_STORAGE_KEY,
+  writeBalancesHidden,
+  writeCertificatesOpen,
+  writeSidebarCollapsed,
+} from "./layout";
+
+function storage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => void values.set(key, value),
+    removeItem: (key: string) => void values.delete(key),
+    clear: () => values.clear(),
+    key: () => null,
+    length: 0,
+  } as unknown as Storage;
+}
+
+beforeEach(() => {
+  vi.stubGlobal("window", { localStorage: storage() });
+});
+
+describe("hidden balances", () => {
+  it("starts shown when nothing has been chosen", () => {
+    expect(readBalancesHidden()).toBe(false);
+  });
+
+  it("remembers the choice both ways", () => {
+    writeBalancesHidden(true);
+    expect(readBalancesHidden()).toBe(true);
+    writeBalancesHidden(false);
+    expect(readBalancesHidden()).toBe(false);
+  });
+
+  it("treats an unrecognised value as shown", () => {
+    window.localStorage.setItem(BALANCES_STORAGE_KEY, "yes");
+    expect(readBalancesHidden()).toBe(false);
+  });
+
+  it("survives storage being refused", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeBalancesHidden(true)).not.toThrow();
+    expect(readBalancesHidden()).toBe(false);
+  });
+});
+
+describe("the certificates list", () => {
+  it("starts closed when nothing has been chosen", () => {
+    expect(readCertificatesOpen()).toBe(false);
+  });
+
+  it("remembers the choice both ways", () => {
+    writeCertificatesOpen(true);
+    expect(readCertificatesOpen()).toBe(true);
+    writeCertificatesOpen(false);
+    expect(readCertificatesOpen()).toBe(false);
+  });
+
+  it("treats an unrecognised value as closed", () => {
+    window.localStorage.setItem(CERTIFICATES_STORAGE_KEY, "yes");
+    expect(readCertificatesOpen()).toBe(false);
+  });
+
+  it("survives storage being refused", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeCertificatesOpen(true)).not.toThrow();
+    expect(readCertificatesOpen()).toBe(false);
+  });
+});
+
+describe("sidebar collapse", () => {
+  it("starts expanded when nothing has been chosen", () => {
+    expect(readSidebarCollapsed()).toBe(false);
+  });
+
+  it("remembers the choice both ways", () => {
+    writeSidebarCollapsed(true);
+    expect(readSidebarCollapsed()).toBe(true);
+    writeSidebarCollapsed(false);
+    expect(readSidebarCollapsed()).toBe(false);
+  });
+
+  it("treats an unrecognised value as expanded", () => {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "yes");
+    expect(readSidebarCollapsed()).toBe(false);
+  });
+
+  it("survives storage being refused", () => {
+    // Private browsing and some embedded webviews throw on access rather than
+    // returning null, which would otherwise take the whole app down at render.
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeSidebarCollapsed(true)).not.toThrow();
+    expect(readSidebarCollapsed()).toBe(false);
+  });
+});

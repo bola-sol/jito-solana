@@ -359,6 +359,8 @@ export interface LeaderTurn {
   quic: QuicPort;
   verify: VerifyStage;
   executed: ExecutedStage;
+  /** Bundles executed and recorded over the turn; null where the bundle stage does not count them. */
+  bundles: number | null;
 }
 
 /** BAM counts what arrived in batches. */
@@ -650,7 +652,7 @@ export type FigureRow = [
 ];
 
 /** First slot, last slot, produced, drained and the previous drain. */
-export type TurnHeadRow = [number, number, number, number, number | null];
+export type TurnHeadRow = [number, number, number, number, number | null, number | null];
 
 /** A page of the blocks held, newest first; `next` is where the following page starts. */
 export interface FiguresPage {

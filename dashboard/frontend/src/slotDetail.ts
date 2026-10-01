@@ -227,6 +227,11 @@ export function versionsTitle(versions: TxVersions): string {
   return `${counts} of ${count(total)} non-vote transactions.`;
 }
 
+/** A turn's bundle count; the stage no longer reports one per block. */
+export function bundlesLabel(bundles: number): string {
+  return `${count(bundles)} ${bundles === 1 ? "bundle" : "bundles"}`;
+}
+
 export function bundlesValue(bundles: { sanitized: number; executed: number }): string {
   const executed = count(bundles.executed);
   return bundles.sanitized > bundles.executed

@@ -2272,7 +2272,11 @@ mod tests {
     }
 
     fn bundled(received: u64, packets: u64) -> BundleTotals {
-        BundleTotals { received, packets }
+        BundleTotals {
+            received,
+            packets,
+            processed: 0,
+        }
     }
 
     #[test]

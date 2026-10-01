@@ -105,6 +105,7 @@ const executed: ExecutedStage = {
 };
 
 const turn: LeaderTurn = {
+  bundles: null,
   first: 88,
   last: 91,
   produced: 4,

@@ -2,7 +2,7 @@ import type { BlockHead } from "./produced";
 import type { FigureRow, FiguresPage, LeaderTurn, ProducedBlock, TurnHeadRow } from "./types";
 
 /** A turn as the list's divider shows it; the rest of the turn is fetched when it opens. */
-export type TurnHead = Pick<LeaderTurn, "first" | "last" | "produced" | "drained_millis" | "since_millis">;
+export type TurnHead = Pick<LeaderTurn, "first" | "last" | "produced" | "drained_millis" | "since_millis" | "bundles">;
 
 export function headOf(row: FigureRow): BlockHead {
   const [slot, slotTime, transactions, blockCost, costLimit, totalFees, priorityFees, tips, duration] = row;
@@ -20,8 +20,8 @@ export function headOf(row: FigureRow): BlockHead {
 }
 
 export function turnHeadOf(row: TurnHeadRow): TurnHead {
-  const [first, last, produced, drained, since] = row;
-  return { first, last, produced, drained_millis: drained, since_millis: since };
+  const [first, last, produced, drained, since, bundles] = row;
+  return { first, last, produced, drained_millis: drained, since_millis: since, bundles: bundles ?? null };
 }
 
 function headOfBlock(block: ProducedBlock): BlockHead {
@@ -56,7 +56,8 @@ function sameTurn(a: TurnHead, b: TurnHead): boolean {
     a.last === b.last &&
     a.produced === b.produced &&
     a.drained_millis === b.drained_millis &&
-    a.since_millis === b.since_millis
+    a.since_millis === b.since_millis &&
+    a.bundles === b.bundles
   );
 }
 
@@ -142,6 +143,7 @@ export class ProducedIndex {
         produced: turn.produced,
         drained_millis: turn.drained_millis,
         since_millis: turn.since_millis,
+        bundles: turn.bundles ?? null,
       };
       const held = this.turns.get(turn.first);
       if (held && sameTurn(held, head)) continue;

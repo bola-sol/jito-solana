@@ -61,6 +61,9 @@ const BUNDLE_STAGE: &str = "bundle_stage-loop_stats";
 
 const BUNDLE_SLOT_STATS: &str = "bundle_stage-stats";
 
+/// A field of `BUNDLE_STAGE` since jito 4.4, which dropped `BUNDLE_SLOT_STATS`.
+const BUNDLES_PROCESSED: &str = "bundles_processed";
+
 /// Every twenty milliseconds while it has work, with no slot on it.
 const WORKER_TIMING: &str = "banking_stage_worker_timing";
 
@@ -249,6 +252,9 @@ pub struct MetricsTap {
 
     /// Latched: it cannot change while the process runs.
     xdp: Mutex<Option<XdpConfig>>,
+
+    /// Latched: whether the bundle stage counts processed bundles, so a turn's zero means none.
+    bundles_processed_reported: AtomicBool,
 
     stake_in_gossip: Mutex<Option<StakeInGossip>>,
 }
@@ -634,6 +640,8 @@ counter_totals! {
     pub struct BundleTotals {
         pub received: u64,
         pub packets: u64,
+        /// Bundles executed and recorded, counted by jito 4.4's bundle stage and not before.
+        pub processed: u64,
     }
 }
 
@@ -920,7 +928,17 @@ impl MetricsTap {
             QUIC_TPU_FORWARDS => add_to(&self.quic_forwards, point),
             QUIC_TPU_VOTE => add_to(&self.quic_vote, point),
             TPU_VERIFIER => add_to(&self.verify, point),
-            BUNDLE_STAGE => add_to(&self.bundles, point),
+            BUNDLE_STAGE => {
+                add_to(&self.bundles, point);
+                if point
+                    .fields
+                    .iter()
+                    .any(|(name, _)| *name == BUNDLES_PROCESSED)
+                {
+                    self.bundles_processed_reported
+                        .store(true, Ordering::Relaxed);
+                }
+            }
             WORKER_COUNTS | WORKER_ERROR_METRICS => add_to(&self.executed, point),
             GOSSIP_ENTRIES | GOSSIP_ENTRY_FAILS => add_to(&self.gossip, point),
             name if GOSSIP_STATS.contains(&name) => add_to(&self.gossip, point),
@@ -1100,6 +1118,10 @@ impl MetricsTap {
     /// The median time from last shred to our notarize vote over the samples reported in the window.
     pub fn vote_lag_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
         self.vote_lag.median(now_millis, window_millis)
+    }
+
+    pub fn reports_bundles_processed(&self) -> bool {
+        self.bundles_processed_reported.load(Ordering::Relaxed)
     }
 
     pub fn take_vote_tracks(&self) -> Vec<(Slot, VoteSent)> {
@@ -1713,6 +1735,7 @@ impl AddPoint for BundleTotals {
             let counter = match *name {
                 "num_bundles_received" => &mut self.received,
                 "num_packets_received" => &mut self.packets,
+                BUNDLES_PROCESSED => &mut self.processed,
                 _ => continue,
             };
             add_value(counter, value);
@@ -2561,6 +2584,27 @@ mod tests {
     }
 
     #[test]
+    fn test_processed_bundles_are_counted_once_the_stage_reports_them() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(BUNDLE_STAGE, &[("num_bundles_received", "5i")]));
+        assert!(
+            !tap.reports_bundles_processed(),
+            "jito 4.3 has no such field"
+        );
+
+        tap.observe(&named(
+            BUNDLE_STAGE,
+            &[("num_bundles_received", "2i"), (BUNDLES_PROCESSED, "3i")],
+        ));
+        tap.observe(&named(BUNDLE_STAGE, &[(BUNDLES_PROCESSED, "4i")]));
+
+        assert!(tap.reports_bundles_processed());
+        let bundles = tap.counters().bundles;
+        assert_eq!(bundles.received, 7);
+        assert_eq!(bundles.processed, 7);
+    }
+
+    #[test]
     fn test_our_vote_is_timed_from_the_last_shred() {
         let tap = MetricsTap::default();
         full_block(&tap, "100i", "180i");
@@ -3239,6 +3283,7 @@ mod tests {
             BundleTotals {
                 received: 6,
                 packets: 22,
+                processed: 0,
             }
         );
     }

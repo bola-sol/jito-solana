@@ -904,6 +904,12 @@ impl Collector {
                 },
                 verify: reading.verify.since(&self.turn_reference.verify),
                 executed: reading.executed.since(&self.turn_reference.executed),
+                bundles: self.metrics_tap.reports_bundles_processed().then(|| {
+                    reading
+                        .bundles
+                        .since(&self.turn_reference.bundles)
+                        .processed
+                }),
             });
             self.turn_reference = reading;
             self.turn_drained = Some(drained_millis);

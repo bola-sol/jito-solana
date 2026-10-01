@@ -23,6 +23,8 @@ pub struct LeaderTurn {
     pub quic: QuicPort,
     pub verify: VerifyTotals,
     pub executed: ExecutedTotals,
+    /// Bundles executed and recorded over the turn; `None` where the bundle stage does not count them.
+    pub bundles: Option<u64>,
 }
 
 #[derive(Debug, Default)]

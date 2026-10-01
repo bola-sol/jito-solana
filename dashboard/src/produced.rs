@@ -142,9 +142,10 @@ impl From<&ProducedBlock> for BlockFigures {
     }
 }
 
-/// A turn as the list's divider shows it: first, last, produced, drained and the previous drain.
+/// A turn as the list's divider shows it: first, last, produced, drained, the previous drain and
+/// the bundles processed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct TurnHead(Slot, Slot, u64, u64, Option<u64>);
+pub struct TurnHead(Slot, Slot, u64, u64, Option<u64>, Option<u64>);
 
 impl From<&LeaderTurn> for TurnHead {
     fn from(turn: &LeaderTurn) -> Self {
@@ -154,6 +155,7 @@ impl From<&LeaderTurn> for TurnHead {
             turn.produced,
             turn.drained_millis,
             turn.since_millis,
+            turn.bundles,
         )
     }
 }
@@ -478,6 +480,7 @@ mod tests {
             },
             verify: VerifyTotals::default(),
             executed: ExecutedTotals::default(),
+            bundles: None,
         }
     }
 
@@ -643,8 +646,8 @@ mod tests {
         assert_eq!(
             first.turns,
             [
-                TurnHead(count - 4, count - 1, 0, 0, None),
-                TurnHead(0, 3, 0, 0, None)
+                TurnHead(count - 4, count - 1, 0, 0, None, None),
+                TurnHead(0, 3, 0, 0, None, None)
             ]
         );
         let second = ring.figures(first.next);
@@ -653,7 +656,7 @@ mod tests {
             [2, 1, 0]
         );
         assert_eq!(second.next, None);
-        assert_eq!(second.turns, [TurnHead(0, 3, 0, 0, None)]);
+        assert_eq!(second.turns, [TurnHead(0, 3, 0, 0, None, None)]);
     }
 
     #[test]

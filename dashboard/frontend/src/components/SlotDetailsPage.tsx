@@ -27,6 +27,7 @@ import type {
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import {
+  bundlesLabel,
   bundlesValue,
   capacity,
   executionView,
@@ -287,6 +288,11 @@ function TurnDivider({
           {turn.produced < slots && `, ${count(turn.produced)} of ${count(slots)} produced`}
           {", "}
           {turnSpanLabel(turn)}
+          {turn.bundles !== null && (
+            <span title="Bundles executed and recorded over the turn, as the bundle stage counts them.">
+              , {bundlesLabel(turn.bundles)}
+            </span>
+          )}
         </span>
         <span className="turn-more">{open ? "TPU path ▾" : "TPU path"}</span>
       </button>

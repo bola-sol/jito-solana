@@ -92,9 +92,16 @@ describe("ProducedIndex", () => {
     expect(index.turns.get(4)?.last).toBe(7);
   });
 
+  it("keeps a turn's bundle count, and none where the stage does not count them", () => {
+    const index = new ProducedIndex();
+    index.addPage({ figures: [], turns: [[2, 5, 4, 1, null, 38], [8, 11, 4, 2, 1, null]], held: 0, floor: 0, next: null });
+    expect(index.turns.get(2)?.bundles).toBe(38);
+    expect(index.turns.get(8)?.bundles).toBeNull();
+  });
+
   it("lets go of what falls below the floor, and takes nothing below it after", () => {
     const index = new ProducedIndex();
-    index.addPage({ figures: [row(3), row(9)], turns: [[2, 5, 4, 1, null]], held: 2, floor: 0, next: null });
+    index.addPage({ figures: [row(3), row(9)], turns: [[2, 5, 4, 1, null, null]], held: 2, floor: 0, next: null });
     index.setFloor(6);
     expect([...index.heads.keys()]).toEqual([9]);
     expect(index.turns.size).toBe(0);

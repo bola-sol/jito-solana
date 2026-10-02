@@ -835,6 +835,9 @@ body {
   overflow-y: auto;
   scrollbar-gutter: stable;
   font-size: 12.5px;
+  /* Chrome's scroll anchoring misjudges rows whose layout content-visibility defers, and threw
+     the page back down whenever the table neared the viewport. */
+  overflow-anchor: none;
 }
 
 /* These filter, so they take the pointer rather than the help cursor. */

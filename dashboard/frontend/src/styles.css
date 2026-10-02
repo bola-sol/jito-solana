@@ -5995,12 +5995,60 @@ body {
   stroke-dasharray: 3 3;
 }
 
+/* The plot takes the pointer; a vertical drag still scrolls the page on a phone. */
+.final-plot {
+  position: relative;
+  touch-action: pan-y;
+  cursor: crosshair;
+}
+
+.final-plot:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.final-cross {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--text-faint);
+  pointer-events: none;
+}
+
+.final-cross > i {
+  position: absolute;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--ours);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
 .final-axis {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
   margin-top: 4px;
   font: 11px var(--mono);
   color: var(--text-faint);
+}
+
+.final-axis > :last-child {
+  justify-self: end;
+}
+
+.final-picked {
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.final-picked b {
+  font-weight: 500;
+  color: var(--text);
 }
 
 @media (max-width: 700px) {

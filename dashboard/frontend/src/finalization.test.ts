@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bandHeights, bandOf, trendLines } from "./finalization";
+import { bandHeights, bandOf, minuteLabel, minuteXs, nearestMinute, trendLines } from "./finalization";
 import type { FinalizationMinute } from "./types";
 
 const MINUTE = 60_000;
@@ -40,5 +40,30 @@ describe("trendLines", () => {
 
   it("draws nothing without minutes", () => {
     expect(trendLines([], (minute) => minute.ours, 300, 90)).toEqual([]);
+  });
+});
+
+describe("picking a minute", () => {
+  const hour = minutes(Array(60).fill(0.5));
+
+  it("places minutes where the lines draw them", () => {
+    const xs = minuteXs(hour);
+    expect(xs[0]).toBeCloseTo(0);
+    expect(xs[59]).toBe(1);
+    expect(minuteXs([])).toEqual([]);
+  });
+
+  it("takes the minute nearest the pointer", () => {
+    const xs = minuteXs(hour);
+    expect(nearestMinute(xs, 1)).toBe(59);
+    expect(nearestMinute(xs, 30.2 / 59)).toBe(30);
+    expect(nearestMinute(xs, -0.2)).toBe(0);
+    expect(nearestMinute([], 0.5)).toBeNull();
+  });
+
+  it("labels a minute as the axis does", () => {
+    expect(minuteLabel(hour, 59)).toBe("now");
+    expect(minuteLabel(hour, 47)).toBe("−12 min");
+    expect(minuteLabel(hour, 0)).toBe("−59 min");
   });
 });

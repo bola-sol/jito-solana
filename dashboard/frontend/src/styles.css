@@ -3729,11 +3729,15 @@ body {
     gap: 4px;
   }
 
-  /* A fee value is wider than a third of the row, so fees go two across, tips beneath; by class,
-     since tips is jito only. */
+  /* A fee value is wider than a third of the row, so fees go two across. Tips, bundles and the
+     versions take half a row each, and an odd one out the whole row, so every row is full. */
   .sx-stats .sx-fee,
-  .sx-stats .sx-wide {
+  .sx-stats .sx-half {
     grid-column: span 2;
+  }
+
+  .sx-stats .sx-row {
+    grid-column: 1 / -1;
   }
 
   /* The four block figures two by two, on the stats' gutter, since three across left the fourth on

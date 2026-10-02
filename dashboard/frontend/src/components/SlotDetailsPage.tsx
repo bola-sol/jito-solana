@@ -637,6 +637,10 @@ function BlockCompute({
   const cap = capacity(block, cost);
   const votes = Math.max(0, block.transactions - block.non_vote_transactions);
   const unused = Math.max(0, block.block_cost_limit - block.block_cost);
+  const tips = rates && block.tips != null;
+  // On a phone each extra takes half a row, and an odd one out the whole of the last.
+  const extras = [tips, block.bundles != null, block.versions != null].filter(Boolean).length;
+  const extra = (nth: number) => (extras % 2 === 1 && nth === extras ? "sx-row" : "sx-half");
 
   return (
     <div className="sx-lead">
@@ -653,9 +657,11 @@ function BlockCompute({
           </div>
         </div>
         <div className="sx-stats">
+          {/* Half the row under alpenglow, where votes are not shown, so the label fits beside two. */}
           <Stat
             label={alpenglow ? "transactions" : "non-vote"}
             value={count(block.non_vote_transactions)}
+            className={alpenglow ? "sx-half" : undefined}
           />
           {!alpenglow && <Stat label="votes" value={count(votes)} />}
           {/* Toned only when it happened: a failed transaction still landed and paid its fee. */}
@@ -676,7 +682,7 @@ function BlockCompute({
           {rates && block.tips != null && (
             <Stat
               label="our tips, SOL"
-              className="sx-fee"
+              className={extra(1)}
               value={sol(ourShare(block.tips, rates) ?? 0, 6)}
               title={`${sol(jitoShare(block.tips, rates), 6)} SOL reached the distribution account, of ${sol(block.tips, 6)} paid. Derived from the configured rates, not measured.`}
             />
@@ -685,6 +691,7 @@ function BlockCompute({
           {block.bundles && (
             <Stat
               label="bundles"
+              className={extra(tips ? 2 : 1)}
               value={bundlesValue(block.bundles)}
               title={`${count(block.bundles.sanitized)} bundles sanitised, ${count(block.bundles.executed)} executed and in the block.`}
             />
@@ -694,7 +701,7 @@ function BlockCompute({
           {block.versions && (
             <Stat
               label="legacy, v0, v1"
-              className="sx-wide"
+              className={extra(extras)}
               value={versionsValue(block.versions)}
               title={versionsTitle(block.versions)}
             />

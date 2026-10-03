@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "Agave Dashboard",
-  "short_name": "Agave",
+  "short_name": "Agave Dash",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

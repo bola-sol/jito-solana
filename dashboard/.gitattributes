@@ -3,3 +3,5 @@
 # with core.autocrlf=true would produce a different binary from a checkout on
 # Linux. Pin the whole tree to LF so every checkout yields the same bytes.
 * text=auto eol=lf
+# Images pass through untouched.
+*.png binary

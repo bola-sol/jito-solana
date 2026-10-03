@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Installed to a home screen: the manifest for Android, the touch icon and title for iOS. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Agave" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0b1004" />
     <title>Agave Dashboard</title>
     <!--
       Stamped before anything renders. Left to the bundle, a dashboard set to
@@ -15,6 +22,8 @@
       try {
         if (localStorage.getItem("agave-dashboard-theme") === "light") {
           document.documentElement.dataset.theme = "light";
+          // The light theme's --bg in styles.css.
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", "#f4f5ef");
         }
       } catch (e) {
         /* storage unavailable; dark is the default anyway */
@@ -66,7 +75,7 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-BLUnc3U6.js"></script>
+    <script type="module" crossorigin src="/assets/index-C4OTSbev.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-C5Ka93SU.css">
   </head>
   <body>

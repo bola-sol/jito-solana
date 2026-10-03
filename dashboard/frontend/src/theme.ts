@@ -13,4 +13,7 @@ export function readTheme(): Theme {
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
   writeStored(THEME_STORAGE_KEY, theme);
+  // The browser's bar, and an installed app's, takes the page's background.
+  const background = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  if (background) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", background);
 }

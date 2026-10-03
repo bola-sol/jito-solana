@@ -372,14 +372,15 @@ fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
         .map(|(_, content_type, body)| (*content_type, *body))
 }
 
-/// Sent with every response. `img-src` allows https for validator icons; the inline script and
-/// style are index.html's theme stamp and splash.
+/// Sent with every response. `img-src` allows https for validator icons; `manifest-src` lets a
+/// phone install the page; the inline script and style are index.html's theme stamp and splash.
 const SECURITY_HEADERS: &str = concat!(
     "content-security-policy:",
     " default-src 'none';",
     " script-src 'self' 'unsafe-inline';",
     " style-src 'self' 'unsafe-inline';",
     " img-src 'self' data: https:;",
+    " manifest-src 'self';",
     " connect-src 'self';",
     " font-src 'self';",
     " base-uri 'none';",
@@ -1443,6 +1444,11 @@ mod tests {
     fn test_policy_still_permits_validator_icons() {
         assert!(SECURITY_HEADERS.contains("img-src 'self' data: https:"));
         assert!(!SECURITY_HEADERS.contains("img-src 'self'\r\n"));
+    }
+
+    #[test]
+    fn test_policy_lets_a_phone_read_the_manifest() {
+        assert!(SECURITY_HEADERS.contains("manifest-src 'self'"));
     }
 
     #[test]

@@ -114,6 +114,12 @@ export function VirtualList({
         width = element.clientWidth;
         measured.current.clear();
         classes.current.clear();
+        // The drawn items have already reported their new heights, which were just forgotten; a
+        // fresh observation reports them again.
+        for (const item of container.current?.children ?? []) {
+          observer.unobserve(item);
+          observer.observe(item);
+        }
         bump();
       }
       follow();
@@ -126,7 +132,7 @@ export function VirtualList({
       resized.disconnect();
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [scroller, bump]);
+  }, [scroller, bump, observer]);
 
   const estimate = useCallback(
     (key: number) => {

@@ -1,7 +1,7 @@
 
 import { ourShare } from "./tips";
 import { count } from "./format";
-import type { BlockCertificate, ProducedBlock, TipRates } from "./types";
+import type { BlockCertificate, LeaderSlotCounts, ProducedBlock, TipRates } from "./types";
 
 /** Fixed in `fee_distribution.rs`; the rest goes to the leader with the priority fees. */
 export const BASE_FEE_BURN_PERCENT = 50;
@@ -140,6 +140,60 @@ export function blockSummary(blocks: readonly BlockHead[] | undefined, rates?: T
       durationMillis: quantileOf(duration, 0.95),
     },
   };
+}
+
+export interface EpochTotals {
+  blocks: number;
+  transactions: number;
+  earned: number;
+  /** Means, not totals. */
+  filled: number | null;
+  durationMillis: number | null;
+}
+
+/** Each epoch's blocks summed, keyed by epoch; a block whose epoch is unknown is left out. */
+export function epochTotals(
+  blocks: readonly BlockHead[],
+  epochOfSlot: (slot: number) => number | null,
+  rates?: TipRates,
+): Map<number, EpochTotals> {
+  const byEpoch = new Map<number, BlockHead[]>();
+  for (const block of blocks) {
+    const epoch = epochOfSlot(block.slot);
+    if (epoch === null) continue;
+    const held = byEpoch.get(epoch);
+    if (held) held.push(block);
+    else byEpoch.set(epoch, [block]);
+  }
+  const totals = new Map<number, EpochTotals>();
+  for (const [epoch, held] of byEpoch) {
+    const { mean } = blockSummary(held, rates);
+    totals.set(epoch, {
+      blocks: held.length,
+      transactions: held.reduce((sum, block) => sum + block.transactions, 0),
+      earned: held.reduce((sum, block) => sum + earnedOf(block, rates).total, 0),
+      filled: mean.filled,
+      durationMillis: mean.durationMillis,
+    });
+  }
+  return totals;
+}
+
+export function leaderSlotsLabel(counts: LeaderSlotCounts): string {
+  const toCome = counts.slots - counts.passed;
+  const parts = [
+    `${count(counts.slots)} slots`,
+    `${count(counts.produced)} produced`,
+    `${count(counts.skipped)} skipped`,
+  ];
+  if (toCome > 0) parts.push(`${count(toCome)} to come`);
+  return parts.join(" · ");
+}
+
+/** Null unless fewer blocks are held than the chain shows produced, as after a restart. */
+export function heldShortLabel(held: number, counts: LeaderSlotCounts | undefined): string | null {
+  if (!counts || held >= counts.produced) return null;
+  return `${count(held)} of ${count(counts.produced)} blocks seen since the restart`;
 }
 
 export function certificateVerdict(certificate: BlockCertificate): { text: string; warn: boolean } {

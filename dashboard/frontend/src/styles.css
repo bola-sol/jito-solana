@@ -2662,20 +2662,47 @@ body {
   background: var(--bg);
 }
 
+/* An epoch's own row on the blocks' columns, tinted so it reads as a heading. The row keeps the
+   rows' font size, since the columns are sized in em; only its words are smaller. */
 .produced-epoch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 6px;
-  padding: 10px 4px 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7em 7em 8em 5em;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 4px;
+  padding: 7px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.produced-epoch .produced-id {
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
   font-size: 12px;
+}
+
+.produced-epoch-name,
+.produced-epoch-short {
   color: var(--text-faint);
 }
 
-.produced-epoch::after {
-  content: "";
-  flex: 1;
-  border-top: 1px solid var(--border);
+.produced-epoch .is-total {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The tooltip's trigger is a flex box, which would drop the space before the unit. */
+.produced-epoch .produced-fees-unit {
+  white-space: pre;
+}
+
+/* Opened leftward from the figure's right edge, since the list clips anything past its own. */
+.produced-epoch .is-total .explain-bubble {
+  left: auto;
+  right: 0;
 }
 
 /* On a phone the slot, time and epoch take the width between them, so the
@@ -2702,8 +2729,20 @@ body {
    detail under an opened row says fees are in SOL. */
 @media (max-width: 560px) {
   .produced-head,
-  .produced-averages {
+  .produced-averages,
+  .produced-epoch {
     grid-template-columns: minmax(0, 1fr) 6.2em 5em 4.2em;
+  }
+
+  /* The words take the row and the figures the line under it, in their own columns. */
+  .produced-epoch .produced-id {
+    grid-column: 1 / -1;
+  }
+  .produced-epoch .produced-txns {
+    grid-column: 2;
+  }
+  .produced-epoch .produced-fees {
+    grid-column: 3;
   }
   .produced-clear-word {
     display: none;

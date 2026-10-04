@@ -52,7 +52,7 @@ pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     finalization::{FinalizationShare, FinalizationTally},
-    skip_rate::SkipRateWalk,
+    skip_rate::{LeaderSlotCounts, SkipRateWalk},
     slot_clock::SlotClock,
 };
 pub use self::{
@@ -367,6 +367,7 @@ struct Debounces {
     finalization_share: Debounced<Option<FinalizationShare>>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
+    leader_slot_counts: Debounced<Vec<LeaderSlotCounts>>,
     health: Debounced<Health>,
     epoch: Debounced<EpochInfo>,
     consensus: Debounced<Consensus>,
@@ -406,6 +407,8 @@ pub struct Collector {
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
     epoch_published: Option<(Epoch, Pubkey, bool)>,
     skip_rate: SkipRateWalk,
+    /// The epoch before the root's, whose blocks the slot page holds for a while.
+    previous_slots: SkipRateWalk,
     finalization: FinalizationTally,
     last_completed_slot: Slot,
     last_completed_at: Instant,
@@ -486,6 +489,7 @@ impl Collector {
             history,
             epochs,
             skip_rate: SkipRateWalk::default(),
+            previous_slots: SkipRateWalk::default(),
             finalization: FinalizationTally::default(),
             epoch_published: None,
             last_completed_slot: 0,
@@ -1789,6 +1793,12 @@ impl Collector {
         // Keyed on the identity too, so a validator that boots on a dummy one and
         // swaps counts its real slots.
         let me = self.ctx.identity();
+        let previous = epoch.checked_sub(1);
+        // At a rollover the current walk carries on as the previous epoch's, so its last slots
+        // are still counted.
+        if previous.is_some_and(|previous| self.skip_rate.epoch == Some((previous, me))) {
+            self.previous_slots = std::mem::take(&mut self.skip_rate);
+        }
         if self.skip_rate.epoch != Some((epoch, me)) {
             // Latched only once the schedule is in hand. Taking an unknown schedule as
             // empty would record a permanent zero.
@@ -1797,13 +1807,24 @@ impl Collector {
             };
             self.skip_rate = SkipRateWalk::new(epoch, me, leader_slots);
         }
+        if let Some(previous) = previous
+            && self.previous_slots.epoch != Some((previous, me))
+        {
+            // After a restart the cache may lack the previous schedule; then there are no counts.
+            self.previous_slots = self
+                .leader_slots_in_epoch(root_bank, previous)
+                .map(|leader_slots| SkipRateWalk::new(previous, me, leader_slots))
+                .unwrap_or_default();
+        }
 
         let root = root_bank.slot();
         // Read only when a leader slot has come due: the sysvar is a 128 KB bitmap.
-        if self.skip_rate.due(root)
+        if (self.skip_rate.due(root) || self.previous_slots.due(root))
             && let Some(history) = root_bank.get_slot_history()
         {
             self.skip_rate.advance(root, |slot| history.check(slot));
+            self.previous_slots
+                .advance(root, |slot| history.check(slot));
         }
         let rate = self.skip_rate.rate();
         self.debounces.skip_rate.publish(
@@ -1811,6 +1832,16 @@ impl Collector {
             TOPIC_SUMMARY,
             "skip_rate",
             SkipRate { epoch, rate },
+        );
+        let counts = [&self.previous_slots, &self.skip_rate]
+            .into_iter()
+            .filter_map(SkipRateWalk::counts)
+            .collect();
+        self.debounces.leader_slot_counts.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "leader_slot_counts",
+            counts,
         );
     }
 

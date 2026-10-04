@@ -737,6 +737,16 @@ export interface SkipRate {
   rate: number | null;
 }
 
+/** This validator's leader slots in one epoch, as far as the root has passed them. */
+export interface LeaderSlotCounts {
+  epoch: number;
+  slots: number;
+  /** Includes any slot too old for the slot history to answer. */
+  passed: number;
+  produced: number;
+  skipped: number;
+}
+
 export interface SnapshotArchive {
   slot: number;
   written_millis: number | null;
@@ -948,6 +958,8 @@ export interface Published {
     finalization_share: FinalizationShare | null;
     epoch_remaining_nanos: number;
     skip_rate: SkipRate;
+    /** The previous epoch, when its schedule is known, then the current one. */
+    leader_slot_counts: LeaderSlotCounts[];
     health: Health;
     consensus: Consensus;
     program_cache: ProgramCache | null;

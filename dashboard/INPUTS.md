@@ -108,7 +108,7 @@ The collector thread polls every 200 ms. The meters thread polls once a second. 
 | `Bank::get_rank_map` for this epoch and the next, `get_vat_health_for_next_epoch` | Under alpenglow, whether this vote account holds a seat in the admitted set now and next epoch, and how far the vote account is short of the ticket after that. The header's "no seat" figure and the epoch card's stat in place of the vote figure. |
 | `Bank::get_lamports_per_signature`, `minimum_vote_account_balance_for_vat`, `get_minimum_balance_for_rent_exemption` | What voting costs: a day of vote fees under TowerBFT, and under alpenglow the admission ticket and the balance the vote account must hold at the epoch's turn. The header's balance warnings. |
 | `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | The epoch card, block height, and the configured slot time. From the root bank, the oldest of our own blocks still kept. |
-| `Bank::get_slot_history` on the root bank | The epoch's skip rate: whether each of our leader slots the root has passed holds a block. Read only when one has come due, and unlike the ledger it survives a restart. |
+| `Bank::get_slot_history` on the root bank | The epoch's skip rate, and the slot page's produced and skipped counts for this epoch and the last: whether each of our leader slots the root has passed holds a block. Read only when one has come due, and unlike the ledger it survives a restart. |
 | `Bank::cluster_type` on the root bank | The cluster's name in the header |
 | `Bank::clock` | The epoch's measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | This node's rank in the BLS rank map, to find its bit in a certificate |

@@ -4,11 +4,15 @@ import {
   blockSummary,
   certificateVerdict,
   earnedOf,
+  epochTotals,
+  heldShortLabel,
+  leaderSlotsLabel,
   sortBlocks,
   type BlockFigures,
   type BlockHead,
   type BlockSummary,
   type Earned,
+  type EpochTotals,
   type SortDir,
   type SortKey,
 } from "../produced";
@@ -17,6 +21,7 @@ import { jitoShare, ourShare } from "../tips";
 import type {
   BlockCertificate,
   Execution,
+  LeaderSlotCounts,
   ProducedBlock,
   ProducedDetail,
   Recurrence,
@@ -67,6 +72,7 @@ export function SlotDetailsPage({
   const floor = store.get("summary", "produced_floor");
   const rates = store.get("summary", "tip_rates");
   const epoch = store.get("epoch", "new");
+  const slotCounts = store.get("summary", "leader_slot_counts");
   const connection = store.getConnection();
   const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
@@ -94,6 +100,11 @@ export function SlotDetailsPage({
 
   const heads = useMemo(() => [...index.heads.values()], [index, revision]);
   const summary = useMemo(() => blockSummary(heads, rates), [heads, rates]);
+  const totals = useMemo(() => epochTotals(heads, (slot) => epochOf(epoch, slot), rates), [heads, epoch, rates]);
+  const countsByEpoch = useMemo(
+    () => new Map((slotCounts ?? []).map((counts) => [counts.epoch, counts])),
+    [slotCounts],
+  );
   const turnBySlot = useMemo(() => turnOf(index.turns.values()), [index, revision]);
   const ordered = useMemo(
     () =>
@@ -121,8 +132,8 @@ export function SlotDetailsPage({
   }, [heads]);
   const firstEpoch = oldest === null ? null : epochOf(epoch, oldest);
   const lastEpoch = newest === null ? null : epochOf(epoch, newest);
-  // Dividers only newest first, and only when the blocks held span more than one epoch.
-  const divided = !sort && firstEpoch !== null && lastEpoch !== null && firstEpoch !== lastEpoch;
+  // Means on an epoch's row only beside another epoch's; with one, the Mean row says the same.
+  const twoEpochs = firstEpoch !== null && lastEpoch !== null && firstEpoch !== lastEpoch;
   const epochs =
     firstEpoch === null || lastEpoch === null
       ? null
@@ -135,8 +146,9 @@ export function SlotDetailsPage({
     const at = position.get(slot) ?? 0;
     const previous = keys[at - 1];
     const blockEpoch = epochOf(epoch, slot);
+    // Newest first only: a sort scatters an epoch's blocks.
     const epochDivider =
-      divided && blockEpoch !== null && (previous === undefined || epochOf(epoch, previous) !== blockEpoch);
+      !sort && blockEpoch !== null && (previous === undefined || epochOf(epoch, previous) !== blockEpoch);
     const turn = sort ? undefined : turnBySlot.get(slot);
     const turnDivider = turn !== undefined && (previous === undefined || turnBySlot.get(previous) !== turn);
     return { blockEpoch, epochDivider, turn, turnDivider };
@@ -164,7 +176,14 @@ export function SlotDetailsPage({
     const { blockEpoch, epochDivider, turn, turnDivider } = shape(slot);
     return (
       <>
-        {epochDivider && blockEpoch !== null && <div className="produced-epoch">Epoch {count(blockEpoch)}</div>}
+        {epochDivider && blockEpoch !== null && (
+          <EpochRow
+            epoch={blockEpoch}
+            totals={totals.get(blockEpoch)}
+            counts={countsByEpoch.get(blockEpoch)}
+            means={twoEpochs}
+          />
+        )}
         {turnDivider && turn && (
           <TurnDivider
             turn={turn}
@@ -432,6 +451,54 @@ function FiguresRow({
       <span className="produced-fill">{full(figures.filled)}</span>
       <span className="produced-fees">{solFigure(figures.earned)}</span>
       <span className="produced-ms">{millis(figures.durationMillis)}</span>
+    </div>
+  );
+}
+
+function EpochRow({
+  epoch,
+  totals,
+  counts,
+  means,
+}: {
+  epoch: number;
+  totals: EpochTotals | undefined;
+  counts: LeaderSlotCounts | undefined;
+  means: boolean;
+}) {
+  const short = totals ? heldShortLabel(totals.blocks, counts) : null;
+  return (
+    <div className="produced-epoch">
+      <span className="produced-id">
+        <Explain
+          className="produced-epoch-name"
+          text={
+            means
+              ? "Totals of the epoch's blocks held, with fill and duration as their means."
+              : "Totals of the epoch's blocks held."
+          }
+        >
+          Epoch {count(epoch)}
+        </Explain>
+        {counts && <span className="produced-epoch-slots">{leaderSlotsLabel(counts)}</span>}
+        {short && <span className="produced-epoch-short">{short}</span>}
+      </span>
+      <span className="produced-txns is-total">
+        {totals && (
+          <Explain text={`Mean ${txns(totals.transactions / totals.blocks)} per block.`}>
+            {txns(totals.transactions)}
+          </Explain>
+        )}
+      </span>
+      <span className="produced-fill">{totals && means ? full(totals.filled) : ""}</span>
+      <span className="produced-fees is-total">
+        {totals && (
+          <Explain text={`Mean ${sol(totals.earned / totals.blocks, 5)} SOL per block.`}>
+            {solFigure(totals.earned)}
+          </Explain>
+        )}
+      </span>
+      <span className="produced-ms">{totals && means ? millis(totals.durationMillis) : ""}</span>
     </div>
   );
 }

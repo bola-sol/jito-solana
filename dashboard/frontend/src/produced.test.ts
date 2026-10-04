@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { blockSummary, certificateVerdict, earnedOf, sortBlocks } from "./produced";
-import type { BlockCertificate, ProducedBlock, TipRates } from "./types";
+import {
+  blockSummary,
+  certificateVerdict,
+  earnedOf,
+  epochTotals,
+  heldShortLabel,
+  leaderSlotsLabel,
+  sortBlocks,
+} from "./produced";
+import type { BlockCertificate, LeaderSlotCounts, ProducedBlock, TipRates } from "./types";
 
 function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
   return {
@@ -164,6 +172,69 @@ describe("blockSummary", () => {
         expect(figures.durationMillis).toBeNull();
       }
     }
+  });
+});
+
+describe("epochTotals", () => {
+  const epochOf = (slot: number) => (slot < 0 ? null : Math.floor(slot / 100));
+
+  it("sums each epoch's blocks and averages fill and duration", () => {
+    const totals = epochTotals(
+      [
+        block({
+          slot: 150,
+          transactions: 1000,
+          total_fees: 100,
+          block_cost: 40,
+          block_cost_limit: 100,
+          duration_nanos: 240e6,
+        }),
+        block({
+          slot: 151,
+          transactions: 2000,
+          total_fees: 200,
+          block_cost: 60,
+          block_cost_limit: 100,
+          duration_nanos: 260e6,
+        }),
+        block({ slot: 99, transactions: 7, total_fees: 10 }),
+        block({ slot: -1, transactions: 5 }),
+      ],
+      epochOf,
+    );
+    expect([...totals.keys()].sort()).toEqual([0, 1]);
+    const current = totals.get(1)!;
+    expect(current.blocks).toBe(2);
+    expect(current.transactions).toBe(3000);
+    expect(current.earned).toBe(150);
+    expect(current.filled).toBeCloseTo(0.5, 10);
+    expect(current.durationMillis).toBe(250);
+    expect(totals.get(0)!.durationMillis).toBeNull();
+  });
+});
+
+describe("leaderSlotsLabel", () => {
+  const counts = (over: Partial<LeaderSlotCounts>): LeaderSlotCounts => ({
+    epoch: 1,
+    slots: 288,
+    passed: 288,
+    produced: 286,
+    skipped: 2,
+    ...over,
+  });
+
+  it("names the slots still to come only while there are some", () => {
+    expect(leaderSlotsLabel(counts({}))).toBe("288 slots · 286 produced · 2 skipped");
+    expect(leaderSlotsLabel(counts({ passed: 4, produced: 4, skipped: 0 }))).toBe(
+      "288 slots · 4 produced · 0 skipped · 284 to come",
+    );
+  });
+
+  it("says how many were seen only when fewer are held than were produced", () => {
+    expect(heldShortLabel(104, counts({}))).toBe("104 of 286 blocks seen since the restart");
+    expect(heldShortLabel(286, counts({}))).toBeNull();
+    expect(heldShortLabel(4, counts({ produced: 0 }))).toBeNull();
+    expect(heldShortLabel(4, undefined)).toBeNull();
   });
 });
 

@@ -2,10 +2,22 @@
 //! block in the chain.
 
 use {
+    serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_slot_history::Check,
 };
+
+/// One epoch's leader slots for this validator, as far as the root has passed them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct LeaderSlotCounts {
+    pub epoch: Epoch,
+    pub slots: usize,
+    /// Slots the root has passed, including any too old for the slot history to answer.
+    pub passed: usize,
+    pub produced: usize,
+    pub skipped: usize,
+}
 
 #[derive(Debug, Default)]
 pub(super) struct SkipRateWalk {
@@ -58,6 +70,17 @@ impl SkipRateWalk {
         }
     }
 
+    pub(super) fn counts(&self) -> Option<LeaderSlotCounts> {
+        let (epoch, _) = self.epoch?;
+        Some(LeaderSlotCounts {
+            epoch,
+            slots: self.leader_slots.len(),
+            passed: self.next_index,
+            produced: self.produced,
+            skipped: self.elapsed.saturating_sub(self.produced),
+        })
+    }
+
     pub(super) fn rate(&self) -> Option<f64> {
         (self.elapsed > 0)
             .then(|| self.elapsed.saturating_sub(self.produced) as f64 / self.elapsed as f64)
@@ -92,6 +115,16 @@ mod tests {
         assert!(walk.due(12));
         walk.advance(13, chain(0, 13, &[11]));
         assert_eq!(walk.rate(), Some(0.25));
+        assert_eq!(
+            walk.counts(),
+            Some(LeaderSlotCounts {
+                epoch: 3,
+                slots: 4,
+                passed: 4,
+                produced: 3,
+                skipped: 1,
+            })
+        );
     }
 
     #[test]
@@ -100,6 +133,12 @@ mod tests {
         walk.advance(21, chain(20, 21, &[21]));
         assert_eq!(walk.next_index, 4);
         assert_eq!(walk.rate(), Some(0.5));
+        let counts = walk.counts().unwrap();
+        assert_eq!(
+            (counts.passed, counts.produced, counts.skipped),
+            (4, 1, 1),
+            "passed, but neither produced nor skipped"
+        );
     }
 
     #[test]
@@ -116,6 +155,8 @@ mod tests {
         let mut walk = SkipRateWalk::new(3, Pubkey::new_unique(), vec![10]);
         walk.advance(9, chain(0, 9, &[]));
         assert_eq!(walk.rate(), None);
+        assert_eq!(walk.counts().unwrap().passed, 0);
         assert_eq!(SkipRateWalk::default().rate(), None);
+        assert_eq!(SkipRateWalk::default().counts(), None);
     }
 }

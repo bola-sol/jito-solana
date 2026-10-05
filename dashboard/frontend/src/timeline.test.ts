@@ -24,6 +24,7 @@ describe("timelineOf", () => {
     expect(timeline?.wait).toBe(921);
     expect(timeline?.run).toBe(11);
     expect(timeline?.label).toBe("921 + 11 ms");
+    expect(timeline?.short).toBe("921+11");
   });
 
   it("draws both spans against one fixed track", () => {
@@ -46,6 +47,7 @@ describe("timelineOf", () => {
     expect(timeline?.run).toBeNull();
     expect(timeline?.runShare).toBe(0);
     expect(timeline?.label).toBe("921 ms");
+    expect(timeline?.short).toBe("921");
   });
 
   it("does not let two clocks disagreeing read as replay finishing early", () => {

@@ -15,6 +15,7 @@ import type { SlotRange } from "../slotHistory";
 import type { Store } from "../store";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
+import { readScheduleColumns, SCHEDULE_COLUMNS, writeScheduleColumns, type ScheduleColumns } from "../layout";
 import { FoundTurns, TurnIndex, turnNumberOf } from "../turnIndex";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
@@ -36,6 +37,13 @@ const RETRY_AFTER_MS = 5000;
 
 /** A search is sent once typing pauses this long. */
 const SEARCH_PAUSE_MS = 250;
+
+const COLUMN_NAMES: Record<ScheduleColumns, string> = {
+  status: "Status",
+  fees: "Fees",
+  timing: "Timing",
+  load: "Load",
+};
 
 const NO_CERTIFICATES: readonly Certificate[] = [];
 
@@ -87,6 +95,7 @@ export function SchedulePage({
   const epoch = store.get("epoch", "new");
   const identity = store.get("summary", "identity_key");
   const rates = store.get("summary", "tip_rates");
+  const [columns, setColumns] = useState(readScheduleColumns);
   const live = store.getSlots();
   // Moves whenever a leader could newly resolve.
   const leaderRevision = store.getLeaderRevision();
@@ -259,7 +268,7 @@ export function SchedulePage({
   const finished = searching ? found?.next === null : exhausted;
 
   return (
-    <section className="schedule">
+    <section className={`schedule columns-${columns}${rates ? " has-tips" : ""}`}>
       <div className="schedule-controls">
         <input
           type="search"
@@ -277,6 +286,22 @@ export function SchedulePage({
             Ours
           </button>
         </div>
+      </div>
+      {/* Shown only where the table is too wide to fit, which the stylesheet decides. */}
+      <div className="schedule-columns" role="group" aria-label="Which columns to show">
+        {SCHEDULE_COLUMNS.map((group) => (
+          <button
+            key={group}
+            type="button"
+            aria-pressed={columns === group}
+            onClick={() => {
+              setColumns(group);
+              writeScheduleColumns(group);
+            }}
+          >
+            {COLUMN_NAMES[group]}
+          </button>
+        ))}
       </div>
 
       <div className="schedule-list" ref={list}>
@@ -325,26 +350,39 @@ const TurnCard = memo(
         <div className={`schedule-slots${alpenglow ? " has-certificate" : ""}`}>
           <div className="schedule-row schedule-head">
             <span className="schedule-slot">Slot</span>
-            <span>{alpenglow ? "Voted" : "Votes"}</span>
+            <span className="sc-status">{alpenglow ? "Voted" : "Votes"}</span>
             {alpenglow && (
-              <span title="Who the reward certificate written in this slot left out, of the validators certificates usually pay.">
-                Certificate
+              <span
+                className="sc-status"
+                title="Who the reward certificate written in this slot left out, of the validators certificates usually pay."
+              >
+                <Heading wide="Certificate" narrow="Cert" />
               </span>
             )}
-            <span>{alpenglow ? "Transactions" : "Non-votes"}</span>
-            <span>Base fee</span>
-            <span>Priority</span>
-            <span title="Reaching the distribution account, after jito's cut. Derived, not measured.">
+            <span className="sc-status">
+              {alpenglow ? <Heading wide="Transactions" narrow="Txns" /> : "Non-votes"}
+            </span>
+            <span className="sc-fees">
+              <Heading wide="Base fee" narrow="Base" />
+            </span>
+            <span className="sc-fees">Priority</span>
+            <span
+              className="sc-fees sc-tips"
+              title="Reaching the distribution account, after jito's cut. Derived, not measured."
+            >
               Tips
             </span>
-            <span>Duration</span>
-            <span title="Data shreds in the block, and how many were repaired.">
+            <span className="sc-timing">Duration</span>
+            <span className="sc-load" title="Data shreds in the block, and how many were repaired.">
               Shreds
             </span>
-            <span title="First shred to block full, then to replay finishing, drawn against one second.">
-              Received to replayed
+            <span
+              className="sc-timing"
+              title="First shred to block full, then to replay finishing, drawn against one second."
+            >
+              <Heading wide="Received to replayed" narrow="Recv + replay" />
             </span>
-            <span>Compute</span>
+            <span className="sc-load">Compute</span>
           </div>
           {turn.slots.map((slot, row) => (
             <SlotRow key={slot.slot} slot={slot} rates={rates} certificate={certificates[row]} />
@@ -419,7 +457,7 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
   const timeline = timelineOf(entry);
   if (!timeline) {
     return (
-      <span className="schedule-tl">
+      <span className="schedule-tl sc-timing">
         <span className="schedule-tl-text">—</span>
       </span>
     );
@@ -434,7 +472,7 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
       ? `Block full ${timeline.wait} ms after its first shred. Replay's finish was not seen.`
       : `Block full ${timeline.wait} ms after its first shred, replayed ${timeline.run} ms after that.${spent}`;
   return (
-    <span className="schedule-tl" title={title}>
+    <span className="schedule-tl sc-timing" title={title}>
       <span className="schedule-tl-track" aria-hidden="true">
         <i className="is-wait" style={{ left: 0, width: `${timeline.waitShare * 100}%` }} />
         {timeline.run !== null && (
@@ -444,7 +482,9 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
           />
         )}
       </span>
-      <span className="schedule-tl-text">{timeline.label}</span>
+      <span className="schedule-tl-text">
+        <Heading wide={timeline.label} narrow={timeline.short} />
+      </span>
     </span>
   );
 }
@@ -476,27 +516,29 @@ function SlotRow({
       {alpenglow ? (
         <VoteMark reward={entry?.reward ?? null} />
       ) : (
-        <span>{votes === null ? "—" : count(votes)}</span>
+        <span className="sc-status">{votes === null ? "—" : count(votes)}</span>
       )}
       {alpenglow && <CertificateCell certificate={certificate} />}
-      <span>{block ? count(block.non_vote_transactions) : "—"}</span>
-      <span>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
-      <span>{block ? sol(block.priority_fees, 4) : "—"}</span>
-      <span>
+      <span className="sc-status">{block ? count(block.non_vote_transactions) : "—"}</span>
+      <span className="sc-fees">{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
+      <span className="sc-fees">{block ? sol(block.priority_fees, 4) : "—"}</span>
+      <span className="sc-fees sc-tips">
         {/* Absent where tips were never measured; nought is a real reading. */}
         {rates && block?.tips != null ? sol(jitoShare(block.tips, rates), 4) : "—"}
       </span>
-      <span>
+      <span className="sc-timing">
         {entry?.duration_nanos == null ? "—" : `${Math.round(entry.duration_nanos / 1e6)} ms`}
       </span>
-      <span>
+      <span className="sc-load">
         {entry?.shreds ? count(entry.shreds.count) : "—"}
         {entry?.shreds && entry.shreds.repaired > 0 && (
-          <span className="schedule-repaired">{count(entry.shreds.repaired)} rep</span>
+          <span className="schedule-repaired">
+            <Heading wide={`${count(entry.shreds.repaired)} rep`} narrow={`+${count(entry.shreds.repaired)}r`} />
+          </span>
         )}
       </span>
       <Timeline entry={entry} />
-      <span>
+      <span className="sc-load">
         {block ? count(block.block_cost) : "—"}
         {filled !== null && <span className="schedule-fill">{percent(filled, 0)}</span>}
       </span>
@@ -513,7 +555,7 @@ const MARKS: Record<Reward, [glyph: string, tone: string]> = {
 function CertificateCell({ certificate }: { certificate: Certificate }) {
   const [text, tone] = certificateText(certificate);
   return (
-    <span className={`schedule-cert is-${tone}`} title={certificateTitle(certificate)}>
+    <span className={`schedule-cert sc-status is-${tone}`} title={certificateTitle(certificate)}>
       {text}
     </span>
   );
@@ -522,8 +564,18 @@ function CertificateCell({ certificate }: { certificate: Certificate }) {
 function VoteMark({ reward }: { reward: Reward | null }) {
   const [glyph, tone] = reward === null ? ["–", "is-unknown"] : MARKS[reward];
   return (
-    <span className="vote-marks" title={rewardTitle(reward)}>
+    <span className="vote-marks sc-status" title={rewardTitle(reward)}>
       <i className={`vote-mark ${tone}`}>{glyph}</i>
     </span>
+  );
+}
+
+/** Text in two lengths: the table's own, and a shorter one for when it shows one group of columns. */
+function Heading({ wide, narrow }: { wide: string; narrow: string }) {
+  return (
+    <>
+      <span className="schedule-wide">{wide}</span>
+      <span className="schedule-narrow">{narrow}</span>
+    </>
   );
 }

@@ -5549,6 +5549,160 @@ body {
   color: var(--warn);
 }
 
+/* ---- schedule, one group of columns at a time ---- */
+
+/* Named, so the table can switch to one group of columns wherever it stops fitting, sidebar or not. */
+.schedule {
+  container: schedule / inline-size;
+}
+
+.schedule-columns,
+.schedule-narrow {
+  display: none;
+}
+
+.schedule-columns button {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.schedule-columns button:hover {
+  color: var(--text-dim);
+}
+
+.schedule-columns button[aria-pressed="true"] {
+  border-color: var(--text-faint);
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.schedule-columns button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Below the width the whole table needs with a full block's figures in it, measured at 1,182px. */
+@container schedule (max-width: 1181px) {
+  .schedule-columns {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  /* Four columns stretched across a tablet's width would leave the figures far apart. */
+  .schedule-slots {
+    max-width: 40em;
+  }
+
+  .schedule-wide {
+    display: none;
+  }
+
+  .schedule-narrow {
+    display: inline;
+  }
+
+  .schedule.columns-status .schedule-row > :is(.sc-fees, .sc-timing, .sc-load),
+  .schedule.columns-fees .schedule-row > :is(.sc-status, .sc-timing, .sc-load),
+  .schedule.columns-timing .schedule-row > :is(.sc-status, .sc-fees, .sc-load),
+  .schedule.columns-load .schedule-row > :is(.sc-status, .sc-fees, .sc-timing),
+  .schedule:not(.has-tips) .schedule-row > .sc-tips {
+    display: none;
+  }
+
+  /* Fractions of what is left, so every turn's rows line up whatever their figures. */
+  .schedule.columns-status .schedule-slots .schedule-row {
+    grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 0.8fr));
+  }
+
+  .schedule.columns-status .schedule-slots.has-certificate .schedule-row {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.4fr) minmax(0, 1.25fr) minmax(0, 0.6fr);
+  }
+
+  /* The slot wider than its share elsewhere: three short figures beside it leave it short at 320px. */
+  .schedule.columns-fees .schedule-slots .schedule-row {
+    grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  }
+
+  .schedule.columns-fees:not(.has-tips) .schedule-slots .schedule-row {
+    grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
+  }
+
+  .schedule.columns-timing .schedule-slots .schedule-row {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr) minmax(0, 1.3fr);
+  }
+
+  .schedule.columns-load .schedule-slots .schedule-row {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.9fr) minmax(0, 1.3fr);
+  }
+
+  .schedule-repaired {
+    margin-left: 4px;
+  }
+
+  /* The figure on top and the track as a bar under it, the width of the column. */
+  .schedule-tl {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .schedule-tl-track {
+    flex: none;
+    max-width: none;
+    height: 3px;
+  }
+
+  .schedule-tl-text {
+    min-width: 0;
+  }
+}
+
+/* The narrowest phones have no room for a full block's compute and its fill side by side. */
+@container schedule (max-width: 300px) {
+  .schedule.columns-load .schedule-fill {
+    display: none;
+  }
+}
+
+/* On a phone the header scrolls away and the bar stays at the top, with the list filling the rest of
+   the screen under it. */
+@media (max-width: 700px) {
+  .schedule-columns {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .schedule-list {
+    flex: none;
+    height: calc(100dvh - 62px - var(--gap));
+  }
+
+  /* The page's padding moves onto the header, so the bar sticks at the very top, and nothing sits
+     below the list, so scrolled to the end the list meets the bar rather than going under it. */
+  .main:has(> .schedule) {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .main:has(> .schedule) > .header {
+    margin-top: 18px;
+  }
+}
+
 .schedule-cert.is-all,
 .schedule-cert.is-none,
 .schedule-cert.is-unknown {

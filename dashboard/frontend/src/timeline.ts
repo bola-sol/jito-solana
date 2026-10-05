@@ -10,6 +10,8 @@ export interface Timeline {
   waitShare: number;
   runShare: number;
   label: string;
+  /** The same without spaces or unit, for a narrow column under a heading that names them. */
+  short: string;
 }
 
 /** The second span is clamped at nought: two threads stamp the two clocks. */
@@ -22,5 +24,6 @@ export function timelineOf(entry: SlotEntry | null): Timeline | null {
   const waitShare = Math.min(1, wait / TIMELINE_SPAN_MS);
   const runShare = run === null ? 0 : Math.min(1 - waitShare, run / TIMELINE_SPAN_MS);
   const label = run === null ? `${wait} ms` : `${wait} + ${run} ms`;
-  return { wait, run, waitShare, runShare, label };
+  const short = run === null ? `${wait}` : `${wait}+${run}`;
+  return { wait, run, waitShare, runShare, label, short };
 }

@@ -4,10 +4,13 @@ import {
   CERTIFICATES_STORAGE_KEY,
   readBalancesHidden,
   readCertificatesOpen,
+  readScheduleColumns,
   readSidebarCollapsed,
+  SCHEDULE_COLUMNS_STORAGE_KEY,
   SIDEBAR_STORAGE_KEY,
   writeBalancesHidden,
   writeCertificatesOpen,
+  writeScheduleColumns,
   writeSidebarCollapsed,
 } from "./layout";
 
@@ -80,6 +83,34 @@ describe("the certificates list", () => {
     });
     expect(() => writeCertificatesOpen(true)).not.toThrow();
     expect(readCertificatesOpen()).toBe(false);
+  });
+});
+
+describe("the schedule's column group", () => {
+  it("starts on status when nothing has been chosen", () => {
+    expect(readScheduleColumns()).toBe("status");
+  });
+
+  it("remembers each group", () => {
+    for (const group of ["fees", "timing", "load", "status"] as const) {
+      writeScheduleColumns(group);
+      expect(readScheduleColumns()).toBe(group);
+    }
+  });
+
+  it("treats an unrecognised value as status", () => {
+    window.localStorage.setItem(SCHEDULE_COLUMNS_STORAGE_KEY, "everything");
+    expect(readScheduleColumns()).toBe("status");
+  });
+
+  it("survives storage being refused", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeScheduleColumns("fees")).not.toThrow();
+    expect(readScheduleColumns()).toBe("status");
   });
 });
 

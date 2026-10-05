@@ -53,3 +53,19 @@ export function readFolded(): string[] {
 export function writeFolded(folded: string[]): void {
   writeStored(FOLDED_STORAGE_KEY, folded.join(","));
 }
+
+export type ScheduleColumns = "status" | "fees" | "timing" | "load";
+
+export const SCHEDULE_COLUMNS: readonly ScheduleColumns[] = ["status", "fees", "timing", "load"];
+
+/** Which group of the schedule's columns a screen too narrow for all of them shows. */
+export const SCHEDULE_COLUMNS_STORAGE_KEY = "agave-dashboard-schedule-columns";
+
+export function readScheduleColumns(): ScheduleColumns {
+  const held = readStored(SCHEDULE_COLUMNS_STORAGE_KEY);
+  return SCHEDULE_COLUMNS.find((group) => group === held) ?? "status";
+}
+
+export function writeScheduleColumns(group: ScheduleColumns): void {
+  writeStored(SCHEDULE_COLUMNS_STORAGE_KEY, group);
+}

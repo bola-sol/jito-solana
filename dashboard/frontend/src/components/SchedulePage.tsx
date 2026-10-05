@@ -415,6 +415,7 @@ function TurnLeader({
   // that has only just come into view.
   const share = peer && totalStake ? peer.stake / totalStake : null;
   const began = turn.slots[turn.slots.length - 1]?.entry?.time_millis ?? null;
+  const version = peer?.version ? buildLabel(peer.client ?? undefined, peer.version) : "";
 
   return (
     <div className="schedule-leader">
@@ -434,10 +435,10 @@ function TurnLeader({
           table lands. */}
       <span className="schedule-leader-when">{began === null ? "" : blockStamp(began)}</span>
       <div className="schedule-leader-meta">
-        <span className="schedule-version">
-          {peer?.version ? buildLabel(peer.client ?? undefined, peer.version) : ""}
+        <span className="schedule-version" title={version || undefined}>
+          {version}
         </span>
-        <span>
+        <span className="schedule-stake">
           {peer && peer.stake > 0 && (
             <>
               {solCompact(peer.stake)} SOL

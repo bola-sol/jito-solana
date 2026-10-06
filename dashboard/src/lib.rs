@@ -13,6 +13,7 @@ pub mod history;
 pub mod host_stats;
 pub mod meters;
 pub mod metrics_tap;
+pub mod net_ifaces;
 pub mod net_stats;
 pub mod produced;
 pub mod proto;

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { xdpDetail, xdpTooltip } from "./components/NetworkCard";
-import { direction, egressShares, NETWORK_WINDOW_SECONDS, sharedPeak, unitFor } from "./network";
-import type { XdpConfig } from "./types";
+import {
+  direction,
+  egressShares,
+  NETWORK_WINDOW_SECONDS,
+  routesShort,
+  sharedPeak,
+  unitFor,
+} from "./network";
+import type { NetInterface, XdpConfig } from "./types";
 
 const KB = 1024;
 const MB = 1024 * 1024;
@@ -41,6 +48,36 @@ describe("direction", () => {
 
   it("has nothing to report before any samples arrive", () => {
     expect(direction([])).toBeNull();
+  });
+});
+
+describe("an interface's routes", () => {
+  const iface = (routes: number, routes_peak: number): NetInterface => ({
+    name: "doublezero0",
+    kind: "tunnel",
+    up: true,
+    mtu: 1476,
+    routes,
+    routes_peak,
+    received_per_second: 0,
+    sent_per_second: 0,
+  });
+
+  it("are short below half the day's highest", () => {
+    expect(routesShort(iface(2, 115))).toBe(true);
+    expect(routesShort(iface(57, 115))).toBe(true);
+  });
+
+  it("are not short through ordinary churn", () => {
+    expect(routesShort(iface(115, 115))).toBe(false);
+    expect(routesShort(iface(109, 115))).toBe(false);
+    expect(routesShort(iface(58, 115))).toBe(false);
+  });
+
+  it("are never judged where the table is small", () => {
+    expect(routesShort(iface(1, 3))).toBe(false);
+    expect(routesShort(iface(0, 9))).toBe(false);
+    expect(routesShort(iface(4, 10))).toBe(true);
   });
 });
 

@@ -69,3 +69,14 @@ export function readScheduleColumns(): ScheduleColumns {
 export function writeScheduleColumns(group: ScheduleColumns): void {
   writeStored(SCHEDULE_COLUMNS_STORAGE_KEY, group);
 }
+
+/** The network card's interface list, folded until the viewer opens it. */
+export const INTERFACES_STORAGE_KEY = "agave-dashboard-interfaces";
+
+export function readInterfacesOpen(): boolean {
+  return readStored(INTERFACES_STORAGE_KEY) === "open";
+}
+
+export function writeInterfacesOpen(open: boolean): void {
+  writeStored(INTERFACES_STORAGE_KEY, open ? "open" : "closed");
+}

@@ -1,15 +1,17 @@
-import type { ReactElement } from "react";
-import { decimal, percent } from "../format";
+import { useState, type ReactElement } from "react";
+import { bytes, count, decimal, percent } from "../format";
+import { readInterfacesOpen, writeInterfacesOpen } from "../layout";
 import {
   direction,
   egressShares,
   NETWORK_WINDOW_SECONDS,
+  routesShort,
   sharedPeak,
   unitFor,
   type Direction,
 } from "../network";
 import { dropsLabel, layerShares } from "../turbine";
-import type { EgressSplit, NetworkSample, Turbine, XdpConfig } from "../types";
+import type { EgressSplit, NetInterface, NetworkSample, Turbine, XdpConfig } from "../types";
 import { useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, chartY, Explain } from "./primitives";
@@ -30,6 +32,7 @@ export function NetworkCard(): ReactElement | null {
   const xdp = store.get("summary", "xdp");
   const split = store.get("summary", "network_egress");
   const turbine = store.get("summary", "turbine");
+  const interfaces = store.get("summary", "net_interfaces");
   // Drawn behind live on the validator's clock, so the newest point sits past the right edge.
   const edge = useChartEdge();
   if (!rates) return null;
@@ -75,6 +78,7 @@ export function NetworkCard(): ReactElement | null {
       {split && <Split total={egress.current} split={split} />}
       {xdp && <Xdp xdp={xdp} dropped={turbine?.xdp_dropped ?? null} />}
       {turbine && <Intake turbine={turbine} />}
+      {interfaces && interfaces.length > 0 && <Interfaces interfaces={interfaces} />}
     </Card>
   );
 }
@@ -125,6 +129,104 @@ function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
     </div>
   );
 }
+
+/** Folded to one line, which leads with any interface whose routes have fallen away. */
+function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
+  const [open, setOpen] = useState(readInterfacesOpen);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    writeInterfacesOpen(next);
+  };
+  const short = interfaces.filter(routesShort);
+  const rest = interfaces.filter((iface) => !routesShort(iface));
+
+  return (
+    <div className="net-ifaces">
+      <div className="net-if-head" onClick={toggle}>
+        <span className="net-xdp-label">
+          <Explain text="This host's network interfaces in use, with the routes through each.">Interfaces</Explain>
+        </span>
+        <span className="net-if-summary">
+          {!open &&
+            (short.length > 0 ? (
+              <>
+                {short.map((iface) => (
+                  <i key={iface.name} className="tone-bad">
+                    <b>{iface.name}</b> {routesLabel(iface)}
+                  </i>
+                ))}
+                {rest.map((iface) => (
+                  <i key={iface.name}>
+                    <b>{iface.name}</b>
+                  </i>
+                ))}
+              </>
+            ) : (
+              interfaces.map((iface) => (
+                <i key={iface.name}>
+                  <b>{iface.name}</b> {iface.up ? iface.kind : "down"}
+                </i>
+              ))
+            ))}
+        </span>
+        <button
+          type="button"
+          className="cache-fold"
+          aria-expanded={open}
+          aria-label={`${open ? "Fold" : "Unfold"} network interfaces`}
+          onClick={(event) => {
+            // The row under it toggles too, and two toggles are none.
+            event.stopPropagation();
+            toggle();
+          }}
+        >
+          {open ? "−" : "+"}
+        </button>
+      </div>
+      {open && (
+        <div className="net-if-list">
+          {interfaces.map((iface) => (
+            <InterfaceRow key={iface.name} iface={iface} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InterfaceRow({ iface }: { iface: NetInterface }) {
+  const short = routesShort(iface);
+  return (
+    <div className={`net-if-row ${iface.up ? "is-up" : "is-down"}`}>
+      <span className="net-if-name" title={iface.mtu === null ? undefined : `MTU ${count(iface.mtu)}`}>
+        {iface.name}
+      </span>
+      <span className="net-if-kind">{iface.kind}</span>
+      <span className="net-if-state">
+        <i className="net-if-dot" aria-hidden="true" />
+        {iface.up ? "up" : "down"}
+      </span>
+      <span className={`net-if-routes${short ? " is-short" : ""}`}>
+        {short ? (
+          <Explain text={`Highest in the last 24 hours: ${count(iface.routes_peak)}.`}>{routesLabel(iface)}</Explain>
+        ) : (
+          routesLabel(iface)
+        )}
+      </span>
+      <span className="net-if-traffic">
+        ↓ {perSecond(iface.received_per_second)} · ↑ {perSecond(iface.sent_per_second)}
+      </span>
+    </div>
+  );
+}
+
+function routesLabel(iface: NetInterface): string {
+  const of = routesShort(iface) ? ` of ${count(iface.routes_peak)}` : "";
+  return `${count(iface.routes)}${of} ${iface.routes === 1 && !of ? "route" : "routes"}`;
+}
+
+const perSecond = (value: number | null) => (value === null ? "—" : `${bytes(value)}/s`);
 
 /** The layer follows stake: a small validator hears most of its shreds two hops from the leader. */
 function Intake({ turbine }: { turbine: Turbine }) {

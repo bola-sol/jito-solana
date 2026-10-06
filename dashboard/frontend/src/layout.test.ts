@@ -4,12 +4,14 @@ import {
   CERTIFICATES_STORAGE_KEY,
   readBalancesHidden,
   readCertificatesOpen,
+  readInterfacesOpen,
   readScheduleColumns,
   readSidebarCollapsed,
   SCHEDULE_COLUMNS_STORAGE_KEY,
   SIDEBAR_STORAGE_KEY,
   writeBalancesHidden,
   writeCertificatesOpen,
+  writeInterfacesOpen,
   writeScheduleColumns,
   writeSidebarCollapsed,
 } from "./layout";
@@ -111,6 +113,29 @@ describe("the schedule's column group", () => {
     });
     expect(() => writeScheduleColumns("fees")).not.toThrow();
     expect(readScheduleColumns()).toBe("status");
+  });
+});
+
+describe("the network card's interface list", () => {
+  it("starts folded when nothing has been chosen", () => {
+    expect(readInterfacesOpen()).toBe(false);
+  });
+
+  it("remembers the choice both ways", () => {
+    writeInterfacesOpen(true);
+    expect(readInterfacesOpen()).toBe(true);
+    writeInterfacesOpen(false);
+    expect(readInterfacesOpen()).toBe(false);
+  });
+
+  it("survives storage being refused", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeInterfacesOpen(true)).not.toThrow();
+    expect(readInterfacesOpen()).toBe(false);
   });
 });
 

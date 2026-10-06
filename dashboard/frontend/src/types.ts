@@ -255,6 +255,22 @@ export interface EpochInfo {
   account_cost_limit: number;
 }
 
+export type InterfaceKind = "physical" | "bond" | "bridge" | "vlan" | "tunnel" | "virtual";
+
+/** One of the host's network interfaces in use. */
+export interface NetInterface {
+  name: string;
+  kind: InterfaceKind;
+  up: boolean;
+  mtu: number | null;
+  routes: number;
+  /** The most routes it carried in any hour of the last day. */
+  routes_peak: number;
+  /** Null until a second reading is in. */
+  received_per_second: number | null;
+  sent_per_second: number | null;
+}
+
 export interface Network {
   received_per_second: number;
   sent_per_second: number;
@@ -982,6 +998,8 @@ export interface Published {
     replay: ReplayWindow | null;
     host: Host | null;
     network: Network;
+    /** Idle interfaces, down with no routes and no traffic, are left out. */
+    net_interfaces: NetInterface[];
     network_egress: EgressSplit;
     xdp: XdpConfig | null;
     ingest_paths: IngestSummary;

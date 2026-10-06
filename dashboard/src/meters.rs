@@ -13,6 +13,7 @@ use {
             SchedulerSource, SchedulerTotals, TapCounters, VerifyTotals, WindowedCounters,
             XdpConfig,
         },
+        net_ifaces::{self, InterfaceKind, InterfaceReading},
         net_stats::{self, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
         thread_stats::{self, ThreadGroup, ThreadReading},
@@ -160,6 +161,20 @@ pub struct TpsSample {
 pub struct Network {
     pub received_per_second: u64,
     pub sent_per_second: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NetInterface {
+    pub name: String,
+    pub kind: InterfaceKind,
+    pub up: bool,
+    pub mtu: Option<u32>,
+    pub routes: u32,
+    /// The most routes it carried in any hour of the last day, this one included.
+    pub routes_peak: u32,
+    /// `None` until a second reading is in, or after a counter went backwards.
+    pub received_per_second: Option<u64>,
+    pub sent_per_second: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -799,6 +814,7 @@ pub struct Meters {
 
     throughput: Throughput,
     network: NetworkMeter,
+    interfaces: InterfaceMeter,
     host: HostMeter,
     sockets: SocketMeter,
     shreds: ShredMeter,
@@ -828,6 +844,7 @@ impl Meters {
             last_tap: None,
             throughput: Throughput::new(),
             network: NetworkMeter::default(),
+            interfaces: InterfaceMeter::default(),
             host: HostMeter::default(),
             sockets: SocketMeter::new(),
             shreds: ShredMeter::new(),
@@ -863,6 +880,8 @@ impl Meters {
         }
 
         self.network.tick(&self.publisher);
+        // Read whether or not anyone watches, so the route peak covers the whole day.
+        self.interfaces.tick(&self.publisher);
         self.tpu.collect_xdp(&self.metrics_tap, &self.publisher);
         // The `/proc` walks run only while somebody is watching. The rest is
         // cheap and keeps the charts whole for a viewer connecting.
@@ -1059,6 +1078,133 @@ impl NetworkMeter {
             "network_history",
         );
     }
+}
+
+/// The interfaces are read this often, which is also the window their rates are taken over.
+const INTERFACE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How far back an interface's highest route count reaches.
+const ROUTE_PEAK_HOURS: u64 = 24;
+
+/// Each interface's received and sent bytes at a reading.
+type InterfaceCounters = HashMap<String, (u64, u64)>;
+
+#[derive(Default)]
+struct InterfaceMeter {
+    started: Option<Instant>,
+    last: Option<(Instant, InterfaceCounters)>,
+    /// Per interface, its highest route count in each hour since the meter started, oldest first.
+    peaks: HashMap<String, VecDeque<(u64, u32)>>,
+    unavailable: bool,
+}
+
+impl InterfaceMeter {
+    fn tick(&mut self, publisher: &Publisher) {
+        if self.unavailable {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last
+            .as_ref()
+            .is_some_and(|(at, _)| now.duration_since(*at) < INTERFACE_INTERVAL)
+        {
+            return;
+        }
+        let readings = match net_ifaces::read() {
+            Ok(readings) => readings,
+            Err(err) => {
+                self.unavailable = true;
+                log::info!("dashboard: network interfaces unavailable: {err}");
+                return;
+            }
+        };
+        let hour = now
+            .duration_since(*self.started.get_or_insert(now))
+            .as_secs()
+            .checked_div(3600)
+            .unwrap_or_default();
+        // Interfaces come and go, as containers' do; only those present keep a history.
+        self.peaks
+            .retain(|name, _| readings.iter().any(|reading| &reading.name == name));
+        let previous = self.last.take();
+        let interfaces: Vec<NetInterface> = readings
+            .iter()
+            .filter_map(|reading| {
+                let peak = note_routes(
+                    self.peaks.entry(reading.name.clone()).or_default(),
+                    hour,
+                    reading.routes,
+                );
+                let rates = previous.as_ref().and_then(|(at, counters)| {
+                    rates_since(reading, counters, now.duration_since(*at))
+                });
+                interface_shown(reading, peak, rates)
+            })
+            .collect();
+        self.last = Some((
+            now,
+            readings
+                .into_iter()
+                .map(|reading| (reading.name, (reading.received, reading.sent)))
+                .collect(),
+        ));
+        publisher.publish(TOPIC_SUMMARY, "net_interfaces", &interfaces);
+    }
+}
+
+/// Records a reading's route count against its hour and returns the highest of the last day.
+fn note_routes(hours: &mut VecDeque<(u64, u32)>, hour: u64, routes: u32) -> u32 {
+    match hours.back_mut() {
+        Some((at, most)) if *at == hour => *most = (*most).max(routes),
+        _ => hours.push_back((hour, routes)),
+    }
+    while hours
+        .front()
+        .is_some_and(|(at, _)| at.saturating_add(ROUTE_PEAK_HOURS) <= hour)
+    {
+        hours.pop_front();
+    }
+    hours.iter().map(|(_, most)| *most).max().unwrap_or(routes)
+}
+
+/// Bytes a second in and out since the last reading; none for a counter that went backwards.
+fn rates_since(
+    reading: &InterfaceReading,
+    counters: &InterfaceCounters,
+    elapsed: Duration,
+) -> Option<(u64, u64)> {
+    let seconds = elapsed.as_secs_f64();
+    let (received, sent) = counters.get(&reading.name)?;
+    if seconds <= 0.0 {
+        return None;
+    }
+    Some((
+        (reading.received.checked_sub(*received)? as f64 / seconds) as u64,
+        (reading.sent.checked_sub(*sent)? as f64 / seconds) as u64,
+    ))
+}
+
+/// `None` for an idle interface: down, with no routes and no traffic.
+fn interface_shown(
+    reading: &InterfaceReading,
+    routes_peak: u32,
+    rates: Option<(u64, u64)>,
+) -> Option<NetInterface> {
+    let quiet = rates.is_none_or(|(received, sent)| received == 0 && sent == 0);
+    if !reading.up && reading.routes == 0 && quiet {
+        return None;
+    }
+    Some(NetInterface {
+        name: reading.name.clone(),
+        kind: reading.kind,
+        up: reading.up,
+        mtu: reading.mtu,
+        routes: reading.routes,
+        routes_peak,
+        received_per_second: rates.map(|(received, _)| received),
+        sent_per_second: rates.map(|(_, sent)| sent),
+    })
 }
 
 #[derive(Default)]
@@ -1986,6 +2132,66 @@ mod tests {
             },
             ..TapCounters::default()
         }
+    }
+
+    #[test]
+    fn test_the_route_peak_is_the_highest_hour_of_the_last_day() {
+        let mut hours = VecDeque::new();
+        assert_eq!(note_routes(&mut hours, 0, 115), 115);
+        assert_eq!(
+            note_routes(&mut hours, 0, 2),
+            115,
+            "a wipe within the hour keeps its high"
+        );
+        assert_eq!(note_routes(&mut hours, 23, 2), 115);
+        assert_eq!(
+            note_routes(&mut hours, 24, 2),
+            2,
+            "a day later the hour that saw 115 has gone"
+        );
+        assert_eq!(hours.len(), 2);
+    }
+
+    fn reading(name: &str, up: bool, routes: u32, received: u64, sent: u64) -> InterfaceReading {
+        InterfaceReading {
+            name: name.to_string(),
+            kind: InterfaceKind::Physical,
+            up,
+            mtu: Some(1500),
+            routes,
+            received,
+            sent,
+        }
+    }
+
+    #[test]
+    fn test_rates_per_interface_and_none_for_a_counter_that_went_backwards() {
+        let counters = HashMap::from([("eno1".to_string(), (1_000, 2_000))]);
+        let five = Duration::from_secs(5);
+        assert_eq!(
+            rates_since(&reading("eno1", true, 3, 6_000, 12_000), &counters, five),
+            Some((1_000, 2_000))
+        );
+        assert_eq!(
+            rates_since(&reading("eno1", true, 3, 500, 12_000), &counters, five),
+            None
+        );
+        assert_eq!(
+            rates_since(&reading("doublezero0", true, 3, 1, 1), &counters, five),
+            None
+        );
+    }
+
+    #[test]
+    fn test_only_an_interface_down_with_no_routes_and_no_traffic_is_left_out() {
+        let idle = reading("docker0", false, 0, 0, 0);
+        assert_eq!(interface_shown(&idle, 0, Some((0, 0))), None);
+        assert_eq!(interface_shown(&idle, 0, None), None);
+        assert!(interface_shown(&reading("docker0", false, 1, 0, 0), 1, Some((0, 0))).is_some());
+        assert!(interface_shown(&idle, 0, Some((10, 0))).is_some());
+        let shown = interface_shown(&reading("doublezero0", true, 2, 0, 0), 115, None).unwrap();
+        assert_eq!((shown.routes, shown.routes_peak), (2, 115));
+        assert_eq!(shown.received_per_second, None);
     }
 
     fn window(samples: &[(u64, u64, u64)]) -> VecDeque<(u64, u64, u64)> {

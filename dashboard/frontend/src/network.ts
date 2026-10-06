@@ -1,3 +1,4 @@
+import type { NetInterface } from "./types";
 
 export const NETWORK_WINDOW_SECONDS = 60;
 
@@ -72,4 +73,12 @@ export function unitFor(value: number): { unit: string; divisor: number } {
     index += 1;
   }
   return { unit: UNITS[index], divisor };
+}
+
+/** A route table this small is never judged short: a NIC's few routes come and go with the network. */
+export const ROUTES_JUDGED_FROM = 10;
+
+/** Fewer than half the most it carried in the last day. */
+export function routesShort(iface: NetInterface): boolean {
+  return iface.routes_peak >= ROUTES_JUDGED_FROM && iface.routes * 2 < iface.routes_peak;
 }

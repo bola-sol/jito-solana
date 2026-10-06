@@ -2317,6 +2317,139 @@ body {
   color: var(--text);
 }
 
+/* The host's interfaces, folded to one line at the card's foot. */
+.net-ifaces {
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.net-if-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 4px 18px;
+  margin: 2px -6px;
+  padding: 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.net-if-head:hover {
+  background: var(--panel-raised);
+}
+
+.net-if-summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-if-summary i {
+  font-style: normal;
+}
+
+.net-if-summary i + i::before {
+  content: " · ";
+  color: var(--text-faint);
+}
+
+.net-if-summary b {
+  font-weight: inherit;
+  color: var(--text);
+}
+
+.net-if-summary .tone-bad,
+.net-if-summary .tone-bad b {
+  color: var(--bad);
+}
+
+.net-if-list {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Two lines an interface, so the half-width card holds them: name and traffic, then the rest. */
+.net-if-row {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  grid-template-areas:
+    "name name name traffic"
+    "kind state routes routes";
+  gap: 2px 10px;
+  padding: 5px 0;
+}
+
+.net-if-row + .net-if-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.net-if-name {
+  grid-area: name;
+  color: var(--text);
+}
+
+.net-if-traffic {
+  grid-area: traffic;
+  text-align: right;
+}
+
+.net-if-kind {
+  grid-area: kind;
+}
+
+.net-if-state {
+  grid-area: state;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.net-if-routes {
+  grid-area: routes;
+}
+
+.net-if-routes.is-short {
+  color: var(--bad);
+}
+
+.net-if-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.net-if-row.is-up .net-if-dot {
+  background: var(--good);
+}
+
+.net-if-row.is-down > * {
+  opacity: 0.65;
+}
+
+/* The narrowest phones give the traffic a line of its own. */
+@media (max-width: 360px) {
+  .net-if-row {
+    grid-template-areas:
+      "name name name name"
+      "traffic traffic traffic traffic"
+      "kind state routes routes";
+  }
+
+  .net-if-traffic {
+    text-align: left;
+  }
+}
+
 .net-turbine-body {
   grid-column: 2;
   display: flex;

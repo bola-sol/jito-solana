@@ -4535,6 +4535,7 @@ body {
 }
 
 .ingest {
+  container: ingest / inline-size;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4542,9 +4543,9 @@ body {
 
 .ingest-row {
   display: grid;
-  /* The two figure columns are fixed so they share one right edge down the
+  /* The figure columns are fixed so they share one right edge down the
      card and can be compared without reading the labels. */
-  grid-template-columns: minmax(0, 1fr) 5.5em 5.5em 6em;
+  grid-template-columns: minmax(0, 1fr) 5.5em 5.5em 5.5em 6em;
   align-items: baseline;
   gap: 8px;
   font-size: 12px;
@@ -4582,6 +4583,7 @@ body {
 }
 
 .ingest-queued,
+.ingest-received,
 .ingest-recent,
 .ingest-total {
   font-family: var(--mono);
@@ -4611,6 +4613,7 @@ body {
   color: var(--text-faint);
 }
 
+.ingest-received,
 .ingest-recent {
   color: var(--text-dim);
 }
@@ -4619,10 +4622,10 @@ body {
   color: var(--text-faint);
 }
 
-/* A phone leaves the name no room beside the figures, so it takes a line of its own. */
-@media (max-width: 360px) {
+/* Four figures leave a narrow card no room for the name, so it takes a line of its own. */
+@container ingest (max-width: 400px) {
   .ingest-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     row-gap: 2px;
   }
 

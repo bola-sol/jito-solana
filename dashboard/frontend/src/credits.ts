@@ -14,12 +14,19 @@ export function shareText(share: number | null): string {
   return percent(share < 1 ? Math.min(rounded, 0.9999) : rounded, 2);
 }
 
-/** Where we stand, for the figure's explanation: the median, and how far behind the best. */
-export function standingText(ours: number, best: number, median: number | null, unit: string): string {
+/** How far behind the best ours is, with the cluster median beside it; the best gets the median alone. */
+export function standingText(ours: number, best: number, median: number | null, unit: string): string | null {
   const gap = best - ours;
-  const behind = gap > 0 ? `ours ${count(gap)} ${unit}${gap === 1 ? "" : "s"} behind the best` : "ours the best";
   const share = median === null ? null : creditsShare(median, best);
-  return share === null ? behind : `cluster median ${shareText(share)}, ${behind}`;
+  const medianText = share === null ? null : `cluster median ${shareText(share)}`;
+  if (gap <= 0) return medianText;
+  const behind = `${count(gap)} ${unit}${gap === 1 ? "" : "s"} behind the best`;
+  return medianText === null ? behind : `${behind} (${medianText})`;
+}
+
+/** The figure's explanation, with where ours stands after it. */
+export function withStanding(explain: string, standing: string | null): string {
+  return standing === null ? `${explain}.` : `${explain}; ${standing}.`;
 }
 
 export function participationShare(

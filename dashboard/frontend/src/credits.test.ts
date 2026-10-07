@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { creditsShare, participationShare, shareText, standingText } from "./credits";
+import { creditsShare, participationShare, shareText, standingText, withStanding } from "./credits";
 import type { VoteParticipation } from "./types";
 
 describe("creditsShare", () => {
@@ -63,15 +63,25 @@ describe("participationShare", () => {
 });
 
 describe("standingText", () => {
-  it("gives the median and the gap to the best", () => {
+  it("gives the gap to the best first, with the median beside it", () => {
     expect(standingText(3_630_594, 3_630_606, 3_623_700, "credit")).toBe(
-      "cluster median 99.81%, ours 12 credits behind the best",
+      "12 credits behind the best (cluster median 99.81%)",
     );
-    expect(standingText(301_550, 301_551, 301_300, "slot")).toBe("cluster median 99.92%, ours 1 slot behind the best");
+    expect(standingText(301_550, 301_551, 301_300, "slot")).toBe("1 slot behind the best (cluster median 99.92%)");
   });
 
-  it("says when ours is the best, and leaves out a median it does not have", () => {
-    expect(standingText(1_208, 1_208, 1_190, "slot")).toBe("cluster median 98.51%, ours the best");
-    expect(standingText(1_200, 1_208, null, "slot")).toBe("ours 8 slots behind the best");
+  it("gives the best the median alone, and leaves out a median it does not have", () => {
+    expect(standingText(1_208, 1_208, 1_190, "slot")).toBe("cluster median 98.51%");
+    expect(standingText(1_200, 1_208, null, "slot")).toBe("8 slots behind the best");
+    expect(standingText(1_208, 1_208, null, "slot")).toBeNull();
+  });
+});
+
+describe("withStanding", () => {
+  it("ends the explanation with the standing, or with nothing when there is none", () => {
+    expect(withStanding("Vote credits against the best", "cluster median 99.81%")).toBe(
+      "Vote credits against the best; cluster median 99.81%.",
+    );
+    expect(withStanding("Vote credits against the best", null)).toBe("Vote credits against the best.");
   });
 });

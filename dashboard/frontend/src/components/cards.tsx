@@ -2,7 +2,7 @@ import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { MATRIX_WINDOW_SECONDS, readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
-import { creditsShare, participationShare, shareText, standingText } from "../credits";
+import { creditsShare, participationShare, shareText, standingText, withStanding } from "../credits";
 import { leaderLabel, lostNote, MISS_PLACES, missMarks, missTotal, placeExplain, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
 import type { Admission, EpochInfo, VoteParticipation } from "../types";
@@ -84,7 +84,10 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
         label={`of the best since slot ${count(participation.since_slot)}, votes rewarded in ${count(participation.paid)} of ${count(participation.rewarded)} slots`}
         value={shareText(share)}
         sub={earned}
-        explain={`Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them; ${standingText(participation.paid, best, participation.cluster_median, "slot")}.`}
+        explain={withStanding(
+          "Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them",
+          standingText(participation.paid, best, participation.cluster_median, "slot"),
+        )}
       />
     );
   }
@@ -97,7 +100,10 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
     <Stat
       label={`of the best this epoch, ${count(credits.credits)} credits`}
       value={shareText(share)}
-      explain={`Vote credits against the most any staked validator has earned this epoch; ${standingText(credits.credits, best, credits.cluster_median, "credit")}.`}
+      explain={withStanding(
+        "Vote credits against the most any staked validator has earned this epoch",
+        standingText(credits.credits, best, credits.cluster_median, "credit"),
+      )}
     />
   );
 }

@@ -33,6 +33,14 @@ impl PortWindow {
     }
 
     pub fn push(&mut self, now: Instant, totals: HashMap<u16, u64>) {
+        // A gap of a whole span, as while nobody watched, leaves no sample that belongs in it.
+        if self
+            .samples
+            .back()
+            .is_some_and(|(last, _)| now.duration_since(*last) >= self.span)
+        {
+            self.samples.clear();
+        }
         self.samples.push_back((now, totals));
         while let Some((next, _)) = self.samples.get(1) {
             if now.duration_since(*next) < self.span {
@@ -235,6 +243,31 @@ mod tests {
             Duration::from_secs(5)
         );
         assert_eq!(window.since(8001, 3), 3);
+    }
+
+    #[test]
+    fn test_gap_longer_than_the_span_starts_the_window_again() {
+        let base = Instant::now();
+        let mut window = PortWindow::new(Duration::from_secs(60));
+        window.push(base, totals(8001, 0));
+        window.push(base + Duration::from_secs(1), totals(8001, 10));
+
+        let back = base + Duration::from_secs(3_600);
+        window.push(back, totals(8001, 5_000));
+        assert_eq!(window.covers(back), Duration::ZERO);
+        assert_eq!(window.since(8001, 5_000), 0);
+
+        window.push(back + Duration::from_secs(5), totals(8001, 5_007));
+        assert_eq!(window.since(8001, 5_007), 7);
+    }
+
+    #[test]
+    fn test_gap_shorter_than_the_span_keeps_the_window() {
+        let base = Instant::now();
+        let mut window = PortWindow::new(Duration::from_secs(60));
+        window.push(base, totals(8001, 0));
+        window.push(base + Duration::from_secs(30), totals(8001, 9));
+        assert_eq!(window.since(8001, 9), 9);
     }
 
     #[test]

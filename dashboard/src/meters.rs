@@ -885,9 +885,13 @@ impl Meters {
         self.tpu.collect_xdp(&self.metrics_tap, &self.publisher);
         // The `/proc` walks run only while somebody is watching. The rest is
         // cheap and keeps the charts whole for a viewer connecting.
-        if self.publisher.subscriber_count() > 0 {
+        let watched = self.publisher.subscriber_count() > 0;
+        if watched {
             self.host.tick(&self.ctx, &self.publisher);
             self.threads.tick(&self.publisher);
+        }
+        // Until startup ends whether or not anyone watches, so the totals begin there.
+        if watched || self.sockets.drops_baseline.is_none() {
             let running = matches!(
                 *self.startup_progress.read().unwrap(),
                 ValidatorStartProgress::Running

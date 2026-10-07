@@ -38,7 +38,7 @@ export function IngestCard(): ReactElement | null {
         Dropped packets per UDP port, shown as a share of everything that
         arrived wherever the traffic is counted in whole packets.{" "}
         {elsewhere
-          ? "Serve repair is the one row without that share, and the QUIC ports are on the TPU path card instead."
+          ? "Serve repair is the one row with no received count, and the QUIC ports are on the TPU path card instead."
           : "Serve repair and the QUIC ports have no such count, and their rows are drop figures alone."}{" "}
         <Explain text="The kernel counts what a socket discarded but not what it delivered, so the delivered count comes from the validator's own receivers. Serve repair never reports one, and the QUIC ports count transactions rather than datagrams.">
           Why?

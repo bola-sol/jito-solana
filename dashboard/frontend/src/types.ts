@@ -294,6 +294,8 @@ export interface IngestPath {
   queued_bytes: number;
   received_recent: number | null;
   received_total: number | null;
+  /** False where the receiver counts messages, as votor counts votes. */
+  received_in_packets: boolean;
   quic: boolean;
 }
 

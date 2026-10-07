@@ -34,6 +34,8 @@ const REPAIR_SENDER: &str = "Repair";
 const SENT_BYTES: &str = "streamer-send-bytes_total";
 const SENT_MILLIS: &str = "streamer-send-sample_duration_ms";
 const TPU_VOTE_RECEIVER: &str = "tpu_vote_receiver";
+/// Votor's server, which takes every vote under alpenglow; it counts votes, not packets.
+const VOTOR_SERVER: &str = "votor_datagram_server";
 
 const PACKETS_COUNT: &str = "packets_count";
 
@@ -191,6 +193,7 @@ pub struct MetricsTap {
 
     pub packets_gossip: AtomicU64,
     pub packets_tpu_vote: AtomicU64,
+    pub votes_votor: AtomicU64,
 
     pub turbine_root: AtomicU64,
     pub turbine_layer_1: AtomicU64,
@@ -820,6 +823,7 @@ pub struct TapCounters {
     pub shreds_repair: u64,
     pub packets_gossip: u64,
     pub packets_tpu_vote: u64,
+    pub votes_votor: u64,
     pub turbine_root: u64,
     pub turbine_layer_1: u64,
     pub turbine_layer_2: u64,
@@ -889,6 +893,13 @@ impl MetricsTap {
             SHREDS_REPAIR => self.add_packets(&self.shreds_repair, point),
             GOSSIP_RECEIVER => self.add_packets(&self.packets_gossip, point),
             TPU_VOTE_RECEIVER => self.add_packets(&self.packets_tpu_vote, point),
+            VOTOR_SERVER => {
+                for (name, value) in &point.fields {
+                    if *name == "datagrams_received" {
+                        add_field(&self.votes_votor, value);
+                    }
+                }
+            }
             GOSSIP_SENDER => {
                 self.add_sent(&self.gossip_sent_bytes, &self.gossip_sent_millis, point)
             }
@@ -1557,6 +1568,7 @@ impl MetricsTap {
             shreds_repair: self.shreds_repair.load(Ordering::Relaxed),
             packets_gossip: self.packets_gossip.load(Ordering::Relaxed),
             packets_tpu_vote: self.packets_tpu_vote.load(Ordering::Relaxed),
+            votes_votor: self.votes_votor.load(Ordering::Relaxed),
             turbine_root: self.turbine_root.load(Ordering::Relaxed),
             turbine_layer_1: self.turbine_layer_1.load(Ordering::Relaxed),
             turbine_layer_2: self.turbine_layer_2.load(Ordering::Relaxed),
@@ -2081,6 +2093,27 @@ mod tests {
         assert_eq!(counters.shreds_turbine, 900);
         assert_eq!(counters.packets_gossip, 42);
         assert_eq!(counters.packets_tpu_vote, 70);
+    }
+
+    #[test]
+    fn test_votor_counts_the_votes_it_took_not_the_ones_it_refused() {
+        let tap = MetricsTap::default();
+        let point = |received: &str| {
+            named(
+                VOTOR_SERVER,
+                &[
+                    ("datagrams_received", received),
+                    ("datagram_rate_limited", "5i"),
+                    ("handshakes_completed", "3i"),
+                ],
+            )
+        };
+        tap.observe(&point("400i"));
+        tap.observe(&point("25i"));
+
+        let counters = tap.counters();
+        assert_eq!(counters.votes_votor, 425);
+        assert_eq!(counters.packets_tpu_vote, 0);
     }
 
     #[test]

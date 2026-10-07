@@ -11,6 +11,7 @@ export function IngestCard(): ReactElement | null {
   const elsewhere = store.get("summary", "quic_paths") !== null;
   const paths = (summary?.paths ?? []).filter((path) => !path.quic || !elsewhere);
   if (!summary || paths.length === 0) return null;
+  const votor = paths.some((path) => path.name === "votor");
 
   return (
     <Card title="Socket ingest" aside="dropped by the kernel, per UDP port" className="ingest-body">
@@ -40,6 +41,7 @@ export function IngestCard(): ReactElement | null {
         {elsewhere
           ? "Serve repair is the one row with no received count, and the QUIC ports are on the TPU path card instead."
           : "Serve repair and the QUIC ports have no such count, and their rows are drop figures alone."}{" "}
+        {votor && "Votor counts the votes it took rather than packets, so its row has no share. "}
         <Explain text="The kernel counts what a socket discarded but not what it delivered, so the delivered count comes from the validator's own receivers. Serve repair never reports one, and the QUIC ports count transactions rather than datagrams.">
           Why?
         </Explain>
@@ -62,11 +64,11 @@ function IngestRow({ path }: { path: IngestPath }) {
       <span className="ingest-received">{units(path.received_recent)}</span>
       <span className="ingest-recent">
         {count(path.drops_recent)}
-        <Share of={path.drops_recent} received={path.received_recent} />
+        <Share of={path.drops_recent} received={path.received_in_packets ? path.received_recent : null} />
       </span>
       <span className="ingest-total">
         {count(path.drops_total)}
-        <Share of={path.drops_total} received={path.received_total} />
+        <Share of={path.drops_total} received={path.received_in_packets ? path.received_total : null} />
       </span>
     </div>
   );

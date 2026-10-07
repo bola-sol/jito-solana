@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { blockStamp, buildLabel, count, shortKey } from "../format";
 import {
   leftOutMost,
@@ -154,9 +164,15 @@ const MissesTable = memo(function MissesTable({
     () => list.rows.filter((row) => filter === null || row.place === filter).reverse(),
     [list.rows, filter],
   );
-  const paged = newestFirst.length > ROWS_PER_PAGE;
   const more = limit < newestFirst.length;
   const toggle = useCallback((slot: number) => setOpened((was) => (was === slot ? null : slot)), []);
+
+  // Held at full height once it scrolls, well before it pages.
+  const [held, setHeld] = useState(false);
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (node) setHeld(node.scrollHeight > node.clientHeight);
+  }, [newestFirst, limit, opened]);
 
   // Observed again after each page, so a page that leaves the marker in view loads the next.
   useEffect(() => {
@@ -174,7 +190,7 @@ const MissesTable = memo(function MissesTable({
   }, [more, limit]);
 
   return (
-    <div className={paged ? "misses-table is-paged" : "misses-table"} ref={scroller}>
+    <div className={held ? "misses-table is-held" : "misses-table"} ref={scroller}>
       <div className="misses-row is-head">
         <span>slot</span>
         <span>when</span>

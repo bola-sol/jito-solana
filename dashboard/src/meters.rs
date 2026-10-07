@@ -22,11 +22,12 @@ use {
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_core::validator::ValidatorStartProgress,
-    solana_gossip::contact_info::Protocol,
+    solana_gossip::contact_info::{ContactInfo, Protocol},
     solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
+        net::SocketAddr,
         path::PathBuf,
         sync::Arc,
         thread,
@@ -254,6 +255,9 @@ pub struct IngestPath {
     /// reporting one; `Some(0)` where the validator logs below info.
     pub received_recent: Option<u64>,
     pub received_total: Option<u64>,
+    /// False where the receiver counts messages, as votor counts votes, so a share of packets
+    /// would be off.
+    pub received_in_packets: bool,
 
     pub quic: bool,
 }
@@ -431,6 +435,7 @@ struct IngestPort {
     name: &'static str,
     port: u16,
     received: Option<u64>,
+    received_in_packets: bool,
     quic: bool,
 }
 
@@ -811,6 +816,8 @@ pub struct Meters {
     started: SystemTime,
     metrics_tap: Arc<MetricsTap>,
     last_tap: Option<TapCounters>,
+    /// The working bank's, as last read; kept through a tick that could not take the lock.
+    alpenglow: bool,
 
     throughput: Throughput,
     network: NetworkMeter,
@@ -842,6 +849,7 @@ impl Meters {
             started,
             metrics_tap,
             last_tap: None,
+            alpenglow: false,
             throughput: Throughput::new(),
             network: NetworkMeter::default(),
             interfaces: InterfaceMeter::default(),
@@ -877,6 +885,7 @@ impl Meters {
         if let Some(working_bank) = working_bank {
             self.throughput.tick(&working_bank, &self.publisher);
             self.tpu.note_epoch(&working_bank);
+            self.alpenglow = working_bank.is_alpenglow();
         }
 
         self.network.tick(&self.publisher);
@@ -900,6 +909,7 @@ impl Meters {
                 &self.ctx,
                 &self.metrics_tap.counters(),
                 running,
+                self.alpenglow,
                 &self.publisher,
             );
         }
@@ -1436,6 +1446,7 @@ impl SocketMeter {
         ctx: &DashboardContext,
         tap: &TapCounters,
         running: bool,
+        alpenglow: bool,
         publisher: &Publisher,
     ) {
         if self.unavailable {
@@ -1454,7 +1465,7 @@ impl SocketMeter {
         };
         self.sampled = true;
         let now = Instant::now();
-        let ports = ingest_ports(ctx, tap);
+        let ports = ingest_ports(&ctx.cluster_info.my_contact_info(), tap, alpenglow);
 
         for port in &ports {
             if let Some(counters) = current.get(&port.port) {
@@ -1509,6 +1520,7 @@ impl SocketMeter {
                         .received
                         .map(|total| self.received_window.since(port.port, total)),
                     received_total: port.received.map(|total| total.saturating_sub(received_by)),
+                    received_in_packets: port.received_in_packets,
                     quic: port.quic,
                 })
             })
@@ -1532,51 +1544,53 @@ impl SocketMeter {
     }
 }
 
-fn ingest_ports(ctx: &DashboardContext, tap: &TapCounters) -> Vec<IngestPort> {
-    let info = ctx.cluster_info.my_contact_info();
-    [
-        // Everything arriving on the TVU port is a shred, so the count the
-        // shred receiver keeps is the count of what the port delivered.
-        (
-            "turbine",
-            info.tvu(Protocol::UDP),
-            Some(tap.shreds_turbine),
-            false,
-        ),
-        ("tpu", info.tpu(Protocol::QUIC), None, true),
-        (
-            "tpu forwards",
-            info.tpu_forwards(Protocol::QUIC),
-            None,
-            true,
-        ),
-        (
-            "tpu vote",
-            info.tpu_vote(Protocol::UDP),
-            Some(tap.packets_tpu_vote),
-            false,
-        ),
-        ("tpu vote quic", info.tpu_vote(Protocol::QUIC), None, true),
-        ("gossip", info.gossip(), Some(tap.packets_gossip), false),
-        // The one port that could have a count and does not: its receiver keeps
-        // counters nothing reports. Reaching them means a change to `core`.
-        (
-            "serve repair",
-            info.serve_repair(Protocol::UDP),
-            None,
-            false,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(name, addr, received, quic)| {
+/// Under alpenglow votes reach votor's port and nothing reaches the TPU vote ports, so the one
+/// replaces the other.
+fn ingest_ports(info: &ContactInfo, tap: &TapCounters, alpenglow: bool) -> Vec<IngestPort> {
+    let port = |name, addr: Option<SocketAddr>, received, received_in_packets, quic| {
         Some(IngestPort {
             name,
             port: addr?.port(),
             received,
+            received_in_packets,
             quic,
         })
-    })
-    .collect()
+    };
+    let datagrams = |name, addr, received| port(name, addr, received, true, false);
+    let quic = |name, addr| port(name, addr, None, true, true);
+
+    let mut ports = vec![
+        // Everything arriving on the TVU port is a shred, so the count the
+        // shred receiver keeps is the count of what the port delivered.
+        datagrams("turbine", info.tvu(Protocol::UDP), Some(tap.shreds_turbine)),
+        quic("tpu", info.tpu(Protocol::QUIC)),
+        quic("tpu forwards", info.tpu_forwards(Protocol::QUIC)),
+    ];
+    if alpenglow {
+        ports.push(port(
+            "votor",
+            info.alpenglow(),
+            Some(tap.votes_votor),
+            false,
+            false,
+        ));
+    } else {
+        ports.push(datagrams(
+            "tpu vote",
+            info.tpu_vote(Protocol::UDP),
+            Some(tap.packets_tpu_vote),
+        ));
+        ports.push(quic("tpu vote quic", info.tpu_vote(Protocol::QUIC)));
+    }
+    ports.push(datagrams("gossip", info.gossip(), Some(tap.packets_gossip)));
+    // The one port that could have a count and does not: its receiver keeps
+    // counters nothing reports. Reaching them means a change to `core`.
+    ports.push(datagrams(
+        "serve repair",
+        info.serve_repair(Protocol::UDP),
+        None,
+    ));
+    ports.into_iter().flatten().collect()
 }
 
 /// In bytes per second; `None` until a sender has reported.
@@ -2118,7 +2132,11 @@ fn push_history<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::fixture::fixture, solana_metrics::datapoint::DataPoint, std::thread::sleep,
+        super::*,
+        crate::fixture::fixture,
+        solana_metrics::datapoint::DataPoint,
+        solana_pubkey::Pubkey,
+        std::{net::Ipv4Addr, thread::sleep},
     };
 
     fn tap(scheduler: SchedulerTotals) -> TapCounters {
@@ -2289,13 +2307,14 @@ mod tests {
         // Only this join knows `shred_fetch_receiver` is the socket gossip advertises as `tvu`.
         let harness = fixture();
         let counted = ingest_ports(
-            &harness.ctx,
+            &harness.ctx.cluster_info.my_contact_info(),
             &TapCounters {
                 shreds_turbine: 900,
                 packets_gossip: 40,
                 packets_tpu_vote: 70,
                 ..TapCounters::default()
             },
+            false,
         );
         let by_name: HashMap<&str, Option<u64>> = counted
             .iter()
@@ -2322,7 +2341,11 @@ mod tests {
     #[test]
     fn test_the_quic_ports_are_flagged_and_the_udp_vote_port_is_not() {
         let harness = fixture();
-        let ports = ingest_ports(&harness.ctx, &TapCounters::default());
+        let ports = ingest_ports(
+            &harness.ctx.cluster_info.my_contact_info(),
+            &TapCounters::default(),
+            false,
+        );
         let quic: HashMap<&str, bool> = ports.iter().map(|port| (port.name, port.quic)).collect();
 
         assert_eq!(quic.get("tpu"), Some(&true));
@@ -2332,6 +2355,57 @@ mod tests {
         assert_eq!(quic.get("gossip"), Some(&false));
         assert_eq!(quic.get("serve repair"), Some(&false));
         assert_ne!(quic.get("tpu vote quic"), Some(&false));
+    }
+
+    #[test]
+    fn test_under_alpenglow_votor_takes_the_place_of_the_vote_ports() {
+        let mut info = ContactInfo::new_localhost(&Pubkey::new_unique(), 0);
+        info.set_alpenglow((Ipv4Addr::LOCALHOST, 8011)).unwrap();
+        let tap = TapCounters {
+            packets_tpu_vote: 70,
+            votes_votor: 400,
+            ..TapCounters::default()
+        };
+        let names = |ports: &[IngestPort]| ports.iter().map(|port| port.name).collect::<Vec<_>>();
+
+        let tower = ingest_ports(&info, &tap, false);
+        assert_eq!(
+            names(&tower),
+            [
+                "turbine",
+                "tpu",
+                "tpu forwards",
+                "tpu vote",
+                "tpu vote quic",
+                "gossip",
+                "serve repair"
+            ]
+        );
+        assert!(tower.iter().all(|port| port.received_in_packets));
+
+        let alpenglow = ingest_ports(&info, &tap, true);
+        assert_eq!(
+            names(&alpenglow),
+            [
+                "turbine",
+                "tpu",
+                "tpu forwards",
+                "votor",
+                "gossip",
+                "serve repair"
+            ]
+        );
+        let votor = &alpenglow[3];
+        assert_eq!(votor.port, 8011);
+        assert_eq!(votor.received, Some(400));
+        assert!(
+            !votor.received_in_packets,
+            "votor counts votes, not packets"
+        );
+        assert!(
+            !votor.quic,
+            "kept on this card rather than the TPU path card"
+        );
     }
 
     #[test]

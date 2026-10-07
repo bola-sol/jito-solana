@@ -810,8 +810,9 @@ export type VoteCost =
 export interface VoteCredits {
   epoch: number;
   credits: number;
-  /** Read on the slow tier, so null until a viewer has been attached. */
   cluster_max: number | null;
+  /** Over the staked validators with credits this epoch. */
+  cluster_median: number | null;
 }
 
 export interface VoteParticipation {
@@ -820,6 +821,8 @@ export interface VoteParticipation {
   paid: number;
   rewarded: number;
   cluster_max: number;
+  /** Over the ranks paid at least once; null before any is. */
+  cluster_median: number | null;
   misses: Misses;
   miss_bins: number[];
   lost_leaders: LostLeader[];

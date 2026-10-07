@@ -2,7 +2,7 @@ import type { CSSProperties, ReactElement } from "react";
 import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { MATRIX_WINDOW_SECONDS, readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
-import { creditsShare, participationShare, shareText } from "../credits";
+import { creditsShare, participationShare, shareText, standingText } from "../credits";
 import { leaderLabel, lostNote, MISS_PLACES, missMarks, missTotal, placeExplain, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
 import type { Admission, EpochInfo, VoteParticipation } from "../types";
@@ -78,20 +78,28 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
       if (earned === undefined) return null;
       return <Stat label="earned this epoch, SOL" value={sol(credits.credits)} />;
     }
+    const best = participation.cluster_max;
     return (
       <Stat
         label={`of the best since slot ${count(participation.since_slot)}, votes rewarded in ${count(participation.paid)} of ${count(participation.rewarded)} slots`}
         value={shareText(share)}
         sub={earned}
-        explain="Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them."
+        explain={`Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them; ${standingText(participation.paid, best, participation.cluster_median, "slot")}.`}
       />
     );
   }
-  const share = creditsShare(credits.credits, credits.cluster_max);
-  if (share === null) {
+  const best = credits.cluster_max;
+  const share = creditsShare(credits.credits, best);
+  if (share === null || best === null) {
     return <Stat label="vote credits" value={count(credits.credits)} />;
   }
-  return <Stat label={`of the best this epoch, ${count(credits.credits)} credits`} value={shareText(share)} />;
+  return (
+    <Stat
+      label={`of the best this epoch, ${count(credits.credits)} credits`}
+      value={shareText(share)}
+      explain={`Vote credits against the most any staked validator has earned this epoch; ${standingText(credits.credits, best, credits.cluster_median, "credit")}.`}
+    />
+  );
 }
 
 function NoSeatStat({ admission }: { admission: Admission }) {

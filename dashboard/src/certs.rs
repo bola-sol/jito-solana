@@ -68,6 +68,8 @@ pub struct Participation {
     pub paid: u64,
     pub rewarded: u64,
     pub cluster_max: u64,
+    /// Over the ranks paid at least once; `None` before any is.
+    pub cluster_median: Option<u64>,
     pub misses: Misses,
     pub miss_bins: Vec<u32>,
     pub lost_leaders: Vec<LostLeader>,
@@ -525,6 +527,7 @@ impl Tally {
             paid: self.paid,
             rewarded: self.rewarded,
             cluster_max: self.per_rank.iter().copied().max().unwrap_or(0),
+            cluster_median: median_of(self.per_rank.clone()),
             misses,
             miss_bins,
             lost_leaders: leaders
@@ -693,6 +696,13 @@ fn decode_paid(bitmap: &[u8], len: usize) -> Option<Vec<bool>> {
     Some(paid)
 }
 
+/// The median of the counts above nought, so validators that earned nothing do not drag it down.
+pub fn median_of(mut counts: Vec<u64>) -> Option<u64> {
+    counts.retain(|count| *count > 0);
+    counts.sort_unstable();
+    counts.get(counts.len().checked_sub(1)? / 2).copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,7 +866,29 @@ mod tests {
 
     #[test]
     fn test_an_empty_tally_has_no_best() {
-        assert_eq!(read(&tally()).cluster_max, 0);
+        let participation = read(&tally());
+        assert_eq!(participation.cluster_max, 0);
+        assert_eq!(participation.cluster_median, None);
+    }
+
+    #[test]
+    fn test_the_median_leaves_out_validators_that_earned_nothing() {
+        let counts: Vec<u64> = (1..=11).map(|count| count * 10).chain([0, 0, 0]).collect();
+        assert_eq!(median_of(counts), Some(60));
+        assert_eq!(median_of(vec![7]), Some(7));
+        assert_eq!(median_of(vec![0, 0]), None);
+        assert_eq!(median_of(Vec::new()), None);
+    }
+
+    #[test]
+    fn test_participation_reads_the_median_of_the_paid_ranks() {
+        let mut tally = tally();
+        tally.add(&mark(100, Reward::Paid, &[0, 1, 2]), &[], None);
+        tally.add(&mark(101, Reward::Paid, &[0, 1]), &[], None);
+        tally.add(&mark(102, Reward::Paid, &[0]), &[], None);
+        let participation = read(&tally);
+        assert_eq!(participation.cluster_max, 3);
+        assert_eq!(participation.cluster_median, Some(2));
     }
 
     #[test]

@@ -294,8 +294,9 @@ pub enum VoteCost {
 pub struct VoteCredits {
     pub epoch: Epoch,
     pub credits: u64,
-    /// Read on the slow tier, so absent until a viewer has been attached.
     pub cluster_max: Option<u64>,
+    /// Over the staked validators with credits this epoch.
+    pub cluster_median: Option<u64>,
 }
 
 /// Whether this vote account holds a seat in alpenglow's admitted set.
@@ -1384,11 +1385,13 @@ impl Collector {
         let mine = vote_accounts.get(&self.ctx.vote_account);
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
         // From the same bank as our own credits, so the share never compares two moments.
-        let cluster_max = vote_accounts
+        let staked_credits: Vec<u64> = vote_accounts
             .values()
             .filter(|(stake, _)| *stake > 0)
             .map(|(_, account)| count_epoch_credits(account.vote_state_view(), epoch))
-            .max();
+            .collect();
+        let cluster_max = staked_credits.iter().copied().max();
+        let cluster_median = certs::median_of(staked_credits);
 
         // After a failover the vote account is voted from another machine, whose
         // last vote must not be read as this one's health.
@@ -1409,6 +1412,7 @@ impl Collector {
             epoch,
             credits: count_epoch_credits(account.vote_state_view(), epoch),
             cluster_max,
+            cluster_median,
         });
         self.debounces
             .bls_key
@@ -2490,6 +2494,8 @@ mod tests {
         let credits = harness.published_key("summary", "vote_credits").unwrap();
         assert!(credits.contains(r#""credits":0"#), "{credits}");
         assert!(credits.contains(r#""cluster_max":0"#), "{credits}");
+        // Nobody has earned a credit yet, so there is no median to compare with.
+        assert!(credits.contains(r#""cluster_median":null"#), "{credits}");
         let admission = harness.published_key("summary", "admission").unwrap();
         assert!(admission.contains(r#""value":null"#), "{admission}");
     }

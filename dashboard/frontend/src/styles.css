@@ -835,9 +835,6 @@ body {
   overflow-y: auto;
   scrollbar-gutter: stable;
   font-size: 12.5px;
-  /* Chrome's scroll anchoring misjudges rows whose layout content-visibility defers, and threw
-     the page back down whenever the table neared the viewport. */
-  overflow-anchor: none;
 }
 
 /* These filter, so they take the pointer rather than the help cursor. */
@@ -887,16 +884,18 @@ body {
   font-size: 12px;
 }
 
-/* A table long enough to page is held at full height and contained, so the layout each store
-   update causes stops at its edge; rows out of view skip layout too. */
-.misses-table.is-paged {
+/* A table that scrolls is held at full height and contained, so the layout each store update
+   causes stops at its edge; rows out of view skip layout too. */
+.misses-table.is-held {
   height: 416px;
   contain: strict;
 }
 
+/* A skipped row has no content to hold its height, so it must not shrink in the held table. */
 .misses-row:not(.is-head) {
+  flex-shrink: 0;
   content-visibility: auto;
-  contain-intrinsic-size: auto 48px;
+  contain-intrinsic-size: auto 36.5px;
 }
 
 .misses-slot .copyable,
@@ -1017,7 +1016,7 @@ body {
   }
 
   .misses-row:not(.is-head) {
-    contain-intrinsic-size: auto 133px;
+    contain-intrinsic-size: auto 118px;
   }
 
   .misses-row.is-head,
@@ -1029,7 +1028,7 @@ body {
     max-height: 60vh;
   }
 
-  .misses-table.is-paged {
+  .misses-table.is-held {
     height: 60vh;
   }
 

@@ -225,6 +225,7 @@ function participation(lost: number, counts: number[]): VoteParticipation {
     paid: 23_582,
     rewarded: 23_693,
     cluster_max: 23_690,
+    cluster_median: 23_600,
     misses: { boundary: 0, leader: 0, snapshot: 0, thin: 0, late: 0, lost },
     miss_bins: [],
     lost_leaders: counts.map((count, index) => ({ identity: `Key${index}`, name: null, count })),

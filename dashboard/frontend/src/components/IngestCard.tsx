@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { bytes, count, percent } from "../format";
+import { bytes, count, percent, units } from "../format";
 import type { IngestPath } from "../types";
 import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
@@ -19,6 +19,9 @@ export function IngestCard(): ReactElement | null {
           <span>socket</span>
           <Explain text="Bytes waiting unread at the moment of the sample.">
             queued
+          </Explain>
+          <Explain text="Datagrams the validator's receivers took off the port in the window.">
+            received
           </Explain>
           <Explain text="Drops in the window, and their share of what arrived on the port.">
             {windowLabel(summary.window_seconds)}
@@ -50,12 +53,13 @@ export function IngestCard(): ReactElement | null {
 function IngestRow({ path }: { path: IngestPath }) {
   return (
     <div className="ingest-row">
-      <span className="ingest-name" title={socketTitle(path)}>
+      <span className="ingest-name" title={`udp/${path.port}`}>
         {path.name}
       </span>
       <span className="ingest-queued">
         {path.queued_bytes > 0 ? bytes(path.queued_bytes) : "—"}
       </span>
+      <span className="ingest-received">{units(path.received_recent)}</span>
       <span className="ingest-recent">
         {count(path.drops_recent)}
         <Share of={path.drops_recent} received={path.received_recent} />
@@ -82,12 +86,6 @@ export function lossShare(drops: number, received: number | null): number | null
 
 export function shareLabel(share: number): string {
   return share < 0.0001 ? "<0.01%" : percent(share, 2);
-}
-
-function socketTitle(path: IngestPath): string {
-  const socket = `udp/${path.port}`;
-  if (path.received_recent === null) return socket;
-  return `${socket} · ${count(path.received_recent)} received in the window`;
 }
 
 export function windowLabel(seconds: number): string {

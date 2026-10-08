@@ -762,11 +762,11 @@ fn respond(
     match (request.topic.as_str(), request.key.as_str()) {
         ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
         ("summary", "displays") => {
-            let displays = match info.read() {
-                Ok(info) => info.displays(),
+            let json = match info.read() {
+                Ok(info) => info.displays_json(),
                 Err(_) => return Some(encode_with_id("summary", "displays", id, &())),
             };
-            Some(encode_with_id("summary", "displays", id, &displays))
+            Some(encode_json_with_id("summary", "displays", id, &json))
         }
         ("summary", "misses") => {
             replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
@@ -1004,6 +1004,42 @@ mod tests {
         )
         .unwrap();
         assert!(reply.contains(r#""keys":[]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_the_display_reply_is_what_encoding_the_table_gives() {
+        use crate::validator_info::ValidatorInfo;
+        let info = RwLock::new(ValidatorInfoCache::default());
+        {
+            let mut cache = info.write().unwrap();
+            for (byte, name, icon) in [
+                (1u8, Some("Lantern"), Some("https://l/i.png")),
+                (2, Some("a \"quoted\" name"), None),
+                (3, None, Some("https://i/only.png")),
+                (4, None, None),
+            ] {
+                cache.insert(
+                    solana_pubkey::Pubkey::new_from_array([byte; 32]),
+                    0,
+                    ValidatorInfo {
+                        name: name.map(str::to_string),
+                        icon_url: icon.map(str::to_string),
+                    },
+                );
+            }
+        }
+        for (request, id) in [
+            (
+                &br#"{"topic":"summary","key":"displays","id":4}"#[..],
+                Some(4),
+            ),
+            (&br#"{"topic":"summary","key":"displays"}"#[..], None),
+        ] {
+            let reply = respond(request, &empty(), &info, &no_epochs(), &no_replies()).unwrap();
+            let expected =
+                encode_with_id("summary", "displays", id, &info.read().unwrap().displays());
+            assert_eq!(reply.text(), expected.text());
+        }
     }
 
     #[test]

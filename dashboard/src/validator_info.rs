@@ -10,7 +10,10 @@ use {
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::collections::{HashMap, hash_map::Entry},
+    std::{
+        collections::{HashMap, hash_map::Entry},
+        sync::{Arc, OnceLock},
+    },
 };
 
 const VALIDATOR_INFO_PROGRAM: Pubkey =
@@ -37,6 +40,8 @@ pub struct Displays {
 pub struct ValidatorInfoCache {
     /// Each entry with the slot it was read at.
     by_identity: HashMap<Pubkey, (Slot, ValidatorInfo)>,
+    /// `displays` as JSON, made on the first request after an entry changes.
+    displays_json: OnceLock<Arc<str>>,
 }
 
 impl ValidatorInfoCache {
@@ -59,6 +64,19 @@ impl ValidatorInfoCache {
         Displays { keys, names, icons }
     }
 
+    /// The `summary.displays` value, encoded once and shared until an entry changes.
+    pub fn displays_json(&self) -> Arc<str> {
+        Arc::clone(self.displays_json.get_or_init(|| {
+            match serde_json::to_string(&self.displays()) {
+                Ok(json) => Arc::from(json),
+                Err(err) => {
+                    log::error!("dashboard: failed to encode the display table: {err}");
+                    Arc::from("null")
+                }
+            }
+        }))
+    }
+
     pub fn len(&self) -> usize {
         self.by_identity.len()
     }
@@ -72,7 +90,6 @@ impl ValidatorInfoCache {
         match self.by_identity.entry(identity) {
             Entry::Vacant(entry) => {
                 entry.insert((slot, info));
-                true
             }
             Entry::Occupied(mut entry) => {
                 let (held_slot, held) = entry.get_mut();
@@ -84,9 +101,10 @@ impl ValidatorInfoCache {
                     return false;
                 }
                 *held = info;
-                true
             }
         }
+        self.displays_json = OnceLock::new();
+        true
     }
 
     /// Separate from the scan so the lock is held only for the merge. `slot` is the scanned bank's.
@@ -346,5 +364,34 @@ mod tests {
         assert_eq!(cache.merge(20, vec![(identity, named("Newer"))]), 0);
         assert_eq!(cache.merge(15, vec![(identity, named("Older"))]), 0);
         assert_eq!(held(&cache).as_deref(), Some("Newer"));
+    }
+
+    #[test]
+    fn test_the_encoded_table_is_kept_until_an_entry_changes() {
+        let mut cache = ValidatorInfoCache::default();
+        let identity = Pubkey::new_unique();
+        let named = |name: &str| ValidatorInfo {
+            name: Some(name.into()),
+            icon_url: None,
+        };
+        let fresh = |cache: &ValidatorInfoCache| serde_json::to_string(&cache.displays()).unwrap();
+
+        assert_eq!(&*cache.displays_json(), fresh(&cache).as_str());
+        cache.insert(identity, 10, named("Lantern"));
+        let held = cache.displays_json();
+        assert_eq!(&*held, fresh(&cache).as_str());
+
+        // Reads that change nothing shown keep the encoding.
+        cache.insert(identity, 12, named("Lantern"));
+        cache.insert(identity, 5, named("Old"));
+        assert!(Arc::ptr_eq(&held, &cache.displays_json()));
+
+        cache.insert(identity, 14, named("Beacon"));
+        assert_eq!(&*cache.displays_json(), fresh(&cache).as_str());
+        assert!(cache.displays_json().contains("Beacon"));
+
+        cache.insert(Pubkey::new_unique(), 14, named("Harbour"));
+        assert_eq!(&*cache.displays_json(), fresh(&cache).as_str());
+        assert!(cache.displays_json().contains("Harbour"));
     }
 }

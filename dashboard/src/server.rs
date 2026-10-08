@@ -7,13 +7,16 @@ use {
         collect::{EpochInfo, Replies},
         history::SlotHistory,
         proto::{
-            DEFLATE_PROTOCOL, Frame, MAX_MESSAGE, Message, Publisher, Request, coalesce,
-            encode_json_with_id, encode_with_id,
+            DEFLATE_PROTOCOL, Frame, Message, Publisher, Request, coalesce, encode_json_with_id,
+            encode_with_id,
         },
         search::{SearchParams, search},
         validator_info::ValidatorInfoCache,
     },
-    soketto::handshake::{Server, server},
+    soketto::{
+        Incoming,
+        handshake::{Server, server},
+    },
     solana_clock::Slot,
     solana_time_utils::timestamp,
     std::{
@@ -491,11 +494,11 @@ async fn serve_websocket(
     let mut updates = publisher.subscribe();
     let snapshot = publisher.snapshot();
 
-    // It has to clear the largest message the server sends; above that is buffering a caller can
-    // cause.
+    // soketto applies these to what it receives only, so a frame over the bound is refused from
+    // its header, before its payload is read.
     let mut builder = server.into_builder();
-    builder.set_max_message_size(MAX_MESSAGE);
-    builder.set_max_frame_size(MAX_MESSAGE);
+    builder.set_max_message_size(MAX_CLIENT_MESSAGE);
+    builder.set_max_frame_size(MAX_CLIENT_MESSAGE);
     let (mut sender, mut receiver) = builder.finish();
 
     let total = snapshot.iter().fold(0usize, |sum, message| {
@@ -522,10 +525,10 @@ async fn serve_websocket(
     let mut incoming = Vec::new();
     let mut pace = ReplyPace::new(Instant::now());
     loop {
-        // soketto's `receive_data` is not cancel safe, so it is polled to
+        // soketto's `receive` is not cancel safe, so it is polled to
         // completion in an inner loop rather than dropped by `select!`.
-        {
-            let receive = receiver.receive_data(&mut incoming);
+        let complete = {
+            let receive = receiver.receive(&mut incoming);
             pin!(receive);
             loop {
                 select! {
@@ -534,8 +537,11 @@ async fn serve_websocket(
                     biased;
 
                     received = &mut receive => match received {
-                        Ok(_) => break,
-                        Err(soketto::connection::Error::Closed) => return Ok(()),
+                        Ok(Incoming::Data(_)) => break true,
+                        Ok(Incoming::Pong(_)) => break false,
+                        Ok(Incoming::Closed(_)) | Err(soketto::connection::Error::Closed) => {
+                            return Ok(());
+                        }
                         Err(err) => return Err(err.into()),
                     },
 
@@ -562,12 +568,15 @@ async fn serve_websocket(
                     },
                 }
             }
-        }
+        };
 
-        // The connection-level limit has to be large enough for what the server
-        // sends, so the bound on client messages is applied here instead.
+        // soketto restarts its count after a pong but keeps the bytes, so the bound is checked
+        // on every return.
         if incoming.len() > MAX_CLIENT_MESSAGE {
             return Err(ConnectionError::Oversized(incoming.len()));
+        }
+        if !complete {
+            continue;
         }
         let wait = pace.take(Instant::now());
         if !wait.is_zero() {
@@ -1833,8 +1842,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_an_oversized_client_message_ends_the_connection() {
-        // The connection-level limit has to clear the largest server message, so the
-        // client bound is applied by hand after the frame arrives.
+        // Refused from the frame's header, before its payload is read.
         let publisher = Arc::new(Publisher::new());
         publisher.publish("summary", "cluster", &"testnet");
         let (addr, server) = serve_one(publisher.clone()).await;
@@ -1848,7 +1856,31 @@ mod tests {
         sender.flush().await.unwrap();
 
         match server.await.unwrap() {
-            Err(ConnectionError::Oversized(len)) => {
+            Err(ConnectionError::Connection(soketto::connection::Error::Codec(
+                soketto::base::Error::PayloadTooLarge { .. },
+            ))) => {}
+            other => panic!("expected the connection to be dropped, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pongs_between_fragments_do_not_lift_the_bound() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let mut stream = connect(addr).await.into_inner().into_inner();
+
+        // An unfinished text frame of 4,000 bytes, then an empty pong, both masked with a zero key.
+        let mut fragment = vec![0x01, 0x80 | 126, 0x0f, 0xa0, 0, 0, 0, 0];
+        fragment.resize(4008, b'x');
+        let pong = [0x8a, 0x80, 0, 0, 0, 0];
+        for _ in 0..2 {
+            stream.write_all(&fragment).await.unwrap();
+            stream.write_all(&pong).await.unwrap();
+        }
+
+        match timeout(Duration::from_secs(10), server).await {
+            Ok(Ok(Err(ConnectionError::Oversized(len)))) => {
                 assert!(len > MAX_CLIENT_MESSAGE, "reported {len} bytes")
             }
             other => panic!("expected the connection to be dropped, got {other:?}"),

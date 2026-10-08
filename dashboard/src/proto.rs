@@ -16,7 +16,7 @@ use {
     tokio::sync::broadcast,
 };
 
-/// soketto has one limit per connection; the largest server message is under half of it.
+/// A ceiling the size tests hold server messages under; soketto limits only what it receives.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
 
 const BROADCAST_CAPACITY: usize = 8192;

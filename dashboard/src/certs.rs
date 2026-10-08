@@ -161,7 +161,7 @@ struct Miss {
     slot: Slot,
     fixed: Option<Place>,
     paid_ranks: u32,
-    unpaid: Vec<u32>,
+    unpaid: Box<[u16]>,
     writer: Option<Pubkey>,
     late: bool,
     vote: Option<VoteSent>,
@@ -173,7 +173,7 @@ pub struct Written {
     pub notar: u32,
     pub skip: u32,
     pub ours_in: bool,
-    pub unpaid: Vec<u32>,
+    pub unpaid: Box<[u16]>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -257,7 +257,7 @@ impl Tally {
                 .iter()
                 .enumerate()
                 .filter(|(_, paid)| !**paid)
-                .filter_map(|(rank, _)| u32::try_from(rank).ok())
+                .filter_map(|(rank, _)| u16::try_from(rank).ok())
                 .collect();
             self.ours.insert(
                 mark.slot,
@@ -309,7 +309,7 @@ impl Tally {
             .iter()
             .enumerate()
             .filter(|(rank, paid)| !**paid && *rank != mark.rank)
-            .filter_map(|(rank, _)| u32::try_from(rank).ok())
+            .filter_map(|(rank, _)| u16::try_from(rank).ok())
             .collect();
         self.by_slot.insert(slot, self.misses.len());
         self.misses.push(Miss {
@@ -370,9 +370,7 @@ impl Tally {
         for written in self.ours.values() {
             let mut left_regular_out = false;
             for rank in &written.unpaid {
-                let Ok(at) = usize::try_from(*rank) else {
-                    continue;
-                };
+                let at = usize::from(*rank);
                 if let Some(count) = unpaid_by_rank.get_mut(at) {
                     *count = count.saturating_add(1);
                 }
@@ -438,11 +436,11 @@ impl Tally {
                     .iter()
                     .copied()
                     .filter(|rank| {
-                        usize::try_from(*rank)
-                            .ok()
-                            .and_then(|rank| regulars.get(rank))
+                        regulars
+                            .get(usize::from(*rank))
                             .is_some_and(|regular| *regular)
                     })
+                    .map(u32::from)
                     .collect();
                 MissRecord {
                     slot: miss.slot,
@@ -890,9 +888,23 @@ mod tests {
         assert_eq!(written.notar, 17);
         assert_eq!(written.skip, 0);
         assert!(written.ours_in);
-        assert_eq!(written.unpaid, [17, 18, 19]);
+        assert_eq!(*written.unpaid, [17, 18, 19]);
         assert!(tally.written_for(500).is_none());
         assert_eq!(tally.usual_paid(), Some(20));
+    }
+
+    #[test]
+    fn test_the_highest_rank_upstream_allows_is_kept() {
+        let last = usize::from(u16::MAX);
+        let mut tally = tally();
+        let mut mark = wide(1_992, Reward::Paid, 0);
+        mark.paid = (0..=last).map(|rank| rank < last).collect();
+        tally.add(&mark, &[], None);
+        assert_eq!(*tally.written_for(1_992).expect("ours").unpaid, [u16::MAX]);
+        mark.slot = 3_000;
+        mark.reward = Reward::Unpaid;
+        tally.add(&mark, &[], None);
+        assert_eq!(*tally.misses[0].unpaid, [u16::MAX]);
     }
 
     #[test]

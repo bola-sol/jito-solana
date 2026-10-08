@@ -3,12 +3,13 @@ import { xdpDetail, xdpTooltip } from "./components/NetworkCard";
 import {
   direction,
   egressShares,
+  interfaceLines,
   NETWORK_WINDOW_SECONDS,
   routesShort,
   sharedPeak,
   unitFor,
 } from "./network";
-import type { NetInterface, XdpConfig } from "./types";
+import type { InterfaceKind, NetInterface, XdpConfig } from "./types";
 
 const KB = 1024;
 const MB = 1024 * 1024;
@@ -59,6 +60,8 @@ describe("an interface's routes", () => {
     mtu: 1476,
     routes,
     routes_peak,
+    member_of: null,
+    inside: null,
     received_per_second: 0,
     sent_per_second: 0,
   });
@@ -78,6 +81,59 @@ describe("an interface's routes", () => {
     expect(routesShort(iface(1, 3))).toBe(false);
     expect(routesShort(iface(0, 9))).toBe(false);
     expect(routesShort(iface(4, 10))).toBe(true);
+  });
+});
+
+describe("interfaceLines", () => {
+  const named = (
+    name: string,
+    member_of: string | null = null,
+    kind: InterfaceKind = "physical",
+  ): NetInterface => ({
+    name,
+    kind,
+    up: true,
+    mtu: 1500,
+    routes: 0,
+    routes_peak: 0,
+    member_of,
+    inside: null,
+    received_per_second: 0,
+    sent_per_second: 0,
+  });
+  const shape = (list: NetInterface[]) =>
+    interfaceLines(list).map(({ iface, depth }) => `${iface.name}:${depth}`);
+
+  it("puts a bond's ports under it, wherever the server listed them", () => {
+    expect(
+      shape([
+        named("eno1", "bond0"),
+        named("eno2", "bond0"),
+        named("bond0", null, "bond"),
+        named("doublezero0", null, "tunnel"),
+      ]),
+    ).toEqual(["bond0:0", "eno1:1", "eno2:1", "doublezero0:0"]);
+  });
+
+  it("keeps the server's order where nothing is a port", () => {
+    expect(shape([named("eth0"), named("wg0", null, "tunnel")])).toEqual(["eth0:0", "wg0:0"]);
+  });
+
+  it("nests a bond inside a bridge a step further", () => {
+    expect(
+      shape([named("eno1", "bond0"), named("bond0", "br0", "bond"), named("br0", null, "bridge")]),
+    ).toEqual(["br0:0", "bond0:1", "eno1:2"]);
+  });
+
+  it("leaves a port at the top when its master is not listed", () => {
+    expect(shape([named("eno1", "bond0"), named("doublezero0", null, "tunnel")])).toEqual([
+      "eno1:0",
+      "doublezero0:0",
+    ]);
+  });
+
+  it("lists a loop of masters once each rather than losing it", () => {
+    expect(shape([named("a", "b"), named("b", "a")])).toEqual(["a:0", "b:1"]);
   });
 });
 

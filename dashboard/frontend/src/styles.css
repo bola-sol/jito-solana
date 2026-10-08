@@ -2379,10 +2379,10 @@ body {
 /* Two lines an interface, so the half-width card holds them: name and traffic, then the rest. */
 .net-if-row {
   display: grid;
-  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
   grid-template-areas:
-    "name name name traffic"
-    "kind state routes routes";
+    "name traffic"
+    "meta meta";
   gap: 2px 10px;
   padding: 5px 0;
 }
@@ -2391,9 +2391,18 @@ body {
   border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
 }
 
+/* A port sits under its master, a step further in for each level. */
+.net-if-row.is-port {
+  margin-left: calc(var(--depth) * 12px);
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
 .net-if-name {
   grid-area: name;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .net-if-traffic {
@@ -2401,19 +2410,32 @@ body {
   text-align: right;
 }
 
-.net-if-kind {
-  grid-area: kind;
+/* Kind, state and routes, apart from the first line's columns so an indented port still fits. */
+.net-if-meta {
+  grid-area: meta;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
 }
 
 .net-if-state {
-  grid-area: state;
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
 
-.net-if-routes {
-  grid-area: routes;
+/* The routes and, on a tunnel, the interface carrying it; a wrap leaves the separator above. */
+.net-if-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 1ch;
+  min-width: 0;
+}
+
+.net-if-routes:has(+ .net-if-inside)::after {
+  content: "\00a0·";
+  color: var(--text-faint);
 }
 
 .net-if-routes.is-short {
@@ -2438,14 +2460,24 @@ body {
 /* The narrowest phones give the traffic a line of its own. */
 @media (max-width: 360px) {
   .net-if-row {
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "name name name name"
-      "traffic traffic traffic traffic"
-      "kind state routes routes";
+      "name"
+      "traffic"
+      "meta";
   }
 
   .net-if-traffic {
     text-align: left;
+  }
+
+  .net-if-detail {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .net-if-routes:has(+ .net-if-inside)::after {
+    content: none;
   }
 }
 

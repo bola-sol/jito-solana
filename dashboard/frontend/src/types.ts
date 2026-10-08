@@ -266,6 +266,10 @@ export interface NetInterface {
   routes: number;
   /** The most routes it carried in any hour of the last day. */
   routes_peak: number;
+  /** The interface it is a port of (its master), such as a bond, bridge or team. */
+  member_of: string | null;
+  /** On a tunnel, the interface holding the default route, which carries its packets. */
+  inside: string | null;
   /** Null until a second reading is in. */
   received_per_second: number | null;
   sent_per_second: number | null;

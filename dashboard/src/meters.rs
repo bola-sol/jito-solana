@@ -14,7 +14,7 @@ use {
             XdpConfig,
         },
         net_ifaces::{self, InterfaceKind, InterfaceReading},
-        net_stats::{self, NetCounters},
+        net_stats::{self, Counted, NetCounters},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
         thread_stats::{self, ThreadGroup, ThreadReading},
         udp_drops::{self, PortCounters, PortWindow},
@@ -172,6 +172,10 @@ pub struct NetInterface {
     pub routes: u32,
     /// The most routes it carried in any hour of the last day, this one included.
     pub routes_peak: u32,
+    /// The interface it is a port of (its master), such as a bond, bridge or team.
+    pub member_of: Option<String>,
+    /// On a tunnel, the interface holding the default route, which carries its packets.
+    pub inside: Option<String>,
     /// `None` until a second reading is in, or after a counter went backwards.
     pub received_per_second: Option<u64>,
     pub sent_per_second: Option<u64>,
@@ -1011,7 +1015,7 @@ impl Throughput {
 
 #[derive(Default)]
 struct NetworkMeter {
-    last: Option<(NetCounters, Instant)>,
+    last: Option<((NetCounters, Counted), Instant)>,
     history: Vec<NetworkSample>,
     unavailable: bool,
 }
@@ -1033,23 +1037,8 @@ impl NetworkMeter {
         let Some((previous, sampled_at)) = self.last.replace((current, now)) else {
             return;
         };
-
-        let seconds = now.duration_since(sampled_at).as_secs_f64();
-        if seconds <= 0.0 {
+        let Some(rates) = network_rates(previous, current, now.duration_since(sampled_at)) else {
             return;
-        }
-        // Counters are unsigned and wrap or reset when an interface goes down,
-        // so a decrease is discarded rather than read as negative throughput.
-        let (Some(received), Some(sent)) = (
-            current.received.checked_sub(previous.received),
-            current.sent.checked_sub(previous.sent),
-        ) else {
-            return;
-        };
-
-        let rates = Network {
-            received_per_second: (received as f64 / seconds) as u64,
-            sent_per_second: (sent as f64 / seconds) as u64,
         };
         publisher.publish(TOPIC_SUMMARY, "network", &rates);
 
@@ -1067,6 +1056,27 @@ impl NetworkMeter {
             "network_history",
         );
     }
+}
+
+/// Bytes a second since the previous reading; none where a counter went backwards or the reading
+/// switched between the cards and every interface, as when the cards vanish.
+fn network_rates(
+    (previous, previous_counted): (NetCounters, Counted),
+    (current, counted): (NetCounters, Counted),
+    elapsed: Duration,
+) -> Option<Network> {
+    let seconds = elapsed.as_secs_f64();
+    if seconds <= 0.0 || counted != previous_counted {
+        return None;
+    }
+    // Counters are unsigned and wrap or reset when an interface goes down,
+    // so a decrease is discarded rather than read as negative throughput.
+    let received = current.received.checked_sub(previous.received)?;
+    let sent = current.sent.checked_sub(previous.sent)?;
+    Some(Network {
+        received_per_second: (received as f64 / seconds) as u64,
+        sent_per_second: (sent as f64 / seconds) as u64,
+    })
 }
 
 /// The interfaces are read this often, which is also the window their rates are taken over.
@@ -1191,6 +1201,8 @@ fn interface_shown(
         mtu: reading.mtu,
         routes: reading.routes,
         routes_peak,
+        member_of: reading.member_of.clone(),
+        inside: reading.inside.clone(),
         received_per_second: rates.map(|(received, _)| received),
         sent_per_second: rates.map(|(_, sent)| sent),
     })
@@ -2157,6 +2169,8 @@ mod tests {
             up,
             mtu: Some(1500),
             routes,
+            member_of: None,
+            inside: None,
             received,
             sent,
         }
@@ -2190,6 +2204,59 @@ mod tests {
         let shown = interface_shown(&reading("doublezero0", true, 2, 0, 0), 115, None).unwrap();
         assert_eq!((shown.routes, shown.routes_peak), (2, 115));
         assert_eq!(shown.received_per_second, None);
+    }
+
+    #[test]
+    fn test_a_port_and_a_tunnel_keep_where_they_sit() {
+        let port = InterfaceReading {
+            member_of: Some("bond0".to_string()),
+            ..reading("eno1", true, 0, 0, 0)
+        };
+        let tunnel = InterfaceReading {
+            kind: InterfaceKind::Tunnel,
+            inside: Some("bond0".to_string()),
+            ..reading("doublezero0", true, 115, 0, 0)
+        };
+        assert_eq!(
+            interface_shown(&port, 0, None)
+                .unwrap()
+                .member_of
+                .as_deref(),
+            Some("bond0")
+        );
+        assert_eq!(
+            interface_shown(&tunnel, 115, None)
+                .unwrap()
+                .inside
+                .as_deref(),
+            Some("bond0")
+        );
+    }
+
+    #[test]
+    fn test_host_rates_skip_a_reading_that_summed_other_interfaces() {
+        let counters = |received, sent| NetCounters { received, sent };
+        let second = Duration::from_secs(1);
+        let cards = (counters(1_000, 2_000), Counted::Cards);
+        assert_eq!(
+            network_rates(cards, (counters(3_000, 2_500), Counted::Cards), second),
+            Some(Network {
+                received_per_second: 2_000,
+                sent_per_second: 500,
+            })
+        );
+        // A driver reload drops the cards, and the bond's lifetime totals are summed instead.
+        let fallback = (
+            counters(9_000_000_000_000, 9_000_000_000_000),
+            Counted::Every,
+        );
+        assert_eq!(network_rates(cards, fallback, second), None);
+        assert_eq!(network_rates(fallback, cards, second), None);
+        assert_eq!(
+            network_rates(cards, (counters(500, 2_500), Counted::Cards), second),
+            None
+        );
+        assert_eq!(network_rates(cards, cards, Duration::ZERO), None);
     }
 
     fn window(samples: &[(u64, u64, u64)]) -> VecDeque<(u64, u64, u64)> {

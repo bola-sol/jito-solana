@@ -1,4 +1,4 @@
-//! The host's network interfaces: each one's kind, state, routes and byte counters, from
+//! The host's network interfaces: each one's kind, state, routes, master and byte counters, from
 //! `/proc/net/dev`, `/proc/net/route` and `/sys/class/net`. Linux only.
 
 use {
@@ -24,6 +24,10 @@ pub struct InterfaceReading {
     pub up: bool,
     pub mtu: Option<u32>,
     pub routes: u32,
+    /// The interface it is a port of (its master), such as a bond, bridge or team.
+    pub member_of: Option<String>,
+    /// On a tunnel, the interface holding the default route, which carries its packets.
+    pub inside: Option<String>,
     pub received: u64,
     pub sent: u64,
 }
@@ -40,10 +44,9 @@ const IFF_UP: u32 = 0x1;
 pub fn read() -> io::Result<Vec<InterfaceReading>> {
     let counters = parse_counters(&std::fs::read_to_string("/proc/net/dev")?);
     // A host without IPv4 routes has no file; every interface then carries none.
-    let routes = std::fs::read_to_string("/proc/net/route")
-        .map(|contents| parse_routes(&contents))
-        .unwrap_or_default();
-    Ok(counters
+    let route_table = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
+    let routes = parse_routes(&route_table);
+    let mut readings: Vec<InterfaceReading> = counters
         .into_iter()
         .map(|(name, received, sent)| {
             let sys = Path::new("/sys/class/net").join(&name);
@@ -52,12 +55,16 @@ pub fn read() -> io::Result<Vec<InterfaceReading>> {
                 up: is_up(&sys),
                 mtu: read_trimmed(&sys.join("mtu")).and_then(|mtu| mtu.parse().ok()),
                 routes: routes.get(&name).copied().unwrap_or(0),
+                member_of: master_of(&sys),
+                inside: None,
                 name,
                 received,
                 sent,
             }
         })
-        .collect())
+        .collect();
+    place_tunnels(&mut readings, &route_table);
+    Ok(readings)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -98,6 +105,55 @@ fn parse_routes(contents: &str) -> HashMap<String, u32> {
         }
     }
     routes
+}
+
+/// Names, on each tunnel, the interface holding the default route, which carries its packets.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn place_tunnels(readings: &mut [InterfaceReading], route_table: &str) {
+    let carrier = default_route(route_table, |name| {
+        readings
+            .iter()
+            .any(|reading| reading.name == name && reading.kind != InterfaceKind::Tunnel)
+    });
+    for reading in readings
+        .iter_mut()
+        .filter(|reading| reading.kind == InterfaceKind::Tunnel)
+    {
+        reading.inside.clone_from(&carrier);
+    }
+}
+
+/// The interface of the lowest-metric IPv4 default route that `eligible` accepts.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn default_route(route_table: &str, eligible: impl Fn(&str) -> bool) -> Option<String> {
+    route_table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next()?;
+            let destination = fields.next()?;
+            // Gateway, flags, reference count and use come before the metric.
+            let metric = fields.nth(4)?.parse::<u32>().ok()?;
+            let mask = fields.next()?;
+            (destination == "00000000" && mask == "00000000" && eligible(name))
+                .then_some((metric, name))
+        })
+        .min_by_key(|(metric, _)| *metric)
+        .map(|(_, name)| name.to_string())
+}
+
+/// The interface it is a port of, from its `master` link, such as a bond, bridge or team.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn master_of(sys: &Path) -> Option<String> {
+    let target = std::fs::read_link(sys.join("master")).ok()?;
+    target.file_name()?.to_str().map(str::to_string)
+}
+
+/// Backed by a device, and not a port of an interface that is, whose counters already hold its own.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn counts_toward_host_total(sys: &Path) -> bool {
+    sys.join("device").exists() && !sys.join("master").join("device").exists()
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -172,12 +228,101 @@ doublezero0\t0000400A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
         );
     }
 
+    const DEFAULTS: &str = "\
+Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+doublezero0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0
+*\t00000000\t00000000\t0201\t0\t0\t0\t00000000\t0\t0\t0
+eno1\t00000000\t0101A8C0\t0003\t0\t0\t200\t00000000\t0\t0\t0
+bond0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0
+bond0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
+";
+
     #[test]
     fn test_routes_counted_per_interface_after_the_heading() {
         let routes = parse_routes(ROUTE);
         assert_eq!(routes.get("eno1"), Some(&2));
         assert_eq!(routes.get("doublezero0"), Some(&1));
         assert_eq!(routes.get("Iface"), None);
+    }
+
+    #[test]
+    fn test_default_route_is_the_lowest_metric_one_eligible() {
+        let named = |names: &'static [&'static str]| move |name: &str| names.contains(&name);
+        assert_eq!(
+            default_route(DEFAULTS, named(&["eno1", "bond0"])),
+            Some("bond0".to_string())
+        );
+        assert_eq!(
+            default_route(DEFAULTS, named(&["eno1"])),
+            Some("eno1".to_string())
+        );
+        assert_eq!(default_route(DEFAULTS, |_| false), None);
+        assert_eq!(default_route(ROUTE, |_| true), Some("eno1".to_string()));
+        assert_eq!(default_route("", |_| true), None);
+    }
+
+    fn tunnel_test_reading(name: &str, kind: InterfaceKind) -> InterfaceReading {
+        InterfaceReading {
+            name: name.to_string(),
+            kind,
+            up: true,
+            mtu: None,
+            routes: 0,
+            member_of: None,
+            inside: None,
+            received: 0,
+            sent: 0,
+        }
+    }
+
+    #[test]
+    fn test_a_tunnel_is_inside_the_default_route_holder_never_a_tunnel() {
+        let mut readings = [
+            tunnel_test_reading("eno1", InterfaceKind::Physical),
+            tunnel_test_reading("bond0", InterfaceKind::Bond),
+            tunnel_test_reading("doublezero0", InterfaceKind::Tunnel),
+        ];
+        place_tunnels(&mut readings, DEFAULTS);
+        let inside: Vec<_> = readings
+            .iter()
+            .map(|reading| reading.inside.as_deref())
+            .collect();
+        assert_eq!(inside, [None, None, Some("bond0")]);
+        let mut alone = [tunnel_test_reading("doublezero0", InterfaceKind::Tunnel)];
+        place_tunnels(&mut alone, DEFAULTS);
+        assert_eq!(alone[0].inside, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_a_port_names_its_master_and_counts_only_where_the_master_has_no_device() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let sys = |name: &str| root.path().join(name);
+        for dir in [
+            "bond0",
+            "eno1/device",
+            "eth0/device",
+            "enP1s1/device",
+            "veth0",
+        ] {
+            fs::create_dir_all(sys(dir)).unwrap();
+        }
+        symlink("../bond0", sys("eno1/master")).unwrap();
+        symlink("../eth0", sys("enP1s1/master")).unwrap();
+        assert_eq!(master_of(&sys("eno1")), Some("bond0".to_string()));
+        assert_eq!(master_of(&sys("bond0")), None);
+        assert!(
+            counts_toward_host_total(&sys("eno1")),
+            "the bond has no device"
+        );
+        assert!(!counts_toward_host_total(&sys("bond0")));
+        assert!(counts_toward_host_total(&sys("eth0")));
+        assert!(
+            !counts_toward_host_total(&sys("enP1s1")),
+            "a VF its synthetic NIC already counts"
+        );
+        assert!(!counts_toward_host_total(&sys("veth0")));
     }
 
     fn interface(files: &[(&str, &str)], dirs: &[&str]) -> tempfile::TempDir {

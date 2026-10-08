@@ -152,7 +152,8 @@ impl DashboardService {
                                 let bank = bank_forks.read().unwrap().root_bank();
                                 let entries = crate::validator_info::scan_all(&bank);
                                 let found = entries.len();
-                                let loaded = info_cache.write().unwrap().merge(entries);
+                                let loaded =
+                                    info_cache.write().unwrap().merge(bank.slot(), entries);
                                 log::info!(
                                     "dashboard: read validator info before the wait, {found} \
                                      accounts, {loaded} cached"
@@ -230,7 +231,7 @@ impl DashboardService {
                     let started = std::time::Instant::now();
                     let entries = crate::validator_info::scan_all(&bank);
                     let found = entries.len();
-                    let loaded = info_cache.write().unwrap().merge(entries);
+                    let loaded = info_cache.write().unwrap().merge(bank.slot(), entries);
                     log::info!(
                         "dashboard: read validator info in {:?}, {found} accounts, {loaded} cached",
                         started.elapsed()

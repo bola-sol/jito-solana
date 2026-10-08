@@ -86,19 +86,20 @@ the domain in the site block is the name to allow, and nothing else is needed.
 ### What it costs the validator
 
 The expensive sampling only runs while at least one viewer is connected: on the
-collector, the cluster-wide validator list and the per-slot account sweep
-behind validator names; on the meters, the `/proc` walks behind the host,
-thread and socket panels. With nobody watching, the collector does slot
-bookkeeping, the meters keep the clock, throughput, network counters and the
-totals lifted from metrics points, and little else runs. A viewer connecting
-finds the throughput and network charts whole; the host, thread and socket
-panels fill from that moment.
+collector, the cluster-wide validator list; on the meters, the `/proc` walks
+behind the host, thread and socket panels. With nobody watching, the collector
+does slot bookkeeping, the meters keep the clock, throughput, network counters
+and the totals lifted from metrics points, and little else runs. A viewer
+connecting finds the throughput and network charts whole; the host, thread and
+socket panels fill from that moment.
 
 What runs whatever the audience, beyond that: a metrics tap that observes the
 datapoints the validator already emits, a listing of the snapshot archive
-directories once a second, and under alpenglow a walk of the block footers for
-their reward certificates, which reads the last two FEC sets of each newly
-rooted block out of the blockstore, at most 64 slots a tick.
+directories once a second, a pass over the accounts each frozen block wrote,
+picking out the config program's, which keeps validator names current, and
+under alpenglow a walk of the block footers for their reward certificates, which
+reads the last two FEC sets of each newly rooted block out of the blockstore, at
+most 64 slots a tick.
 
 The one-off read that maps identities to names runs once, when the collector
 attaches. It asks the secondary index which accounts the config program owns and

@@ -638,7 +638,6 @@ impl Collector {
 
         if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
-            self.collect_validator_info(&frozen);
             // One snapshot for both walks below: it clones the whole table under
             // the gossip lock.
             let peers = self.ctx.cluster_info.all_peers();
@@ -1096,6 +1095,7 @@ impl Collector {
                 .collect(),
             None => frozen.iter().map(|(_, bank)| bank.clone()).collect(),
         };
+        self.collect_validator_info(&banks, frozen);
 
         let mut changed = Vec::new();
         let mut captured = false;
@@ -1741,20 +1741,39 @@ impl Collector {
         }
     }
 
-    fn collect_validator_info(&mut self, frozen: &[(Slot, Arc<Bank>)]) {
+    fn collect_validator_info(&mut self, banks: &[Arc<Bank>], frozen: &[(Slot, Arc<Bank>)]) {
+        // Bank forks repeats a bank every tick; the notification stream sends each once.
+        let repeated = self.frozen_banks.is_none();
         let mut found = Vec::new();
-        for (slot, bank) in frozen {
-            if *slot <= self.info_scanned_to {
+        // Banks frozen while the ledger loaded at startup are never notified, so the first sweep
+        // reads bank forks too.
+        if !repeated && self.info_scanned_to == 0 {
+            for (slot, bank) in frozen {
+                if banks.iter().all(|notified| notified.slot() != *slot) {
+                    self.info_scanned_to = self.info_scanned_to.max(*slot);
+                    found.push((*slot, validator_info::scan_slot(bank)));
+                }
+            }
+        }
+        for bank in banks {
+            let slot = bank.slot();
+            if repeated && slot <= self.info_scanned_to {
                 continue;
             }
-            self.info_scanned_to = self.info_scanned_to.max(*slot);
-            found.extend(validator_info::scan_slot(bank));
+            self.info_scanned_to = self.info_scanned_to.max(slot);
+            found.push((slot, validator_info::scan_slot(bank)));
         }
+        found.retain(|(_, entries)| !entries.is_empty());
         if found.is_empty() {
             return;
         }
 
-        let changed = self.info_cache.write().unwrap().merge(found);
+        let mut cache = self.info_cache.write().unwrap();
+        let changed: usize = found
+            .into_iter()
+            .map(|(slot, entries)| cache.merge(slot, entries))
+            .sum();
+        drop(cache);
         if changed > 0 {
             log::debug!("dashboard: {changed} validator info entries updated");
         }
@@ -2148,6 +2167,7 @@ mod tests {
         },
         solana_core::validator::ValidatorStartProgress,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
     };
 
     #[test]
@@ -3066,6 +3086,86 @@ mod tests {
         assert!(overview.contains(r#""slot":8"#), "{overview}");
         assert!(overview.contains(r#""transactions":"#), "{overview}");
         assert!(collector.totals.contains_key(&8));
+    }
+
+    #[test]
+    fn test_validator_info_is_read_from_each_notified_bank_with_nobody_watching() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        collector.frozen_banks = Some(receiver);
+        let parent = harness.advance_to(1);
+        let higher = harness.advance_to(3);
+        // A fork off slot 1 that freezes after slot 3.
+        let identity = Pubkey::new_unique();
+        let lower = Bank::new_from_parent(
+            parent,
+            SlotLeader {
+                id: harness.identity,
+                vote_address: harness.vote_account,
+            },
+            2,
+        );
+        lower.store_account(
+            &Pubkey::new_unique(),
+            &validator_info::info_account(identity, r#"{"name":"Lantern"}"#),
+        );
+        lower.freeze();
+
+        sender
+            .send((BankNotification::Frozen(higher), None))
+            .unwrap();
+        collector.tick();
+        sender
+            .send((BankNotification::Frozen(Arc::new(lower)), None))
+            .unwrap();
+        collector.tick();
+        assert_eq!(
+            collector.peer_display(&identity).0.as_deref(),
+            Some("Lantern")
+        );
+    }
+
+    #[test]
+    fn test_validator_info_is_read_from_banks_frozen_before_replay_started() {
+        let harness = fixture();
+        let identity = Pubkey::new_unique();
+        harness.advance_with(
+            1,
+            &[(
+                Pubkey::new_unique(),
+                validator_info::info_account(identity, r#"{"name":"Lantern"}"#),
+            )],
+        );
+        let mut collector = harness.collector();
+        let (_sender, receiver) = crossbeam_channel::unbounded();
+        collector.frozen_banks = Some(receiver);
+
+        collector.tick();
+        assert_eq!(
+            collector.peer_display(&identity).0.as_deref(),
+            Some("Lantern")
+        );
+    }
+
+    #[test]
+    fn test_validator_info_is_read_from_bank_forks_with_nobody_watching() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let identity = Pubkey::new_unique();
+        harness.advance_with(
+            1,
+            &[(
+                Pubkey::new_unique(),
+                validator_info::info_account(identity, r#"{"name":"Lantern"}"#),
+            )],
+        );
+
+        collector.tick();
+        assert_eq!(
+            collector.peer_display(&identity).0.as_deref(),
+            Some("Lantern")
+        );
     }
 
     #[test]

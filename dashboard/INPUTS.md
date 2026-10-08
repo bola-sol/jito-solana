@@ -87,6 +87,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | `get_collector_fee_details`: total and priority fees | Base and priority fees per block. With the tips, what the block earned us. |
 | `get_balance` of the eight tip accounts | Tips per block, as the difference from the parent (jito only) |
 | `last_blockhash` | The blockhash of our blocks on Slot details |
+| `get_program_accounts_modified_since_parent` for the config program | Validator names and icons that the block changed |
 | `vote_accounts`, each staked account's `last_voted_slot` (alpenglow only) | If the block's finalization certificate carried each validator's vote: a last vote within three slots of the newest. The Gossip page's finalization share and the peers table's Finalization column. |
 
 The dashboard keeps our blocks for the current epoch. It keeps the previous epoch until a fifth of the new one has passed. An event with these fields, sent when a block completes, removes the need to hold a bank.
@@ -103,7 +104,7 @@ The collector polls every 200 ms, and the meters once a second. Each holds the b
 
 | Call | Feeds |
 | --- | --- |
-| `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Failed transactions for TPS. |
+| `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Failed transactions for TPS. Once, at attach, validator names from the banks frozen while the ledger loaded, which replay does not notify. |
 | `BankForks::migration_status`, `Bank::is_alpenglow` | The consensus in use, and which cluster tip to read |
 | `Bank::vote_accounts`, with each account's `vote_state_view` | Our stake, commission, BLS key and vote credits this epoch (reward lamports under alpenglow), against the best and the median. The Cluster card's counts and delinquency. Each validator's delinquency and last vote in the certificate lists. Stake in the peer table and in the wait's list. |
 | `Bank::get_rank_map` for this epoch and the next, `get_vat_health_for_next_epoch` | Under alpenglow: if our vote account has a seat this epoch and next, and how far it is short of the ticket. The header's "no seat" figure. |
@@ -113,7 +114,7 @@ The collector polls every 200 ms, and the meters once a second. Each holds the b
 | `Bank::cluster_type` on the root bank | The cluster name in the header |
 | `Bank::clock` | The measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | Our rank in the BLS rank map, to find our bit in a certificate |
-| `Bank::get_program_accounts_modified_since_parent`, `get_filtered_indexed_accounts`, `account_indexes_include_key` | Validator names and icons from the config program: before the wait, at attach, then on change |
+| `Bank::get_filtered_indexed_accounts`, `account_indexes_include_key` | Validator names and icons from the config program: before the wait and at attach |
 | `Bank::transaction_count`, `non_vote_transaction_count_since_restart` on the working bank | TPS, as the difference each second |
 
 ## Gossip, blockstore, caches

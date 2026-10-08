@@ -45,6 +45,12 @@ const WEBSOCKET_PATH: &str = "/websocket";
 /// One search at a time across every connection, since each can read the whole history.
 static SEARCHES: Semaphore = Semaphore::const_new(1);
 
+/// Long messages are deflated on the blocking pool, one at a time across every connection.
+static DEFLATES: Semaphore = Semaphore::const_new(1);
+
+/// A millisecond or two of deflate; a shorter message is deflated as it is sent.
+const DEFLATE_AHEAD_FROM: usize = 64 * 1024;
+
 const MAX_REQUEST_HEAD: usize = 8192;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -428,6 +434,31 @@ async fn send_frame(
     }
 }
 
+fn needs_deflating_ahead(message: &Message) -> bool {
+    message.text().len() >= DEFLATE_AHEAD_FROM && message.deflate_pending()
+}
+
+/// Deflates the long messages on the blocking pool, so the send that follows only copies bytes;
+/// if this cannot run, `send_frame` deflates inline.
+async fn deflate_ahead(messages: &[Message], deflate: bool) {
+    if !deflate || !messages.iter().any(needs_deflating_ahead) {
+        return;
+    }
+    let Ok(_permit) = DEFLATES.acquire().await else {
+        return;
+    };
+    // Another connection may have deflated the same messages while this one waited.
+    let pending: Vec<Message> = messages
+        .iter()
+        .filter(|message| needs_deflating_ahead(message))
+        .cloned()
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    let _ = spawn_blocking(move || pending.iter().for_each(Message::deflate_now)).await;
+}
+
 /// Fails the connection if a send cannot complete promptly. Cancelling a
 /// partly written frame leaves the stream indeterminate, so a timeout is fatal.
 async fn send_within(
@@ -501,6 +532,7 @@ async fn serve_websocket(
     builder.set_max_frame_size(MAX_CLIENT_MESSAGE);
     let (mut sender, mut receiver) = builder.finish();
 
+    deflate_ahead(&snapshot, deflate).await;
     let total = snapshot.iter().fold(0usize, |sum, message| {
         sum.saturating_add(message.wire_len(deflate))
     });
@@ -558,7 +590,9 @@ async fn serve_websocket(
                                     }
                                 }
                             }
-                            for message in coalesce(burst) {
+                            let burst = coalesce(burst);
+                            deflate_ahead(&burst, deflate).await;
+                            for message in burst {
                                 send_within(send_frame(&mut sender, &message, deflate)).await?;
                             }
                             send_within(sender.flush()).await?;
@@ -587,6 +621,7 @@ async fn serve_websocket(
             None => respond(&incoming, &history, &info, &epochs, &replies),
         };
         if let Some(reply) = reply {
+            deflate_ahead(std::slice::from_ref(&reply), deflate).await;
             send_within(send_frame(&mut sender, &reply, deflate)).await?;
             send_within(sender.flush()).await?;
         }
@@ -1801,6 +1836,63 @@ mod tests {
                 .iter()
                 .any(|(binary, text)| *binary && text.contains(r#""key":"host""#)),
             "the long message should arrive deflated: {texts:?}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    fn long_rows() -> Vec<&'static str> {
+        vec!["a host row"; 8_000]
+    }
+
+    async fn receive_inflated(receiver: &mut soketto::Receiver<Compat<TcpStream>>) -> String {
+        let mut data = Vec::new();
+        let kind = receiver.receive_data(&mut data).await.unwrap();
+        assert!(kind.is_binary(), "a long message should arrive deflated");
+        let mut text = String::new();
+        ZlibDecoder::new(&data[..])
+            .read_to_string(&mut text)
+            .unwrap();
+        text
+    }
+
+    #[tokio::test]
+    async fn test_long_messages_are_deflated_ahead_only_for_a_deflating_client() {
+        let long = encode_with_id("summary", "host", None, &long_rows());
+        let short = encode_with_id("summary", "host", None, &vec!["a host row"; 400]);
+        assert!(long.text().len() >= DEFLATE_AHEAD_FROM);
+        assert!(long.text().len() < crate::proto::MAX_MESSAGE);
+        assert!(short.text().len() < DEFLATE_AHEAD_FROM);
+        let messages = [long.clone(), short.clone()];
+        deflate_ahead(&messages, false).await;
+        assert!(long.deflate_pending());
+        deflate_ahead(&messages, true).await;
+        assert!(!long.deflate_pending());
+        assert!(short.deflate_pending(), "a short one is left to the send");
+        let inline = encode_with_id("summary", "host", None, &long_rows());
+        let (Frame::Binary(early), Frame::Binary(late)) = (long.frame(true), inline.frame(true))
+        else {
+            panic!("a long message should deflate");
+        };
+        assert_eq!(early, late);
+    }
+
+    #[tokio::test]
+    async fn test_long_snapshot_and_update_messages_arrive_as_their_text() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "host", &long_rows());
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect_deflating(addr).await.into_builder().finish();
+
+        assert_eq!(
+            receive_inflated(&mut receiver).await,
+            encode_with_id("summary", "host", None, &long_rows()).text()
+        );
+        publisher.publish("summary", "rows", &long_rows());
+        assert_eq!(
+            receive_inflated(&mut receiver).await,
+            encode_with_id("summary", "rows", None, &long_rows()).text()
         );
 
         sender.close().await.unwrap();

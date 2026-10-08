@@ -63,6 +63,7 @@ pub use self::{
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
+const SNAPSHOT_READ: Duration = Duration::from_secs(1);
 
 /// Replies to requests, encoded by the collector and handed out by the server as they stand.
 pub struct Replies {
@@ -445,6 +446,7 @@ pub struct Collector {
     overview_dirty: bool,
     overview_retained_at: Instant,
     snapshots: SnapshotTracker,
+    snapshots_read_at: Instant,
 }
 
 pub struct CollectorShared {
@@ -524,6 +526,7 @@ impl Collector {
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
             snapshots: SnapshotTracker::default(),
+            snapshots_read_at: now.checked_sub(SNAPSHOT_READ).unwrap_or(now),
         }
     }
 
@@ -611,6 +614,13 @@ impl Collector {
         );
         self.collect_startup_progress();
 
+        // With or without a viewer: the certificate walk reads the write spans. After the vote
+        // pass, which notes how far a write fell behind.
+        if now.duration_since(self.snapshots_read_at) >= SNAPSHOT_READ {
+            self.snapshots_read_at = now;
+            self.collect_snapshots();
+        }
+
         // The slow tier walks every vote account, so it waits for a viewer. The
         // tiers above feed the slot ring and must not skip.
         let subscribers = self.publisher.subscriber_count();
@@ -641,7 +651,6 @@ impl Collector {
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.collect_gossip_peers(&working_bank, root_bank.slot(), &peers, timestamp());
             self.report_tip_residual();
-            self.collect_snapshots();
             let heard: Contacts = peers
                 .iter()
                 .map(|(contact, at_millis)| {
@@ -2552,20 +2561,21 @@ mod tests {
         assert_eq!(*collector.replies.gossip_peers.read().unwrap(), json);
     }
 
+    fn staged(writing: Option<Writing>) -> Option<Snapshots> {
+        Some(Snapshots {
+            full: None,
+            incremental: None,
+            full_interval: None,
+            incremental_interval: None,
+            writing,
+            last_written: None,
+        })
+    }
+
     #[test]
     fn test_the_vote_pass_counts_how_far_a_snapshot_write_fell_behind() {
         let harness = fixture();
         let mut collector = harness.collector();
-        let staged = |writing| {
-            Some(Snapshots {
-                full: None,
-                incremental: None,
-                full_interval: None,
-                incremental_interval: None,
-                writing,
-                last_written: None,
-            })
-        };
         let writing = Writing {
             slot: 300,
             since_millis: 0,
@@ -2583,6 +2593,28 @@ mod tests {
         assert_eq!(
             shown.last_written.map(|written| written.fell_behind_slots),
             Some(100 - completed)
+        );
+    }
+
+    #[test]
+    fn test_a_snapshot_write_ends_with_nobody_watching() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let writing = Writing {
+            slot: 300,
+            since_millis: 0,
+        };
+        collector.snapshots.observe(staged(Some(writing)), 0, 0);
+        harness.advance_to(1);
+        collector.tick();
+
+        // The fixture generates no snapshots, so the read finds the write over.
+        assert_eq!(
+            collector.snapshots.spans().collect::<Vec<_>>(),
+            [certs::Span {
+                from: 0,
+                to: Some(1),
+            }]
         );
     }
 

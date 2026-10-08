@@ -10,7 +10,7 @@ use {
     serde::Serialize,
     solana_clock::Slot,
     std::{
-        collections::{BTreeMap, HashSet},
+        collections::{BTreeMap, HashSet, VecDeque},
         fs,
         path::Path,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -19,6 +19,10 @@ use {
 
 /// A staging file older than this is a leftover from a crash, not a write.
 const STALE_WRITE: Duration = Duration::from_secs(60);
+
+/// Ended writes kept. The walk reads slots near the root, and 64 default incrementals span over
+/// an hour.
+const SPANS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Archive {
@@ -57,7 +61,7 @@ pub struct SnapshotTracker {
     /// The write in progress, the most slots the node fell behind during it, and where it began.
     writing: Option<(Writing, u64, Slot)>,
     last: Option<Written>,
-    spans: Vec<Span>,
+    spans: VecDeque<Span>,
 }
 
 impl SnapshotTracker {
@@ -70,22 +74,29 @@ impl SnapshotTracker {
     ) -> Option<Snapshots> {
         let writing = read.as_ref().and_then(|snapshots| snapshots.writing);
         match (writing, self.writing.take()) {
-            (Some(writing), None) => self.writing = Some((writing, 0, completed)),
-            (Some(writing), Some((_, fell_behind, from))) => {
+            (Some(writing), Some((held, fell_behind, from))) if held.slot == writing.slot => {
                 self.writing = Some((writing, fell_behind, from));
             }
-            (None, Some((writing, fell_behind_slots, from))) => {
-                self.last = Some(Written {
-                    slot: writing.slot,
-                    took_millis: now_millis.saturating_sub(writing.since_millis),
-                    fell_behind_slots,
-                });
-                self.spans.push(Span {
-                    from,
-                    to: Some(completed),
-                });
+            (writing, held) => {
+                if let Some((ended, fell_behind_slots, from)) = held {
+                    // Ended when the next write began, or by now.
+                    let ended_millis =
+                        writing.map_or(now_millis, |next| next.since_millis.min(now_millis));
+                    self.last = Some(Written {
+                        slot: ended.slot,
+                        took_millis: ended_millis.saturating_sub(ended.since_millis),
+                        fell_behind_slots,
+                    });
+                    if self.spans.len() >= SPANS {
+                        self.spans.pop_front();
+                    }
+                    self.spans.push_back(Span {
+                        from,
+                        to: Some(completed),
+                    });
+                }
+                self.writing = writing.map(|writing| (writing, 0, completed));
             }
-            (None, None) => {}
         }
         read.map(|snapshots| Snapshots {
             last_written: self.last,
@@ -276,6 +287,49 @@ mod tests {
     }
 
     #[test]
+    fn test_a_new_staging_slot_ends_the_write_before_it() {
+        let mut tracker = SnapshotTracker::default();
+        tracker.observe(staged(Some(WRITE)), 10, 1_500);
+        tracker.note_behind(5);
+        let next = Writing {
+            slot: 500,
+            since_millis: 9_000,
+        };
+        let shown = tracker.observe(staged(Some(next)), 60, 10_000).unwrap();
+        assert_eq!(
+            shown.last_written,
+            Some(Written {
+                slot: 300,
+                took_millis: 8_000,
+                fell_behind_slots: 5,
+            })
+        );
+
+        let shown = tracker.observe(staged(None), 70, 12_000).unwrap();
+        assert_eq!(
+            shown.last_written,
+            Some(Written {
+                slot: 500,
+                took_millis: 3_000,
+                fell_behind_slots: 0,
+            })
+        );
+        assert_eq!(
+            tracker.spans().collect::<Vec<_>>(),
+            [
+                Span {
+                    from: 10,
+                    to: Some(60),
+                },
+                Span {
+                    from: 60,
+                    to: Some(70),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_spans_ended_before_an_epoch_are_forgotten_and_an_open_one_kept() {
         let mut tracker = SnapshotTracker::default();
         tracker.observe(staged(Some(WRITE)), 10, 0);
@@ -293,6 +347,24 @@ mod tests {
                 },
                 Span { from: 50, to: None },
             ]
+        );
+    }
+
+    #[test]
+    fn test_only_the_newest_spans_are_kept() {
+        let mut tracker = SnapshotTracker::default();
+        for from in (0..).step_by(2).take(SPANS.saturating_add(3)) {
+            tracker.observe(staged(Some(WRITE)), from, 0);
+            tracker.observe(staged(None), from.saturating_add(1), 0);
+        }
+        let spans = tracker.spans().collect::<Vec<_>>();
+        assert_eq!(spans.len(), SPANS);
+        assert_eq!(
+            spans.first(),
+            Some(&Span {
+                from: 6,
+                to: Some(7),
+            })
         );
     }
 

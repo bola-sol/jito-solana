@@ -147,10 +147,10 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | `slot.search` | Up to 128 leader turns that match a name, key or slot number, or our own turns. One search at a time, on a blocking thread. |
 | `epoch.query` | An epoch's slots, leader turns, our leader slots and cost limits |
 | `summary.displays` | Validator names and icons |
-| `summary.misses`, `summary.written` | Our unrewarded votes, and the certificates this node wrote |
+| `summary.misses`, `summary.written` | Our unrewarded votes, and how often our certificates left out each validator |
 | `peers.gossip` | The Gossip page's peers table |
-| `produced.figures` | All our kept blocks, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
-| `produced.detail` | Up to 64 of our blocks, with their turns, waterfalls and costs |
+| `produced.figures` | This epoch's blocks, and the previous epoch's until a fifth of this one has passed, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
+| `produced.detail` | Our blocks in a range of up to 64 slots, with their turns, waterfalls and costs |
 
 ## The host
 

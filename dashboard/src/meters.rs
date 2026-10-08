@@ -48,6 +48,9 @@ const THREADS_HISTORY: usize = 60;
 
 const THREAD_ROWS: usize = 8;
 
+/// Every thread's name is read again this often; between, names carry over from the last reading.
+const THREAD_NAMES_REFRESH: Duration = Duration::from_secs(60);
+
 const DROPS_WINDOW: Duration = Duration::from_secs(60);
 
 const ACCOUNTS_CACHE_WINDOW: usize = 60;
@@ -1325,6 +1328,8 @@ struct ThreadMeter {
     last: Option<(HashMap<u64, ThreadReading>, Instant)>,
     pinning: HashMap<u64, Option<String>>,
     recent: VecDeque<Vec<(String, f64)>>,
+    /// When every thread's name was last read.
+    named_at: Option<Instant>,
     history: Vec<ThreadsSample>,
     unavailable: bool,
 }
@@ -1334,7 +1339,15 @@ impl ThreadMeter {
         if self.unavailable {
             return;
         }
-        let current = match thread_stats::read() {
+        let refresh_names = self
+            .named_at
+            .is_none_or(|at| at.elapsed() >= THREAD_NAMES_REFRESH);
+        let known = if refresh_names {
+            None
+        } else {
+            self.last.as_ref().map(|(by_tid, _)| by_tid)
+        };
+        let current = match thread_stats::read(known) {
             Ok(threads) => threads,
             Err(err) => {
                 self.unavailable = true;
@@ -1342,6 +1355,9 @@ impl ThreadMeter {
                 return;
             }
         };
+        if refresh_names {
+            self.named_at = Some(Instant::now());
+        }
         let cores = num_cpus();
         for thread in &current {
             self.pinning.entry(thread.tid).or_insert_with(|| {
@@ -1349,24 +1365,24 @@ impl ThreadMeter {
                     .filter(|list| thread_stats::cores_in(list) < cores)
             });
         }
-        let live: HashSet<u64> = current.iter().map(|thread| thread.tid).collect();
-        self.pinning.retain(|tid, _| live.contains(tid));
 
         let now = Instant::now();
+        let threads = current.len();
+        let groups = self.last.take().and_then(|(previous, sampled_at)| {
+            let interval = now.duration_since(sampled_at).as_nanos() as u64;
+            (interval > 0)
+                .then(|| thread_stats::group_shares(&previous, &current, &self.pinning, interval))
+        });
         let by_tid: HashMap<u64, ThreadReading> = current
-            .iter()
-            .cloned()
+            .into_iter()
             .map(|thread| (thread.tid, thread))
             .collect();
-        let Some((previous, sampled_at)) = self.last.replace((by_tid, now)) else {
+        self.pinning.retain(|tid, _| by_tid.contains_key(tid));
+        self.last = Some((by_tid, now));
+        let Some(groups) = groups else {
             return;
         };
-        let interval = now.duration_since(sampled_at).as_nanos() as u64;
-        if interval == 0 {
-            return;
-        }
 
-        let groups = thread_stats::group_shares(&previous, &current, &self.pinning, interval);
         self.recent.push_back(
             groups
                 .iter()
@@ -1379,7 +1395,7 @@ impl ThreadMeter {
         let means = thread_stats::window_means(&self.recent);
         let sample = ThreadsSample {
             timestamp_nanos: system_time_nanos(SystemTime::now()),
-            threads: current.len(),
+            threads,
             groups: thread_stats::select_rows(groups, &means, THREAD_ROWS),
         };
         publisher.publish_ephemeral(TOPIC_SUMMARY, "threads_sample", &sample);
@@ -3190,6 +3206,32 @@ mod tests {
                 .is_some(),
             "a viewer attached and the thread walk still did not run"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_thread_names_carry_over_until_the_refresh() {
+        let harness = fixture();
+        let mut meter = ThreadMeter::default();
+        meter.tick(&harness.publisher);
+        let named = |meter: &ThreadMeter, name: &str| {
+            meter
+                .last
+                .as_ref()
+                .unwrap()
+                .0
+                .values()
+                .any(|reading| reading.name == name)
+        };
+        for reading in meter.last.as_mut().unwrap().0.values_mut() {
+            reading.name = "carried".to_string();
+        }
+        meter.tick(&harness.publisher);
+        assert!(named(&meter, "carried"));
+
+        meter.named_at = Instant::now().checked_sub(THREAD_NAMES_REFRESH);
+        meter.tick(&harness.publisher);
+        assert!(!named(&meter, "carried"));
     }
 
     fn gossip_tap(reports: u64, received_push: u64, process_us: u64, push_us: u64) -> TapCounters {

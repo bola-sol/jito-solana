@@ -435,7 +435,7 @@ impl Collector {
             let unpaid = written
                 .unpaid
                 .iter()
-                .filter_map(|rank| usize::try_from(*rank).ok())
+                .map(|rank| usize::from(*rank))
                 .fold(0u64, |sum, rank| sum.saturating_add(stake_of(rank)));
             let stake_paid = if total > 0 {
                 total.saturating_sub(unpaid) as f64 / total as f64
@@ -446,7 +446,7 @@ impl Collector {
                 .unpaid
                 .iter()
                 .filter_map(|rank| {
-                    let at = usize::try_from(*rank).ok()?;
+                    let at = usize::from(*rank);
                     if !regulars.get(at).copied().unwrap_or(false) {
                         return None;
                     }

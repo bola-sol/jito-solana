@@ -57,6 +57,9 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["compat"] }
 
+[build-dependencies]
+flate2 = { workspace = true }
+
 [dev-dependencies]
 agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
 # Feature unification means `cargo test` compiles this crate with

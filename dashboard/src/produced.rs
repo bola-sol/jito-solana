@@ -8,9 +8,13 @@ use {
         turns::LeaderTurn,
         versions::TxVersions,
     },
-    serde::Serialize,
+    serde::{Serialize, Serializer},
     solana_clock::Slot,
-    std::collections::{BTreeMap, BTreeSet},
+    solana_pubkey::Pubkey,
+    std::{
+        collections::{BTreeMap, BTreeSet},
+        net::IpAddr,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -61,7 +65,8 @@ pub struct ProducedBlock {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BlockCertificate {
     pub rewards: Slot,
-    pub leader: Option<String>,
+    #[serde(serialize_with = "base58_or_null")]
+    pub leader: Option<Pubkey>,
     pub leader_name: Option<String>,
     /// No fewer notarize votes than skip votes.
     pub notarized: bool,
@@ -77,9 +82,22 @@ pub struct BlockCertificate {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CertificateValidator {
-    pub identity: String,
+    #[serde(serialize_with = "base58")]
+    pub identity: Pubkey,
     pub name: Option<String>,
-    pub ip: Option<String>,
+    pub ip: Option<IpAddr>,
+}
+
+/// Base58 text, as `to_string` gives, written straight into the encoder.
+fn base58<S: Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(key)
+}
+
+fn base58_or_null<S: Serializer>(key: &Option<Pubkey>, serializer: S) -> Result<S::Ok, S::Error> {
+    match key {
+        Some(key) => serializer.collect_str(key),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// The previous epoch's blocks stay until this share of the new one has passed, so the page is not
@@ -427,6 +445,7 @@ mod tests {
             meters::QuicPort,
             metrics_tap::{ExecutedTotals, QuicLevels, QuicTotals, VerifyTotals},
         },
+        std::net::{Ipv4Addr, Ipv6Addr},
     };
 
     fn block(slot: Slot) -> ProducedBlock {
@@ -514,6 +533,40 @@ mod tests {
                 .map(|c| c.rewards),
             Some(2)
         );
+    }
+
+    #[test]
+    fn test_a_certificate_encodes_keys_and_addresses_as_text() {
+        let (leader, missing) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let led = BlockCertificate {
+            leader: Some(leader),
+            left_out: vec![
+                CertificateValidator {
+                    identity: missing,
+                    name: Some("Lantern".to_string()),
+                    ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
+                },
+                CertificateValidator {
+                    identity: missing,
+                    name: None,
+                    ip: Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))),
+                },
+                CertificateValidator {
+                    identity: missing,
+                    name: None,
+                    ip: None,
+                },
+            ],
+            ..certificate(9)
+        };
+        assert_eq!(
+            serde_json::to_string(&led).unwrap(),
+            format!(
+                r#"{{"rewards":9,"leader":"{leader}","leader_name":null,"notarized":true,"paid":103,"ranks":112,"stake_paid":0.986,"notar":101,"skip":2,"ours_in":true,"usual":103,"left_out":[{{"identity":"{missing}","name":"Lantern","ip":"192.0.2.10"}},{{"identity":"{missing}","name":null,"ip":"2001:db8::1"}},{{"identity":"{missing}","name":null,"ip":null}}]}}"#
+            )
+        );
+        let unled = serde_json::to_string(&certificate(9)).unwrap();
+        assert!(unled.contains(r#""leader":null"#), "{unled}");
     }
 
     #[test]

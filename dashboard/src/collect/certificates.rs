@@ -442,7 +442,7 @@ impl Collector {
             } else {
                 0.0
             };
-            let left_out = written
+            let mut left_out: Vec<CertificateValidator> = written
                 .unpaid
                 .iter()
                 .filter_map(|rank| {
@@ -453,14 +453,18 @@ impl Collector {
                     let key = map
                         .and_then(|map| map.get_pubkey_stake_entry(at))
                         .map(|entry| entry.node_pubkey)?;
-                    let described = describe(&key, &info, heard);
                     Some(CertificateValidator {
-                        identity: key.to_string(),
-                        name: described.name,
-                        ip: described.ip,
+                        identity: key,
+                        name: info.get(&key).and_then(|info| info.name.clone()),
+                        ip: heard
+                            .get(&key)
+                            .and_then(|entry| entry.contact.gossip())
+                            .map(|addr| addr.ip()),
                     })
                 })
                 .collect();
+            // Held with the block, so kept without growth slack.
+            left_out.shrink_to_fit();
             let leader = self
                 .ctx
                 .leader_schedule_cache
@@ -470,7 +474,7 @@ impl Collector {
                 slot,
                 BlockCertificate {
                     rewards,
-                    leader: leader.map(|key| key.to_string()),
+                    leader,
                     leader_name: leader
                         .and_then(|key| info.get(&key).and_then(|info| info.name.clone())),
                     // A tie reads as notarized.

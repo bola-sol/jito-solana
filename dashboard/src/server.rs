@@ -73,7 +73,7 @@ const REPLY_SPACING: Duration = Duration::from_millis(250);
 /// Out of descriptors, `accept` fails at once, so retrying straight away spins.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
-/// A ceiling, not a throttle: every request in flight holds a copy of its answer.
+/// A ceiling, not a throttle: each connection holds a task, a socket and its buffers.
 const MAX_CONNECTIONS: usize = 256;
 
 #[derive(Clone)]
@@ -222,8 +222,8 @@ async fn refuse(
 ) -> Result<(), ConnectionError> {
     let mut consumed = vec![0u8; head_len];
     socket.read_exact(&mut consumed).await?;
-    let reply = response(status, "text/plain; charset=utf-8", body, false);
-    write_and_close(&mut socket, &reply).await?;
+    let head = response_head(status, "text/plain; charset=utf-8", body.len(), false, "");
+    write_and_close(&mut socket, head.as_bytes(), body).await?;
     Ok(())
 }
 
@@ -330,42 +330,53 @@ async fn serve_http(mut socket: TcpStream, head: &str) -> io::Result<()> {
     let path = request_path(head);
     let is_read = head.starts_with("GET ") || head.starts_with("HEAD ");
 
-    let response = if !is_read {
-        response(
-            405,
-            "text/plain; charset=utf-8",
-            b"method not allowed",
-            false,
-        )
-    } else if assets::ASSETS.is_empty() {
-        response(
-            200,
-            "text/html; charset=utf-8",
-            MISSING_FRONTEND.as_bytes(),
-            false,
-        )
-    } else {
-        match lookup(path) {
-            // Hashed filenames cache forever; the entry document must not, or a redeploy is never
-            // picked up.
-            Some((content_type, body)) => {
-                response(200, content_type, body, path.starts_with("/assets/"))
+    let gzip = accepts_gzip(head);
+    let (status, content_type, body, immutable, coding): (u16, &str, &[u8], bool, &str) =
+        if !is_read {
+            (
+                405,
+                "text/plain; charset=utf-8",
+                b"method not allowed",
+                false,
+                "",
+            )
+        } else if assets::ASSETS.is_empty() {
+            (
+                200,
+                "text/html; charset=utf-8",
+                MISSING_FRONTEND.as_bytes(),
+                false,
+                "",
+            )
+        } else {
+            match lookup(path, gzip) {
+                // Hashed filenames cache forever; the entry document must not, or a redeploy is
+                // never picked up.
+                Some((content_type, body, coding)) => (
+                    200,
+                    content_type,
+                    body,
+                    path.starts_with("/assets/"),
+                    coding,
+                ),
+                // Unknown paths fall through to the SPA so client-side routes
+                // survive a hard refresh.
+                None => match lookup("/index.html", gzip) {
+                    Some((content_type, body, coding)) => (200, content_type, body, false, coding),
+                    None => (404, "text/plain; charset=utf-8", b"not found", false, ""),
+                },
             }
-            // Unknown paths fall through to the SPA so client-side routes
-            // survive a hard refresh.
-            None => match lookup("/index.html") {
-                Some((content_type, body)) => response(200, content_type, body, false),
-                None => response(404, "text/plain; charset=utf-8", b"not found", false),
-            },
-        }
-    };
+        };
 
-    write_and_close(&mut socket, &response).await
+    let response = response_head(status, content_type, body.len(), immutable, coding);
+    write_and_close(&mut socket, response.as_bytes(), body).await
 }
 
-async fn write_and_close(socket: &mut TcpStream, response: &[u8]) -> io::Result<()> {
+/// Embedded assets are written from the binary, not copied.
+async fn write_and_close(socket: &mut TcpStream, head: &[u8], body: &[u8]) -> io::Result<()> {
     timeout(WRITE_TIMEOUT, async {
-        socket.write_all(response).await?;
+        socket.write_all(head).await?;
+        socket.write_all(body).await?;
         socket.flush().await?;
         socket.shutdown().await
     })
@@ -373,12 +384,37 @@ async fn write_and_close(socket: &mut TcpStream, response: &[u8]) -> io::Result<
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "http response"))?
 }
 
-fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
+/// Takes the gzip copy when `gzip` and the asset has one; such an asset sends `vary` either way.
+fn lookup(path: &str, gzip: bool) -> Option<(&'static str, &'static [u8], &'static str)> {
     let path = if path == "/" { "/index.html" } else { path };
     assets::ASSETS
         .iter()
-        .find(|(route, _, _)| *route == path)
-        .map(|(_, content_type, body)| (*content_type, *body))
+        .find(|(route, ..)| *route == path)
+        .map(|&(_, content_type, raw, packed)| match packed {
+            Some(packed) if gzip => (content_type, packed, GZIP_HEADERS),
+            Some(_) => (content_type, raw, VARY_HEADER),
+            None => (content_type, raw, ""),
+        })
+}
+
+const VARY_HEADER: &str = "vary: accept-encoding\r\n";
+const GZIP_HEADERS: &str = "content-encoding: gzip\r\nvary: accept-encoding\r\n";
+
+/// `gzip;q=0` is a refusal.
+fn accepts_gzip(head: &str) -> bool {
+    header(head, "accept-encoding").is_some_and(|value| {
+        value.split(',').any(|coding| {
+            let mut parts = coding.split(';').map(str::trim);
+            parts
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("gzip"))
+                && !parts.any(|param| {
+                    param.split_once('=').is_some_and(|(name, q)| {
+                        name.eq_ignore_ascii_case("q") && q.parse::<f32>().is_ok_and(|q| q <= 0.0)
+                    })
+                })
+        })
+    })
 }
 
 /// Sent with every response. `img-src` allows https for validator icons; `manifest-src` lets a
@@ -399,7 +435,14 @@ const SECURITY_HEADERS: &str = concat!(
     "referrer-policy: no-referrer\r\n",
 );
 
-fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Vec<u8> {
+/// `coding` holds the content-encoding and vary lines, empty for a body with one form.
+fn response_head(
+    status: u16,
+    content_type: &str,
+    len: usize,
+    immutable: bool,
+    coding: &str,
+) -> String {
     let reason = match status {
         403 => "Forbidden",
         404 => "Not Found",
@@ -413,14 +456,10 @@ fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Ve
     } else {
         "no-cache"
     };
-    let mut out = format!(
+    format!(
         "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: \
-         {}\r\ncache-control: {cache}\r\n{SECURITY_HEADERS}connection: close\r\n\r\n",
-        body.len()
+         {len}\r\ncache-control: {cache}\r\n{coding}{SECURITY_HEADERS}connection: close\r\n\r\n"
     )
-    .into_bytes();
-    out.extend_from_slice(body);
-    out
 }
 
 async fn send_frame(
@@ -876,7 +915,7 @@ mod tests {
     use {
         super::*,
         crate::proto::{DEFLATE_FROM, TOPIC_SLOT},
-        flate2::read::ZlibDecoder,
+        flate2::read::{GzDecoder, ZlibDecoder},
         soketto::handshake::{Client, ServerResponse},
         std::io::Read,
     };
@@ -1464,7 +1503,7 @@ mod tests {
     }
 
     fn status_line(status: u16, immutable: bool) -> String {
-        let out = String::from_utf8(response(status, "text/plain", b"", immutable)).unwrap();
+        let out = response_head(status, "text/plain", 0, immutable, "");
         out.lines().next().unwrap().to_string()
     }
 
@@ -1488,15 +1527,10 @@ mod tests {
         // Asset filenames carry a content hash; index.html does not, and caching it
         // would hide a redeploy.
         assert!(
-            String::from_utf8(response(200, "text/javascript", b"x", true))
-                .unwrap()
+            response_head(200, "text/javascript", 1, true, "")
                 .contains("cache-control: public, max-age=31536000, immutable")
         );
-        assert!(
-            String::from_utf8(response(200, "text/html", b"x", false))
-                .unwrap()
-                .contains("cache-control: no-cache")
-        );
+        assert!(response_head(200, "text/html", 1, false, "").contains("cache-control: no-cache"));
     }
 
     #[test]
@@ -1504,21 +1538,18 @@ mod tests {
         // A length that disagrees with the body leaves the client waiting, or reading
         // the next response as this one's tail.
         for body in [b"".as_slice(), b"x".as_slice(), b"hello world".as_slice()] {
-            let out = response(200, "text/plain", body, false);
-            let text = String::from_utf8(out.clone()).unwrap();
+            let head = response_head(200, "text/plain", body.len(), false, "");
             assert!(
-                text.contains(&format!("content-length: {}\r\n", body.len())),
+                head.contains(&format!("content-length: {}\r\n", body.len())),
                 "missing or wrong length for {body:?}"
             );
-            let (head, sent) = text.split_once("\r\n\r\n").expect("no header terminator");
-            assert_eq!(sent.as_bytes(), body);
-            assert_eq!(out.len(), head.len() + 4 + body.len());
+            assert!(head.ends_with("\r\n\r\n"), "no header terminator");
         }
     }
 
     #[test]
     fn test_responses_carry_the_security_headers() {
-        let out = String::from_utf8(response(200, "text/html", b"<html>", false)).unwrap();
+        let out = response_head(200, "text/html", 6, false, "");
         assert!(out.contains("content-security-policy:"));
         assert!(out.contains("x-content-type-options: nosniff"));
         assert!(out.contains("referrer-policy: no-referrer"));
@@ -1537,12 +1568,13 @@ mod tests {
 
     #[test]
     fn test_header_block_is_well_formed() {
-        let out = String::from_utf8(response(200, "text/plain", b"body", false)).unwrap();
-        let (head, body) = out.split_once("\r\n\r\n").expect("no header terminator");
-        assert_eq!(body, "body");
-        assert!(!head.contains("\r\n\r\n"), "blank line inside the headers");
-        for line in head.split("\r\n").skip(1) {
-            assert!(line.contains(':'), "malformed header line: {line:?}");
+        for coding in ["", VARY_HEADER, GZIP_HEADERS] {
+            let out = response_head(200, "text/plain", 4, false, coding);
+            let head = out.strip_suffix("\r\n\r\n").expect("no header terminator");
+            assert!(!head.contains("\r\n\r\n"), "blank line inside the headers");
+            for line in head.split("\r\n").skip(1) {
+                assert!(line.contains(':'), "malformed header line: {line:?}");
+            }
         }
     }
 
@@ -2132,7 +2164,95 @@ mod tests {
     #[test]
     fn test_root_serves_the_entry_document() {
         if !assets::ASSETS.is_empty() {
-            assert!(lookup("/").is_some());
+            assert!(lookup("/", false).is_some());
         }
+    }
+
+    #[test]
+    fn test_a_head_with_one_form_of_body_is_unchanged() {
+        assert_eq!(
+            response_head(404, "text/plain; charset=utf-8", 9, false, ""),
+            format!(
+                "HTTP/1.1 404 Not Found\r\ncontent-type: text/plain; \
+                 charset=utf-8\r\ncontent-length: 9\r\ncache-control: \
+                 no-cache\r\n{SECURITY_HEADERS}connection: close\r\n\r\n"
+            )
+        );
+    }
+
+    #[test]
+    fn test_gzip_is_taken_only_when_offered() {
+        let offers = |value: &str| accepts_gzip(&req(&format!("Accept-Encoding: {value}")));
+        assert!(offers("gzip, deflate, br, zstd"));
+        assert!(offers("deflate;q=1, GZIP;q=0.5"));
+        assert!(!offers("deflate, br"));
+        assert!(!offers("gzip;q=0"));
+        assert!(!offers("br, gzip; q=0.000"));
+        assert!(!offers("gzip;Q=0"));
+        assert!(!accepts_gzip(&req("Host: x")));
+    }
+
+    #[test]
+    fn test_every_gzip_copy_inflates_to_its_asset() {
+        for (route, _, raw, packed) in assets::ASSETS {
+            if [".html", ".js", ".css"]
+                .iter()
+                .any(|suffix| route.ends_with(suffix))
+            {
+                assert!(packed.is_some(), "{route} has no gzip copy");
+            }
+            let Some(packed) = packed else {
+                continue;
+            };
+            assert!(
+                packed.len() < raw.len(),
+                "{route}'s gzip copy is no smaller"
+            );
+            let mut inflated = Vec::new();
+            GzDecoder::new(*packed).read_to_end(&mut inflated).unwrap();
+            assert!(inflated == *raw, "{route}'s gzip copy is not the asset");
+        }
+    }
+
+    async fn get_split(request: &[u8]) -> (String, Vec<u8>) {
+        let (addr, server) = serve_one(Arc::new(Publisher::new())).await;
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = Vec::new();
+        client.read_to_end(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        let split = reply
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("no header terminator");
+        let body = reply.split_off(split.saturating_add(4));
+        (String::from_utf8(reply).unwrap(), body)
+    }
+
+    #[tokio::test]
+    async fn test_the_entry_document_is_gzipped_only_for_a_client_that_asks() {
+        let Some((_, raw, _)) = lookup("/", false) else {
+            return;
+        };
+
+        let (head, body) =
+            get_split(b"GET / HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip, deflate\r\n\r\n").await;
+        assert!(head.contains("content-encoding: gzip\r\n"), "{head}");
+        assert!(head.contains("vary: accept-encoding\r\n"), "{head}");
+        assert!(head.contains(&format!("content-length: {}\r\n", body.len())));
+        let mut inflated = Vec::new();
+        GzDecoder::new(body.as_slice())
+            .read_to_end(&mut inflated)
+            .unwrap();
+        assert!(
+            inflated == raw,
+            "the inflated page is not the entry document"
+        );
+
+        let (head, body) = get_split(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(!head.contains("content-encoding"), "{head}");
+        assert!(head.contains("vary: accept-encoding\r\n"), "{head}");
+        assert!(head.contains(&format!("content-length: {}\r\n", body.len())));
+        assert!(body == raw, "the page is not the entry document");
     }
 }

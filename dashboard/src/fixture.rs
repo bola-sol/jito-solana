@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        collect::{Collector, CollectorShared, EpochInfo, Replies},
+        collect::{Collector, CollectorShared, EpochInfo, FAILED_UNREAD, Replies},
         context::{DashboardContext, StartProgress},
         history::{MAX_RANGE_SLOTS, SlotHistory},
         meters::Meters,
@@ -30,6 +30,7 @@ use {
     },
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
+    solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationReceiver,
     solana_runtime::{
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
@@ -40,7 +41,7 @@ use {
     solana_system_transaction as system_transaction,
     std::{
         collections::HashSet,
-        sync::{Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicU64},
         time::SystemTime,
     },
     tempfile::TempDir,
@@ -60,6 +61,7 @@ pub struct Fixture {
     mint: Keypair,
     pub history: Arc<RwLock<SlotHistory>>,
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    pub failed_total: Arc<AtomicU64>,
     /// Held: dropping it deletes the directory the blockstore has open.
     _ledger: TempDir,
 }
@@ -104,9 +106,12 @@ impl Fixture {
         self.bank_forks.read().unwrap().get(slot).unwrap()
     }
 
-    /// Transfers of more than the mint holds.
     pub fn advance_with_failures(&self, slot: Slot, failures: usize) -> Arc<Bank> {
-        let parent = self.working_bank();
+        self.fork_with_failures(self.working_bank(), slot, failures)
+    }
+
+    /// Transfers of more than the mint holds, in a bank on `parent`.
+    pub fn fork_with_failures(&self, parent: Arc<Bank>, slot: Slot, failures: usize) -> Arc<Bank> {
         if !parent.is_frozen() {
             parent.freeze();
         }
@@ -157,6 +162,24 @@ impl Fixture {
         &self,
         startup: Arc<std::sync::Mutex<crate::startup::StartupPublisher>>,
     ) -> Collector {
+        self.collector_with(startup, None)
+    }
+
+    /// Fed by replay's freeze notifications, as the validator wires it.
+    pub fn notified_collector(&self, frozen_banks: BankNotificationReceiver) -> Collector {
+        self.collector_with(
+            Arc::new(std::sync::Mutex::new(
+                crate::startup::StartupPublisher::default(),
+            )),
+            Some(frozen_banks),
+        )
+    }
+
+    fn collector_with(
+        &self,
+        startup: Arc<std::sync::Mutex<crate::startup::StartupPublisher>>,
+        frozen_banks: Option<BankNotificationReceiver>,
+    ) -> Collector {
         let shared = CollectorShared {
             publisher: self.publisher.clone(),
             info_cache: Arc::new(RwLock::new(ValidatorInfoCache::default())),
@@ -166,8 +189,9 @@ impl Fixture {
             startup_progress: running(),
             startup,
             metrics_tap: Arc::new(MetricsTap::default()),
+            failed_total: self.failed_total.clone(),
         };
-        Collector::new(self.ctx.clone(), shared, None, None, None)
+        Collector::new(self.ctx.clone(), shared, None, None, frozen_banks)
     }
 
     pub fn meters(&self) -> Meters {
@@ -179,6 +203,7 @@ impl Fixture {
             running(),
             SystemTime::now(),
             Arc::new(MetricsTap::default()),
+            self.failed_total.clone(),
         )
     }
 }
@@ -254,6 +279,7 @@ pub fn fixture() -> Fixture {
         // An epoch's ring is thirty-five megabytes written per fixture; no test reaches past this.
         history: Arc::new(RwLock::new(SlotHistory::new(MAX_RANGE_SLOTS))),
         epochs: Arc::new(RwLock::new(Vec::new())),
+        failed_total: Arc::new(AtomicU64::new(FAILED_UNREAD)),
         _ledger: ledger,
     }
 }

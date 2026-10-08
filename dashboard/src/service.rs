@@ -4,7 +4,9 @@
 
 use {
     crate::{
-        collect::{Collector, CollectorShared, EpochInfo, Replies, system_time_nanos},
+        collect::{
+            Collector, CollectorShared, EpochInfo, FAILED_UNREAD, Replies, system_time_nanos,
+        },
         config::DashboardConfig,
         context::{DashboardContext, StartProgress},
         history::{PACKED_SLOTS, SlotHistory},
@@ -23,7 +25,7 @@ use {
         io,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, JoinHandle},
         time::{Duration, SystemTime},
@@ -220,6 +222,7 @@ impl DashboardService {
         frozen_banks: Option<BankNotificationReceiver>,
     ) -> io::Result<()> {
         let info_cache = self.info_cache.clone();
+        let failed_total = Arc::new(AtomicU64::new(FAILED_UNREAD));
 
         self.info_loader = Some({
             let context = context.clone();
@@ -246,11 +249,18 @@ impl DashboardService {
             let started = self.started;
             let context = context.clone();
             let metrics_tap = self.metrics_tap.clone();
+            let failed_total = failed_total.clone();
             thread::Builder::new()
                 .name("solDashMeter".to_string())
                 .spawn(move || {
-                    let mut meters =
-                        Meters::new(context, publisher, startup_progress, started, metrics_tap);
+                    let mut meters = Meters::new(
+                        context,
+                        publisher,
+                        startup_progress,
+                        started,
+                        metrics_tap,
+                        failed_total,
+                    );
                     while !exit.load(Ordering::Relaxed) {
                         meters.tick();
                         thread::sleep(METER_INTERVAL);
@@ -281,6 +291,7 @@ impl DashboardService {
                         startup_progress,
                         startup,
                         metrics_tap,
+                        failed_total,
                     };
                     let mut collector =
                         Collector::new(context, shared, tips, commission_bps, frozen_banks);

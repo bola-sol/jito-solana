@@ -896,7 +896,6 @@ export interface MissList {
   writers: MissWriter[];
   validators: MissValidator[];
   rows: MissRow[];
-  written: WrittenList;
 }
 
 export interface WrittenList {

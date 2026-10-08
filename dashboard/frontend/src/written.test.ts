@@ -124,7 +124,6 @@ function misses(writers: MissWriter[], places: [number, MissPlace][], rewarded: 
     writers,
     validators: [],
     rows,
-    written: list(0, 0, []),
   };
 }
 

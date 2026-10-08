@@ -15,6 +15,7 @@ import {
   leftOutText,
   MISS_PLACES,
   placeExplain,
+  readTwice,
   validatorLabel,
   voteText,
   writerSummary,
@@ -50,10 +51,11 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
     if (top < 0 || bottom > window.innerHeight) node.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [settled]);
 
-  // Asked for on open and on the refresh control; a reply that lands after
-  // the panel closed is dropped.
+  // Asked for on open and on the refresh control, each time read twice; a
+  // reply that lands after the panel closed is dropped.
   const live = useRef(true);
-  const load = useCallback(() => {
+  const cancelReread = useRef(() => {});
+  const read = useCallback(() => {
     setLoading(true);
     store.request("summary.misses", {}).then(
       (got) => {
@@ -69,12 +71,17 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
       },
     );
   }, [store]);
+  const load = useCallback(() => {
+    cancelReread.current();
+    cancelReread.current = readTwice(read);
+  }, [read]);
 
   useEffect(() => {
     live.current = true;
     load();
     return () => {
       live.current = false;
+      cancelReread.current();
     };
   }, [load]);
 

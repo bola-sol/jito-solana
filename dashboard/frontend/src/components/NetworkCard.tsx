@@ -1,0 +1,418 @@
+import { useState, type CSSProperties, type ReactElement } from "react";
+import { bytes, count, decimal, percent } from "../format";
+import { readInterfacesOpen, writeInterfacesOpen } from "../layout";
+import {
+  direction,
+  egressShares,
+  interfaceLines,
+  NETWORK_WINDOW_SECONDS,
+  routesShort,
+  sharedPeak,
+  unitFor,
+  type Direction,
+} from "../network";
+import { dropsLabel, layerShares } from "../turbine";
+import type { EgressSplit, NetInterface, NetworkSample, Turbine, XdpConfig } from "../types";
+import { useChartEdge, windowed } from "../useNow";
+import { useStore } from "../useStore";
+import { Card, chartY, Explain } from "./primitives";
+
+const WIDTH = 300;
+const HEIGHT = 38;
+
+/** The live rate stands for the minute, so the figure is right from the first second. */
+function steady(rate: number): Direction {
+  return { current: rate, average: rate, delta: 0, trend: "flat" };
+}
+
+export function NetworkCard(): ReactElement | null {
+  const store = useStore();
+  const rates = store.get("summary", "network");
+  // Null where the validator was given no XDP config, since the point is only submitted where it
+  // was.
+  const xdp = store.get("summary", "xdp");
+  const split = store.get("summary", "network_egress");
+  const turbine = store.get("summary", "turbine");
+  const interfaces = store.get("summary", "net_interfaces");
+  // Drawn behind live on the validator's clock, so the newest point sits past the right edge.
+  const edge = useChartEdge();
+  if (!rates) return null;
+
+  const windowMs = NETWORK_WINDOW_SECONDS * 1000;
+  const visible = windowed(store.getNetwork(), edge, windowMs, (s) => s.timestamp_nanos);
+  const received = visible.map((sample) => sample.received_per_second);
+  const sent = visible.map((sample) => sample.sent_per_second);
+  const peak = sharedPeak(received, sent);
+  const egress = direction(sent) ?? steady(rates.sent_per_second);
+
+  const scope = "This host's network cards, each byte counted once, not the validator alone.";
+
+  return (
+    <Card
+      title="Host network"
+      aside={`last ${NETWORK_WINDOW_SECONDS}s`}
+      className="network-body"
+    >
+      <Row
+        label="In"
+        kind="ingress"
+        read={direction(received) ?? steady(rates.received_per_second)}
+        samples={visible}
+        value={(sample) => sample.received_per_second}
+        edge={edge}
+        windowMs={windowMs}
+        peak={peak}
+        explain={scope}
+      />
+      <Row
+        label="Out"
+        kind="egress"
+        read={egress}
+        samples={visible}
+        value={(sample) => sample.sent_per_second}
+        edge={edge}
+        windowMs={windowMs}
+        peak={peak}
+        explain={scope}
+      />
+      {split && <Split total={egress.current} split={split} />}
+      {xdp && <Xdp xdp={xdp} dropped={turbine?.xdp_dropped ?? null} />}
+      {turbine && <Intake turbine={turbine} />}
+      {interfaces && interfaces.length > 0 && <Interfaces interfaces={interfaces} />}
+    </Card>
+  );
+}
+
+export function xdpDetail(xdp: XdpConfig): string[] {
+  return [xdp.driver, xdp.model].filter((part) => named(part));
+}
+
+function named(part: string): boolean {
+  return part !== "" && part !== "unknown";
+}
+
+export function xdpTooltip(xdp: XdpConfig): string {
+  const sentence = "How this validator's XDP transmit path is set up.";
+  const parts = [];
+  if (named(xdp.vendor)) parts.push(xdp.vendor);
+  if (xdp.kernel_version !== "" && !xdp.kernel_version.startsWith("unknown")) {
+    parts.push(`kernel ${xdp.kernel_version}`);
+  }
+  if (parts.length === 0) return sentence;
+  const aside = parts.join(", ");
+  return `${sentence} ${aside.charAt(0).toUpperCase()}${aside.slice(1)}.`;
+}
+
+/** Untoned, since copy mode may be intended; only the drops are toned. */
+function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
+  const detail = xdpDetail(xdp);
+  const mode = xdp.zero_copy ? "zero-copy" : "copy";
+  // The drops come before the card's long model name, which is what the
+  // ellipsis takes; the whole line is on the hover.
+  const drops = dropped === null ? null : dropsLabel(dropped);
+  const whole = [mode, drops, ...detail].filter((part) => part !== null).join(" · ");
+
+  return (
+    <div className="net-xdp">
+      <span className="net-xdp-label">
+        <Explain text={xdpTooltip(xdp)}>XDP transmit</Explain>
+      </span>
+      <span className="net-xdp-detail" title={whole}>
+        <span className="net-xdp-mode">{mode}</span>
+        {drops !== null && (
+          <span className={dropped !== null && dropped > 0 ? "tone-bad" : "tone-good"}> · {drops}</span>
+        )}
+        {detail.map((part) => (
+          <span key={part}> · {part}</span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+/** Folded to one line of the top-level interfaces, led by any whose routes have fallen away. */
+function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
+  const [open, setOpen] = useState(readInterfacesOpen);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    writeInterfacesOpen(next);
+  };
+  const lines = interfaceLines(interfaces);
+  const top = lines.filter((line) => line.depth === 0).map((line) => line.iface);
+  const short = top.filter(routesShort);
+  const rest = top.filter((iface) => !routesShort(iface));
+
+  return (
+    <div className="net-ifaces">
+      <div className="net-if-head" onClick={toggle}>
+        <span className="net-xdp-label">
+          <Explain text="This host's network interfaces in use, with the routes through each.">Interfaces</Explain>
+        </span>
+        <span className="net-if-summary">
+          {!open &&
+            (short.length > 0 ? (
+              <>
+                {short.map((iface) => (
+                  <i key={iface.name} className="tone-bad">
+                    <b>{iface.name}</b> {routesLabel(iface)}
+                  </i>
+                ))}
+                {rest.map((iface) => (
+                  <i key={iface.name}>
+                    <b>{iface.name}</b>
+                  </i>
+                ))}
+              </>
+            ) : (
+              top.map((iface) => (
+                <i key={iface.name}>
+                  <b>{iface.name}</b> {iface.up ? iface.kind : "down"}
+                </i>
+              ))
+            ))}
+        </span>
+        <button
+          type="button"
+          className="cache-fold"
+          aria-expanded={open}
+          aria-label={`${open ? "Fold" : "Unfold"} network interfaces`}
+          onClick={(event) => {
+            // The row under it toggles too, and two toggles are none.
+            event.stopPropagation();
+            toggle();
+          }}
+        >
+          {open ? "−" : "+"}
+        </button>
+      </div>
+      {open && (
+        <div className="net-if-list">
+          {lines.map(({ iface, depth }) => (
+            <InterfaceRow key={iface.name} iface={iface} depth={depth} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A port's routes live on the interface it belongs to, so its row leaves them out. */
+function InterfaceRow({ iface, depth }: { iface: NetInterface; depth: number }) {
+  const port = depth > 0;
+  const short = !port && routesShort(iface);
+  return (
+    <div
+      className={`net-if-row ${iface.up ? "is-up" : "is-down"}${port ? " is-port" : ""}`}
+      style={port ? ({ "--depth": String(depth) } as CSSProperties) : undefined}
+    >
+      <span className="net-if-name" title={iface.mtu === null ? undefined : `MTU ${count(iface.mtu)}`}>
+        {iface.name}
+      </span>
+      <span className="net-if-meta">
+        <span className="net-if-kind">{iface.kind}</span>
+        <span className="net-if-state">
+          <i className="net-if-dot" aria-hidden="true" />
+          {iface.up ? "up" : "down"}
+        </span>
+        <span className="net-if-detail">
+          {!port && (
+            <span className={`net-if-routes${short ? " is-short" : ""}`}>
+              {short ? (
+                <Explain text={`Highest in the last 24 hours: ${count(iface.routes_peak)}.`}>{routesLabel(iface)}</Explain>
+              ) : (
+                routesLabel(iface)
+              )}
+            </span>
+          )}
+          {iface.inside && (
+            <span className="net-if-inside">
+              <Explain
+                text={`Its packets travel inside ${iface.inside}, which holds the default route, so the host total already counts them.`}
+              >
+                inside {iface.inside}
+              </Explain>
+            </span>
+          )}
+        </span>
+      </span>
+      <span className="net-if-traffic">
+        ↓ {perSecond(iface.received_per_second)} · ↑ {perSecond(iface.sent_per_second)}
+      </span>
+    </div>
+  );
+}
+
+function routesLabel(iface: NetInterface): string {
+  const of = routesShort(iface) ? ` of ${count(iface.routes_peak)}` : "";
+  return `${count(iface.routes)}${of} ${iface.routes === 1 && !of ? "route" : "routes"}`;
+}
+
+const perSecond = (value: number | null) => (value === null ? "—" : `${bytes(value)}/s`);
+
+/** The layer follows stake: a small validator hears most of its shreds two hops from the leader. */
+function Intake({ turbine }: { turbine: Turbine }) {
+  const shares = layerShares(turbine);
+  if (!shares) return null;
+  return (
+    <div className="net-xdp net-turbine">
+      <span className="net-xdp-label">
+        <Explain text="Where this validator's shreds came from in the turbine tree, over the last five minutes.">
+          Turbine intake
+        </Explain>
+      </span>
+      <span className="net-turbine-body">
+        <span className="net-turbine-bar" aria-hidden="true">
+          {shares.map((layer) => (
+            <i key={layer.key} className={`is-${layer.key}`} style={{ width: `${layer.share * 100}%` }} />
+          ))}
+        </span>
+        <span className="net-xdp-detail">
+          {shares.map((layer, index) => (
+            <span key={layer.key}>
+              {index > 0 && " · "}
+              {layer.label} <b>{percent(layer.share, 0)}</b>
+            </span>
+          ))}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** The shred path over XDP counts no bytes, so the rest is hatched as unattributed. */
+function Split({ total, split }: { total: number; split: EgressSplit }) {
+  const shares = egressShares(total, split);
+  const whole = Math.max(total, shares.measured, 1);
+  const { unit, divisor } = unitFor(total);
+  const show = (value: number) => decimal(value / divisor, 2);
+  const width = (value: number) => `${((100 * value) / whole).toFixed(2)}%`;
+
+  return (
+    <div className="net-split">
+      <span className="net-split-label">
+        <Explain text="What the gossip and repair senders report sending. The rest is mostly shreds over XDP, which reports no bytes.">
+          of which
+        </Explain>
+      </span>
+      <span className="net-split-body">
+        <span className="net-split-bar" aria-hidden="true">
+          <i className="is-gossip" style={{ width: width(shares.gossip) }} />
+          <i className="is-repair" style={{ width: width(shares.repair) }} />
+          <i className="is-unattributed" style={{ width: width(shares.remainder) }} />
+        </span>
+        <span className="net-split-legend">
+          <span>
+            <i className="is-gossip" />gossip {show(shares.gossip)}
+          </span>
+          <span>
+            <i className="is-repair" />repair {show(shares.repair)}
+          </span>
+          <span>
+            <i className="is-unattributed" />unattributed {show(shares.remainder)}
+          </span>
+        </span>
+      </span>
+      <span className="net-split-meta">
+        <b>measured</b>
+        {show(shares.measured)} {unit}/s
+      </span>
+    </div>
+  );
+}
+
+function Row({
+  label,
+  kind,
+  read,
+  samples,
+  value,
+  edge,
+  windowMs,
+  peak,
+  explain,
+}: {
+  label: string;
+  kind: "ingress" | "egress";
+  read: Direction;
+  samples: NetworkSample[];
+  value: (sample: NetworkSample) => number;
+  edge: number;
+  windowMs: number;
+  peak: number;
+  explain: string;
+}) {
+  const { unit, divisor } = unitFor(read.current);
+  const arrow = read.trend === "up" ? "▲" : read.trend === "down" ? "▼" : "·";
+
+  return (
+    <div className="net-row">
+      <span className="net-label">
+        <i className={`net-swatch is-${kind}`} aria-hidden="true" />
+        <Explain text={explain}>{label}</Explain>
+      </span>
+      <span className="net-value">
+        {decimal(read.current / divisor, 2)} <small>{unit}/s</small>
+      </span>
+      <span className="net-spark">
+        <Spark
+          kind={kind}
+          samples={samples}
+          value={value}
+          edge={edge}
+          windowMs={windowMs}
+          peak={peak}
+        />
+      </span>
+      <span className="net-meta">
+        <b>avg {decimal(read.average / divisor, 2)}</b>
+        {/* Untoned: throughput going up is neither good nor bad. */}
+        <em>
+          {arrow} {decimal(Math.abs(read.delta) / divisor, 2)}
+        </em>
+      </span>
+    </div>
+  );
+}
+
+function Spark({
+  kind,
+  samples,
+  value,
+  edge,
+  windowMs,
+  peak,
+}: {
+  kind: string;
+  samples: NetworkSample[];
+  value: (sample: NetworkSample) => number;
+  edge: number;
+  windowMs: number;
+  peak: number;
+}) {
+  if (samples.length < 2) {
+    return <span className="net-collecting">collecting…</span>;
+  }
+  // Placed by timestamp rather than by index, so a second the meter missed
+  // leaves a gap of the right width instead of shifting everything after it.
+  const points = samples.map((sample): [number, number] => [
+    WIDTH * (1 - (edge - sample.timestamp_nanos / 1e6) / windowMs),
+    chartY(value(sample), peak, HEIGHT),
+  ]);
+  const line = points
+    .map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`)
+    .join(" ");
+
+  // Closed under the samples, so a stalled feed does not draw a wedge to
+  // nothing at the right.
+  const first = points[0][0];
+  const last = points[points.length - 1][0];
+  const area = `${line} L${last.toFixed(1)},${HEIGHT} L${first.toFixed(1)},${HEIGHT} Z`;
+
+  return (
+    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img">
+      <path className={`net-fill is-${kind}`} d={area} />
+      <path className={`net-line is-${kind}`} d={line} />
+    </svg>
+  );
+}

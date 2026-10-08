@@ -1,0 +1,2010 @@
+//! One port serving the embedded single-page app over HTTP and the state feed
+//! over a websocket at `/websocket`. Routing peeks at the request head, which
+//! leaves the bytes in the socket for soketto's handshake.
+
+use {
+    crate::{
+        collect::{EpochInfo, Replies},
+        history::SlotHistory,
+        proto::{
+            DEFLATE_PROTOCOL, Frame, Message, Publisher, Request, coalesce, encode_json_with_id,
+            encode_with_id,
+        },
+        search::{SearchParams, search},
+        validator_info::ValidatorInfoCache,
+    },
+    soketto::{
+        Incoming,
+        handshake::{Server, server},
+    },
+    solana_clock::Slot,
+    solana_time_utils::timestamp,
+    std::{
+        io,
+        net::IpAddr,
+        sync::{Arc, RwLock, atomic::Ordering},
+        time::Instant,
+    },
+    thiserror::Error,
+    tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        pin, select,
+        sync::{
+            Semaphore,
+            broadcast::error::{RecvError, TryRecvError},
+        },
+        task::spawn_blocking,
+        time::{Duration, sleep, timeout},
+    },
+    tokio_util::compat::{Compat, TokioAsyncReadCompatExt},
+};
+
+const WEBSOCKET_PATH: &str = "/websocket";
+
+/// One search at a time across every connection, since each can read the whole history.
+static SEARCHES: Semaphore = Semaphore::const_new(1);
+
+const MAX_REQUEST_HEAD: usize = 8192;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Anything larger is a client bug or an attempt to make the server allocate.
+const MAX_CLIENT_MESSAGE: usize = 4096;
+
+/// Otherwise a viewer that stops reading holds a slot until TCP notices.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Unsent bytes the kernel holds for a websocket. A slow viewer's backlog then waits in the
+/// update queue, where a burst is coalesced, rather than in a socket buffer that is sent as is.
+const UNSENT_LIMIT: u32 = 16 * 1024;
+
+const MAX_WEBSOCKET_CLIENTS: usize = 64;
+
+const REPLY_BURST: u32 = 8;
+const REPLY_SPACING: Duration = Duration::from_millis(250);
+
+/// Out of descriptors, `accept` fails at once, so retrying straight away spins.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
+/// A ceiling, not a throttle: every request in flight holds a copy of its answer.
+const MAX_CONNECTIONS: usize = 256;
+
+#[derive(Clone)]
+struct Limits {
+    connections: Arc<Semaphore>,
+    websockets: Arc<Semaphore>,
+}
+
+impl Limits {
+    fn new() -> Self {
+        Self {
+            connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+            websockets: Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS)),
+        }
+    }
+}
+
+const MISSING_FRONTEND: &str = include_str!("missing_frontend.html");
+
+mod assets {
+    include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+}
+
+#[derive(Debug, Error)]
+enum ConnectionError {
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+    #[error("handshake error: {0}")]
+    Handshake(#[from] soketto::handshake::Error),
+    #[error("connection error: {0}")]
+    Connection(#[from] soketto::connection::Error),
+    #[error("client fell too far behind and was disconnected")]
+    Lagged,
+    #[error("client sent an oversized message of {0} bytes")]
+    Oversized(usize),
+}
+
+pub async fn serve(
+    listener: TcpListener,
+    publisher: Arc<Publisher>,
+    history: Arc<RwLock<SlotHistory>>,
+    info: Arc<RwLock<ValidatorInfoCache>>,
+    epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    replies: Arc<Replies>,
+    allowed_hosts: Arc<[String]>,
+) {
+    let limits = Limits::new();
+    loop {
+        let (socket, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(err) => {
+                log::warn!("dashboard: accept failed: {err}");
+                sleep(ACCEPT_BACKOFF).await;
+                continue;
+            }
+        };
+        let publisher = publisher.clone();
+        let history = history.clone();
+        let info = info.clone();
+        let epochs = epochs.clone();
+        let replies = replies.clone();
+        let limits = limits.clone();
+        let allowed_hosts = allowed_hosts.clone();
+        tokio::spawn(async move {
+            if let Err(err) = handle(
+                socket,
+                publisher,
+                history,
+                info,
+                epochs,
+                replies,
+                limits,
+                &allowed_hosts,
+            )
+            .await
+            {
+                log::debug!("dashboard: connection from {peer} ended: {err}");
+            }
+        });
+    }
+}
+
+async fn handle(
+    mut socket: TcpStream,
+    publisher: Arc<Publisher>,
+    history: Arc<RwLock<SlotHistory>>,
+    info: Arc<RwLock<ValidatorInfoCache>>,
+    epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    replies: Arc<Replies>,
+    limits: Limits,
+    allowed_hosts: &[String],
+) -> Result<(), ConnectionError> {
+    // Taken before the head is read, so a flood over the cap holds no task or buffer.
+    let Ok(_connection) = limits.connections.try_acquire_owned() else {
+        log::info!("dashboard: refusing a connection, {MAX_CONNECTIONS} already being served");
+        socket.shutdown().await?;
+        return Ok(());
+    };
+
+    let (head, head_len) = timeout(REQUEST_TIMEOUT, peek_request_head(&socket))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "request head"))??;
+
+    // Checked before anything is served: a page served to a rebound name would be
+    // same-origin with the dashboard.
+    if !host_is_allowed(&head, allowed_hosts) {
+        log::debug!(
+            "dashboard: refusing host {:?}; add it with --dashboard-allowed-host",
+            for_logging(header(&head, "host").unwrap_or("(absent)"))
+        );
+        return refuse(socket, head_len, 421, b"unrecognised host").await;
+    }
+
+    if is_websocket_upgrade(&head) {
+        if !origin_is_allowed(&head) {
+            log::debug!(
+                "dashboard: refusing websocket from origin {:?}",
+                for_logging(header(&head, "origin").unwrap_or("(absent)"))
+            );
+            return refuse(socket, head_len, 403, b"origin not allowed").await;
+        }
+        let Ok(_permit) = limits.websockets.try_acquire_owned() else {
+            log::info!(
+                "dashboard: refusing a websocket, {MAX_WEBSOCKET_CLIENTS} clients already \
+                 connected"
+            );
+            return refuse(socket, head_len, 503, b"too many dashboard clients").await;
+        };
+        let path = request_path(&head).to_string();
+        serve_websocket(socket, publisher, history, info, epochs, replies, &path).await
+    } else {
+        // Closing with unread data sends RST rather than FIN, which truncates the response.
+        let mut consumed = vec![0u8; head_len];
+        socket.read_exact(&mut consumed).await?;
+        serve_http(socket, &head)
+            .await
+            .map_err(ConnectionError::from)
+    }
+}
+
+async fn refuse(
+    mut socket: TcpStream,
+    head_len: usize,
+    status: u16,
+    body: &[u8],
+) -> Result<(), ConnectionError> {
+    let mut consumed = vec![0u8; head_len];
+    socket.read_exact(&mut consumed).await?;
+    let reply = response(status, "text/plain; charset=utf-8", body, false);
+    write_and_close(&mut socket, &reply).await?;
+    Ok(())
+}
+
+/// Pause between peeks of a head that has stopped arriving: `peek` never
+/// clears readiness, so `readable` returns at once.
+const HEAD_POLL: Duration = Duration::from_millis(20);
+
+async fn peek_request_head(socket: &TcpStream) -> io::Result<(String, usize)> {
+    let mut buffer = vec![0u8; MAX_REQUEST_HEAD];
+    let mut last_peeked = 0;
+    loop {
+        socket.readable().await?;
+        let peeked = match socket.peek(&mut buffer).await {
+            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "no request")),
+            Ok(peeked) => peeked,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(err) => return Err(err),
+        };
+        if peeked == last_peeked {
+            sleep(HEAD_POLL).await;
+            continue;
+        }
+        last_peeked = peeked;
+        // `from_utf8_lossy` can change the byte count, so the length comes from
+        // what was actually peeked rather than from the string.
+        let head = String::from_utf8_lossy(&buffer[..peeked]);
+        if head.contains("\r\n\r\n") || peeked == MAX_REQUEST_HEAD {
+            return Ok((head.into_owned(), peeked));
+        }
+    }
+}
+
+fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines()
+        .skip(1) // the request line is not a header
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.trim())
+}
+
+/// Ports are dropped: a dashboard proxied on another port is the same machine.
+fn host_of(value: &str) -> &str {
+    let value = value
+        .rsplit_once("//")
+        .map(|(_, rest)| rest)
+        .unwrap_or(value);
+    // IPv6 authorities are bracketed, so the port colon is the one outside.
+    if let Some(rest) = value.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    value.split(':').next().unwrap_or(value)
+}
+
+/// No `Host` at all is rejected; every HTTP/1.1 client sends one.
+fn host_is_allowed(head: &str, allowed: &[String]) -> bool {
+    let Some(host) = header(head, "host") else {
+        return false;
+    };
+    let host = host_of(host);
+
+    // An address literal is always accepted. Rebinding works by resolving a name
+    // the attacker owns, so the browser sends that name, never a bare address.
+    if host.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+
+    allowed
+        .iter()
+        .any(|candidate| host_of(candidate).eq_ignore_ascii_case(host))
+}
+
+/// No `Origin` is not a browser and is allowed; `null` is a sandboxed frame and is refused.
+fn origin_is_allowed(head: &str) -> bool {
+    let Some(origin) = header(head, "origin") else {
+        return true;
+    };
+    if origin.eq_ignore_ascii_case("null") {
+        return false;
+    }
+    match header(head, "host") {
+        Some(host) => host_of(origin).eq_ignore_ascii_case(host_of(host)),
+        None => false,
+    }
+}
+
+fn is_websocket_upgrade(head: &str) -> bool {
+    head.lines()
+        .filter_map(|line| line.split_once(':'))
+        .any(|(name, value)| {
+            name.eq_ignore_ascii_case("upgrade") && value.trim().eq_ignore_ascii_case("websocket")
+        })
+}
+
+fn request_path(head: &str) -> &str {
+    head.lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .map(|target| target.split(['?', '#']).next().unwrap_or("/"))
+        .unwrap_or("/")
+}
+
+async fn serve_http(mut socket: TcpStream, head: &str) -> io::Result<()> {
+    let path = request_path(head);
+    let is_read = head.starts_with("GET ") || head.starts_with("HEAD ");
+
+    let response = if !is_read {
+        response(
+            405,
+            "text/plain; charset=utf-8",
+            b"method not allowed",
+            false,
+        )
+    } else if assets::ASSETS.is_empty() {
+        response(
+            200,
+            "text/html; charset=utf-8",
+            MISSING_FRONTEND.as_bytes(),
+            false,
+        )
+    } else {
+        match lookup(path) {
+            // Hashed filenames cache forever; the entry document must not, or a redeploy is never
+            // picked up.
+            Some((content_type, body)) => {
+                response(200, content_type, body, path.starts_with("/assets/"))
+            }
+            // Unknown paths fall through to the SPA so client-side routes
+            // survive a hard refresh.
+            None => match lookup("/index.html") {
+                Some((content_type, body)) => response(200, content_type, body, false),
+                None => response(404, "text/plain; charset=utf-8", b"not found", false),
+            },
+        }
+    };
+
+    write_and_close(&mut socket, &response).await
+}
+
+async fn write_and_close(socket: &mut TcpStream, response: &[u8]) -> io::Result<()> {
+    timeout(WRITE_TIMEOUT, async {
+        socket.write_all(response).await?;
+        socket.flush().await?;
+        socket.shutdown().await
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "http response"))?
+}
+
+fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
+    let path = if path == "/" { "/index.html" } else { path };
+    assets::ASSETS
+        .iter()
+        .find(|(route, _, _)| *route == path)
+        .map(|(_, content_type, body)| (*content_type, *body))
+}
+
+/// Sent with every response. `img-src` allows https for validator icons; `manifest-src` lets a
+/// phone install the page; the inline script and style are index.html's theme stamp and splash.
+const SECURITY_HEADERS: &str = concat!(
+    "content-security-policy:",
+    " default-src 'none';",
+    " script-src 'self' 'unsafe-inline';",
+    " style-src 'self' 'unsafe-inline';",
+    " img-src 'self' data: https:;",
+    " manifest-src 'self';",
+    " connect-src 'self';",
+    " font-src 'self';",
+    " base-uri 'none';",
+    " form-action 'none';",
+    " frame-ancestors 'self'\r\n",
+    "x-content-type-options: nosniff\r\n",
+    "referrer-policy: no-referrer\r\n",
+);
+
+fn response(status: u16, content_type: &str, body: &[u8], immutable: bool) -> Vec<u8> {
+    let reason = match status {
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        421 => "Misdirected Request",
+        503 => "Service Unavailable",
+        _ => "OK",
+    };
+    let cache = if immutable {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    let mut out = format!(
+        "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: \
+         {}\r\ncache-control: {cache}\r\n{SECURITY_HEADERS}connection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    out.extend_from_slice(body);
+    out
+}
+
+async fn send_frame(
+    sender: &mut soketto::Sender<Compat<TcpStream>>,
+    message: &Message,
+    deflate: bool,
+) -> Result<(), soketto::connection::Error> {
+    match message.frame(deflate) {
+        Frame::Text(text) => sender.send_text(text).await,
+        Frame::Binary(bytes) => sender.send_binary(bytes).await,
+    }
+}
+
+/// Fails the connection if a send cannot complete promptly. Cancelling a
+/// partly written frame leaves the stream indeterminate, so a timeout is fatal.
+async fn send_within(
+    send: impl Future<Output = Result<(), soketto::connection::Error>>,
+) -> Result<(), ConnectionError> {
+    timeout(WRITE_TIMEOUT, send)
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket send"))??;
+    Ok(())
+}
+
+/// Limits unsent data only, so a fast link keeps its full window in flight.
+#[cfg(target_os = "linux")]
+fn limit_unsent(socket: &TcpStream) {
+    if let Err(err) = socket2::SockRef::from(socket).set_tcp_notsent_lowat(UNSENT_LIMIT) {
+        log::debug!("dashboard: could not limit a websocket's unsent bytes: {err}");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn limit_unsent(_socket: &TcpStream) {}
+
+async fn serve_websocket(
+    socket: TcpStream,
+    publisher: Arc<Publisher>,
+    history: Arc<RwLock<SlotHistory>>,
+    info: Arc<RwLock<ValidatorInfoCache>>,
+    epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    replies: Arc<Replies>,
+    path: &str,
+) -> Result<(), ConnectionError> {
+    limit_unsent(&socket);
+    let mut server = Server::new(socket.compat());
+    // Only a protocol the server lists is reported back from the request.
+    server.add_protocol(DEFLATE_PROTOCOL);
+    // Bounded like the peek: a head cut off at its limit leaves soketto waiting for the rest.
+    let (key, deflate) = timeout(REQUEST_TIMEOUT, async {
+        let request = server.receive_request().await?;
+        let deflate = request
+            .protocols()
+            .any(|protocol| protocol == DEFLATE_PROTOCOL);
+        Ok::<_, soketto::handshake::Error>((request.key(), deflate))
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket request"))??;
+
+    let response = if path == WEBSOCKET_PATH {
+        server::Response::Accept {
+            key,
+            protocol: deflate.then_some(DEFLATE_PROTOCOL),
+        }
+    } else {
+        server::Response::Reject { status_code: 404 }
+    };
+    timeout(WRITE_TIMEOUT, server.send_response(&response))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "websocket response"))??;
+    if path != WEBSOCKET_PATH {
+        return Ok(());
+    }
+
+    // Subscribing before taking the snapshot means a value that changes between
+    // the two arrives as an update instead of going missing.
+    let mut updates = publisher.subscribe();
+    let snapshot = publisher.snapshot();
+
+    // soketto applies these to what it receives only, so a frame over the bound is refused from
+    // its header, before its payload is read.
+    let mut builder = server.into_builder();
+    builder.set_max_message_size(MAX_CLIENT_MESSAGE);
+    builder.set_max_frame_size(MAX_CLIENT_MESSAGE);
+    let (mut sender, mut receiver) = builder.finish();
+
+    let total = snapshot.iter().fold(0usize, |sum, message| {
+        sum.saturating_add(message.wire_len(deflate))
+    });
+    for (index, message) in snapshot.iter().enumerate() {
+        let sent = timeout(WRITE_TIMEOUT, send_frame(&mut sender, message, deflate))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "snapshot send"))?;
+        if let Err(err) = sent {
+            log::warn!(
+                "dashboard: snapshot send failed on message {} of {} ({} bytes, {total} bytes \
+                 total, starts {:.120}): {err}",
+                index.saturating_add(1),
+                snapshot.len(),
+                message.wire_len(deflate),
+                message.text(),
+            );
+            return Err(err.into());
+        }
+        send_within(sender.flush()).await?;
+    }
+
+    let mut incoming = Vec::new();
+    let mut pace = ReplyPace::new(Instant::now());
+    loop {
+        // soketto's `receive` is not cancel safe, so it is polled to
+        // completion in an inner loop rather than dropped by `select!`.
+        let complete = {
+            let receive = receiver.receive(&mut incoming);
+            pin!(receive);
+            loop {
+                select! {
+                    // Client frames are handled first so that pings and closes
+                    // are not starved by a busy update stream.
+                    biased;
+
+                    received = &mut receive => match received {
+                        Ok(Incoming::Data(_)) => break true,
+                        Ok(Incoming::Pong(_)) => break false,
+                        Ok(Incoming::Closed(_)) | Err(soketto::connection::Error::Closed) => {
+                            return Ok(());
+                        }
+                        Err(err) => return Err(err.into()),
+                    },
+
+                    update = updates.recv() => match update {
+                        Ok(message) => {
+                            // A retained key queued twice goes once, with its newer value.
+                            let mut burst = vec![message];
+                            loop {
+                                match updates.try_recv() {
+                                    Ok(message) => burst.push(message),
+                                    Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                                    Err(TryRecvError::Lagged(_)) => {
+                                        return Err(ConnectionError::Lagged);
+                                    }
+                                }
+                            }
+                            for message in coalesce(burst) {
+                                send_within(send_frame(&mut sender, &message, deflate)).await?;
+                            }
+                            send_within(sender.flush()).await?;
+                        }
+                        Err(RecvError::Lagged(_)) => return Err(ConnectionError::Lagged),
+                        Err(RecvError::Closed) => return Ok(()),
+                    },
+                }
+            }
+        };
+
+        // soketto restarts its count after a pong but keeps the bytes, so the bound is checked
+        // on every return.
+        if incoming.len() > MAX_CLIENT_MESSAGE {
+            return Err(ConnectionError::Oversized(incoming.len()));
+        }
+        if !complete {
+            continue;
+        }
+        let wait = pace.take(Instant::now());
+        if !wait.is_zero() {
+            sleep(wait).await;
+        }
+        let reply = match search_request(&incoming) {
+            Some((id, params)) => Some(answer_search(id, params, &history, &info, &epochs).await),
+            None => respond(&incoming, &history, &info, &epochs, &replies),
+        };
+        if let Some(reply) = reply {
+            send_within(send_frame(&mut sender, &reply, deflate)).await?;
+            send_within(sender.flush()).await?;
+        }
+        incoming.clear();
+    }
+}
+
+struct ReplyPace {
+    tokens: u32,
+    refilled: Instant,
+}
+
+impl ReplyPace {
+    fn new(now: Instant) -> Self {
+        Self {
+            tokens: REPLY_BURST,
+            refilled: now,
+        }
+    }
+
+    fn take(&mut self, now: Instant) -> Duration {
+        let elapsed = now.saturating_duration_since(self.refilled).as_millis();
+        let earned = elapsed
+            .checked_div(REPLY_SPACING.as_millis())
+            .and_then(|earned| u32::try_from(earned).ok())
+            .unwrap_or(u32::MAX);
+        if earned > 0 {
+            self.tokens = self.tokens.saturating_add(earned).min(REPLY_BURST);
+            self.refilled = self
+                .refilled
+                .checked_add(REPLY_SPACING.saturating_mul(earned))
+                .unwrap_or(now);
+        }
+        if let Some(left) = self.tokens.checked_sub(1) {
+            self.tokens = left;
+            return Duration::ZERO;
+        }
+        let due = self.refilled.checked_add(REPLY_SPACING).unwrap_or(now);
+        self.refilled = due;
+        due.saturating_duration_since(now)
+    }
+}
+
+/// No forged lines, terminal escapes or 8 KB entries.
+fn for_logging(value: &str) -> String {
+    const LIMIT: usize = 48;
+    let mut out: String = value
+        .chars()
+        .take(LIMIT)
+        .map(|c| match c {
+            ' '..='~' => c,
+            _ => '?',
+        })
+        .collect();
+    if value.chars().nth(LIMIT).is_some() {
+        out.push_str("...");
+    }
+    out
+}
+
+#[derive(serde::Deserialize)]
+struct EpochParams {
+    epoch: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct FiguresParams {
+    /// The page below this slot; the newest without it.
+    before: Option<Slot>,
+}
+
+#[derive(serde::Deserialize)]
+struct DetailParams {
+    first: Slot,
+    last: Slot,
+}
+
+#[derive(serde::Deserialize)]
+struct SlotRangeParams {
+    first_slot: Slot,
+    /// Clamped by the history rather than refused.
+    count: usize,
+}
+
+/// A search request's id and parameters; `None` inside for parameters that do not parse, which
+/// are still answered.
+fn search_request(payload: &[u8]) -> Option<(Option<u64>, Option<SearchParams>)> {
+    let request: Request = serde_json::from_slice(payload).ok()?;
+    if request.topic != "slot" || request.key != "search" {
+        return None;
+    }
+    Some((request.id, serde_json::from_value(request.params).ok()))
+}
+
+/// Run on the blocking pool and one at a time, so a scan of the history holds up no other
+/// client's updates and at most one core.
+async fn answer_search(
+    id: Option<u64>,
+    params: Option<SearchParams>,
+    history: &Arc<RwLock<SlotHistory>>,
+    info: &Arc<RwLock<ValidatorInfoCache>>,
+    epochs: &Arc<RwLock<Vec<EpochInfo>>>,
+) -> Message {
+    let Some(params) = params else {
+        return encode_with_id(
+            "slot",
+            "search",
+            id,
+            &serde_json::json!({ "error": "search needs a before slot" }),
+        );
+    };
+    let Ok(_permit) = SEARCHES.acquire().await else {
+        return encode_with_id("slot", "search", id, &());
+    };
+    let (history, info, epochs) = (Arc::clone(history), Arc::clone(info), Arc::clone(epochs));
+    let found = spawn_blocking(move || {
+        // Held for the scan; the collector writes the epoch records once an epoch.
+        let epochs = epochs.read().ok()?;
+        Some(search(&history, &info, &epochs, &params))
+    })
+    .await;
+    match found {
+        Ok(Some(reply)) => encode_with_id("slot", "search", id, &reply),
+        _ => encode_with_id("slot", "search", id, &()),
+    }
+}
+
+/// Even unknown requests get an answer, so no client waits on an id that never comes back.
+fn respond(
+    payload: &[u8],
+    history: &RwLock<SlotHistory>,
+    info: &RwLock<ValidatorInfoCache>,
+    epochs: &RwLock<Vec<EpochInfo>>,
+    replies: &Replies,
+) -> Option<Message> {
+    let request: Request = serde_json::from_slice(payload).ok()?;
+    let id = request.id;
+    match (request.topic.as_str(), request.key.as_str()) {
+        ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
+        ("summary", "displays") => {
+            let displays = match info.read() {
+                Ok(info) => info.displays(),
+                Err(_) => return Some(encode_with_id("summary", "displays", id, &())),
+            };
+            Some(encode_with_id("summary", "displays", id, &displays))
+        }
+        ("summary", "misses") => {
+            replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
+            let json = match replies.misses.read() {
+                Ok(misses) => misses.misses.clone(),
+                Err(_) => return Some(encode_with_id("summary", "misses", id, &())),
+            };
+            Some(encode_json_with_id("summary", "misses", id, &json))
+        }
+        ("summary", "written") => {
+            replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
+            let json = match replies.misses.read() {
+                Ok(misses) => misses.written.clone(),
+                Err(_) => return Some(encode_with_id("summary", "written", id, &())),
+            };
+            Some(encode_json_with_id("summary", "written", id, &json))
+        }
+        ("peers", "gossip") => {
+            replies
+                .gossip_peers_wanted
+                .store(timestamp(), Ordering::Relaxed);
+            let json = match replies.gossip_peers.read() {
+                Ok(peers) => peers.clone(),
+                Err(_) => return Some(encode_with_id("peers", "gossip", id, &())),
+            };
+            Some(encode_json_with_id("peers", "gossip", id, &json))
+        }
+        ("epoch", "query") => {
+            let Ok(params) = serde_json::from_value::<EpochParams>(request.params) else {
+                return Some(encode_with_id(
+                    "epoch",
+                    "query",
+                    id,
+                    &serde_json::json!({ "error": "query needs an epoch" }),
+                ));
+            };
+            let found = match epochs.read() {
+                Ok(epochs) => epochs
+                    .iter()
+                    .find(|held| held.epoch == params.epoch)
+                    .cloned(),
+                Err(_) => None,
+            };
+            Some(encode_with_id("epoch", "query", id, &found))
+        }
+        ("produced", "figures") => {
+            let Ok(params) = serde_json::from_value::<FiguresParams>(request.params) else {
+                return Some(encode_with_id(
+                    "produced",
+                    "figures",
+                    id,
+                    &serde_json::json!({ "error": "figures takes an optional before slot" }),
+                ));
+            };
+            let page = match replies.produced.read() {
+                Ok(store) => store.figures(params.before),
+                Err(_) => return Some(encode_with_id("produced", "figures", id, &())),
+            };
+            Some(encode_with_id("produced", "figures", id, &page))
+        }
+        ("produced", "detail") => {
+            let Ok(params) = serde_json::from_value::<DetailParams>(request.params) else {
+                return Some(encode_with_id(
+                    "produced",
+                    "detail",
+                    id,
+                    &serde_json::json!({ "error": "detail needs a first and a last slot" }),
+                ));
+            };
+            let detail = replies.produced_detail(params.first, params.last);
+            Some(encode_with_id("produced", "detail", id, &detail))
+        }
+        ("slot", "range") => {
+            // A client waiting on an id cannot tell silence from slowness.
+            let Ok(params) = serde_json::from_value::<SlotRangeParams>(request.params) else {
+                return Some(encode_with_id(
+                    "slot",
+                    "range",
+                    id,
+                    &serde_json::json!({ "error": "range needs a first_slot and a count" }),
+                ));
+            };
+            let range = match history.read() {
+                Ok(history) => history.range(params.first_slot, params.count),
+                Err(_) => return Some(encode_with_id("slot", "range", id, &())),
+            };
+            Some(encode_with_id("slot", "range", id, &range))
+        }
+        (topic, key) => {
+            log::debug!(
+                "dashboard: unhandled request {:?}.{:?}",
+                for_logging(topic),
+                for_logging(key)
+            );
+            Some(encode_with_id(
+                topic,
+                key,
+                id,
+                &serde_json::json!({ "error": "unsupported request" }),
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::proto::{DEFLATE_FROM, TOPIC_SLOT},
+        flate2::read::ZlibDecoder,
+        soketto::handshake::{Client, ServerResponse},
+        std::io::Read,
+    };
+
+    fn empty() -> RwLock<SlotHistory> {
+        RwLock::new(SlotHistory::new(16))
+    }
+
+    fn empty_history() -> Arc<RwLock<SlotHistory>> {
+        Arc::new(empty())
+    }
+
+    fn no_info() -> RwLock<ValidatorInfoCache> {
+        RwLock::new(ValidatorInfoCache::default())
+    }
+
+    fn no_info_shared() -> Arc<RwLock<ValidatorInfoCache>> {
+        Arc::new(no_info())
+    }
+
+    fn no_epochs() -> RwLock<Vec<EpochInfo>> {
+        RwLock::new(Vec::new())
+    }
+
+    fn no_epochs_shared() -> Arc<RwLock<Vec<EpochInfo>>> {
+        Arc::new(no_epochs())
+    }
+
+    fn no_replies() -> Replies {
+        Replies::default()
+    }
+
+    fn no_replies_shared() -> Arc<Replies> {
+        Arc::new(no_replies())
+    }
+
+    fn epoch_record(epoch: u64) -> EpochInfo {
+        EpochInfo {
+            epoch,
+            start_slot: epoch.saturating_mul(432_000),
+            end_slot: epoch.saturating_mul(432_000).saturating_add(431_999),
+            slots_in_epoch: 432_000,
+            my_leader_slots: Vec::new(),
+            leaders: vec!["LEADER".to_string()],
+            turns: vec![0],
+            block_cost_limit: 60_000_000,
+            account_cost_limit: 12_000_000,
+        }
+    }
+
+    #[test]
+    fn test_held_epoch_is_answered_with_its_arrays() {
+        let epochs = RwLock::new(vec![epoch_record(841), epoch_record(842)]);
+        let reply = respond(
+            br#"{"topic":"epoch","key":"query","id":11,"params":{"epoch":841}}"#,
+            &empty(),
+            &no_info(),
+            &epochs,
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":11"#), "{reply}");
+        assert!(reply.contains(r#""epoch":841"#), "{reply}");
+        assert!(reply.contains(r#""LEADER""#), "{reply}");
+    }
+
+    #[test]
+    fn test_dropped_epoch_is_answered_with_nothing() {
+        // A validator that has not been up that long has no schedule for it.
+        let epochs = RwLock::new(vec![epoch_record(842)]);
+        let reply = respond(
+            br#"{"topic":"epoch","key":"query","id":12,"params":{"epoch":700}}"#,
+            &empty(),
+            &no_info(),
+            &epochs,
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":12"#), "{reply}");
+        assert!(reply.contains(r#""value":null"#), "{reply}");
+    }
+
+    #[test]
+    fn test_the_display_table_carries_what_a_validator_calls_itself() {
+        use crate::validator_info::ValidatorInfo;
+        let info = RwLock::new(ValidatorInfoCache::default());
+        info.write().unwrap().insert(
+            solana_pubkey::Pubkey::new_from_array([7; 32]),
+            0,
+            ValidatorInfo {
+                name: Some("Lantern".to_string()),
+                icon_url: Some("https://l/i.png".to_string()),
+            },
+        );
+
+        let reply = respond(
+            br#"{"topic":"summary","key":"displays","id":4}"#,
+            &empty(),
+            &info,
+            &no_epochs(),
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":4"#), "{reply}");
+        assert!(reply.contains(r#""Lantern""#), "{reply}");
+        assert!(reply.contains(r#""https://l/i.png""#), "{reply}");
+    }
+
+    #[test]
+    fn test_unnamed_validator_takes_no_room() {
+        use crate::validator_info::ValidatorInfo;
+        let info = RwLock::new(ValidatorInfoCache::default());
+        info.write().unwrap().insert(
+            solana_pubkey::Pubkey::new_from_array([9; 32]),
+            0,
+            ValidatorInfo::default(),
+        );
+
+        let reply = respond(
+            br#"{"topic":"summary","key":"displays","id":5}"#,
+            &empty(),
+            &info,
+            &no_epochs(),
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""keys":[]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_a_range_request_is_answered_with_its_own_id() {
+        let history = empty();
+        let reply = respond(
+            br#"{"topic":"slot","key":"range","id":9,"params":{"first_slot":4,"count":2}}"#,
+            &history,
+            &no_info(),
+            &no_epochs(),
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":9"#), "{reply}");
+        assert!(reply.contains(r#""first_slot":4"#), "{reply}");
+        assert!(reply.contains(r#""rows":[null,null]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_figures_are_paged_newest_first() {
+        let replies = no_replies();
+        for slot in [40, 41, 42] {
+            replies
+                .produced
+                .write()
+                .unwrap()
+                .insert(crate::produced::sample_block(slot));
+        }
+        let reply = respond(
+            br#"{"topic":"produced","key":"figures","id":6,"params":{"before":42}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":6"#), "{reply}");
+        assert!(reply.contains(r#""figures":[[41,"#), "{reply}");
+        assert!(reply.contains(r#""held":3"#), "{reply}");
+        assert!(reply.contains(r#""next":null"#), "{reply}");
+
+        let newest = respond(
+            br#"{"topic":"produced","key":"figures","id":7,"params":{}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(newest.contains(r#""figures":[[42,"#), "{newest}");
+    }
+
+    #[test]
+    fn test_detail_carries_the_blocks_asked_for() {
+        let replies = no_replies();
+        replies
+            .produced
+            .write()
+            .unwrap()
+            .insert(crate::produced::sample_block(40));
+        let reply = respond(
+            br#"{"topic":"produced","key":"detail","id":2,"params":{"first":40,"last":40}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":2"#), "{reply}");
+        assert!(reply.contains(r#""blockhash":"hash40""#), "{reply}");
+
+        let bad = respond(
+            br#"{"topic":"produced","key":"detail","id":3,"params":{"first":40}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(bad.contains("error"), "{bad}");
+    }
+
+    #[test]
+    fn test_bad_range_parameters_are_answered() {
+        let reply = respond(
+            br#"{"topic":"slot","key":"range","id":3,"params":{"first_slot":"soon"}}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":3"#), "{reply}");
+        assert!(reply.contains("error"), "{reply}");
+    }
+
+    #[test]
+    fn test_detects_a_websocket_upgrade() {
+        assert!(is_websocket_upgrade(
+            "GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n"
+        ));
+        assert!(is_websocket_upgrade(
+            "GET / HTTP/1.1\r\nupgrade:  WebSocket \r\n\r\n"
+        ));
+        assert!(!is_websocket_upgrade("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+    }
+
+    fn req(headers: &str) -> String {
+        format!("GET /websocket HTTP/1.1\r\n{headers}\r\n\r\n")
+    }
+
+    fn allowed() -> Vec<String> {
+        vec![
+            "localhost".into(),
+            "127.0.0.1".into(),
+            "dash.example.com".into(),
+        ]
+    }
+
+    #[test]
+    fn test_page_this_dashboard_served_may_open_a_socket() {
+        assert!(origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: https://dash.example.com"
+        )));
+        // Behind a proxy the visitor's port and the dashboard's differ.
+        assert!(origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: https://dash.example.com:443"
+        )));
+    }
+
+    #[test]
+    fn test_another_site_may_not() {
+        // A websocket is exempt from the same-origin policy, so without this any page a browser
+        // visits could read the feed.
+        assert!(!origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: https://evil.example"
+        )));
+        assert!(!origin_is_allowed(&req(
+            "Host: 127.0.0.1:10999\r\nOrigin: https://evil.example"
+        )));
+    }
+
+    #[test]
+    fn test_sandboxed_frame_is_refused() {
+        assert!(!origin_is_allowed(&req(
+            "Host: dash.example.com\r\nOrigin: null"
+        )));
+    }
+
+    #[test]
+    fn test_client_that_is_not_a_browser_is_allowed() {
+        // curl and monitoring send no Origin, and cannot be acting for a page.
+        assert!(origin_is_allowed(&req("Host: dash.example.com")));
+    }
+
+    #[test]
+    fn test_only_known_hosts_are_answered() {
+        assert!(host_is_allowed(&req("Host: localhost:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: DASH.EXAMPLE.COM"), &allowed()));
+        assert!(!host_is_allowed(&req("Host: rebind.evil"), &allowed()));
+        assert!(!host_is_allowed(&req("Origin: x"), &allowed()));
+    }
+
+    #[test]
+    fn test_address_literal_needs_no_configuration() {
+        // An address cannot be rebound, so accepting one relaxes nothing.
+        assert!(host_is_allowed(&req("Host: 111.1.1.1:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: 127.0.0.1:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: [::1]:10999"), &allowed()));
+        assert!(host_is_allowed(&req("Host: [2001:db8::1]"), &allowed()));
+        assert!(host_is_allowed(&req("Host: 111.1.1.1"), &[]));
+    }
+
+    #[test]
+    fn test_name_still_has_to_be_named() {
+        // The rebinding defence survives the concession above: what an
+        // attacker controls is a name, and a name is still checked.
+        assert!(!host_is_allowed(&req("Host: rebind.evil"), &[]));
+        assert!(!host_is_allowed(
+            &req("Host: 111.1.1.1.evil.com"),
+            &allowed()
+        ));
+        assert!(!host_is_allowed(&req("Host: 999.999.999.999"), &allowed()));
+    }
+
+    #[test]
+    fn test_more_than_one_name_can_be_allowed() {
+        let hosts = vec!["a.example.com".to_string(), "b.example.com".to_string()];
+        assert!(host_is_allowed(&req("Host: a.example.com"), &hosts));
+        assert!(host_is_allowed(&req("Host: b.example.com"), &hosts));
+        assert!(!host_is_allowed(&req("Host: c.example.com"), &hosts));
+    }
+
+    #[test]
+    fn test_rebinding_is_caught_by_the_host_check() {
+        // Rebinding defeats the origin check and is caught by the host check.
+        let rebound = req("Host: rebind.evil:10999\r\nOrigin: http://rebind.evil");
+        assert!(
+            origin_is_allowed(&rebound),
+            "origin matches host under rebinding, which is why the host check exists"
+        );
+        assert!(!host_is_allowed(&rebound, &allowed()));
+    }
+
+    #[test]
+    fn test_hosts_are_compared_without_scheme_or_port() {
+        assert_eq!(host_of("https://dash.example.com:443"), "dash.example.com");
+        assert_eq!(host_of("dash.example.com:10999"), "dash.example.com");
+        assert_eq!(host_of("[::1]:10999"), "::1");
+        assert_eq!(host_of("http://[::1]"), "::1");
+    }
+
+    #[test]
+    fn test_headers_are_case_insensitive_and_end_at_body() {
+        let head = "GET / HTTP/1.1\r\nHOST: x\r\n\r\nHost: injected\r\n";
+        assert_eq!(header(head, "host"), Some("x"));
+        assert_eq!(header(head, "missing"), None);
+    }
+
+    #[test]
+    fn test_extracts_the_request_path() {
+        assert_eq!(
+            request_path("GET /assets/app.js HTTP/1.1\r\n"),
+            "/assets/app.js"
+        );
+        assert_eq!(request_path("GET /?x=1 HTTP/1.1\r\n"), "/");
+        assert_eq!(request_path("garbage"), "/");
+    }
+
+    async fn request_with_no_permits_left(request: &[u8]) -> String {
+        // These fixtures use `Host: x`, so the host policy is widened; the cap is under test.
+        let allowed_hosts = vec!["x".to_string()];
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let limits = Limits {
+            connections: Arc::new(Semaphore::new(1)),
+            websockets: Arc::new(Semaphore::new(1)),
+        };
+        let _held = limits.websockets.clone().try_acquire_owned().unwrap();
+
+        let publisher = Arc::new(Publisher::new());
+        let server = tokio::spawn({
+            let limits = limits.clone();
+            async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                handle(
+                    socket,
+                    publisher,
+                    empty_history(),
+                    no_info_shared(),
+                    no_epochs_shared(),
+                    no_replies_shared(),
+                    limits,
+                    &allowed_hosts,
+                )
+                .await
+            }
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        reply
+    }
+
+    async fn request_with_hosts(request: &[u8], allowed_hosts: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let publisher = Arc::new(Publisher::new());
+        let limits = Limits::new();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            handle(
+                socket,
+                publisher,
+                empty_history(),
+                no_info_shared(),
+                no_epochs_shared(),
+                no_replies_shared(),
+                limits,
+                &allowed_hosts,
+            )
+            .await
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        reply
+    }
+
+    #[tokio::test]
+    async fn test_unrecognised_host_is_turned_away() {
+        let reply = request_with_hosts(
+            b"GET / HTTP/1.1\r\nHost: rebind.evil\r\n\r\n",
+            vec!["dash.example.com".to_string()],
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 421 Misdirected Request"),
+            "expected a refusal, got {reply:?}"
+        );
+        // The page itself must not have gone out: serving it would make the
+        // attacker's origin same-origin with the dashboard.
+        assert!(!reply.contains("<!doctype"), "document was served anyway");
+    }
+
+    #[tokio::test]
+    async fn test_websocket_from_another_origin_is_refused() {
+        let reply = request_with_hosts(
+            b"GET /websocket HTTP/1.1\r\nHost: dash.example.com\r\nUpgrade: websocket\r\nOrigin: https://evil.example\r\n\r\n",
+            vec!["dash.example.com".to_string()],
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 403 Forbidden"),
+            "expected a refusal, got {reply:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_websocket_over_the_cap_is_refused_with_a_status() {
+        let reply = request_with_no_permits_left(
+            b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n",
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 503 Service Unavailable"),
+            "expected a refusal, got {reply:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_is_still_served_when_the_websocket_cap_is_full() {
+        // The point of capping websockets alone: a full pool must not stop the
+        // page itself from loading.
+        let reply = request_with_no_permits_left(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(
+            reply.starts_with("HTTP/1.1 200 OK"),
+            "expected the page, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
+    }
+
+    async fn request_with_no_connections_left(request: &[u8]) -> String {
+        let allowed_hosts = vec!["x".to_string()];
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let limits = Limits {
+            connections: Arc::new(Semaphore::new(1)),
+            websockets: Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS)),
+        };
+        let _held = limits.connections.clone().try_acquire_owned().unwrap();
+
+        let publisher = Arc::new(Publisher::new());
+        let server = tokio::spawn({
+            let limits = limits.clone();
+            async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                handle(
+                    socket,
+                    publisher,
+                    empty_history(),
+                    no_info_shared(),
+                    no_epochs_shared(),
+                    no_replies_shared(),
+                    limits,
+                    &allowed_hosts,
+                )
+                .await
+            }
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        let _ = client.read_to_string(&mut reply).await;
+        server.await.unwrap().unwrap();
+        reply
+    }
+
+    #[tokio::test]
+    async fn test_full_connection_cap_closes_without_reading() {
+        // Over the cap the request is never read: reading it is the cost the
+        // cap exists to bound.
+        let reply = request_with_no_connections_left(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(reply.is_empty(), "expected a closed socket, got {reply:?}");
+    }
+
+    #[tokio::test]
+    async fn test_connection_cap_covers_websockets_too() {
+        // A websocket is a connection. If it were exempt, the cheapest way past
+        // the cap would be to open the long-lived kind.
+        let reply = request_with_no_connections_left(
+            b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\r\n",
+        )
+        .await;
+        assert!(reply.is_empty(), "expected a closed socket, got {reply:?}");
+    }
+
+    #[tokio::test]
+    async fn test_a_head_arriving_in_two_pieces_is_still_served() {
+        let (addr, server) = serve_one(Arc::new(Publisher::new())).await;
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(b"GET / HTTP/1.1\r\nHo").await.unwrap();
+        sleep(Duration::from_millis(100)).await;
+        client.write_all(b"st: x\r\n\r\n").await.unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        server.await.unwrap().unwrap();
+        assert!(
+            reply.starts_with("HTTP/1.1 200 OK"),
+            "expected the page, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
+    }
+
+    fn status_line(status: u16, immutable: bool) -> String {
+        let out = String::from_utf8(response(status, "text/plain", b"", immutable)).unwrap();
+        out.lines().next().unwrap().to_string()
+    }
+
+    #[test]
+    fn test_every_status_the_server_sends_has_its_reason_phrase() {
+        assert_eq!(status_line(200, false), "HTTP/1.1 200 OK");
+        assert_eq!(status_line(403, false), "HTTP/1.1 403 Forbidden");
+        assert_eq!(status_line(404, false), "HTTP/1.1 404 Not Found");
+        assert_eq!(status_line(405, false), "HTTP/1.1 405 Method Not Allowed");
+        assert_eq!(status_line(421, false), "HTTP/1.1 421 Misdirected Request");
+        assert_eq!(status_line(503, false), "HTTP/1.1 503 Service Unavailable");
+    }
+
+    #[test]
+    fn test_an_unlisted_status_still_produces_a_usable_line() {
+        assert_eq!(status_line(418, false), "HTTP/1.1 418 OK");
+    }
+
+    #[test]
+    fn test_only_hashed_assets_are_cached() {
+        // Asset filenames carry a content hash; index.html does not, and caching it
+        // would hide a redeploy.
+        assert!(
+            String::from_utf8(response(200, "text/javascript", b"x", true))
+                .unwrap()
+                .contains("cache-control: public, max-age=31536000, immutable")
+        );
+        assert!(
+            String::from_utf8(response(200, "text/html", b"x", false))
+                .unwrap()
+                .contains("cache-control: no-cache")
+        );
+    }
+
+    #[test]
+    fn test_the_content_length_counts_the_body_that_follows() {
+        // A length that disagrees with the body leaves the client waiting, or reading
+        // the next response as this one's tail.
+        for body in [b"".as_slice(), b"x".as_slice(), b"hello world".as_slice()] {
+            let out = response(200, "text/plain", body, false);
+            let text = String::from_utf8(out.clone()).unwrap();
+            assert!(
+                text.contains(&format!("content-length: {}\r\n", body.len())),
+                "missing or wrong length for {body:?}"
+            );
+            let (head, sent) = text.split_once("\r\n\r\n").expect("no header terminator");
+            assert_eq!(sent.as_bytes(), body);
+            assert_eq!(out.len(), head.len() + 4 + body.len());
+        }
+    }
+
+    #[test]
+    fn test_responses_carry_the_security_headers() {
+        let out = String::from_utf8(response(200, "text/html", b"<html>", false)).unwrap();
+        assert!(out.contains("content-security-policy:"));
+        assert!(out.contains("x-content-type-options: nosniff"));
+        assert!(out.contains("referrer-policy: no-referrer"));
+    }
+
+    #[test]
+    fn test_policy_still_permits_validator_icons() {
+        assert!(SECURITY_HEADERS.contains("img-src 'self' data: https:"));
+        assert!(!SECURITY_HEADERS.contains("img-src 'self'\r\n"));
+    }
+
+    #[test]
+    fn test_policy_lets_a_phone_read_the_manifest() {
+        assert!(SECURITY_HEADERS.contains("manifest-src 'self'"));
+    }
+
+    #[test]
+    fn test_header_block_is_well_formed() {
+        let out = String::from_utf8(response(200, "text/plain", b"body", false)).unwrap();
+        let (head, body) = out.split_once("\r\n\r\n").expect("no header terminator");
+        assert_eq!(body, "body");
+        assert!(!head.contains("\r\n\r\n"), "blank line inside the headers");
+        for line in head.split("\r\n").skip(1) {
+            assert!(line.contains(':'), "malformed header line: {line:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_search_is_answered_with_its_id() {
+        let (id, params) = search_request(
+            br#"{"topic":"slot","key":"search","id":7,"params":{"query":"x","before":64}}"#,
+        )
+        .expect("a search");
+        let reply = answer_search(
+            id,
+            params,
+            &empty_history(),
+            &no_info_shared(),
+            &no_epochs_shared(),
+        )
+        .await;
+        assert!(reply.contains(r#""id":7"#), "{reply}");
+        assert!(reply.contains(r#""turns":[]"#), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn test_a_search_without_a_before_slot_is_told_so() {
+        let (id, params) =
+            search_request(br#"{"topic":"slot","key":"search","id":8,"params":{"query":"x"}}"#)
+                .expect("a search");
+        assert!(params.is_none());
+        let reply = answer_search(
+            id,
+            params,
+            &empty_history(),
+            &no_info_shared(),
+            &no_epochs_shared(),
+        )
+        .await;
+        assert!(
+            reply.contains(r#""id":8"#) && reply.contains("error"),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn test_other_requests_are_not_searches() {
+        assert!(search_request(br#"{"topic":"slot","key":"range","id":1}"#).is_none());
+        assert!(search_request(b"not json").is_none());
+    }
+
+    #[test]
+    fn test_the_miss_list_is_answered_and_the_ask_remembered() {
+        let replies = no_replies();
+        let reply = respond(
+            br#"{"topic":"summary","key":"misses","id":9}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":9"#), "{reply}");
+        assert!(reply.contains(r#""rows":[]"#), "{reply}");
+        assert!(
+            !reply.contains("written"),
+            "served on its own route: {reply}"
+        );
+        let asked = replies.misses_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
+    }
+
+    #[test]
+    fn test_the_gossip_peers_are_answered_and_the_ask_remembered() {
+        let replies = no_replies();
+        let reply = respond(
+            br#"{"topic":"peers","key":"gossip","id":11}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":11"#), "{reply}");
+        assert!(
+            reply.contains(r#""value":null"#),
+            "not gathered yet: {reply}"
+        );
+        let asked = replies.gossip_peers_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
+    }
+
+    #[test]
+    fn test_the_written_list_is_answered_and_the_ask_remembered() {
+        let replies = no_replies();
+        let reply = respond(
+            br#"{"topic":"summary","key":"written","id":10}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":10"#), "{reply}");
+        assert!(reply.contains(r#""certificates":0"#), "{reply}");
+        assert!(reply.contains(r#""rows":[]"#), "{reply}");
+        let asked = replies.misses_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
+    }
+
+    #[test]
+    fn test_a_burst_of_requests_is_answered_at_once_and_the_rest_spaced() {
+        let start = Instant::now();
+        let mut pace = ReplyPace::new(start);
+        for _ in 0..REPLY_BURST {
+            assert_eq!(pace.take(start), Duration::ZERO);
+        }
+        assert_eq!(pace.take(start), REPLY_SPACING);
+        assert_eq!(pace.take(start), REPLY_SPACING.saturating_mul(2));
+        let later = start.checked_add(Duration::from_secs(60)).unwrap();
+        for _ in 0..REPLY_BURST {
+            assert_eq!(pace.take(later), Duration::ZERO);
+        }
+        assert_eq!(pace.take(later), REPLY_SPACING);
+    }
+
+    #[test]
+    fn test_ping_is_answered_with_its_id() {
+        let reply = respond(
+            br#"{"topic":"summary","key":"ping","id":7}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":7"#));
+    }
+
+    #[test]
+    fn test_unknown_requests_still_get_a_reply() {
+        let reply = respond(
+            br#"{"topic":"nope","key":"nope","id":1}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &no_replies(),
+        )
+        .unwrap();
+        assert!(reply.contains("unsupported request"));
+    }
+
+    #[test]
+    fn test_malformed_requests_are_ignored() {
+        assert!(
+            respond(
+                b"not json",
+                &empty(),
+                &no_info(),
+                &no_epochs(),
+                &no_replies()
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_log_text_cannot_forge_a_second_line() {
+        // A newline would end the entry and let the rest pose as one the
+        // validator wrote itself.
+        assert_eq!(
+            for_logging("summary\n[INFO] dashboard: all good"),
+            "summary?[INFO] dashboard: all good"
+        );
+        // An escape sequence would reach the terminal of whoever tails the log,
+        // and an override would reverse the text printed after it.
+        assert_eq!(for_logging("\u{1b}[2Jwiped"), "?[2Jwiped");
+        assert_eq!(for_logging("nice\u{202e}gnp.exe"), "nice?gnp.exe");
+    }
+
+    #[test]
+    fn test_log_text_is_bounded() {
+        let logged = for_logging(&"a".repeat(4096));
+        assert!(
+            logged.len() < 64,
+            "unbounded log line: {} bytes",
+            logged.len()
+        );
+        assert!(
+            logged.ends_with("..."),
+            "truncation is not visible: {logged:?}"
+        );
+        assert_eq!(for_logging("summary"), "summary");
+    }
+
+    #[tokio::test]
+    async fn test_a_get_over_a_socket_serves_the_page() {
+        // Closing on unread bytes sends a reset that discards the response.
+        let reply = request_with_hosts(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 200 OK"),
+            "expected the page, got {:?}",
+            &reply[..reply.len().min(80)]
+        );
+        assert!(reply.contains("content-type: text/html"));
+        assert!(
+            reply.contains("\r\n\r\n"),
+            "a response with no body terminator"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_an_unknown_path_falls_through_to_the_app() {
+        let reply = request_with_hosts(
+            b"GET /some/client/route HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 200 OK"));
+        assert!(reply.contains("content-type: text/html"));
+    }
+
+    #[tokio::test]
+    async fn test_a_method_that_would_write_is_refused() {
+        // Nothing here accepts input over HTTP, and a server that quietly
+        // ignores a POST reads as one that took it.
+        let reply = request_with_hosts(
+            b"POST / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 405 Method Not Allowed"));
+    }
+
+    async fn serve_one(
+        publisher: Arc<Publisher>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::task::JoinHandle<Result<(), ConnectionError>>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let allowed_hosts = vec!["x".to_string()];
+            let (socket, _) = listener.accept().await.unwrap();
+            handle(
+                socket,
+                publisher,
+                empty_history(),
+                no_info_shared(),
+                no_epochs_shared(),
+                no_replies_shared(),
+                Limits::new(),
+                &allowed_hosts,
+            )
+            .await
+        });
+        (addr, server)
+    }
+
+    async fn connect(addr: std::net::SocketAddr) -> Client<'static, Compat<TcpStream>> {
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut client = Client::new(stream.compat(), "x", WEBSOCKET_PATH);
+        match client.handshake().await.unwrap() {
+            ServerResponse::Accepted { protocol: None } => {}
+            _ => panic!("the server refused a well-formed handshake"),
+        }
+        client
+    }
+
+    async fn connect_deflating(addr: std::net::SocketAddr) -> Client<'static, Compat<TcpStream>> {
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut client = Client::new(stream.compat(), "x", WEBSOCKET_PATH);
+        client.add_protocol(DEFLATE_PROTOCOL);
+        match client.handshake().await.unwrap() {
+            ServerResponse::Accepted {
+                protocol: Some(protocol),
+            } => assert_eq!(protocol, DEFLATE_PROTOCOL),
+            _ => panic!("the server should accept the subprotocol it knows"),
+        }
+        client
+    }
+
+    #[tokio::test]
+    async fn test_a_client_offering_the_subprotocol_gets_long_messages_deflated() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        publisher.publish("summary", "host", &vec!["a host row"; 200]);
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect_deflating(addr).await.into_builder().finish();
+
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let mut data = Vec::new();
+            let kind = receiver.receive_data(&mut data).await.unwrap();
+            if kind.is_binary() {
+                assert!(
+                    data.len() < DEFLATE_FROM,
+                    "deflated, so shorter than the cut-off"
+                );
+                let mut text = String::new();
+                ZlibDecoder::new(&data[..])
+                    .read_to_string(&mut text)
+                    .unwrap();
+                texts.push((true, text));
+            } else {
+                texts.push((false, String::from_utf8(data).unwrap()));
+            }
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|(binary, text)| !binary && text.contains(r#""key":"cluster""#)),
+            "the short message should stay text: {texts:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|(binary, text)| *binary && text.contains(r#""key":"host""#)),
+            "the long message should arrive deflated: {texts:?}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_a_value_changing_reaches_a_connected_client() {
+        // The update arm of the select loop, which a server that only ever sent the
+        // snapshot would have passed every other test without.
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+
+        let mut first = Vec::new();
+        receiver.receive_data(&mut first).await.unwrap();
+
+        publisher.publish("summary", "root_slot", &42u64);
+        let mut update = Vec::new();
+        receiver.receive_data(&mut update).await.unwrap();
+        let update = String::from_utf8(update).unwrap();
+        assert!(
+            update.contains(r#""key":"root_slot""#) && update.contains(r#""value":42"#),
+            "expected the update, got {update}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_a_client_request_is_answered_on_the_same_socket() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+
+        sender
+            .send_text(r#"{"topic":"summary","key":"ping","id":7}"#)
+            .await
+            .unwrap();
+        sender.flush().await.unwrap();
+
+        let mut reply = Vec::new();
+        receiver.receive_data(&mut reply).await.unwrap();
+        let reply = String::from_utf8(reply).unwrap();
+        assert!(
+            reply.contains(r#""id":7"#),
+            "the reply did not carry the request's id: {reply}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_an_oversized_client_message_ends_the_connection() {
+        // Refused from the frame's header, before its payload is read.
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+
+        let oversized = "x".repeat(MAX_CLIENT_MESSAGE + 1);
+        sender.send_text(&oversized).await.unwrap();
+        sender.flush().await.unwrap();
+
+        match server.await.unwrap() {
+            Err(ConnectionError::Connection(soketto::connection::Error::Codec(
+                soketto::base::Error::PayloadTooLarge { .. },
+            ))) => {}
+            other => panic!("expected the connection to be dropped, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pongs_between_fragments_do_not_lift_the_bound() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let mut stream = connect(addr).await.into_inner().into_inner();
+
+        // An unfinished text frame of 4,000 bytes, then an empty pong, both masked with a zero key.
+        let mut fragment = vec![0x01, 0x80 | 126, 0x0f, 0xa0, 0, 0, 0, 0];
+        fragment.resize(4008, b'x');
+        let pong = [0x8a, 0x80, 0, 0, 0, 0];
+        for _ in 0..2 {
+            stream.write_all(&fragment).await.unwrap();
+            stream.write_all(&pong).await.unwrap();
+        }
+
+        match timeout(Duration::from_secs(10), server).await {
+            Ok(Ok(Err(ConnectionError::Oversized(len)))) => {
+                assert!(len > MAX_CLIENT_MESSAGE, "reported {len} bytes")
+            }
+            other => panic!("expected the connection to be dropped, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_websocket_client_is_sent_the_retained_snapshot() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        publisher.publish("summary", "root_slot", &7u64);
+        let (addr, server) = serve_one(publisher.clone()).await;
+
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+        let mut frames = Vec::new();
+        for _ in 0..2 {
+            let mut data = Vec::new();
+            receiver.receive_data(&mut data).await.unwrap();
+            frames.push(String::from_utf8(data).unwrap());
+        }
+
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.contains(r#""key":"cluster""#)),
+            "the snapshot was missing a retained key: {frames:?}"
+        );
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.contains(r#""key":"root_slot""#)),
+            "the snapshot was missing a retained key: {frames:?}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_a_websocket_limits_what_the_kernel_holds_unsent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        limit_unsent(&socket);
+        assert_eq!(
+            socket2::SockRef::from(&socket).tcp_notsent_lowat().unwrap(),
+            UNSENT_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_client_that_stops_reading_gets_each_slot_once_it_resumes() {
+        const FILLER: u64 = 128;
+        const WATCHED: u64 = FILLER;
+        const REVISIONS: u64 = 50;
+        let publisher = Arc::new(Publisher::new());
+        publisher.publish("summary", "cluster", &"testnet");
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+
+        // More than the socket buffers hold while the client is not reading, so the server's
+        // sends stall and later updates queue behind them.
+        let pad = "x".repeat(4096);
+        for slot in 0..FILLER {
+            publisher.publish_update(TOPIC_SLOT, "update", slot, &(slot, &pad));
+            sleep(Duration::from_millis(1)).await;
+        }
+        for revision in 0..REVISIONS {
+            publisher.publish_update(TOPIC_SLOT, "update", WATCHED, &(WATCHED, revision));
+            sleep(Duration::from_millis(1)).await;
+        }
+        publisher.publish("summary", "done", &true);
+
+        let mut revisions = Vec::new();
+        loop {
+            let mut data = Vec::new();
+            receiver.receive_data(&mut data).await.unwrap();
+            let frame: serde_json::Value = serde_json::from_slice(&data).unwrap();
+            if frame["key"] == "done" {
+                break;
+            }
+            if frame["key"] == "update" && frame["value"][0] == WATCHED {
+                revisions.push(frame["value"][1].as_u64().unwrap());
+            }
+        }
+        assert!(
+            revisions.len() < REVISIONS as usize,
+            "every revision was sent: {revisions:?}"
+        );
+        assert_eq!(revisions.last(), Some(&(REVISIONS - 1)));
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn test_root_serves_the_entry_document() {
+        if !assets::ASSETS.is_empty() {
+            assert!(lookup("/").is_some());
+        }
+    }
+}

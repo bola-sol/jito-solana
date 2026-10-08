@@ -124,7 +124,7 @@ The collector polls every 200 ms and holds the bank forks read lock only to clon
 | --- | --- |
 | `ClusterInfo::all_peers`, `my_shred_version`, `my_contact_info`, `id` | Cluster versions. Each peer's client, version and address. Our identity, shred version and ports, which match the socket ingest rows to `/proc/net/udp`. When we last heard each validator: "no gossip" after five minutes. |
 | `ClusterInfo::all_peers`, with each contact's `rpc`, `outset` and local timestamp, and `gossip.crds` read with `get` for each peer's `SnapshotHashes` and `LowestSlot` | The Gossip page's peers table: RPC port, last heard, start time, snapshot lag behind our root, and ledger depth. Read every five seconds, only while a page asks. |
-| `ClusterInfo::rpc_peers` | The RPC node count |
+| `ClusterInfo::all_peers`, with each contact's `rpc`, and `socket_addr_space` | The RPC node count: peers other than us with an RPC address in our address space |
 | `ClusterInfo::tvu_peers`, with each contact's wallclock | Who counts as seen during the supermajority wait |
 | `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times, skipped slots, how far back our blocks can be read, and the ledger's filesystem |
 | `Blockstore::is_root`, and `get_slot_components_with_shred_info` on a rooted block's last two FEC sets | Under alpenglow, the reward certificates in each rooted block's footer, read with the rank map. A skipped block paid nobody. If our vote was paid for each slot, and how many slots each rank was paid this epoch. The cause of each unpaid slot, and the writer of each certificate. The count starts when the dashboard starts. |

@@ -37,7 +37,10 @@ use {
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
-        sync::{Arc, Mutex, RwLock, atomic::AtomicU64},
+        sync::{
+            Arc, Mutex, RwLock,
+            atomic::{AtomicU64, Ordering},
+        },
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
 };
@@ -150,6 +153,8 @@ struct Totals {
     transactions: u64,
     non_vote: u64,
     tips: u64,
+    /// Failed transactions along the fork, from the first bank seen on it.
+    failed: u64,
 }
 
 const SLOT_OVERVIEW_LEN: usize = 512;
@@ -435,6 +440,8 @@ pub struct Collector {
     /// `None` reads bank forks instead, which misses banks pruned between ticks.
     frozen_banks: Option<BankNotificationReceiver>,
     totals: BTreeMap<Slot, Totals>,
+    /// Failed transactions along the working fork, read by the meters for TPS.
+    failed_total: Arc<AtomicU64>,
     /// Never applied to another validator's turn.
     commission_bps: Option<u16>,
     tips_residual: Option<u64>,
@@ -449,6 +456,9 @@ pub struct Collector {
     snapshots_read_at: Instant,
 }
 
+/// The shared failed count until the collector first stores one.
+pub const FAILED_UNREAD: u64 = u64::MAX;
+
 pub struct CollectorShared {
     pub publisher: Arc<Publisher>,
     pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
@@ -458,6 +468,7 @@ pub struct CollectorShared {
     pub startup_progress: StartProgress,
     pub startup: Arc<Mutex<StartupPublisher>>,
     pub metrics_tap: Arc<MetricsTap>,
+    pub failed_total: Arc<AtomicU64>,
 }
 
 impl Collector {
@@ -477,6 +488,7 @@ impl Collector {
             startup_progress,
             startup,
             metrics_tap,
+            failed_total,
         } = shared;
         let now = Instant::now();
         Self {
@@ -523,6 +535,7 @@ impl Collector {
             held_from: 0,
             frozen_banks,
             totals: BTreeMap::new(),
+            failed_total,
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
             snapshots: SnapshotTracker::default(),
@@ -596,6 +609,7 @@ impl Collector {
         self.mark_caught_cluster(cluster_tip);
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank, &frozen);
+        self.store_failed(&working_bank);
         self.collect_vote_certs(&root_bank);
         self.collect_turns(completed);
         // From the working bank: the root trails the tip by the thirty-two slots it
@@ -1122,12 +1136,19 @@ impl Collector {
                             .saturating_sub(non_vote),
                     )
                 });
+            // Unlike the counts above, a bank's error count is its own. A genesis bank is its
+            // own parent.
+            let failed = before
+                .filter(|_| bank.parent_slot() < slot)
+                .map_or(0, |before| before.failed)
+                .saturating_add(bank.transaction_error_count());
             self.totals.insert(
                 slot,
                 Totals {
                     transactions: bank.transaction_count(),
                     non_vote: bank.non_vote_transaction_count_since_restart(),
                     tips: self.tips.as_ref().map_or(0, |meter| meter.total(bank)),
+                    failed,
                 },
             );
             // Read at a bank's first sighting: the cost tracker and fees go with the bank once it
@@ -1225,6 +1246,18 @@ impl Collector {
         let timed = self.fill_execution();
         if captured || filled || read || timed {
             self.publish_produced();
+        }
+    }
+
+    /// From the working fork's newest frozen bank, so failures on an abandoned fork drop out.
+    fn store_failed(&self, working_bank: &Bank) {
+        let slot = if working_bank.is_frozen() {
+            working_bank.slot()
+        } else {
+            working_bank.parent_slot()
+        };
+        if let Some(totals) = self.totals.get(&slot) {
+            self.failed_total.store(totals.failed, Ordering::Relaxed);
         }
     }
 
@@ -2541,7 +2574,6 @@ mod tests {
 
     #[test]
     fn test_gossip_peers_are_gathered_only_while_asked_for() {
-        use std::sync::atomic::Ordering;
         let harness = fixture();
         let mut collector = harness.collector();
         let bank = harness.working_bank();
@@ -3086,6 +3118,91 @@ mod tests {
         assert!(overview.contains(r#""slot":8"#), "{overview}");
         assert!(overview.contains(r#""transactions":"#), "{overview}");
         assert!(collector.totals.contains_key(&8));
+    }
+
+    #[test]
+    fn test_a_frozen_bank_adds_its_failures_once() {
+        let harness = fixture();
+        let bank = harness.advance_with_failures(1, 3);
+        let mut collector = harness.collector();
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        collector.frozen_banks = Some(receiver);
+
+        // A duplicate block's slot is frozen again once the cluster's version is repaired.
+        sender
+            .send((BankNotification::Frozen(bank.clone()), None))
+            .unwrap();
+        sender.send((BankNotification::Frozen(bank), None)).unwrap();
+        collector.tick();
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+
+        let child = harness.advance_with_failures(2, 1);
+        sender
+            .send((BankNotification::Frozen(child), None))
+            .unwrap();
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn test_failures_on_an_abandoned_fork_drop_out_of_the_count() {
+        let harness = fixture();
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let mut collector = harness.notified_collector(receiver);
+        let parent = harness.advance_with_failures(1, 1);
+        let abandoned = harness.advance_with_failures(2, 3);
+        sender
+            .send((BankNotification::Frozen(parent.clone()), None))
+            .unwrap();
+        sender
+            .send((BankNotification::Frozen(abandoned), None))
+            .unwrap();
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 4);
+
+        // Slot 3 is built on slot 1, so the working fork moves off slot 2.
+        let sibling = harness.fork_with_failures(parent, 3, 2);
+        sender
+            .send((BankNotification::Frozen(sibling), None))
+            .unwrap();
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_a_bank_read_from_bank_forks_each_tick_is_counted_once() {
+        let harness = fixture();
+        harness.advance_with_failures(1, 3);
+        // Squashing drops the root's parent, so slot 1 has no counts to difference.
+        harness.bank_forks.write().unwrap().set_root(1, None, None);
+        let mut collector = harness.collector();
+
+        collector.tick();
+        collector.tick();
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_an_unfrozen_working_bank_stores_its_parents_failed_count() {
+        let harness = fixture();
+        let parent = harness.advance_with_failures(1, 3);
+        // Replay inserts a bank into bank forks before it fills and freezes it.
+        let working = Bank::new_from_parent(
+            parent,
+            SlotLeader {
+                id: harness.identity,
+                vote_address: harness.vote_account,
+            },
+            2,
+        );
+        harness.bank_forks.write().unwrap().insert(working);
+        assert!(!harness.working_bank().is_frozen());
+        let mut collector = harness.collector();
+
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
     }
 
     #[test]

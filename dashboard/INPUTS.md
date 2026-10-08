@@ -7,7 +7,7 @@ There are six kinds of input. The table starts with the most fragile.
 | Kind | How the dashboard reads it | Event shaped | What can break it |
 | --- | --- | --- | --- |
 | Metrics datapoints | An observer sees each datapoint before the validator sends it | Nearly | A renamed point or field; a point that needs a higher log level |
-| Frozen banks | A channel that replay writes to, named in the validator config | Yes | Nothing |
+| Frozen banks | A channel that replay writes to, named in the validator config | Yes | A stalled dashboard loses notifications on agave; jito's fan out queues them |
 | Gossip and bank forks before the wait | One message on a channel named in the config | Yes | Nothing |
 | Bank and bank forks reads | Polled every 200 ms and every second | No | Lock contention; a bank pruned before the read |
 | Gossip, blockstore, caches | Direct calls on handles from the run command | No | API changes between releases |
@@ -82,7 +82,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | --- | --- |
 | `slot`, `parent_slot` | The key for each slot. Counts are the difference from the parent's totals. |
 | `transaction_count`, `non_vote_transaction_count_since_restart` | Transactions and votes per block |
-| `transaction_error_count`, `transaction_entries_count` | Failed transactions and entries per block |
+| `transaction_error_count`, `transaction_entries_count` | Failed transactions and entries per block. Failed transactions for TPS, summed along the working fork. |
 | `read_cost_tracker`: block cost, block limit, account limit | Compute per block, against its limits |
 | `get_collector_fee_details`: total and priority fees | Base and priority fees per block. With the tips, what the block earned us. |
 | `get_balance` of the eight tip accounts | Tips per block, as the difference from the parent (jito only) |
@@ -100,11 +100,11 @@ The validator's own walk logs each node but emits only totals. An event for each
 
 ## Bank and bank forks reads
 
-The collector polls every 200 ms, and the meters once a second. Each holds the bank forks read lock only to clone handles.
+The collector polls every 200 ms and holds the bank forks read lock only to clone handles. The meters read the working bank once a second without the lock.
 
 | Call | Feeds |
 | --- | --- |
-| `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Failed transactions for TPS. Once, at attach, validator names from the banks frozen while the ledger loaded, which replay does not notify. |
+| `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Once, at attach, validator names from the banks frozen while the ledger loaded, which replay does not notify. |
 | `BankForks::migration_status`, `Bank::is_alpenglow` | The consensus in use, and which cluster tip to read |
 | `Bank::vote_accounts`, with each account's `vote_state_view` | Our stake, commission, BLS key and vote credits this epoch (reward lamports under alpenglow), against the best and the median. The Cluster card's counts and delinquency. Each validator's delinquency and last vote in the certificate lists. Stake in the peer table and in the wait's list. |
 | `Bank::get_rank_map` for this epoch and the next, `get_vat_health_for_next_epoch` | Under alpenglow: if our vote account has a seat this epoch and next, and how far it is short of the ticket. The header's "no seat" figure. |
@@ -115,7 +115,8 @@ The collector polls every 200 ms, and the meters once a second. Each holds the b
 | `Bank::clock` | The measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | Our rank in the BLS rank map, to find our bit in a certificate |
 | `Bank::get_filtered_indexed_accounts`, `account_indexes_include_key` | Validator names and icons from the config program: before the wait and at attach |
-| `Bank::transaction_count`, `non_vote_transaction_count_since_restart` on the working bank | TPS, as the difference each second |
+| `BankForks::sharable_banks`, then `Bank::transaction_count`, `non_vote_transaction_count_since_restart` on its working bank | TPS, as the difference each second |
+| `Bank::is_frozen`, `parent_slot` on the working bank | The working fork's newest frozen bank, whose failed count TPS reads |
 
 ## Gossip, blockstore, caches
 

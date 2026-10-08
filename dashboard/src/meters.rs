@@ -1,10 +1,10 @@
 //! The once-a-second readings: throughput, host, network, sockets, caches and
-//! the TPU path. On their own thread; bank forks is taken with `try_read` and
-//! a sample skipped when replay holds it.
+//! the TPU path. On their own thread, reading the working bank without bank
+//! forks' lock.
 
 use {
     crate::{
-        collect::{CATCH_UP_SLOTS_PER_SECOND, system_time_nanos},
+        collect::{CATCH_UP_SLOTS_PER_SECOND, FAILED_UNREAD, system_time_nanos},
         context::{DashboardContext, StartProgress},
         host_stats::{self, CpuUse, HostSnapshot},
         metrics_tap::{
@@ -24,21 +24,20 @@ use {
     solana_core::validator::ValidatorStartProgress,
     solana_gossip::contact_info::{ContactInfo, Protocol},
     solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         net::SocketAddr,
         path::PathBuf,
-        sync::Arc,
-        thread,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
         time::{Duration, Instant, SystemTime},
     },
 };
 
 pub const METER_INTERVAL: Duration = Duration::from_secs(1);
-
-const LOCK_ATTEMPTS: u32 = 5;
-const LOCK_RETRY: Duration = Duration::from_millis(5);
 
 const CHART_HISTORY: usize = 300;
 
@@ -439,7 +438,7 @@ struct IngestPort {
     quic: bool,
 }
 
-/// `errors` resets per bank, so it is a running sum the caller keeps.
+/// `errors` is the collector's running count of failed transactions along the working fork.
 #[derive(Clone, Copy)]
 struct TxnCounters {
     slot: Slot,
@@ -459,20 +458,6 @@ impl TxnCounters {
             sampled_at: Instant::now(),
         }
     }
-}
-
-fn frozen_errors(bank_forks: &BankForks, counted_to: Option<Slot>) -> (u64, Option<Slot>) {
-    let mut errors = 0u64;
-    let mut newest = counted_to;
-    for (slot, bank) in bank_forks.frozen_banks() {
-        if counted_to.is_some_and(|counted_to| slot > counted_to) {
-            errors = errors.saturating_add(bank.transaction_error_count());
-        }
-        if newest.is_none_or(|newest| slot > newest) {
-            newest = Some(slot);
-        }
-    }
-    (errors, newest)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -811,13 +796,13 @@ impl GossipMeter {
 
 pub struct Meters {
     ctx: DashboardContext,
+    /// The working bank without bank forks' lock.
+    sharable_banks: SharableBanks,
     publisher: Arc<Publisher>,
     startup_progress: StartProgress,
     started: SystemTime,
     metrics_tap: Arc<MetricsTap>,
     last_tap: Option<TapCounters>,
-    /// The working bank's, as last read; kept through a tick that could not take the lock.
-    alpenglow: bool,
 
     throughput: Throughput,
     network: NetworkMeter,
@@ -841,16 +826,18 @@ impl Meters {
         startup_progress: StartProgress,
         started: SystemTime,
         metrics_tap: Arc<MetricsTap>,
+        failed_total: Arc<AtomicU64>,
     ) -> Self {
+        let sharable_banks = ctx.bank_forks.read().unwrap().sharable_banks();
         Self {
             ctx,
+            sharable_banks,
             publisher,
             startup_progress,
             started,
             metrics_tap,
             last_tap: None,
-            alpenglow: false,
-            throughput: Throughput::new(),
+            throughput: Throughput::new(failed_total),
             network: NetworkMeter::default(),
             interfaces: InterfaceMeter::default(),
             host: HostMeter::default(),
@@ -869,24 +856,12 @@ impl Meters {
     pub fn tick(&mut self) {
         self.collect_clock();
 
-        // Taken without waiting long: replay holds bank forks to advance, and
-        // this thread exists so the readings survive a busy validator.
-        let mut working_bank = None;
-        for attempt in 0..LOCK_ATTEMPTS {
-            if attempt > 0 {
-                thread::sleep(LOCK_RETRY);
-            }
-            if let Ok(bank_forks) = self.ctx.bank_forks.try_read() {
-                self.throughput.count_frozen(&bank_forks);
-                working_bank = Some(bank_forks.working_bank());
-                break;
-            }
-        }
-        if let Some(working_bank) = working_bank {
+        let alpenglow = {
+            let working_bank = self.sharable_banks.working();
             self.throughput.tick(&working_bank, &self.publisher);
             self.tpu.note_epoch(&working_bank);
-            self.alpenglow = working_bank.is_alpenglow();
-        }
+            working_bank.is_alpenglow()
+        };
 
         self.network.tick(&self.publisher);
         // Read whether or not anyone watches, so the route peak covers the whole day.
@@ -909,7 +884,7 @@ impl Meters {
                 &self.ctx,
                 &self.metrics_tap.counters(),
                 running,
-                self.alpenglow,
+                alpenglow,
                 &self.publisher,
             );
         }
@@ -960,34 +935,34 @@ impl Meters {
 
 struct Throughput {
     last_counters: Option<TxnCounters>,
-    errors_total: u64,
-    errors_counted_to: Option<Slot>,
+    failed_total: Arc<AtomicU64>,
     history: Vec<TpsSample>,
 }
 
 impl Throughput {
-    fn new() -> Self {
+    fn new(failed_total: Arc<AtomicU64>) -> Self {
         Self {
             last_counters: None,
-            errors_total: 0,
-            errors_counted_to: None,
+            failed_total,
             history: Vec::with_capacity(CHART_HISTORY),
         }
     }
 
-    fn count_frozen(&mut self, bank_forks: &BankForks) {
-        let (errors, counted_to) = frozen_errors(bank_forks, self.errors_counted_to);
-        self.errors_total = self.errors_total.saturating_add(errors);
-        self.errors_counted_to = counted_to;
-    }
-
     fn tick(&mut self, working_bank: &Bank, publisher: &Publisher) {
-        let current = TxnCounters::read(working_bank, self.errors_total);
+        let errors = self.failed_total.load(Ordering::Relaxed);
+        // The collector's first count spans every bank drained at attach, so it is a baseline only.
+        if errors == FAILED_UNREAD {
+            return;
+        }
+        let current = TxnCounters::read(working_bank, errors);
         let Some(previous) = self.last_counters.replace(current) else {
             return;
         };
         // A fork switch or a restart makes the counters incomparable.
-        if current.slot <= previous.slot || current.total < previous.total {
+        if current.slot <= previous.slot
+            || current.total < previous.total
+            || current.errors < previous.errors
+        {
             return;
         }
         let seconds = current
@@ -2136,6 +2111,7 @@ mod tests {
         crate::fixture::fixture,
         solana_metrics::datapoint::DataPoint,
         solana_pubkey::Pubkey,
+        solana_rpc::optimistically_confirmed_bank_tracker::BankNotification,
         std::{net::Ipv4Addr, thread::sleep},
     };
 
@@ -2915,11 +2891,14 @@ mod tests {
     }
 
     #[test]
-    fn test_a_busy_bank_forks_costs_a_sample_and_not_the_heartbeat() {
-        // The reason this thread takes bank forks with `try_read`: waiting would stop
-        // the clock, which looks like a dead feed.
+    fn test_a_busy_bank_forks_costs_neither_a_sample_nor_the_heartbeat() {
+        // Waiting on replay's lock would stop the clock, which looks like a dead feed.
         let harness = fixture();
         let mut meters = harness.meters();
+        harness.failed_total.store(0, Ordering::Relaxed);
+        meters.tick();
+        sleep(Duration::from_millis(250));
+        harness.advance_to(1);
         let held = harness.bank_forks.write().unwrap();
 
         meters.tick();
@@ -2932,8 +2911,8 @@ mod tests {
             "the heartbeat stopped while replay held the lock"
         );
         assert!(
-            harness.published_key("summary", "estimated_tps").is_none(),
-            "the sample should have been skipped, not waited for"
+            harness.published_key("summary", "estimated_tps").is_some(),
+            "the sample was skipped while replay held the lock"
         );
     }
 
@@ -2941,6 +2920,7 @@ mod tests {
     fn test_throughput_needs_two_samples_with_a_slot_between_them() {
         let harness = fixture();
         let mut meters = harness.meters();
+        harness.failed_total.store(0, Ordering::Relaxed);
 
         meters.tick();
         assert!(
@@ -2967,14 +2947,20 @@ mod tests {
         // The error counter resets per bank; differenced, it read nought whenever a bank had fewer
         // failures than the last.
         let harness = fixture();
+        let mut collector = harness.collector();
         let mut meters = harness.meters();
 
         meters.tick();
         sleep(Duration::from_millis(250));
         harness.advance_with_failures(1, 3);
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
         meters.tick();
         sleep(Duration::from_millis(250));
         harness.advance_with_failures(2, 1);
+        collector.tick();
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 4);
         meters.tick();
 
         let message = harness.published_key("summary", "estimated_tps").unwrap();
@@ -2992,9 +2978,117 @@ mod tests {
     }
 
     #[test]
+    fn test_failures_count_in_a_bank_pruned_between_samples() {
+        // Under alpenglow the root follows finalization, so a bank can leave bank forks before
+        // the collector drains its notification.
+        let harness = fixture();
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let mut collector = harness.notified_collector(receiver);
+        let mut meters = harness.meters();
+        // The collector's first count, which the meters take as their baseline.
+        sender
+            .send((BankNotification::Frozen(harness.working_bank()), None))
+            .unwrap();
+        collector.tick();
+
+        meters.tick();
+        sleep(Duration::from_millis(250));
+        let pruned = harness.advance_with_failures(1, 3);
+        let bank = harness.advance_to(2);
+        harness.bank_forks.write().unwrap().set_root(2, None, None);
+        for bank in [pruned, bank] {
+            sender.send((BankNotification::Frozen(bank), None)).unwrap();
+        }
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+        meters.tick();
+
+        let message = harness.published_key("summary", "estimated_tps").unwrap();
+        let tps: serde_json::Value = serde_json::from_str(&message).unwrap();
+        let failed = tps["value"]["non_vote_failed"].as_f64().unwrap();
+        let non_vote = failed + tps["value"]["non_vote_success"].as_f64().unwrap();
+        assert!(
+            failed > 0.0,
+            "the failures of a bank pruned before the sample were lost: {message}"
+        );
+        assert!(
+            (failed - non_vote).abs() < 1e-9,
+            "every non-vote transaction failed, so the two rates should agree: {message}"
+        );
+    }
+
+    #[test]
+    fn test_no_rate_is_reported_before_the_collectors_first_count() {
+        let harness = fixture();
+        let mut meters = harness.meters();
+
+        meters.tick();
+        sleep(Duration::from_millis(250));
+        harness.advance_to(1);
+        meters.tick();
+
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_none(),
+            "a rate was reported before the collector counted"
+        );
+    }
+
+    #[test]
+    fn test_the_collectors_first_count_is_a_baseline_and_not_a_spike() {
+        // The first count sums every bank drained at attach; differenced from nought, it put them
+        // all into one second.
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let mut meters = harness.meters();
+
+        meters.tick();
+        sleep(Duration::from_millis(250));
+        harness.advance_with_failures(1, 3);
+        collector.tick();
+        assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+        meters.tick();
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_none(),
+            "the failures drained at attach were reported as one second's"
+        );
+
+        sleep(Duration::from_millis(250));
+        harness.advance_to(2);
+        collector.tick();
+        meters.tick();
+        let message = harness.published_key("summary", "estimated_tps").unwrap();
+        let tps: serde_json::Value = serde_json::from_str(&message).unwrap();
+        assert_eq!(
+            tps["value"]["non_vote_failed"].as_f64(),
+            Some(0.0),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn test_a_failed_count_that_goes_back_skips_the_sample() {
+        // The collector's count follows the working fork, so a fork switch can lower it.
+        let harness = fixture();
+        let mut meters = harness.meters();
+
+        harness.failed_total.store(5, Ordering::Relaxed);
+        meters.tick();
+        sleep(Duration::from_millis(250));
+        harness.advance_to(1);
+        harness.failed_total.store(2, Ordering::Relaxed);
+        meters.tick();
+
+        assert!(
+            harness.published_key("summary", "estimated_tps").is_none(),
+            "a sample was taken across a fork switch"
+        );
+    }
+
+    #[test]
     fn test_a_replayed_burst_is_not_reported_as_throughput() {
         let harness = fixture();
         let mut meters = harness.meters();
+        harness.failed_total.store(0, Ordering::Relaxed);
 
         meters.tick();
         // No sleep: two ticks in immediate succession put the rate orders of

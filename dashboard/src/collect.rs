@@ -452,6 +452,10 @@ pub struct Collector {
     held_from: Slot,
     overview_dirty: bool,
     overview_retained_at: Instant,
+    /// Dropped while nobody watched, so owed whole to the next viewer.
+    overview_unsent: bool,
+    /// As `overview_unsent`, for the produced list.
+    produced_unsent: bool,
     snapshots: SnapshotTracker,
     snapshots_read_at: Instant,
 }
@@ -538,6 +542,8 @@ impl Collector {
             failed_total,
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
+            overview_unsent: false,
+            produced_unsent: false,
             snapshots: SnapshotTracker::default(),
             snapshots_read_at: now.checked_sub(SNAPSHOT_READ).unwrap_or(now),
         }
@@ -650,6 +656,26 @@ impl Collector {
             self.subscribers = subscribers;
         }
 
+        // Encoded on a timer rather than per change: live clients follow the updates above, and
+        // only a connecting one reads this. Dropped while nobody watches and sent whole to the next
+        // viewer, as is the produced list.
+        if subscribers == 0 {
+            if std::mem::take(&mut self.overview_dirty) {
+                self.publisher.forget(TOPIC_SLOT, "overview");
+                self.overview_unsent = true;
+            }
+        } else if self.overview_unsent
+            || (self.overview_dirty
+                && now.duration_since(self.overview_retained_at) >= OVERVIEW_INTERVAL)
+        {
+            self.publish_slot_overview();
+            self.overview_dirty = false;
+            self.overview_retained_at = now;
+        }
+        if subscribers > 0 && self.produced_unsent {
+            self.publish_produced();
+        }
+
         if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
             // One snapshot for both walks below: it clones the whole table under
@@ -680,15 +706,6 @@ impl Collector {
             if self.fill_certificates(&working_bank, &heard) {
                 self.publish_produced();
             }
-        }
-
-        // Encoded on a timer rather than per change: live clients follow the
-        // updates above, and only a connecting one reads this.
-        if self.overview_dirty && now.duration_since(self.overview_retained_at) >= OVERVIEW_INTERVAL
-        {
-            self.retain_slot_overview();
-            self.overview_dirty = false;
-            self.overview_retained_at = now;
         }
     }
 
@@ -1255,15 +1272,29 @@ impl Collector {
         }
     }
 
-    /// The whole list is for a client connecting; one already connected is sent each block that
-    /// changed. Retained first, so a client connecting in between misses neither.
+    /// The whole list is for a client connecting, and is dropped while nobody watches; one already
+    /// connected is sent each block that changed. Retained first, so a client connecting in between
+    /// misses neither.
     fn publish_produced(&mut self) {
-        let (recent, changed) = {
-            let mut store = self.replies.produced.write().unwrap();
-            (store.recent(PRODUCED_BLOCKS), store.take_changed())
-        };
-        self.publisher
-            .retain_only(TOPIC_SUMMARY, "produced_blocks", &recent);
+        let changed = self.replies.produced.write().unwrap().take_changed();
+        if self.publisher.subscriber_count() == 0 {
+            self.publisher.forget(TOPIC_SUMMARY, "produced_blocks");
+            self.produced_unsent = true;
+            return;
+        }
+        let send = std::mem::take(&mut self.produced_unsent);
+        {
+            // The collector is the only writer, so this is the list `changed` was taken from.
+            let store = self.replies.produced.read().unwrap();
+            let recent = store.recent_refs(PRODUCED_BLOCKS);
+            if send {
+                self.publisher
+                    .publish(TOPIC_SUMMARY, "produced_blocks", &recent);
+            } else {
+                self.publisher
+                    .retain_only(TOPIC_SUMMARY, "produced_blocks", &recent);
+            }
+        }
         for block in changed {
             self.publisher
                 .publish_update(TOPIC_SUMMARY, "produced_block", block.slot, &block);
@@ -1364,20 +1395,25 @@ impl Collector {
         }
     }
 
-    /// Here because no single moment finishes an entry.
+    /// Here because no single moment finishes an entry. Not sent while the overview is owed, which
+    /// carries it and must reach the next viewer before any update.
     fn publish_slot(&mut self, entry: &SlotEntry) {
         self.history.write().unwrap().record(entry);
-        self.publisher
-            .publish_update(TOPIC_SLOT, "update", entry.slot, entry);
+        if !self.overview_unsent {
+            self.publisher
+                .publish_update(TOPIC_SLOT, "update", entry.slot, entry);
+        }
         self.overview_dirty = true;
     }
 
-    fn retain_slot_overview(&self) {
-        self.publisher.retain_only(
-            TOPIC_SLOT,
-            "overview",
-            &self.slots.overview(SLOT_OVERVIEW_LEN),
-        );
+    fn publish_slot_overview(&mut self) {
+        let overview = self.slots.overview(SLOT_OVERVIEW_LEN);
+        if std::mem::take(&mut self.overview_unsent) {
+            self.publisher.publish(TOPIC_SLOT, "overview", &overview);
+        } else {
+            self.publisher
+                .retain_only(TOPIC_SLOT, "overview", &overview);
+        }
     }
 
     fn collect_identity_and_vote(&mut self, bank: &Bank, cluster_tip: Option<Slot>) {
@@ -3163,6 +3199,7 @@ mod tests {
     #[test]
     fn test_a_frozen_bank_arrives_by_notification() {
         let harness = fixture();
+        let _viewer = harness.publisher.subscribe();
         let bank = harness.advance_to(8);
         let mut collector = harness.collector();
         let (sender, receiver) = crossbeam_channel::unbounded();
@@ -3362,6 +3399,7 @@ mod tests {
     #[test]
     fn test_the_overview_is_encoded_once_a_second() {
         let harness = fixture();
+        let _viewer = harness.publisher.subscribe();
         let mut collector = harness.collector();
         harness.advance_to(8);
         collector.tick();
@@ -3379,5 +3417,89 @@ mod tests {
         let refreshed = harness.published_key("slot", "overview").unwrap();
         assert!(refreshed.contains(r#""slot":9"#), "{refreshed}");
         assert!(!collector.overview_dirty);
+    }
+
+    #[test]
+    fn test_the_overview_is_dropped_while_unwatched_and_sent_to_the_next_viewer() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let watching = harness.publisher.subscribe();
+        harness.advance_to(8);
+        collector.tick();
+        assert!(harness.published_key("slot", "overview").is_some());
+
+        drop(watching);
+        harness.advance_to(9);
+        collector.tick();
+        assert!(
+            harness.published_key("slot", "overview").is_none(),
+            "a stale overview was kept for the next viewer"
+        );
+
+        let mut viewer = harness.publisher.subscribe();
+        harness.advance_to(10);
+        collector.tick();
+        let sent = std::iter::from_fn(|| viewer.try_recv().ok())
+            .find(|message| message.contains(r#""topic":"slot""#))
+            .expect("the next viewer was not sent the overview");
+        assert!(
+            sent.contains(r#""topic":"slot","key":"overview""#),
+            "an update went ahead of the overview: {sent}"
+        );
+        assert!(sent.contains(r#""slot":10"#), "{sent}");
+        assert!(harness.published_key("slot", "overview").is_some());
+
+        harness.advance_to(11);
+        collector.tick();
+        assert!(
+            std::iter::from_fn(|| viewer.try_recv().ok())
+                .any(|message| message.contains(r#""topic":"slot","key":"update""#)),
+            "updates did not resume after the overview"
+        );
+    }
+
+    #[test]
+    fn test_the_produced_list_is_dropped_while_unwatched_and_sent_to_the_next_viewer() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let watching = harness.publisher.subscribe();
+        collector.tick();
+        harness.advance_to(4);
+        collector.tick();
+        assert!(
+            harness
+                .published_key("summary", "produced_blocks")
+                .is_some()
+        );
+
+        drop(watching);
+        harness.advance_to(8);
+        collector.tick();
+        assert!(
+            harness
+                .published_key("summary", "produced_blocks")
+                .is_none(),
+            "a stale list was kept for the next viewer"
+        );
+
+        let mut viewer = harness.publisher.subscribe();
+        collector.tick();
+        let sent = std::iter::from_fn(|| viewer.try_recv().ok())
+            .find(|message| message.contains(r#""key":"produced_blocks""#))
+            .expect("the next viewer was not sent the list");
+        let sent: serde_json::Value = serde_json::from_str(&sent).unwrap();
+        assert!(
+            sent["value"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|block| block["slot"].as_u64() == Some(8)),
+            "{sent}"
+        );
+        assert!(
+            harness
+                .published_key("summary", "produced_blocks")
+                .is_some()
+        );
     }
 }

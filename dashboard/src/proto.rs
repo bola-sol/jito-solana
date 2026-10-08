@@ -350,6 +350,11 @@ impl Publisher {
         self.retained.lock().unwrap().insert((topic, key), message);
     }
 
+    /// Drops a retained value, so a client connecting is not handed it stale.
+    pub fn forget(&self, topic: &'static str, key: &'static str) {
+        self.retained.lock().unwrap().remove(&(topic, key));
+    }
+
     pub fn snapshot(&self) -> Vec<Message> {
         self.retained.lock().unwrap().values().cloned().collect()
     }
@@ -473,6 +478,18 @@ mod tests {
         publisher.retain_only("peers", "all", &[1u64, 2]);
         assert_eq!(publisher.snapshot().len(), 1);
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_a_forgotten_value_leaves_the_snapshot() {
+        let publisher = Publisher::new();
+        publisher.retain_only("slot", "overview", &[1u64]);
+        publisher.publish("summary", "root_slot", &2u64);
+        publisher.forget("slot", "overview");
+        publisher.forget("slot", "overview");
+        let snapshot = publisher.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot[0].text().contains(r#""key":"root_slot""#));
     }
 
     #[test]

@@ -240,6 +240,13 @@ impl ProducedStore {
         recent
     }
 
+    /// The newest `count`, oldest first, borrowed for encoding in place.
+    pub fn recent_refs(&self, count: usize) -> Vec<&ProducedBlock> {
+        let mut recent: Vec<&ProducedBlock> = self.blocks.values().rev().take(count).collect();
+        recent.reverse();
+        recent
+    }
+
     /// The blocks added or filled in since the last call, oldest first; one since dropped is left out.
     pub fn take_changed(&mut self) -> Vec<ProducedBlock> {
         std::mem::take(&mut self.changed)
@@ -590,6 +597,40 @@ mod tests {
             })
         );
         assert!(!ring.fill_bundles(landed), "nothing left to fill");
+    }
+
+    #[test]
+    fn test_the_borrowed_list_encodes_as_the_cloned_one() {
+        let mut ring = ProducedStore::default();
+        for slot in [10, 11, 12] {
+            ring.insert(block(slot));
+        }
+        ring.set_certificate(
+            11,
+            BlockCertificate {
+                leader: Some(Pubkey::new_unique()),
+                left_out: vec![CertificateValidator {
+                    identity: Pubkey::new_unique(),
+                    name: Some("Lantern".to_string()),
+                    ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
+                }],
+                ..certificate(3)
+            },
+        );
+        ring.set_versions(12, TxVersions::default());
+        ring.set_execution(12, execution());
+        ring.fill_bundles(|_| {
+            Some(Bundles {
+                sanitized: 4,
+                executed: 3,
+            })
+        });
+        for count in [0, 2, usize::MAX] {
+            assert_eq!(
+                crate::proto::encode("summary", "produced_blocks", &ring.recent(count)).text(),
+                crate::proto::encode("summary", "produced_blocks", &ring.recent_refs(count)).text(),
+            );
+        }
     }
 
     #[test]

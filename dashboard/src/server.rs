@@ -572,19 +572,20 @@ async fn serve_websocket(
     let (mut sender, mut receiver) = builder.finish();
 
     deflate_ahead(&snapshot, deflate).await;
+    let count = snapshot.len();
     let total = snapshot.iter().fold(0usize, |sum, message| {
         sum.saturating_add(message.wire_len(deflate))
     });
-    for (index, message) in snapshot.iter().enumerate() {
-        let sent = timeout(WRITE_TIMEOUT, send_frame(&mut sender, message, deflate))
+    // Taken by value: each message is released once sent, not when the connection closes.
+    for (index, message) in snapshot.into_iter().enumerate() {
+        let sent = timeout(WRITE_TIMEOUT, send_frame(&mut sender, &message, deflate))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "snapshot send"))?;
         if let Err(err) = sent {
             log::warn!(
-                "dashboard: snapshot send failed on message {} of {} ({} bytes, {total} bytes \
-                 total, starts {:.120}): {err}",
+                "dashboard: snapshot send failed on message {} of {count} ({} bytes, {total} \
+                 bytes total, starts {:.120}): {err}",
                 index.saturating_add(1),
-                snapshot.len(),
                 message.wire_len(deflate),
                 message.text(),
             );
@@ -2093,6 +2094,33 @@ mod tests {
                 .iter()
                 .any(|frame| frame.contains(r#""key":"root_slot""#)),
             "the snapshot was missing a retained key: {frames:?}"
+        );
+
+        sender.close().await.unwrap();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_a_connected_client_does_not_hold_a_replaced_snapshot_value() {
+        let publisher = Arc::new(Publisher::new());
+        publisher.retain_only("summary", "history", &[1u64, 2]);
+        let held = publisher.snapshot();
+        let (addr, server) = serve_one(publisher.clone()).await;
+        let (mut sender, mut receiver) = connect(addr).await.into_builder().finish();
+        let mut snapshot = Vec::new();
+        receiver.receive_data(&mut snapshot).await.unwrap();
+        assert_eq!(snapshot, held[0].text().as_bytes());
+
+        publisher.retain_only("summary", "history", &[3u64]);
+        // Sent from the update loop, so the snapshot loop has finished.
+        publisher.publish("summary", "done", &true);
+        let mut done = Vec::new();
+        receiver.receive_data(&mut done).await.unwrap();
+        assert!(String::from_utf8(done).unwrap().contains(r#""key":"done""#));
+        assert_eq!(
+            held[0].copies(),
+            1,
+            "the connection still holds the replaced value"
         );
 
         sender.close().await.unwrap();

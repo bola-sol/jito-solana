@@ -930,6 +930,7 @@ mod tests {
         let info = RwLock::new(ValidatorInfoCache::default());
         info.write().unwrap().insert(
             solana_pubkey::Pubkey::new_from_array([7; 32]),
+            0,
             ValidatorInfo {
                 name: Some("Lantern".to_string()),
                 icon_url: Some("https://l/i.png".to_string()),
@@ -955,6 +956,7 @@ mod tests {
         let info = RwLock::new(ValidatorInfoCache::default());
         info.write().unwrap().insert(
             solana_pubkey::Pubkey::new_from_array([9; 32]),
+            0,
             ValidatorInfo::default(),
         );
 

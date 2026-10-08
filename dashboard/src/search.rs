@@ -251,6 +251,7 @@ mod tests {
         let mut info = ValidatorInfoCache::default();
         info.insert(
             *key,
+            0,
             ValidatorInfo {
                 name: Some(name.into()),
                 icon_url: None,

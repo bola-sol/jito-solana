@@ -6,10 +6,11 @@ use {
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_accounts_db::accounts_index::IndexKey,
+    solana_clock::Slot,
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::collections::HashMap,
+    std::collections::{HashMap, hash_map::Entry},
 };
 
 const VALIDATOR_INFO_PROGRAM: Pubkey =
@@ -34,19 +35,20 @@ pub struct Displays {
 
 #[derive(Debug, Default)]
 pub struct ValidatorInfoCache {
-    by_identity: HashMap<Pubkey, ValidatorInfo>,
+    /// Each entry with the slot it was read at.
+    by_identity: HashMap<Pubkey, (Slot, ValidatorInfo)>,
 }
 
 impl ValidatorInfoCache {
     pub fn get(&self, identity: &Pubkey) -> Option<&ValidatorInfo> {
-        self.by_identity.get(identity)
+        self.by_identity.get(identity).map(|(_, info)| info)
     }
 
     pub fn displays(&self) -> Displays {
         let mut keys = Vec::with_capacity(self.by_identity.len());
         let mut names = Vec::with_capacity(self.by_identity.len());
         let mut icons = Vec::with_capacity(self.by_identity.len());
-        for (identity, info) in &self.by_identity {
+        for (identity, (_, info)) in &self.by_identity {
             if info.name.is_none() && info.icon_url.is_none() {
                 continue;
             }
@@ -65,19 +67,34 @@ impl ValidatorInfoCache {
         self.by_identity.is_empty()
     }
 
-    pub fn insert(&mut self, identity: Pubkey, info: ValidatorInfo) -> bool {
-        if self.by_identity.get(&identity) == Some(&info) {
-            return false;
+    /// A read from an older slot than the one held is ignored.
+    pub fn insert(&mut self, identity: Pubkey, slot: Slot, info: ValidatorInfo) -> bool {
+        match self.by_identity.entry(identity) {
+            Entry::Vacant(entry) => {
+                entry.insert((slot, info));
+                true
+            }
+            Entry::Occupied(mut entry) => {
+                let (held_slot, held) = entry.get_mut();
+                if slot < *held_slot {
+                    return false;
+                }
+                *held_slot = slot;
+                if *held == info {
+                    return false;
+                }
+                *held = info;
+                true
+            }
         }
-        self.by_identity.insert(identity, info);
-        true
     }
 
-    /// Separate from the scan so the lock is held only for the merge.
-    pub fn merge(&mut self, entries: Vec<(Pubkey, ValidatorInfo)>) -> usize {
+    /// Separate from the scan so the lock is held only for the merge. `slot` is the scanned bank's.
+    pub fn merge(&mut self, slot: Slot, entries: Vec<(Pubkey, ValidatorInfo)>) -> usize {
         entries
             .into_iter()
-            .filter(|(identity, info)| self.insert(*identity, info.clone()))
+            .map(|(identity, info)| self.insert(identity, slot, info))
+            .filter(|changed| *changed)
             .count()
     }
 }
@@ -149,31 +166,30 @@ fn parse(data: &[u8]) -> Option<(Pubkey, ValidatorInfo)> {
 }
 
 #[cfg(test)]
+fn encode(keys: Vec<(Pubkey, bool)>, json: &str) -> Vec<u8> {
+    let mut data = bincode::serialize(&ConfigKeys { keys }).unwrap();
+    data.extend(bincode::serialize(&json.to_string()).unwrap());
+    data
+}
+
+/// A validator info account naming `identity`, for tests elsewhere too.
+#[cfg(test)]
+pub(crate) fn info_account(identity: Pubkey, json: &str) -> solana_account::AccountSharedData {
+    solana_account::AccountSharedData::from(solana_account::Account {
+        lamports: 1,
+        data: encode(
+            vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],
+            json,
+        ),
+        owner: solana_sdk_ids::config::id(),
+        executable: false,
+        rent_epoch: 0,
+    })
+}
+
+#[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::fixture::fixture,
-        solana_account::{Account, AccountSharedData},
-    };
-
-    fn encode(keys: Vec<(Pubkey, bool)>, json: &str) -> Vec<u8> {
-        let mut data = bincode::serialize(&ConfigKeys { keys }).unwrap();
-        data.extend(bincode::serialize(&json.to_string()).unwrap());
-        data
-    }
-
-    fn info_account(identity: Pubkey, json: &str) -> AccountSharedData {
-        AccountSharedData::from(Account {
-            lamports: 1,
-            data: encode(
-                vec![(VALIDATOR_INFO_PROGRAM, false), (identity, true)],
-                json,
-            ),
-            owner: solana_sdk_ids::config::id(),
-            executable: false,
-            rent_epoch: 0,
-        })
-    }
+    use {super::*, crate::fixture::fixture};
 
     #[test]
     fn test_the_slot_sweep_finds_info_written_in_that_slot() {
@@ -239,8 +255,8 @@ mod tests {
             name: Some("Lantern".into()),
             icon_url: None,
         };
-        assert_eq!(cache.merge(vec![(identity, info.clone())]), 1);
-        assert_eq!(cache.merge(vec![(identity, info)]), 0, "nothing changed");
+        assert_eq!(cache.merge(1, vec![(identity, info.clone())]), 1);
+        assert_eq!(cache.merge(1, vec![(identity, info)]), 0, "nothing changed");
         assert_eq!(cache.len(), 1);
         assert_eq!(
             cache.get(&identity).and_then(|info| info.name.as_deref()),
@@ -299,8 +315,36 @@ mod tests {
             name: Some("Lantern".into()),
             ..ValidatorInfo::default()
         };
-        assert!(cache.insert(identity, info.clone()));
-        assert!(!cache.insert(identity, info));
+        assert!(cache.insert(identity, 1, info.clone()));
+        assert!(!cache.insert(identity, 1, info));
         assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn test_an_older_read_does_not_replace_a_newer_one() {
+        let mut cache = ValidatorInfoCache::default();
+        let identity = Pubkey::new_unique();
+        let named = |name: &str| ValidatorInfo {
+            name: Some(name.into()),
+            icon_url: None,
+        };
+        let held =
+            |cache: &ValidatorInfoCache| cache.get(&identity).and_then(|info| info.name.clone());
+
+        assert_eq!(cache.merge(10, vec![(identity, named("New"))]), 1);
+        assert_eq!(
+            cache.merge(5, vec![(identity, named("Old"))]),
+            0,
+            "a scan of an older bank finishing late must not revert the name"
+        );
+        assert_eq!(held(&cache).as_deref(), Some("New"));
+
+        assert_eq!(cache.merge(12, vec![(identity, named("Newer"))]), 1);
+        assert_eq!(held(&cache).as_deref(), Some("Newer"));
+
+        // An unchanged read still moves the entry's slot forward.
+        assert_eq!(cache.merge(20, vec![(identity, named("Newer"))]), 0);
+        assert_eq!(cache.merge(15, vec![(identity, named("Older"))]), 0);
+        assert_eq!(held(&cache).as_deref(), Some("Newer"));
     }
 }

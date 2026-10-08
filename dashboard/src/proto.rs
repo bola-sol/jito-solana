@@ -68,7 +68,7 @@ pub enum Supersedes {
 #[derive(Clone)]
 pub struct Message {
     text: Arc<str>,
-    /// Made the first time a client that takes it is sent the message, and shared by every copy.
+    /// Made before the first send to a client that takes it, and shared by every copy.
     deflated: Arc<OnceLock<Option<Box<[u8]>>>>,
     /// So an older value still queued for a slow client can be dropped in its favour.
     supersedes: Option<Supersedes>,
@@ -119,6 +119,16 @@ impl Message {
 
     pub fn supersedes(&self) -> Option<Supersedes> {
         self.supersedes
+    }
+
+    /// Long enough to travel deflated and not deflated yet.
+    pub fn deflate_pending(&self) -> bool {
+        self.text.len() >= DEFLATE_FROM && self.deflated.get().is_none()
+    }
+
+    /// Fills the deflated copy every clone shares, so a later send only copies bytes.
+    pub fn deflate_now(&self) {
+        let _ = self.deflated();
     }
 }
 
@@ -523,6 +533,21 @@ mod tests {
         assert!(message.deflated.get().is_none());
         assert!(matches!(copy.frame(true), Frame::Binary(_)));
         assert!(message.deflated.get().is_some());
+    }
+
+    #[test]
+    fn test_a_message_deflated_ahead_is_sent_as_the_same_bytes() {
+        let ahead = encode("summary", "host", &vec!["a host row"; 400]);
+        let inline = encode("summary", "host", &vec!["a host row"; 400]);
+        assert!(ahead.deflate_pending());
+        ahead.clone().deflate_now();
+        assert!(!ahead.deflate_pending());
+        let (Frame::Binary(early), Frame::Binary(late)) = (ahead.frame(true), inline.frame(true))
+        else {
+            panic!("a long message should deflate");
+        };
+        assert_eq!(early, late);
+        assert!(!encode("summary", "root_slot", &7u64).deflate_pending());
     }
 
     #[test]

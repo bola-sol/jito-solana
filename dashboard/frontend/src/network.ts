@@ -82,3 +82,34 @@ export const ROUTES_JUDGED_FROM = 10;
 export function routesShort(iface: NetInterface): boolean {
   return iface.routes_peak >= ROUTES_JUDGED_FROM && iface.routes * 2 < iface.routes_peak;
 }
+
+/** A line of the interface list: a port sits one depth under the interface it belongs to. */
+export interface InterfaceLine {
+  iface: NetInterface;
+  depth: number;
+}
+
+/** Each port after the interface it belongs to, otherwise in the server's order; a port whose
+ *  master is not listed stands at the top. */
+export function interfaceLines(interfaces: NetInterface[]): InterfaceLine[] {
+  const listed = new Set(interfaces.map((iface) => iface.name));
+  const masterOf = (iface: NetInterface) =>
+    iface.member_of && listed.has(iface.member_of) ? iface.member_of : null;
+  const ports = new Map<string, NetInterface[]>();
+  for (const iface of interfaces) {
+    const master = masterOf(iface);
+    if (master !== null) ports.set(master, [...(ports.get(master) ?? []), iface]);
+  }
+  const lines: InterfaceLine[] = [];
+  const placed = new Set<string>();
+  const place = (iface: NetInterface, depth: number) => {
+    if (placed.has(iface.name)) return;
+    placed.add(iface.name);
+    lines.push({ iface, depth });
+    for (const port of ports.get(iface.name) ?? []) place(port, depth + 1);
+  };
+  for (const iface of interfaces) if (masterOf(iface) === null) place(iface, 0);
+  // A loop of masters, which the kernel refuses, is listed rather than lost.
+  for (const iface of interfaces) place(iface, 0);
+  return lines;
+}

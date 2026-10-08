@@ -1,9 +1,10 @@
-import { useState, type ReactElement } from "react";
+import { useState, type CSSProperties, type ReactElement } from "react";
 import { bytes, count, decimal, percent } from "../format";
 import { readInterfacesOpen, writeInterfacesOpen } from "../layout";
 import {
   direction,
   egressShares,
+  interfaceLines,
   NETWORK_WINDOW_SECONDS,
   routesShort,
   sharedPeak,
@@ -44,8 +45,7 @@ export function NetworkCard(): ReactElement | null {
   const peak = sharedPeak(received, sent);
   const egress = direction(sent) ?? steady(rates.sent_per_second);
 
-  const scope =
-    "Every non-loopback interface on this host, not the validator alone.";
+  const scope = "This host's network cards, each byte counted once, not the validator alone.";
 
   return (
     <Card
@@ -130,7 +130,7 @@ function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   );
 }
 
-/** Folded to one line, which leads with any interface whose routes have fallen away. */
+/** Folded to one line of the top-level interfaces, led by any whose routes have fallen away. */
 function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
   const [open, setOpen] = useState(readInterfacesOpen);
   const toggle = () => {
@@ -138,8 +138,10 @@ function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
     setOpen(next);
     writeInterfacesOpen(next);
   };
-  const short = interfaces.filter(routesShort);
-  const rest = interfaces.filter((iface) => !routesShort(iface));
+  const lines = interfaceLines(interfaces);
+  const top = lines.filter((line) => line.depth === 0).map((line) => line.iface);
+  const short = top.filter(routesShort);
+  const rest = top.filter((iface) => !routesShort(iface));
 
   return (
     <div className="net-ifaces">
@@ -163,7 +165,7 @@ function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
                 ))}
               </>
             ) : (
-              interfaces.map((iface) => (
+              top.map((iface) => (
                 <i key={iface.name}>
                   <b>{iface.name}</b> {iface.up ? iface.kind : "down"}
                 </i>
@@ -186,8 +188,8 @@ function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
       </div>
       {open && (
         <div className="net-if-list">
-          {interfaces.map((iface) => (
-            <InterfaceRow key={iface.name} iface={iface} />
+          {lines.map(({ iface, depth }) => (
+            <InterfaceRow key={iface.name} iface={iface} depth={depth} />
           ))}
         </div>
       )}
@@ -195,24 +197,44 @@ function Interfaces({ interfaces }: { interfaces: NetInterface[] }) {
   );
 }
 
-function InterfaceRow({ iface }: { iface: NetInterface }) {
-  const short = routesShort(iface);
+/** A port's routes live on the interface it belongs to, so its row leaves them out. */
+function InterfaceRow({ iface, depth }: { iface: NetInterface; depth: number }) {
+  const port = depth > 0;
+  const short = !port && routesShort(iface);
   return (
-    <div className={`net-if-row ${iface.up ? "is-up" : "is-down"}`}>
+    <div
+      className={`net-if-row ${iface.up ? "is-up" : "is-down"}${port ? " is-port" : ""}`}
+      style={port ? ({ "--depth": String(depth) } as CSSProperties) : undefined}
+    >
       <span className="net-if-name" title={iface.mtu === null ? undefined : `MTU ${count(iface.mtu)}`}>
         {iface.name}
       </span>
-      <span className="net-if-kind">{iface.kind}</span>
-      <span className="net-if-state">
-        <i className="net-if-dot" aria-hidden="true" />
-        {iface.up ? "up" : "down"}
-      </span>
-      <span className={`net-if-routes${short ? " is-short" : ""}`}>
-        {short ? (
-          <Explain text={`Highest in the last 24 hours: ${count(iface.routes_peak)}.`}>{routesLabel(iface)}</Explain>
-        ) : (
-          routesLabel(iface)
-        )}
+      <span className="net-if-meta">
+        <span className="net-if-kind">{iface.kind}</span>
+        <span className="net-if-state">
+          <i className="net-if-dot" aria-hidden="true" />
+          {iface.up ? "up" : "down"}
+        </span>
+        <span className="net-if-detail">
+          {!port && (
+            <span className={`net-if-routes${short ? " is-short" : ""}`}>
+              {short ? (
+                <Explain text={`Highest in the last 24 hours: ${count(iface.routes_peak)}.`}>{routesLabel(iface)}</Explain>
+              ) : (
+                routesLabel(iface)
+              )}
+            </span>
+          )}
+          {iface.inside && (
+            <span className="net-if-inside">
+              <Explain
+                text={`Its packets travel inside ${iface.inside}, which holds the default route, so the host total already counts them.`}
+              >
+                inside {iface.inside}
+              </Explain>
+            </span>
+          )}
+        </span>
       </span>
       <span className="net-if-traffic">
         ↓ {perSecond(iface.received_per_second)} · ↑ {perSecond(iface.sent_per_second)}

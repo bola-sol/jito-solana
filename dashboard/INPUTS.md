@@ -160,7 +160,7 @@ The validator does not own these inputs. The dashboard reads them directly:
 
 - CPU, load and memory: `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, and `/proc/self/status` for the validator's resident memory.
 - Disks: `/proc/diskstats`, `statvfs` on the ledger, accounts and snapshot paths, and `/sys/dev/block/<major>:<minor>` with its `partition` marker.
-- Network: `/proc/net/dev`, `/proc/net/route`, and `/sys/class/net/<interface>` (`type`, `flags`, `operstate`, `mtu`, `uevent`, and the `device`, `bonding`, `bridge` and `tun_flags` entries).
+- Network: `/proc/net/dev`, `/proc/net/route` for each interface's routes and the IPv4 default route, and `/sys/class/net/<interface>` (`type`, `flags`, `operstate`, `mtu`, `uevent`, the `device`, `bonding`, `bridge` and `tun_flags` entries, and the `master` link). The host total counts the interfaces with a `device` link, leaving out any whose `master` also has one, and counts every interface but loopback where none has one. A container holding both a passed-through NIC and a veth counts only the NIC.
 - Sockets: `/proc/net/udp` and `udp6`, for drops and queues.
 - Threads: `comm`, `schedstat` and `status` under `/proc/self/task`.
 - CPU governor: `/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor`.

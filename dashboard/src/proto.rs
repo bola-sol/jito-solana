@@ -121,6 +121,12 @@ impl Message {
         self.supersedes
     }
 
+    /// Copies sharing this message's text, this one included.
+    #[cfg(test)]
+    pub(crate) fn copies(&self) -> usize {
+        Arc::strong_count(&self.text)
+    }
+
     /// Long enough to travel deflated and not deflated yet.
     pub fn deflate_pending(&self) -> bool {
         self.text.len() >= DEFLATE_FROM && self.deflated.get().is_none()

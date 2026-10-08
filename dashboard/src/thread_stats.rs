@@ -31,9 +31,11 @@ pub struct ThreadGroup {
     pub other: bool,
 }
 
+/// A thread in `known` keeps the name it has there; only the others have `comm` read.
 #[cfg(target_os = "linux")]
-pub fn read() -> io::Result<Vec<ThreadReading>> {
+pub fn read(known: Option<&HashMap<u64, ThreadReading>>) -> io::Result<Vec<ThreadReading>> {
     let mut threads = Vec::new();
+    let mut buf = [0u8; 128];
     for entry in std::fs::read_dir("/proc/self/task")?.flatten() {
         let Some(tid) = entry
             .file_name()
@@ -44,18 +46,23 @@ pub fn read() -> io::Result<Vec<ThreadReading>> {
         };
         let dir = entry.path();
         // A thread can exit between the listing and the read.
-        let (Ok(name), Ok(schedstat)) = (
-            std::fs::read_to_string(dir.join("comm")),
-            std::fs::read_to_string(dir.join("schedstat")),
-        ) else {
+        let Some((on_cpu_nanos, waiting_nanos)) =
+            read_small(&dir.join("schedstat"), &mut buf).and_then(parse_schedstat)
+        else {
             continue;
         };
-        let Some((on_cpu_nanos, waiting_nanos)) = parse_schedstat(&schedstat) else {
+        let Some(name) = known
+            .and_then(|known| known.get(&tid))
+            .map(|before| before.name.clone())
+            .or_else(|| {
+                read_small(&dir.join("comm"), &mut buf).map(|name| name.trim().to_string())
+            })
+        else {
             continue;
         };
         threads.push(ThreadReading {
             tid,
-            name: name.trim().to_string(),
+            name,
             on_cpu_nanos,
             waiting_nanos,
         });
@@ -63,8 +70,16 @@ pub fn read() -> io::Result<Vec<ThreadReading>> {
     Ok(threads)
 }
 
+/// One open and one read: both files are a few dozen bytes.
+#[cfg(target_os = "linux")]
+fn read_small<'a>(path: &std::path::Path, buf: &'a mut [u8]) -> Option<&'a str> {
+    use std::io::Read as _;
+    let len = std::fs::File::open(path).ok()?.read(buf).ok()?;
+    std::str::from_utf8(buf.get(..len)?).ok()
+}
+
 #[cfg(not(target_os = "linux"))]
-pub fn read() -> io::Result<Vec<ThreadReading>> {
+pub fn read(_known: Option<&HashMap<u64, ThreadReading>>) -> io::Result<Vec<ThreadReading>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "thread counters are only available on Linux",
@@ -219,10 +234,15 @@ fn share(nanos: u64, count: usize, span: f64) -> f64 {
 /// Ranked on the window so rows do not reorder every tick.
 pub fn select_rows(
     mut groups: Vec<ThreadGroup>,
-    means: &HashMap<String, f64>,
+    means: &HashMap<&str, f64>,
     top: usize,
 ) -> Vec<ThreadGroup> {
-    let rank = |group: &ThreadGroup| means.get(&group.name).copied().unwrap_or(group.on_cpu);
+    let rank = |group: &ThreadGroup| {
+        means
+            .get(group.name.as_str())
+            .copied()
+            .unwrap_or(group.on_cpu)
+    };
     groups.sort_by(|a, b| {
         rank(b)
             .partial_cmp(&rank(a))
@@ -261,11 +281,11 @@ fn mean_of(groups: &[ThreadGroup], count: usize, value: impl Fn(&ThreadGroup) ->
 
 pub fn window_means<'a>(
     recent: impl IntoIterator<Item = &'a Vec<(String, f64)>>,
-) -> HashMap<String, f64> {
-    let mut sums: HashMap<String, (f64, usize)> = HashMap::new();
+) -> HashMap<&'a str, f64> {
+    let mut sums: HashMap<&str, (f64, usize)> = HashMap::new();
     for tick in recent {
         for (name, share) in tick {
-            let entry = sums.entry(name.clone()).or_insert((0.0, 0));
+            let entry = sums.entry(name.as_str()).or_insert((0.0, 0));
             entry.0 += share;
             entry.1 = entry.1.saturating_add(1);
         }
@@ -460,10 +480,10 @@ mod tests {
             group("solRepairSvc", 1, 0.02),
         ];
         let means = HashMap::from([
-            ("solPohTickProd".to_string(), 0.95),
-            ("solGossip".to_string(), 0.40),
-            ("solScHandleV".to_string(), 0.08),
-            ("solRepairSvc".to_string(), 0.02),
+            ("solPohTickProd", 0.95),
+            ("solGossip", 0.40),
+            ("solScHandleV", 0.08),
+            ("solRepairSvc", 0.02),
         ]);
         let rows = select_rows(groups, &means, 2);
         assert_eq!(rows.len(), 3);
@@ -497,11 +517,67 @@ mod tests {
         assert!((means["b"] - 0.1).abs() < 1e-9);
     }
 
+    #[test]
+    fn test_ranked_rows_serialise_as_published() {
+        let recent = vec![
+            vec![
+                ("solPohTickProd".to_string(), 1.0),
+                ("solGossip".to_string(), 0.5),
+            ],
+            vec![
+                ("solGossip".to_string(), 0.25),
+                ("solScHandleV".to_string(), 0.125),
+            ],
+        ];
+        let groups = vec![
+            group("solPohTickProd", 1, 0.75),
+            group("solGossip", 6, 0.5),
+            group("solScHandleV", 11, 0.25),
+            group("solRepairSvc", 1, 0.0625),
+        ];
+        let rows = select_rows(groups, &window_means(&recent), 2);
+        assert_eq!(
+            serde_json::to_string(&rows).unwrap(),
+            r#"[{"name":"solPohTickProd","count":1,"cores":null,"on_cpu":0.75,"waiting":0.0,"other":false},{"name":"solGossip","count":6,"cores":null,"on_cpu":0.5,"waiting":0.0,"other":false},{"name":"","count":12,"cores":null,"on_cpu":0.234375,"waiting":0.0,"other":true}]"#
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn test_this_process_reports_its_own_threads() {
-        let threads = read().unwrap();
+        let threads = read(None).unwrap();
         assert!(!threads.is_empty());
         assert!(threads.iter().all(|thread| !thread.name.is_empty()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_only_a_thread_not_already_known_has_its_name_read() {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let helper = std::thread::spawn(move || {
+            let _ = wait.recv();
+        });
+        let main = u64::from(std::process::id());
+        let mut known = by_tid(&read(None).unwrap());
+        for reading in known.values_mut() {
+            reading.name = "carried".to_string();
+        }
+        known.remove(&main);
+        let threads = read(Some(&known)).unwrap();
+        drop(release);
+        helper.join().unwrap();
+
+        let name = |tid| {
+            threads
+                .iter()
+                .find(|thread| thread.tid == tid)
+                .map(|thread| thread.name.as_str())
+        };
+        assert!(name(main).is_some_and(|name| name != "carried"));
+        assert!(
+            threads
+                .iter()
+                .any(|thread| thread.tid != main && thread.name == "carried")
+        );
     }
 }

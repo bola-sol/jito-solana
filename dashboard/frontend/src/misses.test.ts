@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   delinquentText,
   leaderLabel,
@@ -11,6 +11,8 @@ import {
   leftOutMost,
   leftOutText,
   placeExplain,
+  readTwice,
+  REREAD_MS,
   turnMarks,
   validatorTag,
   voteText,
@@ -28,7 +30,6 @@ function list(
     since_slot: 6_696_000,
     rewarded: 5_774,
     ranks: 112,
-    written: { rewarded: 5_774, certificates: 0, carried_all: 0, rows: [] },
     writers: writers.map(([name, misses, certificates]) => ({
       identity: `${name}Key111111111111111`,
       name,
@@ -272,5 +273,31 @@ describe("leaderLabel", () => {
     expect(leaderLabel({ identity: "GdnSyH3YtwcxFvQrVVJMm1JhTS4QVX7MFsX56uJLUfiZ", name: null, count: 1 })).toBe(
       "GdnSyH…LUfiZ",
     );
+  });
+});
+
+describe("readTwice", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("reads at once and once more after the collector's next rebuild", () => {
+    vi.useFakeTimers();
+    const read = vi.fn();
+    readTwice(read);
+    expect(read).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(7_999);
+    expect(read).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(read).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(10 * REREAD_MS);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the second read when cancelled", () => {
+    vi.useFakeTimers();
+    const read = vi.fn();
+    const cancel = readTwice(read);
+    cancel();
+    vi.advanceTimersByTime(10 * REREAD_MS);
+    expect(read).toHaveBeenCalledTimes(1);
   });
 });

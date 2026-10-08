@@ -15,11 +15,19 @@ use {
     solana_gossip::contact_info::ContactInfo,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_time_utils::timestamp,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::HashMap,
+        sync::{Arc, atomic::Ordering},
+    },
 };
 
 const CERT_SLOTS_PER_TICK: u64 = 64;
+
+/// How long after the last request the miss and written lists are rebuilt every slow tick.
+const WANTED_FOR_MILLIS: u64 = 30_000;
+
+/// How often the lists are rebuilt while nobody is asking.
+const UNASKED_EVERY_MILLIS: u64 = 60_000;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct MissList {
@@ -31,7 +39,6 @@ pub struct MissList {
     pub validators: Vec<MissValidator>,
     /// Oldest first.
     pub rows: Vec<MissRow>,
-    pub written: WrittenList,
 }
 
 /// A peer's contact and when this node last took something new from it over gossip, in unix
@@ -93,17 +100,17 @@ pub struct MissReplies {
 }
 
 impl MissReplies {
-    pub fn new(list: &MissList) -> Self {
+    pub fn new(misses: &MissList, written: &WrittenList) -> Self {
         Self {
-            misses: json_or_null(list),
-            written: json_or_null(&list.written),
+            misses: json_or_null(misses),
+            written: json_or_null(written),
         }
     }
 }
 
 impl Default for MissReplies {
     fn default() -> Self {
-        Self::new(&MissList::default())
+        Self::new(&MissList::default(), &WrittenList::default())
     }
 }
 
@@ -185,6 +192,8 @@ pub(super) struct CertificateWalk {
     /// are dropped, since an unwalked slot looks like one before alpenglow.
     walk: Option<(Slot, Slot)>,
     tally: Option<certs::Tally>,
+    /// The epoch and unix milliseconds of the last miss list built.
+    listed: Option<(Epoch, u64)>,
 }
 
 impl Collector {
@@ -261,10 +270,24 @@ impl Collector {
         }
     }
 
-    pub(super) fn collect_miss_list(&self, bank: &Bank, heard: &Contacts, votes: &LastVotes) {
+    pub(super) fn collect_miss_list(
+        &mut self,
+        bank: &Bank,
+        heard: &Contacts,
+        votes: &LastVotes,
+        now_millis: u64,
+    ) {
         let Some(tally) = &self.certificates.tally else {
             return;
         };
+        let wanted = self.replies.misses_wanted.load(Ordering::Relaxed);
+        let asked = now_millis.saturating_sub(wanted) <= WANTED_FOR_MILLIS;
+        let recent = self.certificates.listed.is_some_and(|(epoch, at)| {
+            epoch == tally.epoch() && now_millis.saturating_sub(at) < UNASKED_EVERY_MILLIS
+        });
+        if !asked && recent {
+            return;
+        }
         let records = tally.records();
         let epoch_start = bank.epoch_schedule().get_first_slot_in_epoch(tally.epoch());
         let rank_map = bank.get_rank_map(epoch_start);
@@ -272,7 +295,6 @@ impl Collector {
         let mut writer_at: HashMap<Pubkey, u32> = HashMap::new();
         let mut validators: Vec<MissValidator> = Vec::new();
         let mut validator_at: HashMap<u32, u32> = HashMap::new();
-        let now_millis = timestamp();
         let info = self.info_cache.read().unwrap();
         let history = self.history.read().unwrap();
         let rows = records
@@ -374,15 +396,15 @@ impl Collector {
             writers,
             validators,
             rows,
-            written: WrittenList {
-                rewarded: tally.rewarded(),
-                certificates: summary.certificates,
-                carried_all: summary.carried_all,
-                rows: written_rows,
-            },
         };
-        let replies = MissReplies::new(&list);
-        *self.replies.misses.write().unwrap() = replies;
+        let written = WrittenList {
+            rewarded: tally.rewarded(),
+            certificates: summary.certificates,
+            carried_all: summary.carried_all,
+            rows: written_rows,
+        };
+        *self.replies.misses.write().unwrap() = MissReplies::new(&list, &written);
+        self.certificates.listed = Some((list.epoch, now_millis));
     }
 
     pub(super) fn fill_certificates(&mut self, bank: &Bank, heard: &Contacts) -> bool {
@@ -516,7 +538,7 @@ impl Collector {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::fixture::fixture, solana_time_utils::timestamp};
 
     #[test]
     fn test_standing_reads_the_stalest_vote_against_the_tip() {
@@ -551,5 +573,112 @@ mod tests {
             !is_quiet(Some(now + 1), now),
             "a timestamp ahead of the clock is heard"
         );
+    }
+
+    #[test]
+    fn test_the_miss_list_is_rebuilt_while_asked_for_and_once_a_minute_otherwise() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let bank = harness.working_bank();
+        let schedule = bank.epoch_schedule();
+        let epoch = bank.epoch();
+        let new_tally = |epoch: Epoch| {
+            let start = schedule.get_first_slot_in_epoch(epoch);
+            certs::Tally::new(
+                epoch,
+                start,
+                start,
+                schedule.get_slots_in_epoch(epoch),
+                Vec::new(),
+            )
+        };
+        let miss = |slot: Slot| certs::Mark {
+            slot,
+            reward: certs::Reward::Unpaid,
+            rank: 0,
+            paid: vec![false, true],
+            notar: 2,
+            skip: 0,
+        };
+        let add = |collector: &mut Collector, slot: Slot| {
+            collector
+                .certificates
+                .tally
+                .as_mut()
+                .unwrap()
+                .add(&miss(slot), &[], None);
+        };
+        let held = |collector: &Collector| -> serde_json::Value {
+            serde_json::from_str(&collector.replies.misses.read().unwrap().misses).unwrap()
+        };
+        let rows = |collector: &Collector| held(collector)["rows"].as_array().unwrap().len();
+        let listed = |collector: &Collector| collector.certificates.listed;
+        let (heard, votes) = (Contacts::new(), LastVotes::new());
+        let now = timestamp();
+        let at = |millis: u64| now.saturating_add(millis);
+        let start = schedule.get_first_slot_in_epoch(epoch);
+        let next = epoch.saturating_add(1);
+
+        collector.certificates.tally = Some(new_tally(epoch));
+        add(&mut collector, start);
+        assert_eq!(listed(&collector), None);
+        collector.collect_miss_list(&bank, &heard, &votes, now);
+        assert_eq!(listed(&collector), Some((epoch, now)), "never built");
+        let list = held(&collector);
+        assert_eq!(list["epoch"], epoch);
+        assert_eq!(rows(&collector), 1);
+        assert!(
+            list.get("written").is_none(),
+            "served on its own route: {list}"
+        );
+
+        add(&mut collector, start.saturating_add(1));
+        collector.collect_miss_list(&bank, &heard, &votes, at(5_000));
+        assert_eq!(
+            listed(&collector),
+            Some((epoch, now)),
+            "unasked, and built under a minute ago"
+        );
+        assert_eq!(rows(&collector), 1);
+
+        collector
+            .replies
+            .misses_wanted
+            .store(at(5_000), Ordering::Relaxed);
+        collector.collect_miss_list(&bank, &heard, &votes, at(10_000));
+        assert_eq!(listed(&collector), Some((epoch, at(10_000))), "asked for");
+        assert_eq!(rows(&collector), 2);
+
+        add(&mut collector, start.saturating_add(2));
+        collector.collect_miss_list(&bank, &heard, &votes, at(40_000));
+        assert_eq!(
+            listed(&collector),
+            Some((epoch, at(10_000))),
+            "last asked over half a minute ago"
+        );
+        collector.collect_miss_list(&bank, &heard, &votes, at(65_000));
+        assert_eq!(
+            listed(&collector),
+            Some((epoch, at(10_000))),
+            "a minute from the last build, not the first"
+        );
+        assert_eq!(rows(&collector), 2);
+        collector.collect_miss_list(&bank, &heard, &votes, at(70_000));
+        assert_eq!(
+            listed(&collector),
+            Some((epoch, at(70_000))),
+            "a minute after the last build"
+        );
+        assert_eq!(rows(&collector), 3);
+
+        collector.certificates.tally = Some(new_tally(next));
+        collector.collect_miss_list(&bank, &heard, &votes, at(75_000));
+        assert_eq!(
+            listed(&collector),
+            Some((next, at(75_000))),
+            "a new epoch at once"
+        );
+        assert_eq!(held(&collector)["epoch"], next);
+        assert_eq!(rows(&collector), 0);
     }
 }

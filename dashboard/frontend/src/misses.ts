@@ -174,3 +174,13 @@ export function writerSummary(list: MissList): string | null {
     alone === top.misses ? " Every one of them paid everybody else." : alone > 0 ? ` ${count(alone)} of them paid everybody else.` : "";
   return `${top.name ?? shortKey(top.identity)} wrote ${count(top.misses)} of the ${count(list.rows.length)} certificates that left this validator out, ${count(top.misses)} of the ${count(top.certificates)} it wrote.${others}`;
 }
+
+/** Past one `SLOW_TICK` in `dashboard/src/collect.rs`, a fast tick and the slow tier's work, by when the list a read asked for is rebuilt. */
+export const REREAD_MS = 8_000;
+
+/** Reads now and once more after `REREAD_MS`; the returned function cancels the second read. */
+export function readTwice(read: () => void): () => void {
+  read();
+  const timer = setTimeout(read, REREAD_MS);
+  return () => clearTimeout(timer);
+}

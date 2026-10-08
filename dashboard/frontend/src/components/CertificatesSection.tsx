@@ -26,7 +26,7 @@ import { Copyable } from "./Copyable";
 import { Hinted } from "./MissesPanel";
 import { WriterName } from "./WriterName";
 
-/** The validator rebuilds both lists every five seconds. */
+/** Inside the validator's 30 s asked-for window, so both lists are rebuilt every five seconds while mounted. */
 const POLL_MS = 15_000;
 
 const LINE_TITLE =

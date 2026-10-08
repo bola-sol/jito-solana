@@ -734,6 +734,7 @@ fn respond(
             Some(encode_with_id("summary", "displays", id, &displays))
         }
         ("summary", "misses") => {
+            replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
             let json = match replies.misses.read() {
                 Ok(misses) => misses.misses.clone(),
                 Err(_) => return Some(encode_with_id("summary", "misses", id, &())),
@@ -741,6 +742,7 @@ fn respond(
             Some(encode_json_with_id("summary", "misses", id, &json))
         }
         ("summary", "written") => {
+            replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
             let json = match replies.misses.read() {
                 Ok(misses) => misses.written.clone(),
                 Err(_) => return Some(encode_with_id("summary", "written", id, &())),
@@ -1516,17 +1518,27 @@ mod tests {
     }
 
     #[test]
-    fn test_the_miss_list_is_answered_with_its_id() {
+    fn test_the_miss_list_is_answered_and_the_ask_remembered() {
+        let replies = no_replies();
         let reply = respond(
             br#"{"topic":"summary","key":"misses","id":9}"#,
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_replies(),
+            &replies,
         )
         .unwrap();
         assert!(reply.contains(r#""id":9"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
+        assert!(
+            !reply.contains("written"),
+            "served on its own route: {reply}"
+        );
+        let asked = replies.misses_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
     }
 
     #[test]
@@ -1553,18 +1565,24 @@ mod tests {
     }
 
     #[test]
-    fn test_the_written_list_is_answered_with_its_id() {
+    fn test_the_written_list_is_answered_and_the_ask_remembered() {
+        let replies = no_replies();
         let reply = respond(
             br#"{"topic":"summary","key":"written","id":10}"#,
             &empty(),
             &no_info(),
             &no_epochs(),
-            &no_replies(),
+            &replies,
         )
         .unwrap();
         assert!(reply.contains(r#""id":10"#), "{reply}");
         assert!(reply.contains(r#""certificates":0"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
+        let asked = replies.misses_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
     }
 
     #[test]

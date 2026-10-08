@@ -164,7 +164,8 @@ after that, each of our blocks that is added or filled in arrives alone as
 A client can also send a request carrying an `id`, and the reply goes back to
 that `id` alone: `summary.ping`, `summary.displays` for the whole name table,
 `summary.misses` for the epoch's unrewarded votes one a row, `summary.written`
-for what this node's own certificates left out per validator,
+for what this node's own certificates left out per validator, both rebuilt
+every five seconds while either is asked for and once a minute otherwise,
 `epoch.query` for a held epoch's schedule, `slot.range` for a run of slots
 out of the packed history, which holds an epoch, `slot.search` for a page of
 the turns in it that match a leader's name or key, a slot number or this

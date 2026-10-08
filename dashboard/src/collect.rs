@@ -75,6 +75,9 @@ pub struct Replies {
     /// Unix milliseconds of the last request for the gossip peers, which are gathered only while
     /// someone is asking.
     pub gossip_peers_wanted: AtomicU64,
+    /// Unix milliseconds of the last request for the miss or written list, which are rebuilt
+    /// every slow tick only while someone is asking.
+    pub misses_wanted: AtomicU64,
 }
 
 impl Replies {
@@ -122,6 +125,7 @@ impl Default for Replies {
             tap: Arc::default(),
             gossip_peers: RwLock::new(Arc::from("null")),
             gossip_peers_wanted: AtomicU64::new(0),
+            misses_wanted: AtomicU64::new(0),
         }
     }
 }
@@ -650,7 +654,7 @@ impl Collector {
                     )
                 })
                 .collect();
-            self.collect_miss_list(&working_bank, &heard, &votes);
+            self.collect_miss_list(&working_bank, &heard, &votes, timestamp());
             if self.fill_certificates(&working_bank, &heard) {
                 self.publish_produced();
             }

@@ -132,7 +132,7 @@ The collector polls every 200 ms, and the meters once a second. Each holds the b
 | `Validator::highest_finalized` | The cluster tip under alpenglow, from votor's last certificate |
 | `LeaderScheduleCache::slot_leader_at`, `get_epoch_leader_schedule` with `get_leader_upcoming_slots`, `next_leader_slot` | The epoch's leader turns, our leader slots, the validators the peer table lists, and the countdown to our next slot |
 | `ValidatorStartProgress` | The boot phases and their times |
-| The snapshot archive directories, through `agave_snapshots::paths`, and the intervals in `SnapshotConfig` | The newest full and incremental snapshots, their age, and when the next are due. A snapshot being written, and how long the last took. |
+| The snapshot archive directories, through `agave_snapshots::paths`, and the intervals in `SnapshotConfig` | The newest full and incremental snapshots, their age, and when the next are due. A snapshot being written, and how long the last took. Under alpenglow, the slots each write spanned, which the miss list gives as a cause. Read every second, watched or not. |
 | `solana_version::Version::this_build` | The client, version and commit in the header |
 
 The certificate walk is the only place where the dashboard parses ledger bytes. A per slot event that names the validators each reward certificate paid would replace it. The leader knows this when it writes the footer.

@@ -95,9 +95,10 @@ finds the throughput and network charts whole; the host, thread and socket
 panels fill from that moment.
 
 What runs whatever the audience, beyond that: a metrics tap that observes the
-datapoints the validator already emits, and under alpenglow a walk of the
-block footers for their reward certificates, which reads the last two FEC sets
-of each newly rooted block out of the blockstore, at most 64 slots a tick.
+datapoints the validator already emits, a listing of the snapshot archive
+directories once a second, and under alpenglow a walk of the block footers for
+their reward certificates, which reads the last two FEC sets of each newly
+rooted block out of the blockstore, at most 64 slots a tick.
 
 The one-off read that maps identities to names runs once, when the collector
 attaches. It asks the secondary index which accounts the config program owns and

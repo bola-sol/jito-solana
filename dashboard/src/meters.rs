@@ -3154,9 +3154,9 @@ mod tests {
         harness.failed_total.store(0, Ordering::Relaxed);
 
         meters.tick();
-        // No sleep: two ticks in immediate succession put the rate orders of
-        // magnitude above the guard.
-        harness.advance_to(1);
+        // Thirty slots between back-to-back ticks stay above the guard for ticks up to 1.5 s
+        // apart, so a loaded machine cannot slow the rate under it.
+        harness.advance_to(30);
         meters.tick();
 
         assert!(

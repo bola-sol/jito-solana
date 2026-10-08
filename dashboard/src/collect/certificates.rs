@@ -192,13 +192,13 @@ impl Collector {
         if !root_bank.is_alpenglow() || self.last_completed_slot == 0 {
             return;
         }
+        let root = root_bank.slot();
         let (floor, from) = match self.certificates.walk {
             Some((floor, read_to)) => (floor, read_to.saturating_add(1)),
-            None => (self.last_completed_slot, self.last_completed_slot),
+            None => (root, root),
         };
-        let to = self
-            .last_completed_slot
-            .min(from.saturating_add(CERT_SLOTS_PER_TICK).saturating_sub(1));
+        // A block above the root may yet be skipped.
+        let to = root.min(from.saturating_add(CERT_SLOTS_PER_TICK).saturating_sub(1));
         if to < from {
             return;
         }

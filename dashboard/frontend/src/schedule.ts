@@ -113,7 +113,7 @@ export function rewardTitle(reward: Reward | null | undefined): string {
     case "unpaid":
       return "The reward certificate was written without this node's vote.";
     case "no_certificate":
-      return "No reward certificate: the leader eight slots on produced no block.";
+      return "No reward certificate: no rooted block eight slots on carried one.";
     default:
       return "The reward certificate is written eight slots on, and has not been seen yet.";
   }
@@ -121,8 +121,8 @@ export function rewardTitle(reward: Reward | null | undefined): string {
 
 export const REWARD_LAG = 8;
 
-/** A count of usual payees, "none" without a block, null until read, undefined where the rewarded
- *  slot is not held. */
+/** A count of usual payees, "none" where no rooted block carried a certificate, null until read,
+ *  undefined where the rewarded slot is not held. */
 export type Certificate = number | "none" | null | undefined;
 
 export function certificateAt(
@@ -148,7 +148,7 @@ export function certificateText(certificate: Certificate): [text: string, tone: 
 export function certificateTitle(certificate: Certificate): string {
   if (certificate === undefined) return "The slot this certificate rewards is not held.";
   if (certificate === null) return "The certificate written in this slot has not been read yet.";
-  if (certificate === "none") return "No certificate: the leader produced no block in this slot.";
+  if (certificate === "none") return "No certificate: no rooted block in this slot carried one.";
   if (certificate === 0) return "The certificate written in this slot paid everyone certificates usually pay.";
   return `The certificate written in this slot left out ${count(certificate)} of the validators certificates usually pay.`;
 }

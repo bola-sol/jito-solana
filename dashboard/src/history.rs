@@ -71,7 +71,7 @@ pub const HAS_REPLAY: u16 = 1 << 3;
 pub const HAS_SHREDS: u16 = 1 << 4;
 pub const HAS_REPLAYED: u16 = 1 << 5;
 /// Two bits for the reward certificate's verdict on this node's vote: unseen,
-/// paid, unpaid, or no certificate written.
+/// paid, unpaid, or none because no rooted block carried one.
 pub const REWARD_SHIFT: u16 = 6;
 pub const REWARD_MASK: u16 = 0b11 << REWARD_SHIFT;
 pub const REWARD_PAID: u16 = 1 << REWARD_SHIFT;

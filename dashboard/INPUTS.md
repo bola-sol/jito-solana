@@ -125,7 +125,7 @@ The collector polls every 200 ms, and the meters once a second. Each holds the b
 | `ClusterInfo::rpc_peers` | The RPC node count |
 | `ClusterInfo::tvu_peers`, with each contact's wallclock | Who counts as seen during the supermajority wait |
 | `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times, skipped slots, how far back our blocks can be read, and the ledger's filesystem |
-| `Blockstore::get_slot_components_with_shred_info` on a block's last two FEC sets | Under alpenglow, the reward certificates in each block footer, read with the rank map. If our vote was paid for each slot, and how many slots each rank was paid this epoch. The cause of each unpaid slot, and the writer of each certificate. The count starts when the dashboard starts. |
+| `Blockstore::is_root`, and `get_slot_components_with_shred_info` on a rooted block's last two FEC sets | Under alpenglow, the reward certificates in each rooted block's footer, read with the rank map. A skipped block paid nobody. If our vote was paid for each slot, and how many slots each rank was paid this epoch. The cause of each unpaid slot, and the writer of each certificate. The count starts when the dashboard starts. |
 | `Blockstore::get_slot_entries` on our slots, once full | Our blocks' non-vote transactions by message version: legacy, v0, v1 |
 | `Blockstore::get_latest_optimistic_slots`, `highest_slot` | The cluster tip under TowerBFT: the last confirmed slot, but not below the highest slot with shreds. After a restart, the confirmed slot is older than the snapshot. |
 | `BlockCommitmentCache::highest_confirmed_slot`, `highest_super_majority_root`, `root` | The confirmed, rooted and finalized levels on the slot strip |

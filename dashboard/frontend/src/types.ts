@@ -23,7 +23,7 @@ export interface SlotEntry {
   left_out: number | null;
 }
 
-/** `no_certificate`: the leader eight slots on produced no block, so nobody was paid. */
+/** `no_certificate`: no rooted block eight slots on carried a certificate, so nobody was paid. */
 export type Reward = "paid" | "unpaid" | "no_certificate";
 
 export interface ShredArrival {

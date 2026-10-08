@@ -46,7 +46,7 @@ const LOST_LEADERS: usize = 3;
 pub enum Reward {
     Paid,
     Unpaid,
-    /// The leader of slot N+8 produced no block, so nobody was paid for N.
+    /// No rooted block in slot N+8 carried a certificate, so nobody was paid for N.
     NoCertificate,
 }
 
@@ -551,7 +551,7 @@ enum Block {
     Opaque,
 }
 
-/// Stops at the first slot still filling.
+/// Stops at the first slot past the root.
 pub fn walk(
     blockstore: &Blockstore,
     bank: &Bank,
@@ -607,17 +607,24 @@ fn rank_of(bank: &Bank, vote_account: &Pubkey, slot: Slot) -> Option<(usize, usi
 }
 
 fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
+    if slot > root {
+        return Block::Pending;
+    }
+    // Blockstore roots are written before bank forks' root moves, so a slot up to the root that
+    // is not one was skipped.
+    if !blockstore.is_root(slot) {
+        return Block::Missing;
+    }
     let meta = match blockstore.meta(slot) {
         Ok(Some(meta)) if meta.is_full() => meta,
-        Ok(_) if slot <= root => return Block::Missing,
-        Ok(_) => return Block::Pending,
-        Err(_) => return Block::Opaque,
+        // Rooted but not held, as a downloaded snapshot's slot.
+        _ => return Block::Opaque,
     };
     let Some(last) = meta.last_index else {
         return Block::Opaque;
     };
     let start = last.saturating_add(1).saturating_sub(FOOTER_SPAN);
-    let Ok((components, _, _)) = blockstore.get_slot_components_with_shred_info(slot, start, true)
+    let Ok((components, _, _)) = blockstore.get_slot_components_with_shred_info(slot, start, false)
     else {
         return Block::Opaque;
     };
@@ -705,7 +712,15 @@ pub fn median_of(mut counts: Vec<u64>) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        solana_keypair::Keypair,
+        solana_ledger::{
+            blockstore::make_slot_entries,
+            get_tmp_ledger_path_auto_delete,
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        },
+    };
 
     fn bitmap(len: u16, set: &[usize]) -> Vec<u8> {
         let mut bits = vec![0u8; usize::from(len).div_ceil(8)];
@@ -753,6 +768,61 @@ mod tests {
     fn test_garbage_does_not_decode() {
         assert_eq!(decode_paid(&[0u8, 1], 10), None);
         assert_eq!(decode_paid(&[7u8, 10, 0, 0, 0], 10), None);
+    }
+
+    #[test]
+    fn test_only_a_rooted_block_is_read() {
+        let ledger = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger.path()).unwrap();
+        // 5 arrived whole and was skipped, 6 was rooted without its shreds, 7 is rooted and whole
+        // with no footer, 9 is the root and ends in a footer, 12 is past the root.
+        for (slot, parent) in [(5, 4), (7, 6), (12, 11)] {
+            let (shreds, _) = make_slot_entries(slot, parent, 4);
+            blockstore.insert_shreds(shreds, true).unwrap();
+        }
+        let (_, entries) = make_slot_entries(9, 8, 4);
+        let hash = entries[0].hash;
+        let footer = BlockFooterV1 {
+            bank_hash: hash,
+            block_producer_time_nanos: 9,
+            block_user_agent: vec![],
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        };
+        let shredder = Shredder::new(9, 8, 0, 0).unwrap();
+        let keypair = Keypair::new();
+        let shred = |component: BlockComponent, last, chained, index| {
+            shredder
+                .component_to_merkle_shreds_for_tests(
+                    &keypair,
+                    &component,
+                    last,
+                    chained,
+                    index,
+                    index,
+                    &ReedSolomonCache::default(),
+                    &mut ProcessShredsStats::default(),
+                )
+                .0
+        };
+        let mut shreds = shred(BlockComponent::EntryBatch(entries), false, hash, 0);
+        let next = u32::try_from(shreds.len()).unwrap();
+        let chained = shreds.last().unwrap().merkle_root().unwrap();
+        let marker = VersionedBlockMarker::from_block_footer(footer.clone());
+        shreds.extend(shred(
+            BlockComponent::new_block_marker(marker),
+            true,
+            chained,
+            next,
+        ));
+        blockstore.insert_shreds(shreds, true).unwrap();
+        blockstore.set_roots([6, 7, 9].iter()).unwrap();
+        assert!(matches!(read_block(&blockstore, 5, 9), Block::Missing));
+        assert!(matches!(read_block(&blockstore, 6, 9), Block::Opaque));
+        assert!(matches!(read_block(&blockstore, 7, 9), Block::Opaque));
+        assert!(matches!(read_block(&blockstore, 9, 9), Block::Footer(read) if *read == footer));
+        assert!(matches!(read_block(&blockstore, 12, 9), Block::Pending));
     }
 
     #[test]

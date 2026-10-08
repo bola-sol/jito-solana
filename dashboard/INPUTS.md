@@ -183,9 +183,32 @@ Some panels were planned and not built. The validator has no input for them.
 - Bytes per gossip message or entry type. Gossip counts messages and entries, not their size.
 - Gossip entries held per type. Walking the gossip table is crate-private, and its stats point reports only the total.
 
-## What an events system would need to carry
+## Agave's event system
 
-- Everything under metrics datapoints as typed events, with a slot where the point has one. Not datapoints matched by name and gated by the log level.
-- A frozen block event with the fields listed under frozen banks, so a consumer never needs to hold a bank.
-- The supermajority wait's result for each node, and each reward certificate's membership per slot, from the code that already computes them.
-- A way to subscribe from the run command without a change to core. The two config fields the dashboard carries stand in for that today.
+Anza is writing an event system for the validator: the `agave-event-system` crate in [anza-xyz/agave-sdk](https://github.com/anza-xyz/agave-sdk). The validator publishes typed events to named streams in shared memory. Other processes subscribe to these streams. The system operates on Linux only. On other platforms, each operation does nothing.
+
+These properties change how the dashboard can use it:
+
+- All streams are off by default. A policy enables streams by the start of their name, for example `off,slot.=on`.
+- A slow subscriber does not slow the validator. When a subscriber does not read fast enough, the publisher drops new events and counts them.
+- A subscriber can decode events without the validator's types, because each stream keeps the schema of its events.
+
+On 2026-10-08, agave does not publish events, and the crate defines no validator events. The dashboard reads none of its inputs from this system.
+
+### What the dashboard needs from it
+
+| Kind | Stream needed | Notes |
+| --- | --- | --- |
+| Metrics datapoints | One typed stream for each point, with the slot where the point has one | Counters must be running totals, not counts since the last event. Then a dropped event loses resolution, not counts. |
+| Frozen banks | One event for each frozen block, with the fields listed under frozen banks | Then no subscriber holds a bank. |
+| Gossip and bank forks before the wait | One event for each node during the supermajority wait: its stake, its version, and if gossip has a fresh contact | The validator's own walk already calculates this. |
+| Bank and bank forks reads | State streams: the leader schedule, stakes and rank map at the start of each epoch, and each vote account when it changes | A subscriber that starts late needs the full value. A state stream must send the full value at an interval, not only when it changes. |
+| Gossip, blockstore, caches | For each slot, the validators that its reward certificate paid. For each peer, its contact information when it changes | The leader knows the certificate's members when it writes the footer. With this stream, the dashboard does not parse ledger bytes. |
+| The host | None | A separate process can read these inputs itself. |
+
+### What changes for the dashboard
+
+- The dashboard can operate as a separate process. The validator only publishes events, and the dashboard needs no change to core.
+- The validator needs two settings: the event system's directory and the stream policy. The dashboard must document the stream names it needs.
+- A dropped event is a gap in the data. The dashboard must show the gap, not a zero. The publisher's count of dropped events tells it when a gap occurs.
+- Until state streams exist, the bank, gossip and blockstore reads stay inside the validator. The metrics and frozen block streams can replace the metrics observer and the bank notification channel first.

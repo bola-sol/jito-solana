@@ -25,7 +25,7 @@ use {
     },
     serde::Serialize,
     solana_clock::{Epoch, Slot},
-    solana_gossip::contact_info::ContactInfo,
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     solana_rpc::optimistically_confirmed_bank_tracker::{
@@ -1709,21 +1709,7 @@ impl Collector {
     fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) -> LastVotes {
         let vote_accounts = bank.vote_accounts();
         let tip = bank.slot();
-
-        // A validator can be in gossip or the vote accounts without the other, so both are walked.
-        let versions: HashMap<Pubkey, String> = peers
-            .iter()
-            .map(|(contact_info, _)| (*contact_info.pubkey(), contact_info.version().to_string()))
-            .collect();
-
-        let rpc_nodes = self
-            .ctx
-            .cluster_info
-            .rpc_peers()
-            .iter()
-            .map(|contact_info| *contact_info.pubkey())
-            .collect::<HashSet<_>>()
-            .len();
+        let rpc_nodes = count_rpc_nodes(&self.ctx.cluster_info, peers);
 
         let tally = tally_stake(
             vote_accounts
@@ -1737,6 +1723,14 @@ impl Collector {
                 }),
             tip,
         );
+
+        // A validator can be in gossip or the vote accounts without the other, so both are walked.
+        // Versions are kept only for the staked identities they are counted over.
+        let versions: HashMap<Pubkey, String> = peers
+            .iter()
+            .filter(|(contact_info, _)| tally.staked.contains_key(contact_info.pubkey()))
+            .map(|(contact_info, _)| (*contact_info.pubkey(), contact_info.version().to_string()))
+            .collect();
 
         self.debounces.validator_counts.publish(
             &self.publisher,
@@ -2055,6 +2049,18 @@ fn assess_health(
     Health { replay, vote }
 }
 
+/// `ClusterInfo::rpc_peers`' filter over a copy of the table, which holds one contact per identity.
+fn count_rpc_nodes(cluster_info: &ClusterInfo, peers: &[(ContactInfo, u64)]) -> usize {
+    let me = cluster_info.id();
+    let space = cluster_info.socket_addr_space();
+    peers
+        .iter()
+        .filter(|(contact, _)| {
+            contact.pubkey() != &me && contact.rpc().is_some_and(|addr| space.check(&addr))
+        })
+        .count()
+}
+
 /// Counted over staked identities so the two cards add up.
 fn version_shares(
     staked: &HashMap<Pubkey, u64>,
@@ -2195,6 +2201,9 @@ mod tests {
         solana_core::validator::ValidatorStartProgress,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_net_utils::SocketAddrSpace,
+        solana_signer::Signer,
+        std::net::SocketAddr,
     };
 
     #[test]
@@ -2776,6 +2785,68 @@ mod tests {
             shares[..MAX_VERSIONS_REPORTED].iter().all(|s| !s.other),
             "only the tail row is flagged"
         );
+    }
+
+    #[test]
+    fn test_unstaked_versions_leave_the_shares_unchanged() {
+        let staked = staked(&[(1, 30), (2, 20), (3, 10)]);
+        let with_unstaked = gossiped(&[(1, "4.2.0"), (2, "4.3.0"), (7, "4.3.0"), (8, "4.1.0")]);
+        let staked_only = gossiped(&[(1, "4.2.0"), (2, "4.3.0")]);
+        assert_eq!(
+            serde_json::to_string(&version_shares(&staked, &with_unstaked)).unwrap(),
+            serde_json::to_string(&version_shares(&staked, &staked_only)).unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_a_staked_peer_is_published_with_its_release() {
+        // The fixture node is staked and in its own gossip table.
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let peers = harness.ctx.cluster_info.all_peers();
+        collector.collect_peers(&harness.working_bank(), &peers);
+
+        let version = harness
+            .ctx
+            .cluster_info
+            .my_contact_info()
+            .version()
+            .to_string();
+        let release = format!(r#""version":"{}""#, strip_prerelease(&version));
+        let versions = harness.published_key("summary", "versions").unwrap();
+        assert!(versions.contains(&release), "{versions}");
+        assert!(!versions.contains(r#""version":null"#), "{versions}");
+    }
+
+    #[test]
+    fn test_rpc_nodes_are_counted_as_gossip_counts_them() {
+        // Our own contact, a public RPC address, a private one, and none.
+        for (space, expected) in [
+            (SocketAddrSpace::Unspecified, 2),
+            (SocketAddrSpace::Global, 1),
+        ] {
+            let keypair = Arc::new(Keypair::new());
+            let me = SocketAddr::from(([1, 2, 3, 4], 8000));
+            let cluster_info = ClusterInfo::new(
+                ContactInfo::new_with_socketaddr(&keypair.pubkey(), &me),
+                keypair,
+                space,
+            );
+            for ip in [[1, 2, 3, 5], [10, 0, 0, 1]] {
+                let socket = SocketAddr::from((ip, 8000));
+                cluster_info.insert_info(ContactInfo::new_with_socketaddr(
+                    &Pubkey::new_unique(),
+                    &socket,
+                ));
+            }
+            cluster_info.insert_info(ContactInfo::new(Pubkey::new_unique(), timestamp(), 0));
+
+            let peers = cluster_info.all_peers();
+            assert_eq!(peers.len(), 4);
+            let counted = count_rpc_nodes(&cluster_info, &peers);
+            assert_eq!(counted, cluster_info.rpc_peers().len());
+            assert_eq!(counted, expected);
+        }
     }
 
     const FRESH: Duration = Duration::from_secs(1);

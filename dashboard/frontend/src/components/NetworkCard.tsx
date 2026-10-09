@@ -110,6 +110,7 @@ function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
   // The drops come before the card's long model name, which is what the
   // ellipsis takes; the whole line is on the hover.
   const drops = dropped === null ? null : dropsLabel(dropped);
+  const tone = dropped !== null && dropped > 0 ? "tone-bad" : "tone-good";
   const whole = [mode, drops, ...detail].filter((part) => part !== null).join(" · ");
 
   return (
@@ -119,13 +120,13 @@ function Xdp({ xdp, dropped }: { xdp: XdpConfig; dropped: number | null }) {
       </span>
       <span className="net-xdp-detail" title={whole}>
         <span className="net-xdp-mode">{mode}</span>
-        {drops !== null && (
-          <span className={dropped !== null && dropped > 0 ? "tone-bad" : "tone-good"}> · {drops}</span>
-        )}
+        {drops !== null && <span className={`net-xdp-drops ${tone}`}> · {drops}</span>}
         {detail.map((part) => (
           <span key={part}> · {part}</span>
         ))}
       </span>
+      {/* The narrow layout's copy of the drops, on a line of their own. */}
+      {drops !== null && <span className={`net-xdp-drops-line ${tone}`}>{drops}</span>}
     </div>
   );
 }
@@ -268,10 +269,13 @@ function Intake({ turbine }: { turbine: Turbine }) {
           ))}
         </span>
         <span className="net-xdp-detail">
+          {/* Breaks only after a separator, so a wrapped line never starts with one. */}
           {shares.map((layer, index) => (
             <span key={layer.key}>
-              {index > 0 && " · "}
-              {layer.label} <b>{percent(layer.share, 0)}</b>
+              {index > 0 && "\u00a0· "}
+              <span className="net-turbine-layer">
+                {layer.label} <b>{percent(layer.share, 0)}</b>
+              </span>
             </span>
           ))}
         </span>

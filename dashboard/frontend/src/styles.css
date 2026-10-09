@@ -2102,6 +2102,7 @@ body {
   font-weight: 500;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .net-value small {
@@ -2137,6 +2138,8 @@ body {
   line-height: 38px;
 }
 
+/* Unwrapped: the average and the change are in the current rate's unit, so they have no widest
+   figure. */
 .net-meta {
   grid-column: 3;
   grid-row: 1 / 3;
@@ -2146,6 +2149,7 @@ body {
   color: var(--text-faint);
   line-height: 1.6;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .net-meta b {
@@ -2233,10 +2237,18 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Each entry holds the width of its widest figure, 1,023.99, so the legend wraps by the card's width
+   alone. */
 .net-split-legend span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: calc(14px + 15ch);
+  white-space: nowrap;
+}
+
+.net-split-legend span:last-child {
+  min-width: calc(14px + 21ch);
 }
 
 .net-split-legend i {
@@ -2316,6 +2328,11 @@ body {
   color: var(--text);
 }
 
+/* Shown only in the narrow layout. */
+.net-xdp-drops-line {
+  display: none;
+}
+
 /* The host's interfaces, folded to one line at the card's foot. */
 .net-ifaces {
   padding: 4px 0 2px;
@@ -2367,6 +2384,7 @@ body {
 }
 
 .net-if-list {
+  container: net-ifaces / inline-size;
   display: flex;
   flex-direction: column;
   padding: 2px 0 4px;
@@ -2470,7 +2488,11 @@ body {
   .net-if-traffic {
     text-align: left;
   }
+}
 
+/* Narrower than a tunnel's longest line, 1,234 of 1,234 routes inside a 15-character name, the
+   carrier takes a line of its own, so the route count never wraps the row. */
+@container net-ifaces (max-width: calc(56ch + 31px)) {
   .net-if-detail {
     flex-direction: column;
     align-items: flex-start;
@@ -2521,6 +2543,10 @@ body {
 .net-turbine .net-xdp-detail b {
   font-weight: 500;
   color: var(--text-dim);
+}
+
+.net-turbine-layer {
+  white-space: nowrap;
 }
 
 /* ---- produced blocks ---- */
@@ -4685,7 +4711,11 @@ body {
   .validators-body {
     grid-template-columns: 1fr;
   }
+}
 
+/* The host network card's narrow layout, up to the width at which its three columns and widest
+   figures fit beside the socket card. */
+@media (max-width: 1180px) {
   /* The sparkline gives up its width first: the two figures are what gets
      read, and the line is the shape behind them. */
   /* Both tracks fractional: an auto track takes the SVG's intrinsic width. */
@@ -4705,19 +4735,12 @@ body {
     font-size: 20px;
   }
 
+  /* The average and the change on two lines at every width, so a longer figure cannot wrap the row
+     taller. */
   .net-meta {
     grid-column: 2;
     grid-row: 1;
     line-height: 1.4;
-  }
-
-  .net-meta b {
-    display: inline;
-  }
-
-  .net-meta b::after {
-    content: " · ";
-    color: var(--border);
   }
 
   .net-spark {
@@ -4727,12 +4750,35 @@ body {
     min-width: 0;
   }
 
-  /* The XDP and turbine lines wrap instead of clipping: the drops clause is
-     the end of the first and the last layer the end of the second. */
+  /* The XDP and turbine lines wrap instead of clipping. */
   .net-xdp-detail {
     white-space: normal;
     overflow: visible;
     line-height: 1.5;
+  }
+
+  /* The drops take a line of their own across the card, so their count coming and going does not
+     change its height. */
+  .net-xdp-detail .net-xdp-drops {
+    display: none;
+  }
+
+  .net-xdp-drops-line {
+    display: block;
+    grid-column: 1 / -1;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Each layer holds the width of 100%, so the line wraps by the card's width alone. */
+  .net-turbine .net-xdp-detail b {
+    display: inline-block;
+    min-width: 4ch;
+    text-align: right;
   }
 
   .net-split {
@@ -4763,6 +4809,13 @@ body {
   .net-split-body {
     grid-column: 1 / 3;
     grid-row: 2;
+  }
+}
+
+/* The widest headline, 1,023.99 MB/s, fits its column at 320px. */
+@media (max-width: 360px) {
+  .net-value {
+    font-size: 18px;
   }
 }
 

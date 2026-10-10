@@ -606,6 +606,8 @@ impl Collector {
             .map(|(slot, _)| *slot)
             .max()
             .unwrap_or_default();
+        // Processed's own, which the page shows it beside; the working bank is Highest's.
+        let completed_height = frozen.last().map(|(_, bank)| bank.block_height());
 
         self.collect_slot_positions(&root_bank, highest_slot, completed);
         self.hold_produced_from(&root_bank);
@@ -621,7 +623,7 @@ impl Collector {
         // From the working bank: the root trails the tip by the thirty-two slots it
         // takes to root.
         self.collect_identity_and_vote(&working_bank, cluster_tip);
-        self.collect_epoch(&working_bank);
+        self.collect_epoch(&working_bank, completed_height);
         self.debounces.consensus.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -1556,14 +1558,16 @@ impl Collector {
         );
     }
 
-    fn collect_epoch(&mut self, bank: &Bank) {
+    fn collect_epoch(&mut self, bank: &Bank, completed_height: Option<u64>) {
         // Blocks, not slots: the gap between the two is how many slots the cluster skipped.
-        self.debounces.block_height.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "block_height",
-            bank.block_height(),
-        );
+        if let Some(height) = completed_height {
+            self.debounces.block_height.publish(
+                &self.publisher,
+                TOPIC_SUMMARY,
+                "block_height",
+                height,
+            );
+        }
 
         let epoch_schedule = bank.epoch_schedule();
         let slot = bank.slot();
@@ -3305,6 +3309,33 @@ mod tests {
 
         collector.tick();
         assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_block_height_is_processeds_not_the_working_banks() {
+        let harness = fixture();
+        let processed = harness.advance_to(4);
+        let working = Bank::new_from_parent(
+            processed.clone(),
+            SlotLeader {
+                id: harness.identity,
+                vote_address: harness.vote_account,
+            },
+            5,
+        );
+        harness.bank_forks.write().unwrap().insert(working);
+        assert_ne!(
+            harness.working_bank().block_height(),
+            processed.block_height()
+        );
+        let mut collector = harness.collector();
+
+        collector.tick();
+        assert_eq!(published_number(&harness, "completed_slot"), Some(4));
+        assert_eq!(
+            published_number(&harness, "block_height"),
+            Some(processed.block_height())
+        );
     }
 
     #[test]

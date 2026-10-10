@@ -1205,6 +1205,174 @@ body {
   color: var(--text);
 }
 
+/* Phones read the positions as offsets from Processed rather than as a grid of slot numbers. */
+.slot-anchor {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .slot-axis {
+    display: none;
+  }
+
+  .slot-anchor {
+    container: slot-anchor / inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+  }
+}
+
+.slot-anchor-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+
+.slot-anchor-label,
+.slot-anchor-height {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.slot-anchor-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.slot-anchor-sep {
+  color: var(--text-faint);
+}
+
+.slot-anchor-highest {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.slot-anchor-highest b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Scaled to the strip, so the anchor and the block height share a row down to a 320px phone. */
+.slot-anchor-value {
+  font-family: var(--mono);
+  font-size: min(34px, 8cqi);
+  font-weight: 500;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+/* Aligned by flex rather than text-align, which its tooltip would inherit. */
+.slot-anchor-height {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+}
+
+.slot-anchor-height-value {
+  font-family: var(--mono);
+  font-size: min(18px, 5cqi);
+  color: var(--text);
+}
+
+.slot-tiles {
+  display: grid;
+  grid-template-columns: repeat(var(--tiles, 4), minmax(0, 1fr));
+  gap: 6px;
+}
+
+.slot-tiles.has-3 {
+  --tiles: 3;
+}
+
+.slot-tiles.has-4 {
+  --tiles: 4;
+}
+
+.slot-tile {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.slot-tile-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* A label wider than its tile ends in an ellipsis rather than running into the next one. The
+   button is clipped, not the wrapper, which also holds the bubble. */
+.slot-tile-label .explain {
+  min-width: 0;
+}
+
+.slot-tile-label .explain-trigger {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slot-tile-delta {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.slot-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--level, var(--text-faint));
+}
+
+.slot-dot.is-highest {
+  background: var(--text-faint);
+}
+
+.slot-dot.is-voted {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ours);
+}
+
+/* Tighter on a phone, so four tiles keep one row down to a 308px strip, a 360px phone. */
+@container slot-anchor (width < 400px) {
+  .slot-tiles {
+    gap: 4px;
+  }
+
+  .slot-tile {
+    padding: 8px 5px;
+  }
+
+  .slot-tile-label {
+    gap: 4px;
+    font-size: 11px;
+  }
+}
+
+@container slot-anchor (width < 308px) {
+  .slot-tiles.has-4 {
+    --tiles: 2;
+  }
+}
+
 .slot-bars {
   display: flex;
   align-items: flex-end;

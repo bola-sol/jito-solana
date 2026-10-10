@@ -23,6 +23,27 @@ const LEVEL_NAMES = new Map<SlotLevel, string>(
   LEVELS.map(([level, label]) => [level, label]),
 );
 
+type Marker = "finalized" | "root" | "confirmed" | "voted" | "processed" | "highest" | "height";
+
+interface Position {
+  marker: Marker;
+  label: string;
+  slot: number | undefined;
+  explanation: string;
+}
+
+/** The phone layout's tiles: the vote, then the settled levels; the slot itself is in each tooltip. */
+const TILES: Array<[Marker, string]> = [
+  ["voted", "is-voted"],
+  ["confirmed", "level-optimistically_confirmed"],
+  ["finalized", "level-finalized"],
+  ["root", "level-rooted"],
+];
+
+export function markerTip(explanation: string, slot: number | undefined): string {
+  return slot === undefined ? explanation : `${explanation}: ${count(slot)}`;
+}
+
 export function SlotStrip(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
@@ -55,42 +76,57 @@ export function SlotStrip(): ReactElement {
 
   // Most settled first, as deltas from Processed, this validator's own tip. Under alpenglow
   // confirmed, root and finalized coincide.
-  const positions: Array<[string, number | undefined, string]> = [
-    [
-      "Finalized",
-      store.get("summary", "finalized_slot"),
-      alpenglow
+  const positions: Position[] = [
+    {
+      marker: "finalized",
+      label: "Finalized",
+      slot: store.get("summary", "finalized_slot"),
+      explanation: alpenglow
         ? "Highest slot with a finalization certificate"
         : "Highest slot a supermajority of stake has rooted",
-    ],
-    [
-      "Root",
-      store.get("summary", "root_slot"),
-      "Highest slot this validator has rooted",
-    ],
+    },
+    {
+      marker: "root",
+      label: "Root",
+      slot: store.get("summary", "root_slot"),
+      explanation: "Highest slot this validator has rooted",
+    },
     ...(alpenglow
       ? []
       : [
-          [
-            "Confirmed",
-            store.get("summary", "optimistically_confirmed_slot"),
-            "Highest slot the cluster has voted to confirm",
-          ] as [string, number | undefined, string],
+          {
+            marker: "confirmed",
+            label: "Confirmed",
+            slot: store.get("summary", "optimistically_confirmed_slot"),
+            explanation: "Highest slot the cluster has voted to confirm",
+          } satisfies Position,
         ]),
-    [
-      "Voted",
-      store.get("summary", "vote_slot") ?? undefined,
-      alpenglow
+    {
+      marker: "voted",
+      label: "Voted",
+      slot: store.get("summary", "vote_slot") ?? undefined,
+      explanation: alpenglow
         ? "Last slot a certificate carrying this node's vote landed"
         : "The slot this validator last voted on",
-    ],
-    ["Processed", processed, "Highest slot this validator has replayed and frozen"],
-    [
-      "Highest",
-      store.get("summary", "estimated_slot"),
-      "Highest slot this validator holds a bank for, whether or not it has been replayed",
-    ],
-    ["Block height", store.get("summary", "block_height"), "Blocks in the chain to Processed, which is slots less skips"],
+    },
+    {
+      marker: "processed",
+      label: "Processed",
+      slot: processed,
+      explanation: "Highest slot this validator has replayed and frozen",
+    },
+    {
+      marker: "highest",
+      label: "Highest",
+      slot: store.get("summary", "estimated_slot"),
+      explanation: "Highest slot this validator holds a bank for, whether or not it has been replayed",
+    },
+    {
+      marker: "height",
+      label: "Block height",
+      slot: store.get("summary", "block_height"),
+      explanation: "Blocks in the chain to Processed, which is slots less skips",
+    },
   ];
 
   const levels = alpenglow
@@ -209,11 +245,11 @@ export function SlotStrip(): ReactElement {
       </div>
 
       <div className="slot-axis">
-        {positions.map(([label, slot, explanation]) => (
-          <div className="slot-position" key={label}>
+        {positions.map(({ marker, label, slot, explanation }) => (
+          <div className="slot-position" key={marker}>
             <div className="slot-position-label">
               <Explain text={explanation}>{label}</Explain>
-              {label !== "Block height" && (
+              {marker !== "height" && (
                 <span className="slot-position-delta">{slotDelta(slot, processed)}</span>
               )}
             </div>
@@ -221,6 +257,7 @@ export function SlotStrip(): ReactElement {
           </div>
         ))}
       </div>
+      <SlotAnchor positions={positions} />
 
       <div className="slot-key">
         {levels.map(([level, label, explanation]) => (
@@ -239,6 +276,55 @@ export function SlotStrip(): ReactElement {
         />
       </div>
     </section>
+  );
+}
+
+/** The phone layout: Processed as the anchor, with Highest and Block height beside it and the
+ *  other positions as offsets from it. */
+function SlotAnchor({ positions }: { positions: Position[] }) {
+  const at = new Map(positions.map((position) => [position.marker, position]));
+  const processed = at.get("processed");
+  const highest = at.get("highest");
+  const height = at.get("height");
+  const tiles = TILES.flatMap(([marker, dot]) => {
+    const position = at.get(marker);
+    return position ? [{ position, dot }] : [];
+  });
+  if (!processed || !highest || !height) return null;
+  return (
+    <div className="slot-anchor">
+      <div className="slot-anchor-head">
+        <div className="slot-anchor-tip">
+          <div className="slot-anchor-label">
+            <Explain text={processed.explanation}>{processed.label}</Explain>
+            <span className="slot-anchor-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="slot-anchor-highest">
+              <i className="slot-dot is-highest" />
+              <Explain text={markerTip(highest.explanation, highest.slot)}>{highest.label}</Explain>
+              <b>{slotDelta(highest.slot, processed.slot)}</b>
+            </span>
+          </div>
+          <div className="slot-anchor-value">{count(processed.slot)}</div>
+        </div>
+        <div className="slot-anchor-height">
+          <Explain text={height.explanation}>{height.label}</Explain>
+          <div className="slot-anchor-height-value">{count(height.slot)}</div>
+        </div>
+      </div>
+      <div className={`slot-tiles has-${tiles.length}`}>
+        {tiles.map(({ position, dot }) => (
+          <div className="slot-tile" key={position.marker}>
+            <div className="slot-tile-label">
+              <i className={`slot-dot ${dot}`} />
+              <Explain text={markerTip(position.explanation, position.slot)}>{position.label}</Explain>
+            </div>
+            <div className="slot-tile-delta">{slotDelta(position.slot, processed.slot) || "—"}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

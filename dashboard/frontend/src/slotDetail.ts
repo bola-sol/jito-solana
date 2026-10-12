@@ -222,21 +222,38 @@ export interface LeadingView {
   /** From trying to start the slot under Alpenglow, otherwise the bank's open time alone. */
   fromStart: boolean;
   segments: ExecutionSegment[];
-  start: number | null;
-  slowStart: boolean;
+  /** What a start long against the open bank is called out as, or null when it is not. */
+  slow: { micros: number; label: string } | null;
   place: string;
 }
 
 /** Null when none of the slot's leader reports has landed. */
 export function leadingView(slot: number, leading: LeaderTiming): LeadingView | null {
   const open = leading.open_millis === null ? null : leading.open_millis * 1000;
+  const start = leading.start_micros;
+  const wait = start === null ? null : leading.parent_wait_micros;
+  // From 4.4 the wait for the parent is reported apart from the rest of the start.
+  const starting: Array<[string, string, string, number | null]> =
+    wait === null
+      ? [
+          [
+            "fixed",
+            "getting started",
+            "From trying to start the slot to its bank existing, any wait for the parent block to finish replaying included.",
+            start,
+          ],
+        ]
+      : [
+          ["fixed", "waiting for the parent", "Until the parent block finished replaying here.", wait],
+          [
+            "record",
+            "opening the bank",
+            "From trying to start the slot to its bank existing, less the wait for the parent.",
+            Math.max(0, (start ?? 0) - wait),
+          ],
+        ];
   const parts: Array<[string, string, string, number | null]> = [
-    [
-      "fixed",
-      "getting started",
-      "From trying to start the slot to its bank existing, any wait for the parent block to finish replaying included.",
-      leading.start_micros,
-    ],
+    ...starting,
     ["load", "building", "The bank open to transactions, from set to cleared.", open],
   ];
   const present = parts.filter((part): part is [string, string, string, number] => part[3] !== null);
@@ -255,8 +272,12 @@ export function leadingView(slot: number, leading: LeaderTiming): LeadingView | 
       micros,
       share: total > 0 ? micros / total : 0,
     })),
-    start: leading.start_micros,
-    slowStart: leading.start_micros !== null && open !== null && leading.start_micros > open * SLOW_START,
+    slow:
+      start === null || open === null || start <= open * SLOW_START
+        ? null
+        : wait !== null && wait > open * SLOW_START
+          ? { micros: wait, label: "waiting for the parent" }
+          : { micros: start, label: "getting started" },
     place: notes.join(", "),
   };
 }

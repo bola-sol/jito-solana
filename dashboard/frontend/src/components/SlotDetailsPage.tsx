@@ -1109,9 +1109,11 @@ function LeadingTime({ slot, leading }: { slot: number; leading: LeaderTiming })
         <div className="sx-cu-value">{micros(view.total)}</div>
         <div className="sx-cu-of">
           {view.fromStart ? "from trying to start the slot to its bank closing" : "the bank open, from set to cleared"}
-          {view.slowStart && view.start !== null && (
+          {view.slow && (
             <>
-              , <span className="tone-warn">{micros(view.start)} getting started</span>
+              , <span className="tone-warn">
+                {micros(view.slow.micros)} {view.slow.label}
+              </span>
             </>
           )}
         </div>

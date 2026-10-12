@@ -299,6 +299,18 @@ impl ProducedStore {
         changed
     }
 
+    /// Timed again when this block, or the one before it, fills.
+    pub fn set_duration(&mut self, slot: Slot, nanos: u64) -> bool {
+        match self.blocks.get_mut(&slot) {
+            Some(block) if block.duration_nanos != Some(nanos) => {
+                block.duration_nanos = Some(nanos);
+                self.changed.insert(slot);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Replaced whenever the tap holds more, since the slot's reports arrive one at a time.
     pub fn fill_leading(&mut self, timing: impl Fn(Slot) -> Option<LeaderTiming>) -> bool {
         let mut changed = false;

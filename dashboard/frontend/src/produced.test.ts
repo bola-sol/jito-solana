@@ -30,6 +30,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     versions: null,
     execution: null,
     certificate: null,
+    leading: null,
     ...over,
   };
 }

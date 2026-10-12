@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        metrics_tap::{Recurrence, SlotCost, SlotWaterfall, StageTimes},
+        metrics_tap::{LeaderTiming, Recurrence, SlotCost, SlotWaterfall, StageTimes},
         turns::LeaderTurn,
         versions::TxVersions,
     },
@@ -60,6 +60,8 @@ pub struct ProducedBlock {
     pub versions: Option<TxVersions>,
     pub execution: Option<Execution>,
     pub certificate: Option<BlockCertificate>,
+    /// Where the slot's time went on our side; its parts land over the slot's last moments.
+    pub leading: Option<LeaderTiming>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -109,6 +111,9 @@ const MAX_HELD_BLOCKS: usize = 32_768;
 
 /// The bundle stage reports within a few slots, and the tap keeps its reports about this long.
 const BUNDLE_REACH: usize = 512;
+
+/// The leader reports land within a second of the slot; the tap keeps them far longer.
+const LEADING_REACH: usize = 64;
 
 /// Blocks in one page of figures, a few tens of kilobytes on the wire.
 pub const FIGURES_PAGE: usize = 1024;
@@ -296,6 +301,20 @@ impl ProducedStore {
         changed
     }
 
+    /// Replaced whenever the tap holds more, since the slot's reports arrive one at a time.
+    pub fn fill_leading(&mut self, timing: impl Fn(Slot) -> Option<LeaderTiming>) -> bool {
+        let mut changed = false;
+        for block in self.blocks.values_mut().rev().take(LEADING_REACH) {
+            let held = timing(block.slot);
+            if held.is_some() && held != block.leading {
+                block.leading = held;
+                self.changed.insert(block.slot);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// The blocks still waiting on their reward certificate.
     pub fn without_certificate(&self) -> Vec<Slot> {
         self.blocks
@@ -443,6 +462,7 @@ pub(crate) fn sample_block(slot: Slot) -> ProducedBlock {
         versions: None,
         execution: None,
         certificate: None,
+        leading: None,
     }
 }
 
@@ -600,6 +620,29 @@ mod tests {
             })
         );
         assert!(!ring.fill_bundles(landed), "nothing left to fill");
+    }
+
+    #[test]
+    fn test_a_blocks_leader_timing_is_replaced_as_its_parts_land() {
+        let mut ring = ProducedStore::default();
+        ring.insert(block(10));
+        let part = LeaderTiming {
+            open_millis: Some(400),
+            ..LeaderTiming::default()
+        };
+        assert!(ring.fill_leading(|_| Some(part)));
+        assert!(!ring.fill_leading(|_| Some(part)), "nothing new");
+        let whole = LeaderTiming {
+            broadcast_micros: Some(411_000),
+            ..part
+        };
+        assert!(ring.fill_leading(|_| Some(whole)));
+        assert_eq!(ring.recent(usize::MAX)[0].leading, Some(whole));
+        assert!(
+            !ring.fill_leading(|_| None),
+            "a report gone from the tap leaves the block as it was"
+        );
+        assert_eq!(ring.recent(usize::MAX)[0].leading, Some(whole));
     }
 
     #[test]

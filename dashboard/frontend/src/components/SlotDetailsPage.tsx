@@ -21,6 +21,7 @@ import { jitoShare, ourShare } from "../tips";
 import type {
   BlockCertificate,
   Execution,
+  LeaderTiming,
   LeaderSlotCounts,
   ProducedBlock,
   ProducedDetail,
@@ -36,6 +37,7 @@ import {
   bundlesValue,
   capacity,
   executionView,
+  leadingView,
   schedulerView,
   shareOfGroup,
   versionsTitle,
@@ -783,6 +785,7 @@ function BlockCompute({
       </div>
       {cap && <CapacityBar cap={cap} />}
       {block.execution && <ExecutionTime execution={block.execution} />}
+      {block.leading && <LeadingTime slot={block.slot} leading={block.leading} />}
     </div>
   );
 }
@@ -1079,6 +1082,73 @@ function ExecutionTime({ execution }: { execution: Execution }) {
         <Stat label="per worker" value={micros(view.perWorker)} />
         <Stat label="longest batch" value={micros(execution.longest_batch)} />
       </div>
+    </div>
+  );
+}
+
+function LeadingTime({ slot, leading }: { slot: number; leading: LeaderTiming }) {
+  const view = leadingView(slot, leading);
+  if (!view) return null;
+  const stats: Array<[string, number | null, string?]> = [
+    [
+      "broadcast",
+      leading.broadcast_micros,
+      "From the slot's first entries reaching broadcast to its last shred sent, by broadcast's own clock.",
+    ],
+    ["shredding", leading.shredding_micros],
+    ["scheduler receiving", leading.scheduler_receive_micros],
+    ["scheduler scheduling", leading.scheduler_schedule_micros],
+  ];
+  return (
+    <div className="sx-exec">
+      <div className="sx-strip">
+        <span className="sx-strip-label">
+          <Explain text="Where this slot's time went on our side, from starting it to its bank closing.">
+            Leading this slot
+          </Explain>
+        </span>
+        <span className="sx-strip-right">
+          <span>{view.place}</span>
+        </span>
+      </div>
+      <div className="sx-cu">
+        <div className="sx-cu-value">{micros(view.total)}</div>
+        <div className="sx-cu-of">
+          {view.fromStart ? "from trying to start the slot to its bank closing" : "the bank open, from set to cleared"}
+          {view.slowStart && view.start !== null && (
+            <>
+              , <span className="tone-warn">{micros(view.start)} getting started</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="sx-cap">
+        <div className="sx-cap-bar" aria-hidden="true">
+          {view.segments.map((segment) => (
+            <i
+              key={segment.key}
+              className={`sx-exec-seg is-${segment.key}`}
+              style={{ width: `${segment.share * 100}%` }}
+            />
+          ))}
+        </div>
+        <div className="sx-legend">
+          {view.segments.map((segment) => (
+            <span className="sx-key" key={segment.key}>
+              <i className={`sx-sw is-${segment.key}`} />
+              {segment.explain ? <Explain text={segment.explain}>{segment.label}</Explain> : segment.label}{" "}
+              <b>{micros(segment.micros)}</b>
+            </span>
+          ))}
+        </div>
+      </div>
+      {stats.some(([, value]) => value !== null) && (
+        <div className="sx-keep">
+          {stats.map(([label, value, title]) =>
+            value === null ? null : <Stat key={label} label={label} value={micros(value)} title={title} />,
+          )}
+        </div>
+      )}
     </div>
   );
 }

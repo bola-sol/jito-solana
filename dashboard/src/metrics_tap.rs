@@ -144,6 +144,17 @@ const VOTE_ARRIVAL: &str = "consensus_vote_metrics";
 
 const VOTE_ACCOUNT: &str = "address";
 
+/// Under alpenglow, the block creation loop's report on one of our leader slots.
+const LEADER_START: &str = "slot-metrics";
+
+const LEADER_BANK: &str = "leader-slot-start-to-cleared-elapsed-ms";
+
+const BROADCAST_TRANSMIT: &str = "broadcast-transmit-shreds-stats";
+
+const BROADCAST_PROCESS: &str = "broadcast-process-shreds-stats";
+
+const SCHEDULER_SLOT_TIMING: &str = "banking_stage_scheduler_slot_timing";
+
 const VOTE_TRACKS: usize = 4096;
 
 /// A leader window's first slot at a time, so several minutes of them.
@@ -262,6 +273,8 @@ pub struct MetricsTap {
 
     vote_arrivals: Mutex<VoteArrivals>,
 
+    leader_timings: Mutex<BTreeMap<Slot, LeaderTiming>>,
+
     /// Latched: it cannot change while the process runs.
     xdp: Mutex<Option<XdpConfig>>,
 
@@ -269,6 +282,25 @@ pub struct MetricsTap {
     bundles_processed_reported: AtomicBool,
 
     stake_in_gossip: Mutex<Option<StakeInGossip>>,
+}
+
+/// Where one of our leader slots' time went, merged from the reports that each carry part of it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct LeaderTiming {
+    /// Under alpenglow, from trying to start the slot to its bank existing, any wait for the
+    /// parent's replay included.
+    pub start_micros: Option<u64>,
+    /// The bank open to transactions, from set to cleared.
+    pub open_millis: Option<u64>,
+    /// From broadcast's first entries for the slot to its last shred sent.
+    pub broadcast_micros: Option<u64>,
+    pub shredding_micros: Option<u64>,
+    pub scheduler_receive_micros: Option<u64>,
+    pub scheduler_schedule_micros: Option<u64>,
+    /// The window began on a parent not yet certified.
+    pub fast_handover: bool,
+    /// The block had to move to another parent.
+    pub parent_switched: bool,
 }
 
 /// One validator's votes over an epoch, each timed from its slot starting here to the vote arriving.
@@ -950,6 +982,12 @@ impl MetricsTap {
             REPLAY_SLOT_STATS => self.remember_replay(point),
             VOTE_TRACKING => self.remember_vote_track(point),
             VOTE_ARRIVAL => self.remember_vote_arrival(point),
+            LEADER_START | LEADER_BANK | BROADCAST_TRANSMIT | BROADCAST_PROCESS => {
+                self.remember_leader_timing(point)
+            }
+            SCHEDULER_SLOT_TIMING if scheduler_source(point) == SchedulerSource::Scheduler => {
+                self.remember_leader_timing(point)
+            }
             SHRED_FULL => self.remember_fill(point),
             BUNDLE_SLOT_STATS => self.remember_bundles(point),
             WORKER_TIMING => self.remember_worker_timing(point, timestamp()),
@@ -1088,6 +1126,43 @@ impl MetricsTap {
         };
         if let Ok(mut held) = self.xdp.lock() {
             *held = Some(config);
+        }
+    }
+
+    fn remember_leader_timing(&self, point: &DataPoint) {
+        let field = |wanted: &str| {
+            point
+                .fields
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .and_then(|(_, value)| field_u64(value))
+        };
+        let Some(slot) = field(SLOT) else {
+            return;
+        };
+        let Ok(mut timings) = self.leader_timings.lock() else {
+            return;
+        };
+        let timing = timings.entry(slot).or_default();
+        match point.name {
+            LEADER_START => {
+                // Reported again when the slot ends, with the start's histogram emptied.
+                if let Some(start) = field("slot_delay_max").filter(|start| *start > 0) {
+                    timing.start_micros = Some(start);
+                }
+                timing.fast_handover |= field("leader_handover_fast") == Some(1);
+                timing.parent_switched |= field("leader_handover_sad") == Some(1);
+            }
+            LEADER_BANK => timing.open_millis = field("elapsed"),
+            BROADCAST_TRANSMIT => timing.broadcast_micros = field("end_to_end_elapsed"),
+            BROADCAST_PROCESS => timing.shredding_micros = field("shredding_time"),
+            _ => {
+                timing.scheduler_receive_micros = field("receive_time_us");
+                timing.scheduler_schedule_micros = field("schedule_time_us");
+            }
+        }
+        while timings.len() > PENDING_SLOTS {
+            timings.pop_first();
         }
     }
 
@@ -1581,6 +1656,10 @@ impl MetricsTap {
         }
         sum.workers = workers.len() as u64;
         Some(sum)
+    }
+
+    pub fn leader_timing(&self, slot: Slot) -> Option<LeaderTiming> {
+        self.leader_timings.lock().ok()?.get(&slot).copied()
     }
 
     /// The epoch they describe, and each vote account's arrivals.
@@ -2083,10 +2162,80 @@ mod tests {
         named(ACCOUNTS_DB_TIMINGS, fields)
     }
 
+    fn slot_point_named(
+        name: &'static str,
+        slot: Slot,
+        fields: &[(&'static str, &str)],
+    ) -> DataPoint {
+        let mut point = named(name, fields);
+        point.fields.push((SLOT, format!("{slot}i")));
+        point
+    }
+
     fn arrival_point(vote: &Pubkey, fields: &[(&'static str, &str)]) -> DataPoint {
         let mut point = named(VOTE_ARRIVAL, fields);
         point.add_tag(VOTE_ACCOUNT, &vote.to_string());
         point
+    }
+
+    #[test]
+    fn test_a_leader_slots_timing_is_merged_from_its_reports() {
+        let tap = MetricsTap::default();
+        let slot = 4_000;
+        tap.observe(&slot_point_named(
+            LEADER_START,
+            slot,
+            &[("slot_delay_max", "46100i"), ("leader_handover_fast", "0i")],
+        ));
+        tap.observe(&slot_point_named(LEADER_BANK, slot, &[("elapsed", "400i")]));
+        tap.observe(&slot_point_named(
+            BROADCAST_TRANSMIT,
+            slot,
+            &[("end_to_end_elapsed", "411000i")],
+        ));
+        tap.observe(&slot_point_named(
+            BROADCAST_PROCESS,
+            slot,
+            &[("shredding_time", "9800i")],
+        ));
+        tap.observe(&slot_point_named(
+            SCHEDULER_SLOT_TIMING,
+            slot,
+            &[
+                ("receive_time_us", "142000i"),
+                ("schedule_time_us", "31000i"),
+            ],
+        ));
+        // At the slot's end the block creation loop reports again, its start histogram empty.
+        tap.observe(&slot_point_named(
+            LEADER_START,
+            slot,
+            &[("slot_delay_max", "0i"), ("leader_handover_fast", "1i")],
+        ));
+
+        assert_eq!(
+            tap.leader_timing(slot),
+            Some(LeaderTiming {
+                start_micros: Some(46_100),
+                open_millis: Some(400),
+                broadcast_micros: Some(411_000),
+                shredding_micros: Some(9_800),
+                scheduler_receive_micros: Some(142_000),
+                scheduler_schedule_micros: Some(31_000),
+                fast_handover: true,
+                parent_switched: false,
+            })
+        );
+        assert_eq!(tap.leader_timing(slot.saturating_add(1)), None);
+    }
+
+    #[test]
+    fn test_another_schedulers_slot_timing_is_not_ours() {
+        let tap = MetricsTap::default();
+        let mut bam = slot_point_named(SCHEDULER_SLOT_TIMING, 9, &[("receive_time_us", "5i")]);
+        bam.tags.push((SCHEDULER_ID, "10000".to_string()));
+        tap.observe(&bam);
+        assert_eq!(tap.leader_timing(9), None);
     }
 
     #[test]

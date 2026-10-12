@@ -3,12 +3,13 @@ import {
   bundlesValue,
   capacity,
   executionView,
+  leadingView,
   schedulerView,
   shareOfGroup,
   versionsTitle,
   versionsValue,
 } from "./slotDetail";
-import type { ProducedBlock, SlotCost, SlotWaterfall } from "./types";
+import type { LeaderTiming, ProducedBlock, SlotCost, SlotWaterfall } from "./types";
 import { waterfallRows } from "./waterfall";
 
 function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
@@ -31,6 +32,7 @@ function block(over: Partial<ProducedBlock> = {}): ProducedBlock {
     versions: null,
     execution: null,
     certificate: null,
+    leading: null,
     ...over,
   };
 }
@@ -304,6 +306,47 @@ describe("executionView", () => {
     });
     expect(view.total).toBe(0);
     expect(view.segments.every((s) => s.share === 0)).toBe(true);
+  });
+});
+
+describe("leadingView", () => {
+  const timing = (over: Partial<LeaderTiming> = {}): LeaderTiming => ({
+    start_micros: 46_000,
+    open_millis: 400,
+    broadcast_micros: 411_000,
+    shredding_micros: 9_800,
+    scheduler_receive_micros: 142_000,
+    scheduler_schedule_micros: 31_000,
+    fast_handover: false,
+    parent_switched: false,
+    ...over,
+  });
+
+  it("lays the start and the open bank end to end", () => {
+    const view = leadingView(4_000, timing())!;
+    expect(view.segments.map((segment) => [segment.label, segment.micros])).toEqual([
+      ["getting started", 46_000],
+      ["building", 400_000],
+    ]);
+    expect(view.total).toBe(446_000);
+    expect(view.fromStart).toBe(true);
+    expect(view.slowStart).toBe(true);
+    expect(view.place).toBe("slot 1 of 4 in the turn");
+  });
+
+  it("starts at the open bank under tower, which has no start report", () => {
+    const view = leadingView(4_003, timing({ start_micros: null, fast_handover: true, parent_switched: true }))!;
+    expect(view.segments.map((segment) => segment.key)).toEqual(["load"]);
+    expect(view.fromStart).toBe(false);
+    expect(view.slowStart).toBe(false);
+    expect(view.place).toBe("slot 4 of 4 in the turn, fast handover, parent switched");
+  });
+
+  it("marks only a start long against the open bank, and has nothing to show before a report", () => {
+    expect(leadingView(1, timing({ start_micros: 2_000 }))!.slowStart).toBe(false);
+    expect(
+      leadingView(1, timing({ start_micros: null, open_millis: null, broadcast_micros: 411_000 })),
+    ).toBeNull();
   });
 });
 

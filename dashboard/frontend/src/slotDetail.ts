@@ -1,7 +1,9 @@
 
 import { count, percent } from "./format";
+import { SLOTS_PER_TURN } from "./schedule";
 import type {
   Execution,
+  LeaderTiming,
   ProducedBlock,
   SlotCost,
   SlotWaterfall,
@@ -209,6 +211,53 @@ export function executionView(execution: Execution): ExecutionView {
     segments,
     perSlot: execution.window_millis > 0 ? total / (execution.window_millis * 1000) : null,
     perWorker: execution.workers > 0 ? nonVote / execution.workers : null,
+  };
+}
+
+/** A start longer than this share of the bank's open time is marked. */
+const SLOW_START = 0.1;
+
+export interface LeadingView {
+  total: number;
+  /** From trying to start the slot under Alpenglow, otherwise the bank's open time alone. */
+  fromStart: boolean;
+  segments: ExecutionSegment[];
+  start: number | null;
+  slowStart: boolean;
+  place: string;
+}
+
+/** Null when none of the slot's leader reports has landed. */
+export function leadingView(slot: number, leading: LeaderTiming): LeadingView | null {
+  const open = leading.open_millis === null ? null : leading.open_millis * 1000;
+  const parts: Array<[string, string, string, number | null]> = [
+    [
+      "fixed",
+      "getting started",
+      "From trying to start the slot to its bank existing, any wait for the parent block to finish replaying included.",
+      leading.start_micros,
+    ],
+    ["load", "building", "The bank open to transactions, from set to cleared.", open],
+  ];
+  const present = parts.filter((part): part is [string, string, string, number] => part[3] !== null);
+  if (present.length === 0) return null;
+  const total = present.reduce((sum, part) => sum + part[3], 0);
+  const notes = [`slot ${(slot % SLOTS_PER_TURN) + 1} of ${SLOTS_PER_TURN} in the turn`];
+  if (leading.fast_handover) notes.push("fast handover");
+  if (leading.parent_switched) notes.push("parent switched");
+  return {
+    total,
+    fromStart: leading.start_micros !== null,
+    segments: present.map(([key, label, explain, micros]) => ({
+      key,
+      label,
+      explain,
+      micros,
+      share: total > 0 ? micros / total : 0,
+    })),
+    start: leading.start_micros,
+    slowStart: leading.start_micros !== null && open !== null && leading.start_micros > open * SLOW_START,
+    place: notes.join(", "),
   };
 }
 

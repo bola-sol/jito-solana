@@ -328,6 +328,23 @@ export interface ProducedBlock {
   versions: TxVersions | null;
   execution: Execution | null;
   certificate: BlockCertificate | null;
+  /** Where the slot's time went on our side; its parts land over the slot's last moments. */
+  leading: LeaderTiming | null;
+}
+
+export interface LeaderTiming {
+  /** Under Alpenglow, from trying to start the slot to its bank existing, any wait for the parent
+   *  included. */
+  start_micros: number | null;
+  /** The bank open to transactions, from set to cleared. */
+  open_millis: number | null;
+  /** From broadcast's first entries for the slot to its last shred sent. */
+  broadcast_micros: number | null;
+  shredding_micros: number | null;
+  scheduler_receive_micros: number | null;
+  scheduler_schedule_micros: number | null;
+  fast_handover: boolean;
+  parent_switched: boolean;
 }
 
 export interface BlockCertificate {

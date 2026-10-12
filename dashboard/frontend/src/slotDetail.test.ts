@@ -312,6 +312,7 @@ describe("executionView", () => {
 describe("leadingView", () => {
   const timing = (over: Partial<LeaderTiming> = {}): LeaderTiming => ({
     start_micros: 46_000,
+    parent_wait_micros: null,
     open_millis: 400,
     broadcast_micros: 411_000,
     shredding_micros: 9_800,
@@ -330,20 +331,36 @@ describe("leadingView", () => {
     ]);
     expect(view.total).toBe(446_000);
     expect(view.fromStart).toBe(true);
-    expect(view.slowStart).toBe(true);
+    expect(view.slow).toEqual({ micros: 46_000, label: "getting started" });
     expect(view.place).toBe("slot 1 of 4 in the turn");
+  });
+
+  it("splits the start into the wait for the parent and the rest where 4.4 reports both", () => {
+    const view = leadingView(4_000, timing({ start_micros: 46_000, parent_wait_micros: 41_800 }))!;
+    expect(view.segments.map((segment) => [segment.label, segment.micros])).toEqual([
+      ["waiting for the parent", 41_800],
+      ["opening the bank", 4_200],
+      ["building", 400_000],
+    ]);
+    expect(view.total).toBe(446_000);
+    expect(view.slow).toEqual({ micros: 41_800, label: "waiting for the parent" });
+    // A slow start that was not the wait is called out as a whole.
+    expect(leadingView(1, timing({ start_micros: 46_000, parent_wait_micros: 1_000 }))!.slow).toEqual({
+      micros: 46_000,
+      label: "getting started",
+    });
   });
 
   it("starts at the open bank under tower, which has no start report", () => {
     const view = leadingView(4_003, timing({ start_micros: null, fast_handover: true, parent_switched: true }))!;
     expect(view.segments.map((segment) => segment.key)).toEqual(["load"]);
     expect(view.fromStart).toBe(false);
-    expect(view.slowStart).toBe(false);
+    expect(view.slow).toBeNull();
     expect(view.place).toBe("slot 4 of 4 in the turn, fast handover, parent switched");
   });
 
   it("marks only a start long against the open bank, and has nothing to show before a report", () => {
-    expect(leadingView(1, timing({ start_micros: 2_000 }))!.slowStart).toBe(false);
+    expect(leadingView(1, timing({ start_micros: 2_000 }))!.slow).toBeNull();
     expect(
       leadingView(1, timing({ start_micros: null, open_millis: null, broadcast_micros: 411_000 })),
     ).toBeNull();

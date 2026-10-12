@@ -290,6 +290,8 @@ pub struct LeaderTiming {
     /// Under alpenglow, from trying to start the slot to its bank existing, any wait for the
     /// parent's replay included.
     pub start_micros: Option<u64>,
+    /// The part of the start spent waiting for the parent's replay; reported from 4.4 on.
+    pub parent_wait_micros: Option<u64>,
     /// The bank open to transactions, from set to cleared.
     pub open_millis: Option<u64>,
     /// From broadcast's first entries for the slot to its last shred sent.
@@ -1146,8 +1148,13 @@ impl MetricsTap {
         let timing = timings.entry(slot).or_default();
         match point.name {
             LEADER_START => {
-                // Reported again when the slot ends, with the start's histogram emptied.
-                if let Some(start) = field("slot_delay_max").filter(|start| *start > 0) {
+                if let Some(start) = field("slot_delay_us") {
+                    // From 4.4: once per slot, the wait for the parent reported apart.
+                    timing.start_micros = Some(start);
+                    timing.parent_wait_micros = field("replay_is_behind_us");
+                } else if let Some(start) = field("slot_delay_max").filter(|start| *start > 0) {
+                    // Before 4.4: reported again when the slot ends, with the start's histogram
+                    // emptied.
                     timing.start_micros = Some(start);
                 }
                 timing.fast_handover |= field("leader_handover_fast") == Some(1);
@@ -2217,6 +2224,7 @@ mod tests {
             tap.leader_timing(slot),
             Some(LeaderTiming {
                 start_micros: Some(46_100),
+                parent_wait_micros: None,
                 open_millis: Some(400),
                 broadcast_micros: Some(411_000),
                 shredding_micros: Some(9_800),
@@ -2227,6 +2235,32 @@ mod tests {
             })
         );
         assert_eq!(tap.leader_timing(slot.saturating_add(1)), None);
+    }
+
+    #[test]
+    fn test_from_44_the_start_and_the_wait_for_the_parent_come_apart() {
+        let tap = MetricsTap::default();
+        tap.observe(&slot_point_named(
+            LEADER_START,
+            12,
+            &[
+                ("slot_delay_us", "46100i"),
+                ("replay_is_behind_us", "41800i"),
+                ("leader_handover_sad", "1i"),
+            ],
+        ));
+        let timing = tap.leader_timing(12).unwrap();
+        assert_eq!(timing.start_micros, Some(46_100));
+        assert_eq!(timing.parent_wait_micros, Some(41_800));
+        assert!(timing.parent_switched);
+
+        // A start that took no measurable time is still a reading.
+        tap.observe(&slot_point_named(
+            LEADER_START,
+            13,
+            &[("slot_delay_us", "0i"), ("replay_is_behind_us", "0i")],
+        ));
+        assert_eq!(tap.leader_timing(13).unwrap().start_micros, Some(0));
     }
 
     #[test]

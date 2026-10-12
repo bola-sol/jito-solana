@@ -336,6 +336,8 @@ export interface LeaderTiming {
   /** Under Alpenglow, from trying to start the slot to its bank existing, any wait for the parent
    *  included. */
   start_micros: number | null;
+  /** The part of the start spent waiting for the parent's replay; reported from 4.4 on. */
+  parent_wait_micros: number | null;
   /** The bank open to transactions, from set to cleared. */
   open_millis: number | null;
   /** From broadcast's first entries for the slot to its last shred sent. */

@@ -2,6 +2,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElem
 import { count, percent, shortKey } from "../format";
 import {
   ariaSort,
+  arrivalMedian,
+  arrivalText,
+  arrivalTitle,
   entryRows,
   filterCounts,
   FIRST_SORT,
@@ -317,10 +320,14 @@ function TimeCard({ time }: { time: Gossip["time"] }) {
 /** Under this share the column marks a validator's votes as usually late to the certificate. */
 const LOW_FINALIZATION = 0.5;
 
+/** Past this many times the middle peer's, a validator's votes are marked as arriving late. */
+const LATE_ARRIVAL = 2;
+
 const HEADINGS: { column: PeerColumn; label: string; numeric: boolean }[] = [
   { column: "stake", label: "Stake, SOL", numeric: true },
   { column: "name", label: "Validator", numeric: false },
   { column: "finalization", label: "Finalization", numeric: true },
+  { column: "arrival", label: "Vote arrival", numeric: true },
   { column: "client", label: "Client", numeric: false },
   { column: "ip", label: "IP", numeric: false },
   { column: "rpc", label: "RPC", numeric: true },
@@ -412,6 +419,7 @@ function PeersCard({
           now={now}
           slotMillis={slotMillis}
           searched={query.trim() !== ""}
+          arrivalEpoch={list.vote_arrival_epoch ?? null}
         />
       )}
       <div className="card-footnote">
@@ -430,6 +438,7 @@ const PeersTable = memo(function PeersTable({
   now,
   slotMillis,
   searched,
+  arrivalEpoch,
 }: {
   rows: GossipPeer[];
   sort: PeerSort;
@@ -438,11 +447,19 @@ const PeersTable = memo(function PeersTable({
   now: number;
   slotMillis: number | null;
   searched: boolean;
+  arrivalEpoch: number | null;
 }) {
   const [limit, setLimit] = useState(ROWS_PER_PAGE);
-  // Only under Alpenglow, where the shares exist.
+  // Only under Alpenglow, where the shares exist, and the arrivals once votor has reported an epoch.
   const finalization = useMemo(() => rows.some((row) => row.finalization !== null), [rows]);
-  const headings = finalization ? HEADINGS : HEADINGS.filter((heading) => heading.column !== "finalization");
+  const arrivals = useMemo(() => rows.some((row) => row.voteArrival !== null), [rows]);
+  const lateAfter = useMemo(() => {
+    const median = arrivalMedian(rows);
+    return median === null ? null : median * LATE_ARRIVAL;
+  }, [rows]);
+  const headings = HEADINGS.filter(
+    (heading) => (finalization || heading.column !== "finalization") && (arrivals || heading.column !== "arrival"),
+  );
   const scroller = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLTableRowElement>(null);
   const more = limit < rows.length;
@@ -475,7 +492,12 @@ const PeersTable = memo(function PeersTable({
                   className={heading.numeric ? "is-num" : heading.column === "name" ? "is-name" : undefined}
                   aria-sort={order}
                 >
-                  <button type="button" className="gossip-sort" onClick={() => onSort(heading.column)}>
+                  <button
+                    type="button"
+                    className="gossip-sort"
+                    onClick={() => onSort(heading.column)}
+                    title={heading.column === "arrival" ? arrivalHeadingTitle(arrivalEpoch) : undefined}
+                  >
                     {heading.label}
                     {/* Out of the button's name; `aria-sort` says the same. */}
                     {order && <span aria-hidden="true">{order === "ascending" ? " ↑" : " ↓"}</span>}
@@ -494,6 +516,9 @@ const PeersTable = memo(function PeersTable({
               now={now}
               slotMillis={slotMillis}
               finalization={finalization}
+              arrivals={arrivals}
+              arrivalEpoch={arrivalEpoch}
+              lateAfter={lateAfter}
             />
           ))}
           {rows.length === 0 && (
@@ -516,13 +541,20 @@ const PeerLine = memo(function PeerLine({
   now,
   slotMillis,
   finalization,
+  arrivals,
+  arrivalEpoch,
+  lateAfter,
 }: {
   peer: GossipPeer;
   ours: boolean;
   now: number;
   slotMillis: number | null;
   finalization: boolean;
+  arrivals: boolean;
+  arrivalEpoch: number | null;
+  lateAfter: number | null;
 }) {
+  const arrival = peer.voteArrival;
   return (
     <tr className={ours ? "is-ours" : undefined}>
       <td className="is-num">{stakeText(peer.stake)}</td>
@@ -542,6 +574,14 @@ const PeerLine = memo(function PeerLine({
           className={`is-num${peer.finalization !== null && peer.finalization < LOW_FINALIZATION ? " tone-warn" : ""}`}
         >
           {percent(peer.finalization, 0)}
+        </td>
+      )}
+      {arrivals && (
+        <td
+          className={`is-num${arrival && lateAfter !== null && arrival.mean > lateAfter ? " tone-warn" : ""}`}
+          title={arrival ? arrivalTitle(arrival, arrivalEpoch) : ours ? "Our own votes are not timed." : undefined}
+        >
+          {arrival ? arrivalText(arrival) : "—"}
         </td>
       )}
       <td>{peer.client || "—"}</td>
@@ -592,4 +632,9 @@ function SnapshotAges({ peer }: { peer: GossipPeer }) {
       ))}
     </>
   );
+}
+
+function arrivalHeadingTitle(epoch: number | null): string {
+  const over = epoch === null ? "the last epoch" : `epoch ${count(epoch)}`;
+  return `When each validator's notarize votes reached us after the slot began, on average over ${over}.`;
 }

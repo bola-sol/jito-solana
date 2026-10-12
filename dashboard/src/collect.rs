@@ -2653,13 +2653,54 @@ mod tests {
             "snapshot_full",
             "snapshot_incremental",
             "lowest",
+            "finalization",
+            "vote_arrival",
         ] {
             assert_eq!(list[column].as_array().unwrap().len(), rows, "{column}");
         }
+        assert!(
+            list["vote_arrival_epoch"].is_null(),
+            "votor has reported no epoch yet"
+        );
 
         // A client that stopped asking half a minute ago is no longer served fresh lists.
         collector.collect_gossip_peers(&bank, bank.slot(), &[], now.saturating_add(31_000));
         assert_eq!(*collector.replies.gossip_peers.read().unwrap(), json);
+    }
+
+    #[test]
+    fn test_a_peers_vote_arrival_is_found_through_its_vote_account() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let bank = harness.working_bank();
+        let peers = harness.ctx.cluster_info.all_peers();
+        let now = timestamp();
+        let mut point = solana_metrics::datapoint::DataPoint::new("consensus_vote_metrics");
+        point.add_tag("address", &harness.ctx.vote_account.to_string());
+        point.add_field_i64("epoch", 3);
+        point.add_field_i64("notar_vote_us_mean", 151_000);
+        point.add_field_i64("finalize_vote_us_mean", 203_000);
+        collector.metrics_tap.observe_point(&point);
+
+        collector
+            .replies
+            .gossip_peers_wanted
+            .store(now, Ordering::Relaxed);
+        collector.collect_gossip_peers(&bank, bank.slot(), &peers, now);
+        let json = collector.replies.gossip_peers.read().unwrap().clone();
+        let list: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let me = harness.ctx.identity().to_string();
+        let row = list["identity"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|identity| identity == &me)
+            .unwrap();
+        assert_eq!(list["vote_arrival_epoch"], 3);
+        assert_eq!(
+            list["vote_arrival"][row],
+            serde_json::json!([151_000, null, null, 203_000])
+        );
     }
 
     fn staged(writing: Option<Writing>) -> Option<Snapshots> {

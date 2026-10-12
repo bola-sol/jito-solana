@@ -26,7 +26,16 @@ export interface GossipPeer {
   ledger: number | null;
   /** Under Alpenglow, the share of recent blocks whose finalization certificate carried its vote. */
   finalization: number | null;
+  voteArrival: VoteArrival | null;
   haystack: string;
+}
+
+/** Microseconds from a slot starting here to the peer's votes arriving, over an epoch. */
+export interface VoteArrival {
+  mean: number;
+  spread: number | null;
+  worst: number | null;
+  finalize: number | null;
 }
 
 function behind(root: number, slot: number | null | undefined): number | null {
@@ -52,9 +61,36 @@ export function gossipPeers(list: GossipPeers): GossipPeer[] {
       incremental: behind(list.root, list.snapshot_incremental[index]),
       ledger: behind(list.root, list.lowest[index]),
       finalization: list.finalization[index] ?? null,
+      voteArrival: arrivalOf(list.vote_arrival?.[index] ?? null),
       haystack: [name ?? "", client, ip ?? "", identity].join(" ").toLowerCase(),
     };
   });
+}
+
+function arrivalOf(cell: GossipPeers["vote_arrival"][number]): VoteArrival | null {
+  if (!cell) return null;
+  const [mean, spread, worst, finalize] = cell;
+  return { mean, spread, worst, finalize };
+}
+
+/** The middle peer's mean, which a peer far above is marked against. */
+export function arrivalMedian(peers: readonly GossipPeer[]): number | null {
+  const means = peers.flatMap((peer) => (peer.voteArrival ? [peer.voteArrival.mean] : [])).sort((a, b) => a - b);
+  return means.length === 0 ? null : (means[Math.floor(means.length / 2)] ?? null);
+}
+
+const millis = (micros: number) => `${count(Math.round(micros / 1000))} ms`;
+
+export function arrivalText(arrival: VoteArrival): string {
+  return millis(arrival.mean);
+}
+
+export function arrivalTitle(arrival: VoteArrival, epoch: number | null): string {
+  const over = epoch === null ? "" : ` in epoch ${count(epoch)}`;
+  const spread = arrival.spread === null ? "" : `, spread ${millis(arrival.spread)}`;
+  const worst = arrival.worst === null ? "" : `, worst ${millis(arrival.worst)}`;
+  const finalize = arrival.finalize === null ? "" : `; finalize votes ${millis(arrival.finalize)}`;
+  return `Notarize votes reached us ${millis(arrival.mean)} after the slot began on average${over}${spread}${worst}${finalize}.`;
 }
 
 export type PeerFilter = "all" | "staked" | "rpc" | "silent" | "restarted";
@@ -106,7 +142,8 @@ export type PeerColumn =
   | "up"
   | "snapshot"
   | "ledger"
-  | "finalization";
+  | "finalization"
+  | "arrival";
 
 export interface PeerSort {
   column: PeerColumn;
@@ -147,6 +184,7 @@ const COLUMNS: Record<PeerColumn, { key: Key; ascending: boolean }> = {
   snapshot: { key: snapshotAge, ascending: false },
   ledger: { key: (peer) => peer.ledger, ascending: false },
   finalization: { key: (peer) => peer.finalization, ascending: false },
+  arrival: { key: (peer) => peer.voteArrival?.mean ?? null, ascending: true },
 };
 
 function compareKeys(a: number | string, b: number | string): number {

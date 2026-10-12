@@ -7,11 +7,13 @@
 use {
     crate::certs::VoteSent,
     serde::Serialize,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_metrics::datapoint::DataPoint,
+    solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+        str::FromStr,
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -137,6 +139,11 @@ const REPLAY_SLOTS: usize = 256;
 
 const VOTE_TRACKING: &str = "event_handler_slot_tracking";
 
+/// Votor's per-epoch timing of each validator's votes, one point per vote account.
+const VOTE_ARRIVAL: &str = "consensus_vote_metrics";
+
+const VOTE_ACCOUNT: &str = "address";
+
 const VOTE_TRACKS: usize = 4096;
 
 /// A leader window's first slot at a time, so several minutes of them.
@@ -253,6 +260,8 @@ pub struct MetricsTap {
 
     vote_timings: Mutex<BTreeMap<Slot, StageTimes>>,
 
+    vote_arrivals: Mutex<VoteArrivals>,
+
     /// Latched: it cannot change while the process runs.
     xdp: Mutex<Option<XdpConfig>>,
 
@@ -260,6 +269,22 @@ pub struct MetricsTap {
     bundles_processed_reported: AtomicBool,
 
     stake_in_gossip: Mutex<Option<StakeInGossip>>,
+}
+
+/// One validator's votes over an epoch, each timed from its slot starting here to the vote arriving.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VoteArrival {
+    pub notarize_mean_micros: u64,
+    pub notarize_spread_micros: Option<u64>,
+    pub notarize_worst_micros: Option<u64>,
+    pub finalize_mean_micros: Option<u64>,
+}
+
+/// The newest epoch's arrivals; votor reports each epoch once, after it has finished.
+#[derive(Debug, Default)]
+struct VoteArrivals {
+    epoch: Option<Epoch>,
+    by_vote: HashMap<Pubkey, VoteArrival>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -924,6 +949,7 @@ impl MetricsTap {
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
             VOTE_TRACKING => self.remember_vote_track(point),
+            VOTE_ARRIVAL => self.remember_vote_arrival(point),
             SHRED_FULL => self.remember_fill(point),
             BUNDLE_SLOT_STATS => self.remember_bundles(point),
             WORKER_TIMING => self.remember_worker_timing(point, timestamp()),
@@ -1063,6 +1089,48 @@ impl MetricsTap {
         if let Ok(mut held) = self.xdp.lock() {
             *held = Some(config);
         }
+    }
+
+    fn remember_vote_arrival(&self, point: &DataPoint) {
+        let Some(vote) = point
+            .tags
+            .iter()
+            .find(|(name, _)| *name == VOTE_ACCOUNT)
+            .and_then(|(_, key)| Pubkey::from_str(key).ok())
+        else {
+            return;
+        };
+        let field = |wanted: &str| {
+            point
+                .fields
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .and_then(|(_, value)| field_u64(value))
+        };
+        // Absent where the validator sent no notarize vote that epoch.
+        let (Some(epoch), Some(notarize_mean_micros)) =
+            (field("epoch"), field("notar_vote_us_mean"))
+        else {
+            return;
+        };
+        let arrival = VoteArrival {
+            notarize_mean_micros,
+            notarize_spread_micros: field("notar_vote_us_stddev"),
+            notarize_worst_micros: field("notar_vote_us_maximum"),
+            finalize_mean_micros: field("finalize_vote_us_mean"),
+        };
+        let Ok(mut arrivals) = self.vote_arrivals.lock() else {
+            return;
+        };
+        match arrivals.epoch {
+            Some(held) if epoch < held => return,
+            Some(held) if epoch == held => (),
+            _ => {
+                arrivals.epoch = Some(epoch);
+                arrivals.by_vote.clear();
+            }
+        }
+        arrivals.by_vote.insert(vote, arrival);
     }
 
     fn remember_vote_track(&self, point: &DataPoint) {
@@ -1513,6 +1581,14 @@ impl MetricsTap {
         }
         sum.workers = workers.len() as u64;
         Some(sum)
+    }
+
+    /// The epoch they describe, and each vote account's arrivals.
+    pub fn vote_arrivals(&self) -> (Option<Epoch>, HashMap<Pubkey, VoteArrival>) {
+        self.vote_arrivals
+            .lock()
+            .map(|arrivals| (arrivals.epoch, arrivals.by_vote.clone()))
+            .unwrap_or_default()
     }
 
     pub fn vote_time(&self, slot: Slot) -> Option<StageTimes> {
@@ -2005,6 +2081,69 @@ mod tests {
 
     fn point(fields: &[(&'static str, &str)]) -> DataPoint {
         named(ACCOUNTS_DB_TIMINGS, fields)
+    }
+
+    fn arrival_point(vote: &Pubkey, fields: &[(&'static str, &str)]) -> DataPoint {
+        let mut point = named(VOTE_ARRIVAL, fields);
+        point.add_tag(VOTE_ACCOUNT, &vote.to_string());
+        point
+    }
+
+    #[test]
+    fn test_vote_arrivals_keep_the_newest_epoch_only() {
+        let tap = MetricsTap::default();
+        let (early, late) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let full = [
+            ("epoch", "7i"),
+            ("notar_vote_count", "400i"),
+            ("notar_vote_us_mean", "118000i"),
+            ("notar_vote_us_stddev", "30000i"),
+            ("notar_vote_us_maximum", "470000i"),
+            ("finalize_vote_us_mean", "166000i"),
+        ];
+        tap.observe(&arrival_point(&early, &full));
+        // Votor sends no mean for a validator that never voted that way.
+        tap.observe(&arrival_point(
+            &Pubkey::new_unique(),
+            &[("epoch", "7i"), ("notar_vote_count", "0i")],
+        ));
+        let (epoch, held) = tap.vote_arrivals();
+        assert_eq!(epoch, Some(7));
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            held.get(&early),
+            Some(&VoteArrival {
+                notarize_mean_micros: 118_000,
+                notarize_spread_micros: Some(30_000),
+                notarize_worst_micros: Some(470_000),
+                finalize_mean_micros: Some(166_000),
+            })
+        );
+
+        tap.observe(&arrival_point(
+            &late,
+            &[("epoch", "8i"), ("notar_vote_us_mean", "92000i")],
+        ));
+        tap.observe(&arrival_point(
+            &early,
+            &[("epoch", "7i"), ("notar_vote_us_mean", "1i")],
+        ));
+        let (epoch, held) = tap.vote_arrivals();
+        assert_eq!(epoch, Some(8), "a later epoch replaces the earlier one");
+        assert_eq!(held.keys().collect::<Vec<_>>(), vec![&late]);
+        assert_eq!(held[&late].finalize_mean_micros, None);
+    }
+
+    #[test]
+    fn test_a_vote_arrival_without_a_readable_account_is_dropped() {
+        let tap = MetricsTap::default();
+        let mut point = named(
+            VOTE_ARRIVAL,
+            &[("epoch", "7i"), ("notar_vote_us_mean", "5i")],
+        );
+        point.add_tag(VOTE_ACCOUNT, "not a key");
+        tap.observe(&point);
+        assert_eq!(tap.vote_arrivals(), (None, HashMap::new()));
     }
 
     #[test]

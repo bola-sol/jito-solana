@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ariaSort,
+  arrivalMedian,
+  arrivalTitle,
   entryRows,
   filterCounts,
   FIRST_SORT,
@@ -40,6 +42,8 @@ const LIST: GossipPeers = {
   snapshot_incremental: [9_958, null, null, null],
   lowest: [9_000, 9_900, 9_990, null],
   finalization: [0.98, 0.25, null, 0.93],
+  vote_arrival_epoch: 1_048,
+  vote_arrival: [[92_400, 21_000, 388_000, 141_000], [412_000, null, null, null], null, [151_000, 34_000, 612_000, 203_000]],
 };
 
 const PEERS = gossipPeers(LIST);
@@ -59,6 +63,25 @@ describe("gossipPeers", () => {
     });
     expect(PEERS[1].client).toBe("JitoLabs v4.3.0");
     expect(PEERS[2]).toMatchObject({ full: null, incremental: null, rpc: 8899 });
+  });
+});
+
+describe("vote arrival", () => {
+  it("reads each peer's cell, and none where votor sent nothing", () => {
+    expect(PEERS[0].voteArrival).toEqual({ mean: 92_400, spread: 21_000, worst: 388_000, finalize: 141_000 });
+    expect(PEERS[2].voteArrival).toBeNull();
+  });
+
+  it("takes the middle mean of the peers that have one", () => {
+    expect(arrivalMedian(PEERS)).toBe(151_000);
+    expect(arrivalMedian([PEERS[2]])).toBeNull();
+  });
+
+  it("says the epoch and whichever figures votor sent", () => {
+    expect(arrivalTitle(PEERS[3].voteArrival!, 1_048)).toBe(
+      "Notarize votes reached us 151 ms after the slot began on average in epoch 1,048, spread 34 ms, worst 612 ms; finalize votes 203 ms.",
+    );
+    expect(arrivalTitle(PEERS[1].voteArrival!, null)).toBe("Notarize votes reached us 412 ms after the slot began on average.");
   });
 });
 
@@ -93,6 +116,11 @@ describe("sortPeers", () => {
   it("puts the highest finalization share first and a node without one last", () => {
     expect(order("finalization")).toEqual(["Big1111", "Old4444", "Mid2222", "Rpc3333"]);
     expect(order("finalization", true)).toEqual(["Mid2222", "Old4444", "Big1111", "Rpc3333"]);
+  });
+
+  it("puts the earliest vote arrival first and a node without one last", () => {
+    expect(order("arrival")).toEqual(["Big1111", "Old4444", "Mid2222", "Rpc3333"]);
+    expect(order("arrival", true)).toEqual(["Mid2222", "Old4444", "Big1111", "Rpc3333"]);
   });
 
   it("sorts addresses by value and no snapshot as the oldest", () => {

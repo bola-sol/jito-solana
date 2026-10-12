@@ -67,6 +67,12 @@ Gossip sends these points itself and clears each counter when it sends it. The d
 | `cluster_info_crds_stats` | `all-push`, `all-pull`, and `<type>-push`, `<type>-pull` for each of the fourteen entry types | Entries accepted, by push, pull and type |
 | `cluster_info_crds_stats_fails` | `all-push`, `all-pull`, and `<type>-push`, `<type>-pull` | Entries rejected, by push, pull and type |
 
+### Per epoch
+
+| Point | Fields read | Feeds |
+| --- | --- | --- |
+| `consensus_vote_metrics` | tag `address` (a vote account); `epoch`, `notar_vote_us_mean`, `notar_vote_us_stddev`, `notar_vote_us_maximum`, `finalize_vote_us_mean` | Under alpenglow, the Gossip peers table's vote arrival: how long after a slot began here each validator's votes arrived, over the last finished epoch. Votor reports each epoch once, after a later one's slot is finalized; only the newest epoch is kept. Our own votes do not pass through it. |
+
 ### Read once, or on change
 
 | Point | Fields read | Feeds |

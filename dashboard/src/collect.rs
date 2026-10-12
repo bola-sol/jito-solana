@@ -897,9 +897,9 @@ impl Collector {
         }
     }
 
-    /// From the last earlier block that filled here to this one filling, as Firedancer times a
-    /// slot from completion to completion. The next block to have filled is timed again, since its
-    /// baseline may have been one of these. Returns whether a produced block changed.
+    /// From the last earlier block that filled here to this one filling, so a slot's figure lines up
+    /// with its own work. The next block to have filled is timed again, since its baseline may have
+    /// been one of these. Returns whether a produced block changed.
     fn retime(&mut self, filled: &[Slot], changed: &mut Vec<SlotEntry>) -> bool {
         let mut produced_changed = false;
         for &slot in filled {

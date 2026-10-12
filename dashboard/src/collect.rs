@@ -1255,9 +1255,15 @@ impl Collector {
             .write()
             .unwrap()
             .fill_bundles(|slot| tap.bundles_landed(slot).map(Bundles::from));
+        let led = self
+            .replies
+            .produced
+            .write()
+            .unwrap()
+            .fill_leading(|slot| tap.leader_timing(slot));
         let read = self.fill_versions();
         let timed = self.fill_execution();
-        if captured || filled || read || timed {
+        if captured || filled || led || read || timed {
             self.publish_produced();
         }
     }
@@ -1394,6 +1400,7 @@ impl Collector {
             versions: None,
             execution: None,
             certificate: None,
+            leading: self.metrics_tap.leader_timing(slot),
         }
     }
 

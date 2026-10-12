@@ -159,6 +159,9 @@ struct Totals {
 
 const SLOT_OVERVIEW_LEN: usize = 512;
 
+/// How far back a slot's duration looks for an earlier block that filled.
+const FULL_REACH_SLOTS: u64 = 64;
+
 const SLOT_HISTORY: usize = 4096;
 
 const MAX_VERSIONS_REPORTED: usize = 5;
@@ -837,6 +840,7 @@ impl Collector {
     /// Timed from the blockstore's first-shred record rather than a 200ms poll.
     fn collect_slot_durations(&mut self, up_to: Slot) {
         let mut changed = Vec::new();
+        let mut filled = Vec::new();
         for slot in self.clock.slots_to_time(up_to) {
             // A skipped slot has no shreds and no timestamp, so the next slot that does is
             // measured from the last that did.
@@ -844,26 +848,98 @@ impl Collector {
                 continue;
             };
 
-            let elapsed = self.clock.record(slot, arrived);
+            // The minute's mean stays on first shreds: it is the same over a window, and needs no
+            // block to fill.
+            self.clock.record(slot, arrived);
             let shreds = self.metrics_tap.shred_fill(slot).map(ShredArrival::from);
+            let was_full = self.slots.get(slot).and_then(SlotEntry::full_at).is_some();
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.time_millis = Some(arrived);
-                if let Some(elapsed) = elapsed {
-                    entry.duration_nanos = Some(elapsed.saturating_mul(1_000_000));
-                }
                 if entry.shreds.is_none() {
                     entry.shreds = shreds;
                 }
             }) {
+                if !was_full && entry.full_at().is_some() {
+                    filled.push(slot);
+                }
                 changed.push(entry);
             }
 
             self.history.write().unwrap().record_time(slot, arrived);
         }
 
+        // A block's fill can be reported after both moments it is read above, our own most often,
+        // since broadcast inserts our shreds after the bank freezes. Unfilled, the next slot would be
+        // timed from an older block.
+        for slot in up_to.saturating_sub(FULL_REACH_SLOTS)..=up_to {
+            let late = self
+                .slots
+                .get(slot)
+                .is_some_and(|entry| entry.time_millis.is_some() && entry.shreds.is_none());
+            let Some(shreds) = late
+                .then(|| self.metrics_tap.shred_fill(slot).map(ShredArrival::from))
+                .flatten()
+            else {
+                continue;
+            };
+            if let Some(entry) = self.slots.update(slot, |entry| entry.shreds = Some(shreds)) {
+                filled.push(slot);
+                changed.push(entry);
+            }
+        }
+
+        let retimed = self.retime(&filled, &mut changed);
         for entry in &changed {
             self.publish_slot(entry);
         }
+        if retimed {
+            self.publish_produced();
+        }
+    }
+
+    /// From the last earlier block that filled here to this one filling, so a slot's figure lines up
+    /// with its own work. The next block to have filled is timed again, since its baseline may have
+    /// been one of these. Returns whether a produced block changed.
+    fn retime(&mut self, filled: &[Slot], changed: &mut Vec<SlotEntry>) -> bool {
+        let mut produced_changed = false;
+        for &slot in filled {
+            let next =
+                (slot.saturating_add(1)..=slot.saturating_add(FULL_REACH_SLOTS)).find(|later| {
+                    self.slots
+                        .get(*later)
+                        .and_then(SlotEntry::full_at)
+                        .is_some()
+                });
+            for timed in std::iter::once(slot).chain(next) {
+                let Some(duration) = self.full_duration(timed) else {
+                    continue;
+                };
+                if let Some(entry) = self
+                    .slots
+                    .update(timed, |entry| entry.duration_nanos = Some(duration))
+                {
+                    changed.push(entry);
+                }
+                if self
+                    .replies
+                    .produced
+                    .write()
+                    .unwrap()
+                    .set_duration(timed, duration)
+                {
+                    produced_changed = true;
+                }
+            }
+        }
+        produced_changed
+    }
+
+    fn full_duration(&self, slot: Slot) -> Option<u64> {
+        let end = self.slots.get(slot)?.full_at()?;
+        let start = (slot.saturating_sub(FULL_REACH_SLOTS)..slot)
+            .rev()
+            .find_map(|earlier| self.slots.get(earlier)?.full_at())?;
+        Some(end.saturating_sub(start).saturating_mul(1_000_000))
     }
 
     fn first_shred_time(&self, slot: Slot) -> Option<u64> {
@@ -1131,6 +1207,7 @@ impl Collector {
         self.collect_validator_info(&banks, frozen);
 
         let mut changed = Vec::new();
+        let mut became_full = Vec::new();
         let mut captured = false;
         for bank in &banks {
             self.observe_finalization(bank);
@@ -1222,6 +1299,7 @@ impl Collector {
             }
 
             let level = classify_slot(slot, root, confirmed, finalized);
+            let was_full = self.slots.get(slot).and_then(SlotEntry::full_at).is_some();
             if let Some(entry) = self.slots.update(slot, |entry| {
                 entry.level = level;
                 if let Some(detail) = &detail {
@@ -1234,9 +1312,13 @@ impl Collector {
                     entry.shreds = shreds;
                 }
             }) {
+                if !was_full && entry.full_at().is_some() {
+                    became_full.push(slot);
+                }
                 changed.push(entry);
             }
         }
+        let retimed = self.retime(&became_full, &mut changed);
 
         // The loop above no longer covers slots that have fallen out of bank
         // forks, so their levels advance from the roots directly.
@@ -1269,7 +1351,7 @@ impl Collector {
             .fill_leading(|slot| tap.leader_timing(slot));
         let read = self.fill_versions();
         let timed = self.fill_execution();
-        if captured || filled || led || read || timed {
+        if captured || filled || led || read || timed || retimed {
             self.publish_produced();
         }
     }
@@ -2626,6 +2708,48 @@ mod tests {
         assert!(credits.contains(r#""cluster_median":null"#), "{credits}");
         let admission = harness.published_key("summary", "admission").unwrap();
         assert!(admission.contains(r#""value":null"#), "{admission}");
+    }
+
+    #[test]
+    fn test_a_slot_is_timed_from_the_last_earlier_block_to_fill() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let fill = |collector: &mut Collector, slot: Slot, first: u64, full_millis: u64| {
+            collector.slots.update(slot, |entry| {
+                entry.time_millis = Some(first);
+                entry.shreds = Some(ShredArrival {
+                    count: 1,
+                    repaired: 0,
+                    full_millis,
+                });
+            });
+        };
+        let duration = |collector: &Collector, slot: Slot| {
+            collector
+                .slots
+                .get(slot)
+                .and_then(|entry| entry.duration_nanos)
+                .map(|nanos| nanos / 1_000_000)
+        };
+        // A turn's short first slot, then a full one; 102 has not filled yet.
+        fill(&mut collector, 100, 1_000, 144);
+        fill(&mut collector, 101, 1_150, 194);
+        fill(&mut collector, 103, 1_700, 150);
+        let mut changed = Vec::new();
+        collector.retime(&[100, 101, 103], &mut changed);
+        assert_eq!(duration(&collector, 100), None, "nothing earlier filled");
+        assert_eq!(duration(&collector, 101), Some(200));
+        assert_eq!(
+            duration(&collector, 103),
+            Some(506),
+            "across the slot still filling"
+        );
+
+        // When 102 fills late it is timed, and so is 103 again from it.
+        fill(&mut collector, 102, 1_400, 200);
+        collector.retime(&[102], &mut changed);
+        assert_eq!(duration(&collector, 102), Some(256));
+        assert_eq!(duration(&collector, 103), Some(250));
     }
 
     #[test]

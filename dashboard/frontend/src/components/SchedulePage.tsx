@@ -372,7 +372,9 @@ const TurnCard = memo(
             >
               Tips
             </span>
-            <span className="sc-timing">Duration</span>
+            <span className="sc-timing" title="From the previous block filling here to this one filling.">
+              Duration
+            </span>
             <span className="sc-load" title="Data shreds in the block, and how many were repaired.">
               Shreds
             </span>

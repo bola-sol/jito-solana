@@ -141,6 +141,18 @@ describe("entriesOf", () => {
     expect(entry.block?.block_cost_limit).toBe(60_000_000);
   });
 
+  it("times a slot from the last earlier block to fill to this one filling", () => {
+    // A turn's first slot closes early by design, so its block fills 144 ms after its first shred
+    // and the next, a full slot, 200 ms later; the first shreds are 150 ms apart.
+    const entries = entriesOf(
+      range([row({ 8: 1_000_000, 12: 144 }), row({ 8: 1_000_150, 12: 194 }), row({ 1: HAS_CLOCK, 8: 1_000_400 })]),
+      epochOf(),
+      undefined,
+    );
+    expect(entries[1].duration_nanos).toBe(200_000_000);
+    expect(entries[2].duration_nanos).toBeNull();
+  });
+
   it("works the duration out as the gap to the last slot that had a clock", () => {
     const entries = entriesOf(
       range([row({ 8: 1_000_000 }), row({ 8: 1_000_400 })]),

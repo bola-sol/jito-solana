@@ -50,11 +50,16 @@ const LEVELS: SlotLevel[] = [
   "skipped",
 ];
 
-/** One row as a schedule entry; `previousTime` is the last earlier slot's clock, for the gap. */
+/** When a row's block became full here, or null without its first shred and fill. */
+export function fullAtOf(row: WireRow): number | null {
+  return (row[1] & HAS_CLOCK) !== 0 && (row[1] & HAS_SHREDS) !== 0 ? row[8] + row[12] : null;
+}
+
+/** One row as a schedule entry; `previousFull` is when the last earlier block filled, for the gap. */
 export function entryFromRow(
   slot: number,
   row: WireRow,
-  previousTime: number | null,
+  previousFull: number | null,
   epoch: EpochInfo | undefined,
   identity: string | undefined,
 ): SlotEntry {
@@ -100,7 +105,10 @@ export function entryFromRow(
             tips: (flags & HAS_TIPS) === 0 ? null : tips,
             replay_micros: (flags & HAS_REPLAY) === 0 ? null : replay,
           },
-    duration_nanos: timed && previousTime !== null ? (timeMillis - previousTime) * 1_000_000 : null,
+    duration_nanos: (() => {
+      const full = fullAtOf(row);
+      return full !== null && previousFull !== null ? (full - previousFull) * 1_000_000 : null;
+    })(),
     time_millis: timed ? timeMillis : null,
     shreds: (flags & HAS_SHREDS) === 0 ? null : { count: shreds, repaired, full_millis: fullMillis },
     replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
@@ -116,13 +124,13 @@ export function entriesOf(
   identity: string | undefined,
 ): SlotEntry[] {
   const entries: SlotEntry[] = [];
-  // The gap to the previous slot with a clock, as the validator measures it, so a skipped slot is
-  // one long interval.
-  let previousTime: number | null = null;
+  // From the last earlier block to fill, as the validator measures it, so a skipped slot is one long
+  // interval.
+  let previousFull: number | null = null;
   range.rows.forEach((row, index) => {
     if (row === null) return;
-    entries.push(entryFromRow(range.first_slot + index, row, previousTime, epoch, identity));
-    if ((row[1] & HAS_CLOCK) !== 0) previousTime = row[8];
+    entries.push(entryFromRow(range.first_slot + index, row, previousFull, epoch, identity));
+    previousFull = fullAtOf(row) ?? previousFull;
   });
   return entries;
 }

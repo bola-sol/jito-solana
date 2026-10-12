@@ -1,4 +1,4 @@
-import { entryFromRow, HAS_CLOCK, type WireRow } from "./slotHistory";
+import { entryFromRow, fullAtOf, type WireRow } from "./slotHistory";
 import type { EpochInfo, SlotEntry } from "./types";
 
 /** Unsigned columns per slot: votes, non-votes, compute, replay, shreds, repaired, full, replayed. */
@@ -9,8 +9,8 @@ const LARGE = 4;
 /** Entries decoded and kept, a few screens of turns with the rows their certificates read. */
 const DECODED_KEPT = 4096;
 
-/** How far back a slot's duration looks for an earlier clock. */
-const CLOCK_REACH = 64;
+/** How far back a slot's duration looks for an earlier block that filled. */
+const FULL_REACH = 64;
 
 /** One fetched span as columns: some seventy bytes a slot, where an entry object is six hundred. */
 class Span {
@@ -74,7 +74,7 @@ class Span {
   }
 }
 
-/** Decodes a row as `entriesOf` would, its duration from the nearest earlier slot with a clock, and
+/** Decodes a row as `entriesOf` would, its duration from the nearest earlier block to fill, and
  *  keeps the most recent entries so a drawn turn's rows keep their objects. */
 class Decoder {
   private decoded = new Map<number, SlotEntry>();
@@ -93,12 +93,12 @@ class Decoder {
     if (kept) return kept;
     const row = rowOf(slot);
     if (row === null) return undefined;
-    let previousTime: number | null = null;
-    for (let earlier = slot - 1; earlier >= slot - CLOCK_REACH && previousTime === null; earlier--) {
+    let previousFull: number | null = null;
+    for (let earlier = slot - 1; earlier >= slot - FULL_REACH && previousFull === null; earlier--) {
       const before = rowOf(earlier);
-      if (before && (before[1] & HAS_CLOCK) !== 0) previousTime = before[8];
+      if (before) previousFull = fullAtOf(before);
     }
-    const entry = entryFromRow(slot, row, previousTime, epoch, identity);
+    const entry = entryFromRow(slot, row, previousFull, epoch, identity);
     this.decoded.set(slot, entry);
     if (this.decoded.size > DECODED_KEPT) {
       const oldest = this.decoded.keys().next().value;
@@ -154,7 +154,7 @@ export class SlotColumns {
     return this.spanOf(slot)?.row(slot) ?? null;
   }
 
-  /** As `entriesOf` reads it, the duration measured from the nearest earlier slot with a clock. */
+  /** As `entriesOf` reads it, the duration measured from the nearest earlier block to fill. */
   entry(slot: number, epoch: EpochInfo | undefined, identity: string | undefined): SlotEntry | undefined {
     return this.decoder.entry(slot, (at) => this.row(at), epoch, identity);
   }

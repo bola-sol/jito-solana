@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NO_LEADER, type LeaderRef } from "./schedule";
-import { HAS_CLOCK, type SlotRange, type WireRow } from "./slotHistory";
+import { HAS_CLOCK, HAS_SHREDS, type SlotRange, type WireRow } from "./slotHistory";
 import { FoundTurns, liveFloor, TurnIndex, turnNumberOf } from "./turnIndex";
 import type { SlotEntry } from "./types";
 
@@ -13,7 +13,7 @@ function run(from: number, to: number, mine = false): SlotEntry[] {
 }
 
 function wire(slot: number): WireRow {
-  return [4, HAS_CLOCK, 0, 0, 0, 0, 0, 0, slot * 400, 0, 0, 0, 0, 0, 0];
+  return [4, HAS_CLOCK | HAS_SHREDS, 0, 0, 0, 0, 0, 0, slot * 400, 0, 0, 0, 0, 0, 0];
 }
 
 /** Rows for `[first, end)`, present except where listed. */

@@ -24,7 +24,8 @@ pub struct SlotEntry {
     pub level: SlotLevel,
     pub mine: bool,
     pub block: Option<BlockDetail>,
-    /// In nanoseconds, from shred arrival, so it exists without a block.
+    /// In nanoseconds, from the last earlier block to fill here to this one filling, so it lines up
+    /// with the slot's own work rather than the one before it.
     pub duration_nanos: Option<u64>,
     pub time_millis: Option<u64>,
     pub shreds: Option<ShredArrival>,
@@ -61,6 +62,14 @@ pub struct BlockDetail {
 }
 
 impl SlotEntry {
+    /// When the block became full here, on the blockstore's clock.
+    pub fn full_at(&self) -> Option<u64> {
+        Some(
+            self.time_millis?
+                .saturating_add(self.shreds.as_ref()?.full_millis),
+        )
+    }
+
     fn new(slot: Slot) -> Self {
         Self {
             slot,

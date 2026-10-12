@@ -172,6 +172,11 @@ export interface GossipPeers {
   lowest: (number | null)[];
   /** Under Alpenglow, the share of recent blocks whose finalization certificate carried its vote. */
   finalization: (number | null)[];
+  /** The epoch `vote_arrival` describes; null until votor has reported one. */
+  vote_arrival_epoch: number | null;
+  /** Under Alpenglow, microseconds from a slot starting here to the peer's votes arriving: notarize
+   *  mean, spread and worst, then the finalize mean. */
+  vote_arrival: ([number, number | null, number | null, number | null] | null)[];
 }
 
 /** Published on the slow tier; filter against the completed slot before rendering. */

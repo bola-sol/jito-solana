@@ -3,8 +3,9 @@
 
 use {
     super::Collector,
+    crate::metrics_tap::VoteArrival,
     serde::Serialize,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_gossip::{
         contact_info::ContactInfo,
         crds_data::{LowestSlot, SnapshotHashes},
@@ -19,6 +20,9 @@ use {
 
 /// How long after the last request the list is still gathered.
 const WANTED_FOR_MILLIS: u64 = 30_000;
+
+/// Notarize mean, its spread and its worst, then the finalize mean, in microseconds.
+pub type VoteArrivalCell = (u64, Option<u64>, Option<u64>, Option<u64>);
 
 /// One array per column, so several thousand rows stay compact.
 #[derive(Debug, Default, Serialize)]
@@ -42,6 +46,10 @@ pub struct GossipPeers {
     pub started: Vec<u64>,
     /// Under alpenglow, the share of recent blocks whose finalization certificate carried its vote.
     pub finalization: Vec<Option<f32>>,
+    /// The epoch `vote_arrival` describes; none until votor has reported one.
+    pub vote_arrival_epoch: Option<Epoch>,
+    /// Under alpenglow, from a slot starting here to the peer's votes arriving.
+    pub vote_arrival: Vec<Option<VoteArrivalCell>>,
     pub snapshot_full: Vec<Option<Slot>>,
     pub snapshot_incremental: Vec<Option<Slot>>,
     pub lowest: Vec<Option<Slot>>,
@@ -91,6 +99,12 @@ impl Collector {
         }
         let stake_of = |key: &Pubkey| stakes.get(key).copied().unwrap_or(0);
         let finalization = self.finalization_by_node(bank, now_millis);
+        let (arrival_epoch, arrivals) = self.metrics_tap.vote_arrivals();
+        let arrival_by_node: HashMap<Pubkey, VoteArrival> = bank
+            .vote_accounts()
+            .iter()
+            .filter_map(|(vote, (_, account))| Some((*account.node_pubkey(), *arrivals.get(vote)?)))
+            .collect();
         let mut rows: Vec<&(ContactInfo, u64)> = peers.iter().collect();
         rows.sort_by(|(a, _), (b, _)| {
             stake_of(b.pubkey())
@@ -101,6 +115,7 @@ impl Collector {
         let mut list = GossipPeers {
             root,
             total_stake: total,
+            vote_arrival_epoch: arrival_epoch,
             ..GossipPeers::default()
         };
         // What each peer advertises, read in one short hold of the gossip table's lock.
@@ -154,6 +169,15 @@ impl Collector {
                 .push(contact.outset().checked_div(1_000).unwrap_or(0));
             list.finalization
                 .push(finalization.get(key).map(|share| *share as f32));
+            list.vote_arrival
+                .push(arrival_by_node.get(key).map(|arrival| {
+                    (
+                        arrival.notarize_mean_micros,
+                        arrival.notarize_spread_micros,
+                        arrival.notarize_worst_micros,
+                        arrival.finalize_mean_micros,
+                    )
+                }));
             list.snapshot_full.push(full);
             list.snapshot_incremental.push(incremental);
             list.lowest.push(lowest);

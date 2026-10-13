@@ -14,7 +14,7 @@ use {
             XdpConfig,
         },
         net_ifaces::{self, InterfaceKind, InterfaceReading},
-        net_stats::{self, Counted, NetCounters},
+        net_stats::{self, Counted, InterfaceCounters, NetCounters, NetReading},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
         thread_stats::{self, ThreadGroup, ThreadReading},
         udp_drops::{self, PortCounters, PortWindow},
@@ -870,9 +870,9 @@ impl Meters {
             working_bank.is_alpenglow()
         };
 
-        self.network.tick(&self.publisher);
+        let interface_rates = self.network.tick(&self.publisher);
         // Read whether or not anyone watches, so the route peak covers the whole day.
-        self.interfaces.tick(&self.publisher);
+        self.interfaces.tick(&self.publisher, interface_rates);
         self.tpu.collect_xdp(&self.metrics_tap, &self.publisher);
         // The `/proc` walks run only while somebody is watching. The rest is
         // cheap and keeps the charts whole for a viewer connecting.
@@ -1018,31 +1018,57 @@ impl Throughput {
 
 #[derive(Default)]
 struct NetworkMeter {
-    last: Option<((NetCounters, Counted), Instant)>,
+    last: Option<(NetReading, Instant)>,
     history: Vec<NetworkSample>,
+    /// Each interface's bytes a second over the same interval as the host total.
+    interface_rates: HashMap<String, (u64, u64)>,
     unavailable: bool,
 }
 
 impl NetworkMeter {
-    fn tick(&mut self, publisher: &Publisher) {
+    /// Returns each interface's rates over the same interval as the host total it published.
+    fn tick(&mut self, publisher: &Publisher) -> &HashMap<String, (u64, u64)> {
         if self.unavailable {
-            return;
+            return &self.interface_rates;
         }
-        let current = match net_stats::read() {
-            Ok(counters) => counters,
+        let rates = match net_stats::read() {
+            Ok(reading) => self.note(reading, Instant::now()),
             Err(err) => {
-                self.unavailable = true;
+                self.give_up();
                 log::info!("dashboard: network counters unavailable, panel disabled: {err}");
-                return;
+                None
             }
         };
-        let now = Instant::now();
-        let Some((previous, sampled_at)) = self.last.replace((current, now)) else {
-            return;
-        };
-        let Some(rates) = network_rates(previous, current, now.duration_since(sampled_at)) else {
-            return;
-        };
+        if let Some(rates) = rates {
+            self.publish(publisher, rates);
+        }
+        &self.interface_rates
+    }
+
+    /// The host total since the last reading, and each interface's rates over the same interval.
+    fn note(&mut self, current: NetReading, now: Instant) -> Option<Network> {
+        let previous = self.last.take();
+        let rates = previous.as_ref().and_then(|(before, sampled_at)| {
+            let elapsed = now.duration_since(*sampled_at);
+            self.interface_rates =
+                interface_rates(&before.interfaces, &current.interfaces, elapsed);
+            network_rates(
+                (before.total, before.counted),
+                (current.total, current.counted),
+                elapsed,
+            )
+        });
+        self.last = Some((current, now));
+        rates
+    }
+
+    /// For good, with no interface rates left to be shown as current.
+    fn give_up(&mut self) {
+        self.unavailable = true;
+        self.interface_rates.clear();
+    }
+
+    fn publish(&mut self, publisher: &Publisher, rates: Network) {
         publisher.publish(TOPIC_SUMMARY, "network", &rates);
 
         let sample = NetworkSample {
@@ -1082,45 +1108,62 @@ fn network_rates(
     })
 }
 
-/// The interfaces are read this often, which is also the window their rates are taken over.
+/// Each interface's kind, state and routes are read this often. Its traffic comes every second,
+/// with the host total.
 const INTERFACE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How far back an interface's highest route count reaches.
 const ROUTE_PEAK_HOURS: u64 = 24;
 
-/// Each interface's received and sent bytes at a reading.
-type InterfaceCounters = HashMap<String, (u64, u64)>;
-
 #[derive(Default)]
 struct InterfaceMeter {
     started: Option<Instant>,
-    last: Option<(Instant, InterfaceCounters)>,
+    /// The last reading of each interface, with its highest route count of the last day.
+    described: Option<(Instant, Vec<(InterfaceReading, u32)>)>,
     /// Per interface, its highest route count in each hour since the meter started, oldest first.
     peaks: HashMap<String, VecDeque<(u64, u32)>>,
     unavailable: bool,
 }
 
 impl InterfaceMeter {
-    fn tick(&mut self, publisher: &Publisher) {
+    /// Published every second with the host total's interface rates, so the two agree.
+    fn tick(&mut self, publisher: &Publisher, rates: &HashMap<String, (u64, u64)>) {
         if self.unavailable {
             return;
         }
         let now = Instant::now();
         if self
-            .last
+            .described
             .as_ref()
-            .is_some_and(|(at, _)| now.duration_since(*at) < INTERFACE_INTERVAL)
+            .is_none_or(|(at, _)| now.duration_since(*at) >= INTERFACE_INTERVAL)
         {
-            return;
+            let readings = match net_ifaces::read() {
+                Ok(readings) => readings,
+                Err(err) => {
+                    self.unavailable = true;
+                    log::info!("dashboard: network interfaces unavailable: {err}");
+                    return;
+                }
+            };
+            self.described = Some((now, self.note_peaks(now, readings)));
         }
-        let readings = match net_ifaces::read() {
-            Ok(readings) => readings,
-            Err(err) => {
-                self.unavailable = true;
-                log::info!("dashboard: network interfaces unavailable: {err}");
-                return;
-            }
+        let Some((_, described)) = &self.described else {
+            return;
         };
+        let interfaces: Vec<NetInterface> = described
+            .iter()
+            .filter_map(|(reading, peak)| {
+                interface_shown(reading, *peak, rates.get(&reading.name).copied())
+            })
+            .collect();
+        publisher.publish(TOPIC_SUMMARY, "net_interfaces", &interfaces);
+    }
+
+    fn note_peaks(
+        &mut self,
+        now: Instant,
+        readings: Vec<InterfaceReading>,
+    ) -> Vec<(InterfaceReading, u32)> {
         let hour = now
             .duration_since(*self.started.get_or_insert(now))
             .as_secs()
@@ -1129,29 +1172,17 @@ impl InterfaceMeter {
         // Interfaces come and go, as containers' do; only those present keep a history.
         self.peaks
             .retain(|name, _| readings.iter().any(|reading| &reading.name == name));
-        let previous = self.last.take();
-        let interfaces: Vec<NetInterface> = readings
-            .iter()
-            .filter_map(|reading| {
+        readings
+            .into_iter()
+            .map(|reading| {
                 let peak = note_routes(
                     self.peaks.entry(reading.name.clone()).or_default(),
                     hour,
                     reading.routes,
                 );
-                let rates = previous.as_ref().and_then(|(at, counters)| {
-                    rates_since(reading, counters, now.duration_since(*at))
-                });
-                interface_shown(reading, peak, rates)
+                (reading, peak)
             })
-            .collect();
-        self.last = Some((
-            now,
-            readings
-                .into_iter()
-                .map(|reading| (reading.name, (reading.received, reading.sent)))
-                .collect(),
-        ));
-        publisher.publish(TOPIC_SUMMARY, "net_interfaces", &interfaces);
+            .collect()
     }
 }
 
@@ -1170,21 +1201,30 @@ fn note_routes(hours: &mut VecDeque<(u64, u32)>, hour: u64, routes: u32) -> u32 
     hours.iter().map(|(_, most)| *most).max().unwrap_or(routes)
 }
 
-/// Bytes a second in and out since the last reading; none for a counter that went backwards.
-fn rates_since(
-    reading: &InterfaceReading,
-    counters: &InterfaceCounters,
+/// Each interface's bytes a second in and out between two readings; none for an interface new
+/// since the earlier one or whose counter went backwards.
+fn interface_rates(
+    before: &InterfaceCounters,
+    after: &InterfaceCounters,
     elapsed: Duration,
-) -> Option<(u64, u64)> {
+) -> HashMap<String, (u64, u64)> {
     let seconds = elapsed.as_secs_f64();
-    let (received, sent) = counters.get(&reading.name)?;
     if seconds <= 0.0 {
-        return None;
+        return HashMap::new();
     }
-    Some((
-        (reading.received.checked_sub(*received)? as f64 / seconds) as u64,
-        (reading.sent.checked_sub(*sent)? as f64 / seconds) as u64,
-    ))
+    after
+        .iter()
+        .filter_map(|(name, (received, sent))| {
+            let (received_before, sent_before) = before.get(name)?;
+            Some((
+                name.clone(),
+                (
+                    (received.checked_sub(*received_before)? as f64 / seconds) as u64,
+                    (sent.checked_sub(*sent_before)? as f64 / seconds) as u64,
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// `None` for an idle interface: down, with no routes and no traffic.
@@ -2178,7 +2218,7 @@ mod tests {
         assert_eq!(hours.len(), 2);
     }
 
-    fn reading(name: &str, up: bool, routes: u32, received: u64, sent: u64) -> InterfaceReading {
+    fn reading(name: &str, up: bool, routes: u32) -> InterfaceReading {
         InterfaceReading {
             name: name.to_string(),
             kind: InterfaceKind::Physical,
@@ -2187,37 +2227,114 @@ mod tests {
             routes,
             member_of: None,
             inside: None,
-            received,
-            sent,
         }
     }
 
     #[test]
     fn test_rates_per_interface_and_none_for_a_counter_that_went_backwards() {
-        let counters = HashMap::from([("eno1".to_string(), (1_000, 2_000))]);
-        let five = Duration::from_secs(5);
+        let before = HashMap::from([
+            ("eno1".to_string(), (1_000, 2_000)),
+            ("eno2".to_string(), (9_000, 9_000)),
+        ]);
+        let after = HashMap::from([
+            ("eno1".to_string(), (6_000, 12_000)),
+            ("eno2".to_string(), (500, 9_000)),
+            ("doublezero0".to_string(), (1, 1)),
+        ]);
+        let rates = interface_rates(&before, &after, Duration::from_secs(5));
+        assert_eq!(rates, HashMap::from([("eno1".to_string(), (1_000, 2_000))]));
+        assert!(interface_rates(&before, &after, Duration::ZERO).is_empty());
+    }
+
+    #[test]
+    fn test_the_interfaces_get_their_rates_from_the_readings_the_host_total_used() {
+        // One card carries everything, so its rate and the host's must match at every reading.
+        let at = |received: u64, sent: u64, tunnel: u64, counted| NetReading {
+            total: NetCounters { received, sent },
+            counted,
+            interfaces: HashMap::from([
+                ("eno1".to_string(), (received, sent)),
+                ("doublezero0".to_string(), (tunnel, tunnel)),
+            ]),
+        };
+        let mut meter = NetworkMeter::default();
+        let start = Instant::now();
         assert_eq!(
-            rates_since(&reading("eno1", true, 3, 6_000, 12_000), &counters, five),
-            Some((1_000, 2_000))
-        );
-        assert_eq!(
-            rates_since(&reading("eno1", true, 3, 500, 12_000), &counters, five),
+            meter.note(at(10_000, 40_000, 7, Counted::Cards), start),
             None
         );
+        assert!(
+            meter.interface_rates.is_empty(),
+            "nothing to compare a first reading with"
+        );
+
+        let second = start + Duration::from_millis(1_003);
+        let host = meter
+            .note(at(22_500, 55_640, 1_007, Counted::Cards), second)
+            .unwrap();
         assert_eq!(
-            rates_since(&reading("doublezero0", true, 3, 1, 1), &counters, five),
+            meter.interface_rates["eno1"],
+            (host.received_per_second, host.sent_per_second)
+        );
+        assert_eq!(meter.interface_rates["doublezero0"], (997, 997));
+
+        // A reading that summed other interfaces has no host total, but each interface still moves.
+        let third = second + Duration::from_secs(1);
+        assert_eq!(
+            meter.note(at(30_000, 60_000, 2_007, Counted::Every), third),
             None
         );
+        assert_eq!(meter.interface_rates["doublezero0"], (1_000, 1_000));
+
+        meter.give_up();
+        assert!(
+            meter.interface_rates.is_empty(),
+            "no rate outlives the readings"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_the_interfaces_are_sent_every_tick_with_the_rates_handed_to_them() {
+        let Some(name) = net_ifaces::read()
+            .ok()
+            .and_then(|readings| readings.into_iter().next())
+            .map(|reading| reading.name)
+        else {
+            return;
+        };
+        let publisher = Publisher::new();
+        let sent_for = |publisher: &Publisher| {
+            let message = publisher
+                .snapshot()
+                .iter()
+                .map(|message| message.to_string())
+                .find(|message| message.contains(r#""key":"net_interfaces""#))
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_str(&message).unwrap();
+            value["value"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|interface| interface["name"] == name.as_str())
+                .map(|interface| interface["received_per_second"].clone())
+        };
+        let mut meter = InterfaceMeter::default();
+        meter.tick(&publisher, &HashMap::from([(name.clone(), (10, 20))]));
+        assert_eq!(sent_for(&publisher), Some(serde_json::json!(10)));
+        // Well inside the five seconds between readings of the interfaces themselves.
+        meter.tick(&publisher, &HashMap::from([(name.clone(), (30, 40))]));
+        assert_eq!(sent_for(&publisher), Some(serde_json::json!(30)));
     }
 
     #[test]
     fn test_only_an_interface_down_with_no_routes_and_no_traffic_is_left_out() {
-        let idle = reading("docker0", false, 0, 0, 0);
+        let idle = reading("docker0", false, 0);
         assert_eq!(interface_shown(&idle, 0, Some((0, 0))), None);
         assert_eq!(interface_shown(&idle, 0, None), None);
-        assert!(interface_shown(&reading("docker0", false, 1, 0, 0), 1, Some((0, 0))).is_some());
+        assert!(interface_shown(&reading("docker0", false, 1), 1, Some((0, 0))).is_some());
         assert!(interface_shown(&idle, 0, Some((10, 0))).is_some());
-        let shown = interface_shown(&reading("doublezero0", true, 2, 0, 0), 115, None).unwrap();
+        let shown = interface_shown(&reading("doublezero0", true, 2), 115, None).unwrap();
         assert_eq!((shown.routes, shown.routes_peak), (2, 115));
         assert_eq!(shown.received_per_second, None);
     }
@@ -2226,12 +2343,12 @@ mod tests {
     fn test_a_port_and_a_tunnel_keep_where_they_sit() {
         let port = InterfaceReading {
             member_of: Some("bond0".to_string()),
-            ..reading("eno1", true, 0, 0, 0)
+            ..reading("eno1", true, 0)
         };
         let tunnel = InterfaceReading {
             kind: InterfaceKind::Tunnel,
             inside: Some("bond0".to_string()),
-            ..reading("doublezero0", true, 115, 0, 0)
+            ..reading("doublezero0", true, 115)
         };
         assert_eq!(
             interface_shown(&port, 0, None)

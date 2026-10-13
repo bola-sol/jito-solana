@@ -1,5 +1,5 @@
-//! The host's network interfaces: each one's kind, state, routes, master and byte counters, from
-//! `/proc/net/dev`, `/proc/net/route` and `/sys/class/net`. Linux only.
+//! The host's network interfaces: each one's kind, state, routes and master, from `/proc/net/dev`,
+//! `/proc/net/route` and `/sys/class/net`. Linux only. Their traffic is read with the host total.
 
 use {
     serde::Serialize,
@@ -28,8 +28,6 @@ pub struct InterfaceReading {
     pub member_of: Option<String>,
     /// On a tunnel, the interface holding the default route, which carries its packets.
     pub inside: Option<String>,
-    pub received: u64,
-    pub sent: u64,
 }
 
 /// Link types the kernel gives tunnels: IPIP, IPv6-in-IPv6, SIT, GRE, IPv6 GRE, and none, which
@@ -48,7 +46,7 @@ pub fn read() -> io::Result<Vec<InterfaceReading>> {
     let routes = parse_routes(&route_table);
     let mut readings: Vec<InterfaceReading> = counters
         .into_iter()
-        .map(|(name, received, sent)| {
+        .map(|(name, _, _)| {
             let sys = Path::new("/sys/class/net").join(&name);
             InterfaceReading {
                 kind: kind_of(&sys),
@@ -58,8 +56,6 @@ pub fn read() -> io::Result<Vec<InterfaceReading>> {
                 member_of: master_of(&sys),
                 inside: None,
                 name,
-                received,
-                sent,
             }
         })
         .collect();
@@ -77,7 +73,7 @@ pub fn read() -> io::Result<Vec<InterfaceReading>> {
 
 /// Each interface but loopback, with its received and sent bytes.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn parse_counters(contents: &str) -> Vec<(String, u64, u64)> {
+pub(crate) fn parse_counters(contents: &str) -> Vec<(String, u64, u64)> {
     contents
         .lines()
         .filter_map(|line| {
@@ -270,8 +266,6 @@ bond0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
             routes: 0,
             member_of: None,
             inside: None,
-            received: 0,
-            sent: 0,
         }
     }
 

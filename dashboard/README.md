@@ -168,7 +168,10 @@ members, or a tunnel and the link under it, count once. A port whose master is
 also backed by a device is left out, and where no interface has one, every
 interface but loopback counts. In `summary.net_interfaces`, `member_of` names,
 on a port, its `master`, such as a bond, bridge or team, and `inside` names, on
-a tunnel, the interface holding the IPv4 default route.
+a tunnel, the interface holding the IPv4 default route. Each interface's rates
+come from the same read of `/proc/net/dev` as `summary.network`, every second,
+so the two cover the same interval; its kind, state and routes are read every
+five seconds.
 
 A client can also send a request carrying an `id`, and the reply goes back to
 that `id` alone: `summary.ping`, `summary.displays` for the whole name table,

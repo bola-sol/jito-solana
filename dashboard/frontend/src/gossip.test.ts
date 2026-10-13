@@ -43,7 +43,12 @@ const LIST: GossipPeers = {
   lowest: [9_000, 9_900, 9_990, null],
   finalization: [0.98, 0.25, null, 0.93],
   vote_arrival_epoch: 1_048,
-  vote_arrival: [[92_400, 21_000, 388_000, 141_000], [412_000, null, null, null], null, [151_000, 34_000, 612_000, 203_000]],
+  vote_arrival: [
+    [92_400, 21_000, 388_000, 141_000, 1_802],
+    [412_000, null, null, null, 1],
+    null,
+    [151_000, 34_000, 612_000, 203_000],
+  ],
 };
 
 const PEERS = gossipPeers(LIST);
@@ -68,7 +73,8 @@ describe("gossipPeers", () => {
 
 describe("vote arrival", () => {
   it("reads each peer's cell, and none where votor sent nothing", () => {
-    expect(PEERS[0].voteArrival).toEqual({ mean: 92_400, spread: 21_000, worst: 388_000, finalize: 141_000 });
+    expect(PEERS[0].voteArrival).toEqual({ mean: 92_400, spread: 21_000, worst: 388_000, finalize: 141_000, votes: 1_802 });
+    expect(PEERS[3].voteArrival?.votes, "a reply without the count").toBeNull();
     expect(PEERS[2].voteArrival).toBeNull();
   });
 
@@ -81,7 +87,12 @@ describe("vote arrival", () => {
     expect(arrivalTitle(PEERS[3].voteArrival!, 1_048)).toBe(
       "Notarize votes reached us 151 ms after the slot began on average in epoch 1,048, spread 34 ms, worst 612 ms; finalize votes 203 ms.",
     );
-    expect(arrivalTitle(PEERS[1].voteArrival!, null)).toBe("Notarize votes reached us 412 ms after the slot began on average.");
+    expect(arrivalTitle(PEERS[0].voteArrival!, 1_048)).toBe(
+      "Notarize votes reached us 92 ms after the slot began on average over 1,802 votes in epoch 1,048, spread 21 ms, worst 388 ms; finalize votes 141 ms.",
+    );
+    expect(arrivalTitle(PEERS[1].voteArrival!, null)).toBe(
+      "Notarize votes reached us 412 ms after the slot began on average over 1 vote.",
+    );
   });
 });
 

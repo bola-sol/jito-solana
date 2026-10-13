@@ -1,7 +1,7 @@
 //! Host-wide totals from `/proc/net/dev`, each byte counted once at the network cards, not the
 //! validator's own traffic. Reports nothing rather than zeros where the file is unreadable.
 
-use std::{io, path::Path};
+use std::{collections::HashMap, io, path::Path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetCounters {
@@ -18,19 +18,45 @@ pub enum Counted {
     Every,
 }
 
+/// Each interface's received and sent bytes, by name.
+pub type InterfaceCounters = HashMap<String, (u64, u64)>;
+
+/// The host total and each interface's counters, from one read of the file, so rates taken from
+/// them describe the same interval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetReading {
+    pub total: NetCounters,
+    pub counted: Counted,
+    pub interfaces: InterfaceCounters,
+}
+
 #[cfg(target_os = "linux")]
-pub fn read() -> io::Result<(NetCounters, Counted)> {
+pub fn read() -> io::Result<NetReading> {
     let contents = std::fs::read_to_string("/proc/net/dev")?;
-    read_from(&contents, Path::new("/sys/class/net"))
+    reading_from(&contents, Path::new("/sys/class/net"))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unrecognised /proc/net/dev"))
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn read() -> io::Result<(NetCounters, Counted)> {
+pub fn read() -> io::Result<NetReading> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "network counters are only available on Linux",
     ))
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn reading_from(contents: &str, sys: &Path) -> Option<NetReading> {
+    let (total, counted) = read_from(contents, sys)?;
+    let interfaces = crate::net_ifaces::parse_counters(contents)
+        .into_iter()
+        .map(|(name, received, sent)| (name, (received, sent)))
+        .collect();
+    Some(NetReading {
+        total,
+        counted,
+        interfaces,
+    })
 }
 
 /// Totals over the cards found under `sys`, or over every interface where there are none.
@@ -154,5 +180,13 @@ doublezero0:  500   5    0    0    0     0          0         0      300       3
             Some((18_570, 12_380, Counted::Every))
         );
         assert_eq!(read_from("", cards.path()), None);
+
+        // Each interface comes from the same read as the total, the bond and its ports alike.
+        let reading = reading_from(BONDED, cards.path()).unwrap();
+        assert_eq!((reading.total.received, reading.total.sent), (9000, 6000));
+        assert_eq!(reading.interfaces["bond0"], (9000, 6000));
+        assert_eq!(reading.interfaces["eno2"], (3000, 2000));
+        assert!(!reading.interfaces.contains_key("lo"));
+        assert_eq!(reading_from("", cards.path()), None);
     }
 }

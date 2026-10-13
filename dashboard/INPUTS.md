@@ -76,7 +76,7 @@ Gossip sends these points itself and clears each counter when it sends it. The d
 
 | Point | Fields read | Feeds |
 | --- | --- | --- |
-| `consensus_vote_metrics` | tag `address` (a vote account); `epoch`, `notar_vote_us_mean`, `notar_vote_us_stddev`, `notar_vote_us_maximum`, `finalize_vote_us_mean` | Under alpenglow, the Gossip peers table's vote arrival: how long after a slot began here each validator's votes arrived, over the last finished epoch. Votor reports each epoch once, after a later one's slot is finalized; only the newest epoch is kept. Our own votes do not pass through it. |
+| `consensus_vote_metrics` | tag `address` (a vote account); `epoch`, `notar_vote_count`, `notar_vote_us_mean`, `notar_vote_us_stddev`, `notar_vote_us_maximum`, `finalize_vote_us_mean` | Under alpenglow, the Gossip peers table's vote arrival: how long after a slot began here each validator's votes arrived, over the last finished epoch, and how many notarize votes that covers. Votor reports each epoch once, after a later one's slot is finalized; only the newest epoch is kept. Our own votes do not pass through it. |
 
 ### Read once, or on change
 

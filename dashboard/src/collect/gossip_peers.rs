@@ -21,8 +21,9 @@ use {
 /// How long after the last request the list is still gathered.
 const WANTED_FOR_MILLIS: u64 = 30_000;
 
-/// Notarize mean, its spread and its worst, then the finalize mean, in microseconds.
-pub type VoteArrivalCell = (u64, Option<u64>, Option<u64>, Option<u64>);
+/// Notarize mean, its spread and its worst, then the finalize mean, in microseconds; then the
+/// notarize votes the mean is over.
+pub type VoteArrivalCell = (u64, Option<u64>, Option<u64>, Option<u64>, Option<u64>);
 
 /// One array per column, so several thousand rows stay compact.
 #[derive(Debug, Default, Serialize)]
@@ -176,6 +177,7 @@ impl Collector {
                         arrival.notarize_spread_micros,
                         arrival.notarize_worst_micros,
                         arrival.finalize_mean_micros,
+                        arrival.notarize_count,
                     )
                 }));
             list.snapshot_full.push(full);

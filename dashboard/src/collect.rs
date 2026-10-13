@@ -2809,6 +2809,7 @@ mod tests {
         let mut point = solana_metrics::datapoint::DataPoint::new("consensus_vote_metrics");
         point.add_tag("address", &harness.ctx.vote_account.to_string());
         point.add_field_i64("epoch", 3);
+        point.add_field_i64("notar_vote_count", 1_740);
         point.add_field_i64("notar_vote_us_mean", 151_000);
         point.add_field_i64("finalize_vote_us_mean", 203_000);
         collector.metrics_tap.observe_point(&point);
@@ -2830,7 +2831,7 @@ mod tests {
         assert_eq!(list["vote_arrival_epoch"], 3);
         assert_eq!(
             list["vote_arrival"][row],
-            serde_json::json!([151_000, null, null, 203_000])
+            serde_json::json!([151_000, null, null, 203_000, 1_740])
         );
     }
 

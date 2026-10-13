@@ -311,6 +311,8 @@ pub struct VoteArrival {
     pub notarize_mean_micros: u64,
     pub notarize_spread_micros: Option<u64>,
     pub notarize_worst_micros: Option<u64>,
+    /// The notarize votes the mean is over.
+    pub notarize_count: Option<u64>,
     pub finalize_mean_micros: Option<u64>,
 }
 
@@ -1199,6 +1201,7 @@ impl MetricsTap {
             notarize_mean_micros,
             notarize_spread_micros: field("notar_vote_us_stddev"),
             notarize_worst_micros: field("notar_vote_us_maximum"),
+            notarize_count: field("notar_vote_count"),
             finalize_mean_micros: field("finalize_vote_us_mean"),
         };
         let Ok(mut arrivals) = self.vote_arrivals.lock() else {
@@ -2299,6 +2302,7 @@ mod tests {
                 notarize_mean_micros: 118_000,
                 notarize_spread_micros: Some(30_000),
                 notarize_worst_micros: Some(470_000),
+                notarize_count: Some(400),
                 finalize_mean_micros: Some(166_000),
             })
         );

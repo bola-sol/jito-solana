@@ -36,6 +36,8 @@ export interface VoteArrival {
   spread: number | null;
   worst: number | null;
   finalize: number | null;
+  /** The notarize votes the mean is over. */
+  votes: number | null;
 }
 
 function behind(root: number, slot: number | null | undefined): number | null {
@@ -69,8 +71,8 @@ export function gossipPeers(list: GossipPeers): GossipPeer[] {
 
 function arrivalOf(cell: GossipPeers["vote_arrival"][number]): VoteArrival | null {
   if (!cell) return null;
-  const [mean, spread, worst, finalize] = cell;
-  return { mean, spread, worst, finalize };
+  const [mean, spread, worst, finalize, votes] = cell;
+  return { mean, spread, worst, finalize, votes: votes ?? null };
 }
 
 /** The middle peer's mean, which a peer far above is marked against. */
@@ -86,7 +88,8 @@ export function arrivalText(arrival: VoteArrival): string {
 }
 
 export function arrivalTitle(arrival: VoteArrival, epoch: number | null): string {
-  const over = epoch === null ? "" : ` in epoch ${count(epoch)}`;
+  const votes = arrival.votes === null ? "" : ` over ${count(arrival.votes)} vote${arrival.votes === 1 ? "" : "s"}`;
+  const over = `${votes}${epoch === null ? "" : ` in epoch ${count(epoch)}`}`;
   const spread = arrival.spread === null ? "" : `, spread ${millis(arrival.spread)}`;
   const worst = arrival.worst === null ? "" : `, worst ${millis(arrival.worst)}`;
   const finalize = arrival.finalize === null ? "" : `; finalize votes ${millis(arrival.finalize)}`;

@@ -211,13 +211,20 @@ impl Collector {
         if to < from {
             return;
         }
-        let (read_to, marks) = certs::walk(
+        let certs::Walked {
+            read_to,
+            marks,
+            closed_at,
+        } = certs::walk(
             &self.ctx.blockstore,
             root_bank,
             &self.ctx.vote_account,
             from,
             to,
         );
+        for (slot, nanos) in closed_at {
+            self.metrics_tap.note_block_closed(slot, nanos);
+        }
         if let Some(read_to) = read_to {
             self.certificates.walk = Some((floor, read_to));
         }

@@ -1004,6 +1004,7 @@ export interface Published {
     observed_slot_duration_nanos: number | null;
     /** Alpenglow only: median microseconds from a block's last shred to its finalization. */
     finality_micros: number | null;
+    finality_from_leader_micros: number | null;
     /** Alpenglow only; null before a block has been seen. */
     finalization_share: FinalizationShare | null;
     epoch_remaining_nanos: number;

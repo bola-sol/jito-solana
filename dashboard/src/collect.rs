@@ -378,6 +378,7 @@ struct Debounces {
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
     finality_micros: Debounced<Option<u64>>,
+    finality_from_leader_micros: Debounced<Option<u64>>,
     finalization_share: Debounced<Option<FinalizationShare>>,
     next_leader_slot: Debounced<Option<Slot>>,
     skip_rate: Debounced<SkipRate>,
@@ -834,6 +835,13 @@ impl Collector {
             "finality_micros",
             self.metrics_tap
                 .finality_micros(timestamp(), FINALITY_WINDOW_MILLIS),
+        );
+        self.debounces.finality_from_leader_micros.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "finality_from_leader_micros",
+            self.metrics_tap
+                .finality_from_leader_micros(timestamp(), FINALITY_WINDOW_MILLIS),
         );
     }
 
@@ -2677,6 +2685,16 @@ mod tests {
             .produced_detail(0, 8)
             .expect("the store is readable");
         assert_eq!(detail.blocks.len(), page.figures.len());
+    }
+
+    #[test]
+    fn test_the_time_from_the_leader_is_published_beside_finality() {
+        let harness = fixture();
+        harness.collector().tick();
+        for key in ["finality_micros", "finality_from_leader_micros"] {
+            let published = harness.published_key("summary", key).unwrap();
+            assert!(published.contains(r#""value":null"#), "{published}");
+        }
     }
 
     #[test]

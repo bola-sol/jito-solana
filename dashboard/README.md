@@ -97,9 +97,9 @@ What runs whatever the audience, beyond that: a metrics tap that observes the
 datapoints the validator already emits, a listing of the snapshot archive
 directories once a second, a pass over the accounts each frozen block wrote,
 picking out the config program's, which keeps validator names current, and
-under alpenglow a walk of the block footers for their reward certificates, which
-reads the last two FEC sets of each newly rooted block out of the blockstore, at
-most 64 slots a tick.
+under alpenglow a walk of the block footers for their reward certificates and the
+leader's close time, which reads the last two FEC sets of each newly rooted block
+out of the blockstore, at most 64 slots a tick, with or without a seat.
 
 The one-off read that maps identities to names runs once, when the collector
 attaches. It asks the secondary index which accounts the config program owns and
@@ -154,7 +154,7 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `finality_micros`, `finalization_share`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_block`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `leader_slot_counts`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `net_interfaces`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
+| `summary` | `version`, `client`, `commit_hash`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `finality_micros`, `finality_from_leader_micros`, `finalization_share`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `waterfall`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_block`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `leader_slot_counts`, `health`, `host`, `snapshots`, `estimated_tps`, `tps_history`, `tps_sample`, `network`, `network_sample`, `net_interfaces`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
 | `epoch`   | `new` |
 | `peers`   | `all` |
 | `slot`    | `overview`, `update`, `upcoming` |

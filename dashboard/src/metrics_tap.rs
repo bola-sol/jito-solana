@@ -18,6 +18,7 @@ use {
             Arc, Mutex,
             atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         },
+        time::UNIX_EPOCH,
     },
 };
 
@@ -260,6 +261,11 @@ pub struct MetricsTap {
     /// Microseconds from a slot's last shred to our notarize vote, stamped the same way.
     vote_lag: TimedSamples,
 
+    /// Microseconds from the leader closing a block, by its clock, to its finalization here.
+    from_leader: TimedSamples,
+
+    closed_blocks: Mutex<ClosedBlocks>,
+
     shred_fills: Mutex<BTreeMap<Slot, ShredFill>>,
 
     bundle_slots: Mutex<BTreeMap<Slot, BundleLanding>>,
@@ -430,6 +436,15 @@ pub struct ShredFill {
     pub shreds: u64,
     pub repaired: u64,
     pub full_millis: u64,
+    /// Unix nanoseconds when the block became full here, from the point's own clock.
+    pub full_at_nanos: u64,
+}
+
+/// When each block's leader closed it, and the finality waiting for that, kept until both meet.
+#[derive(Debug, Default)]
+struct ClosedBlocks {
+    closed_at: BTreeMap<Slot, u64>,
+    waiting: BTreeMap<Slot, u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
@@ -1250,6 +1265,7 @@ impl MetricsTap {
         let now_millis = timestamp();
         if let Some(micros) = finalized_us.and_then(|at| at.checked_sub(last_shred_us)) {
             self.finality.push(now_millis, micros);
+            self.time_from_leader(slot, micros, now_millis);
         }
         if let Some(micros) = notarize_us.and_then(|at| at.checked_sub(last_shred_us)) {
             self.vote_lag.push(now_millis, micros);
@@ -1259,6 +1275,68 @@ impl MetricsTap {
     /// The median time from last shred to finalization over the samples reported in the window.
     pub fn finality_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
         self.finality.median(now_millis, window_millis)
+    }
+
+    /// The median time from the leader closing a block to its finalization here, over the window.
+    pub fn finality_from_leader_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
+        self.from_leader.median(now_millis, window_millis)
+    }
+
+    /// The footer's producer clock for `slot`, from the certificate walk.
+    pub fn note_block_closed(&self, slot: Slot, closed_at_nanos: u64) {
+        let Ok(mut closed) = self.closed_blocks.lock() else {
+            return;
+        };
+        closed.closed_at.insert(slot, closed_at_nanos);
+        while closed.closed_at.len() > SHRED_FILLS {
+            closed.closed_at.pop_first();
+        }
+        let waiting = closed.waiting.remove(&slot);
+        drop(closed);
+        if let Some(finality_us) = waiting {
+            self.push_from_leader(slot, closed_at_nanos, finality_us, timestamp());
+        }
+    }
+
+    /// Votor usually reports after the walk has read the footer; otherwise the finality waits.
+    fn time_from_leader(&self, slot: Slot, finality_us: u64, now_millis: u64) {
+        let Ok(mut closed) = self.closed_blocks.lock() else {
+            return;
+        };
+        let Some(&closed_at_nanos) = closed.closed_at.get(&slot) else {
+            closed.waiting.insert(slot, finality_us);
+            while closed.waiting.len() > SHRED_FILLS {
+                closed.waiting.pop_first();
+            }
+            return;
+        };
+        drop(closed);
+        self.push_from_leader(slot, closed_at_nanos, finality_us, now_millis);
+    }
+
+    /// A leader whose clock runs ahead of ours reads negative, and that sample is left out.
+    fn push_from_leader(
+        &self,
+        slot: Slot,
+        closed_at_nanos: u64,
+        finality_us: u64,
+        now_millis: u64,
+    ) {
+        let Some(full_at_nanos) = self
+            .shred_fill(slot)
+            .map(|fill| fill.full_at_nanos)
+            .filter(|nanos| *nanos > 0)
+        else {
+            return;
+        };
+        let Some(rotor_us) = full_at_nanos
+            .checked_sub(closed_at_nanos)
+            .and_then(|nanos| nanos.checked_div(1_000))
+        else {
+            return;
+        };
+        self.from_leader
+            .push(now_millis, rotor_us.saturating_add(finality_us));
     }
 
     /// The median time from last shred to our notarize vote over the samples reported in the window.
@@ -1346,7 +1424,15 @@ impl MetricsTap {
 
     /// The -1 the blockstore sends for an unknown last index drops the point.
     fn remember_fill(&self, point: &DataPoint) {
-        let mut fill = ShredFill::default();
+        let mut fill = ShredFill {
+            full_at_nanos: point
+                .timestamp
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .and_then(|since| u64::try_from(since.as_nanos()).ok())
+                .unwrap_or_default(),
+            ..ShredFill::default()
+        };
         let mut slot = None;
         let mut last_index = None;
         for (name, value) in &point.fields {
@@ -2895,6 +2981,80 @@ mod tests {
                 ("last_index", "40i"),
             ],
         ));
+    }
+
+    /// Full at unix second 1,000, so close times can be set relative to it.
+    const FULL_AT_NANOS: u64 = 1_000_000_000_000;
+
+    fn full_block_at(tap: &MetricsTap, slot: &str, total_time_ms: &str) {
+        let mut point = named(
+            SHRED_FULL,
+            &[
+                ("slot", slot),
+                ("total_time_ms", total_time_ms),
+                ("last_index", "40i"),
+            ],
+        );
+        point.timestamp = UNIX_EPOCH
+            .checked_add(std::time::Duration::from_nanos(FULL_AT_NANOS))
+            .unwrap();
+        tap.observe(&point);
+    }
+
+    fn finalized_89_ms_after_the_last_shred(tap: &MetricsTap) {
+        tap.observe(&named(
+            VOTE_TRACKING,
+            &[
+                ("slot", "100i"),
+                ("first_shred", "1000i"),
+                ("finalized", "270000i"),
+            ],
+        ));
+    }
+
+    #[test]
+    fn test_a_block_is_full_when_its_point_was_made() {
+        let tap = MetricsTap::default();
+        full_block_at(&tap, "100i", "180i");
+        assert_eq!(
+            tap.shred_fill(100).map(|fill| fill.full_at_nanos),
+            Some(FULL_AT_NANOS)
+        );
+    }
+
+    #[test]
+    fn test_from_the_leader_adds_the_time_since_it_closed_the_block() {
+        let tap = MetricsTap::default();
+        full_block_at(&tap, "100i", "180i");
+        tap.note_block_closed(100, FULL_AT_NANOS.saturating_sub(40_000_000));
+        finalized_89_ms_after_the_last_shred(&tap);
+        assert_eq!(
+            tap.finality_from_leader_micros(timestamp(), 60_000),
+            Some(129_000)
+        );
+    }
+
+    #[test]
+    fn test_from_the_leader_waits_for_the_close_time_when_votor_reports_first() {
+        let tap = MetricsTap::default();
+        full_block_at(&tap, "100i", "180i");
+        finalized_89_ms_after_the_last_shred(&tap);
+        assert_eq!(tap.finality_from_leader_micros(timestamp(), 60_000), None);
+        tap.note_block_closed(100, FULL_AT_NANOS.saturating_sub(40_000_000));
+        assert_eq!(
+            tap.finality_from_leader_micros(timestamp(), 60_000),
+            Some(129_000)
+        );
+    }
+
+    #[test]
+    fn test_a_leader_clock_ahead_of_ours_is_left_out() {
+        let tap = MetricsTap::default();
+        full_block_at(&tap, "100i", "180i");
+        tap.note_block_closed(100, FULL_AT_NANOS.saturating_add(1));
+        finalized_89_ms_after_the_last_shred(&tap);
+        assert_eq!(tap.finality_from_leader_micros(timestamp(), 60_000), None);
+        assert_eq!(tap.finality_micros(timestamp(), 60_000), Some(89_000));
     }
 
     #[test]

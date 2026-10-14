@@ -549,39 +549,62 @@ enum Block {
     Opaque,
 }
 
-/// Stops at the first slot past the root.
+/// What a walk read: the last slot, our marks, and when each block's leader closed it.
+#[derive(Debug, Default)]
+pub struct Walked {
+    pub read_to: Option<Slot>,
+    pub marks: Vec<Mark>,
+    /// The footer's producer clock, unix nanoseconds, for every block read.
+    pub closed_at: Vec<(Slot, u64)>,
+}
+
+/// Stops at the first slot past the root. Footers are read whether or not we hold a rank.
 pub fn walk(
     blockstore: &Blockstore,
     bank: &Bank,
     vote_account: &Pubkey,
     from: Slot,
     to: Slot,
-) -> (Option<Slot>, Vec<Mark>) {
-    let my_rank = |slot| rank_of(bank, vote_account, slot);
+) -> Walked {
     let root = bank.slot();
-    let mut marks = Vec::new();
-    let mut read_to = None;
+    let mut walked = Walked::default();
     for slot in from..=to {
-        let Some(reward_slot) = slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
-            read_to = Some(slot);
-            continue;
-        };
-        let Some((rank, len)) = my_rank(reward_slot) else {
-            read_to = Some(slot);
-            continue;
-        };
-        match read_block(blockstore, slot, root) {
-            Block::Footer(footer) => {
+        let block = read_block(blockstore, slot, root);
+        if matches!(block, Block::Pending) {
+            break;
+        }
+        let ranked = slot
+            .checked_sub(NUM_SLOTS_FOR_REWARD)
+            .and_then(|reward_slot| {
+                rank_of(bank, vote_account, reward_slot).map(|rank| (reward_slot, rank))
+            });
+        let (closed_at, mark) = read_slot(block, ranked);
+        if let Some(nanos) = closed_at {
+            walked.closed_at.push((slot, nanos));
+        }
+        walked.marks.extend(mark);
+        walked.read_to = Some(slot);
+    }
+    walked
+}
+
+/// The block's close time, and our mark where we hold a rank for the slot it rewards.
+fn read_slot(block: Block, ranked: Option<(Slot, (usize, usize))>) -> (Option<u64>, Option<Mark>) {
+    match block {
+        Block::Footer(footer) => {
+            let mark = ranked.and_then(|(reward_slot, (rank, len))| {
                 let notar = footer.notar_reward_cert.as_ref().map(|cert| cert.bitmap());
                 let skip = footer
                     .skip_reward_cert
                     .as_ref()
                     .map(|cert| cert.to_bitmap());
-                if let Some(mark) = build_mark(notar, skip, reward_slot, rank, len) {
-                    marks.push(mark);
-                }
-            }
-            Block::Missing => marks.push(Mark {
+                build_mark(notar, skip, reward_slot, rank, len)
+            });
+            (Some(footer.block_producer_time_nanos), mark)
+        }
+        Block::Missing => (
+            None,
+            ranked.map(|(reward_slot, (rank, _))| Mark {
                 slot: reward_slot,
                 reward: Reward::NoCertificate,
                 rank,
@@ -589,12 +612,9 @@ pub fn walk(
                 notar: 0,
                 skip: 0,
             }),
-            Block::Pending => break,
-            Block::Opaque => {}
-        }
-        read_to = Some(slot);
+        ),
+        Block::Pending | Block::Opaque => (None, None),
     }
-    (read_to, marks)
 }
 
 /// `None` where it holds no stake there.
@@ -821,6 +841,41 @@ mod tests {
         assert!(matches!(read_block(&blockstore, 7, 9), Block::Opaque));
         assert!(matches!(read_block(&blockstore, 9, 9), Block::Footer(read) if *read == footer));
         assert!(matches!(read_block(&blockstore, 12, 9), Block::Pending));
+    }
+
+    fn footer_closed_at(nanos: u64) -> Block {
+        let (_, entries) = make_slot_entries(1, 0, 1);
+        Block::Footer(Box::new(BlockFooterV1 {
+            bank_hash: entries[0].hash,
+            block_producer_time_nanos: nanos,
+            block_user_agent: vec![],
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        }))
+    }
+
+    #[test]
+    fn test_a_footer_is_timed_whether_or_not_we_hold_a_rank() {
+        assert_eq!(read_slot(footer_closed_at(42), None), (Some(42), None));
+        let (closed_at, mark) = read_slot(footer_closed_at(42), Some((5, (0, 10))));
+        assert_eq!(closed_at, Some(42));
+        assert_eq!(
+            mark.map(|mark| (mark.slot, mark.reward)),
+            Some((5, Reward::NoCertificate))
+        );
+    }
+
+    #[test]
+    fn test_a_skipped_slot_marks_only_a_ranked_reward() {
+        assert_eq!(read_slot(Block::Missing, None), (None, None));
+        let (closed_at, mark) = read_slot(Block::Missing, Some((5, (2, 10))));
+        assert_eq!(closed_at, None);
+        assert_eq!(
+            mark.map(|mark| (mark.rank, mark.reward)),
+            Some((2, Reward::NoCertificate))
+        );
+        assert_eq!(read_slot(Block::Opaque, Some((5, (2, 10)))), (None, None));
     }
 
     #[test]

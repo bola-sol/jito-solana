@@ -141,6 +141,8 @@ The SPA lives in `frontend/`. Its `dist` directory is checked in so that a plain
 
 [INPUTS.md](INPUTS.md) lists every validator input the dashboard reads and what
 each one feeds.
+The events it needs from agave's event system are listed in
+[bola-sol/agave-dashboard-events](https://github.com/bola-sol/agave-dashboard-events).
 
 ## Wire protocol
 

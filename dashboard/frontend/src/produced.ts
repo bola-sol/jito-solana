@@ -27,6 +27,11 @@ export type BlockHead = Pick<
   | "duration_nanos"
 >;
 
+/** Under alpenglow a block holds no votes, so every failure is among its non-vote transactions. */
+export function succeededOf(block: Pick<ProducedBlock, "non_vote_transactions" | "failed_transactions">): number {
+  return Math.max(0, block.non_vote_transactions - block.failed_transactions);
+}
+
 /** By the runtime's own arithmetic: the burn floored, the rest kept. */
 export function earnedOf(block: BlockHead, rates: TipRates | undefined): Earned {
   const gross = block.total_fees - block.priority_fees;

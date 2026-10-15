@@ -7,6 +7,7 @@ import {
   heldShortLabel,
   leaderSlotsLabel,
   sortBlocks,
+  succeededOf,
 } from "./produced";
 import type { BlockCertificate, LeaderSlotCounts, ProducedBlock, TipRates } from "./types";
 
@@ -269,5 +270,16 @@ describe("sortBlocks", () => {
   it("leaves the list it was given alone", () => {
     sortBlocks(held, "earned", "asc");
     expect(slots(held)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("succeededOf", () => {
+  it("is the block's transactions less those that failed", () => {
+    expect(succeededOf({ non_vote_transactions: 1_167, failed_transactions: 167 })).toBe(1_000);
+    expect(succeededOf({ non_vote_transactions: 12, failed_transactions: 0 })).toBe(12);
+  });
+
+  it("never reads below nought", () => {
+    expect(succeededOf({ non_vote_transactions: 3, failed_transactions: 5 })).toBe(0);
   });
 });

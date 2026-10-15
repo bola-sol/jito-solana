@@ -77,7 +77,7 @@ All of these are running totals, sent each second (gossip every two seconds).
 | Epoch | epoch, first slot, slots in epoch, ns per slot, cluster type, consensus (tower or alpenglow), lamports per signature, admission ticket minimum, rent-exempt minimum for a vote account | at start, each epoch, and at an interval | Static, state | `Bank::epoch_schedule`, `ns_per_slot_at_slot`, `cluster_type`, `migration_status`, the fee and ticket reads | 2 | those reads |
 | Slot clock | slot, block height, clock unix timestamp | each root | Static | `Bank::block_height`, `Bank::clock` | 2 | those reads |
 | Leader schedule | epoch, the leader of each four-slot turn | each epoch, for this epoch and the next | Large: about 108,000 turns in a 432,000-slot epoch | `LeaderScheduleCache` | 2 | `LeaderScheduleCache` |
-| Validator info | identity, name, icon URL | on change; all validators at an interval | Per validator, bounded strings | the config program's accounts | 2 | `get_filtered_indexed_accounts`, `get_program_accounts_modified_since_parent` |
+| Validator info | identity, name, icon URL, parsed in the validator | on change; all validators at an interval, which needs the config program's account index | Per validator, bounded: under 700 bytes, as validator info is at most 576 bytes | the config program's accounts | 2 | `get_filtered_indexed_accounts`, `get_program_accounts_modified_since_parent` |
 
 The leader schedule is too large for one event. Send it one turn at a time, or send the epoch's node stakes so that the dashboard calculates it.
 
@@ -97,7 +97,7 @@ Each of these is priority 3. The dashboard shows none of them today.
 
 - Shred arrival, in the table above: a shred timeline for each block.
 - The TPU counters with a slot, read when the slot ends: the TPU path for each slot, not each leader turn.
-- A record for each transaction in our blocks: fee, compute, status and execution time. This needs transaction data.
+- A record for each transaction in our blocks: signature, fee, compute, status and execution time. The record is bounded, and does not need the transaction itself.
 - The reason for each skipped slot.
 - The costliest accounts of each of our blocks, as a bounded list.
 - Compute for each of our blocks, split into votes, bundles and the rest.
@@ -116,14 +116,14 @@ Each of these is priority 3. The dashboard shows none of them today.
 - The event directory: `<ledger>/events`. The operator gives the dashboard the ledger path.
 - Nothing for the pages' own requests. The dashboard answers them from what it keeps.
 
-## What the first version cannot carry
+## Limits of the first version
 
-- Account data. Validator names and icons come from the config program's accounts.
-- Transaction data. A record for each transaction needs it.
-- A large value in one event. The leader schedule, the vote accounts and the peers must go one item at a time.
-- Start-up before the event system exists. agave#16054 starts it after the ledger opens, so searching for RPC, downloading a snapshot and loading the ledger send no events.
-- State for a late subscriber. A subscriber starts at the newest event, and the validator clears the event directory at each start. State streams must resend.
-- A subscriber process that exits without dropping its handle keeps its place in the stream. The stream then rejects every event for every subscriber until the stream is recreated.
+- Raw account and transaction data. The dashboard needs neither. The validator can parse what the dashboard uses into bounded events: validator info is at most 576 bytes on chain, and a transaction record needs a signature and a few numbers.
+- A large value in one event. Each queue cell is the size of the largest event. So the leader schedule, the vote accounts and the peers go one item at a time. The stream's capacity must hold a full set, or the publisher spreads the set over time.
+- Start-up before the event system exists. agave#16054 starts it after the ledger loads, so searching for RPC, downloading a snapshot and loading the ledger send no events.
+- State for a late subscriber. A subscriber starts at the newest event, and agave#16054 clears the event directory at each validator start. State streams must resend.
+- A slow subscriber. When any subscriber falls a full queue behind, the publisher rejects new events for every subscriber. Subscribers see the loss only in each lane's rejected count.
+- A subscriber that exits without dropping its handle. It keeps its place, so the stream rejects every event for every subscriber. Only a validator restart, or turning the stream off and on, recreates it.
 
 ## If the dashboard runs inside the validator
 
@@ -131,6 +131,7 @@ Each of these is priority 3. The dashboard shows none of them today.
 - State streams need no resends, because the direct reads give the current state.
 - `/proc/self` is the validator, so it needs no process id.
 - Validator names, the leader schedule and the early start-up phases stay available.
+- Without the bank notification channel, it refreshes validator names with a periodic scan of the config program's account index.
 - Upstream, it still needs the run command's flags and start-up code, and three public fields on `Validator`: `block_commitment_cache`, `leader_schedule_cache` and `highest_finalized`. The events remove the metrics observer, the bank notification relay and the gossip-ready channel.
 
 ## Appendix: what the dashboard reads today

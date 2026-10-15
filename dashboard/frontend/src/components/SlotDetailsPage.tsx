@@ -8,6 +8,7 @@ import {
   heldShortLabel,
   leaderSlotsLabel,
   sortBlocks,
+  succeededOf,
   type BlockFigures,
   type BlockHead,
   type BlockSummary,
@@ -734,8 +735,8 @@ function BlockCompute({
         <div className="sx-stats">
           {/* Half the row under alpenglow, where votes are not shown, so the label fits beside two. */}
           <Stat
-            label={alpenglow ? "transactions" : "non-vote"}
-            value={count(block.non_vote_transactions)}
+            label={alpenglow ? "succeeded" : "non-vote"}
+            value={count(alpenglow ? succeededOf(block) : block.non_vote_transactions)}
             className={alpenglow ? "sx-half" : undefined}
           />
           {!alpenglow && <Stat label="votes" value={count(votes)} />}

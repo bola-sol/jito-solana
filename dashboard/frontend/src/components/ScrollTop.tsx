@@ -1,0 +1,92 @@
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type ReactElement } from "react";
+import { heldScrollTop } from "../scroll";
+
+/** Within this of the top, a list follows new items in rather than holding its place. */
+export const LIVE_EDGE_PX = 120;
+
+export function ScrollTop({
+  scroller,
+  hold = true,
+}: {
+  scroller: RefObject<HTMLElement | null>;
+  /** Off where the list holds its own place, as a virtual list does. */
+  hold?: boolean;
+}): ReactElement {
+  const [away, setAway] = useState(false);
+  // Shared with the hook below: it needs to know where the list was left, to
+  // tell its own correction apart from one the browser already made.
+  const top = useRef(0);
+  useHeldScroll(scroller, top, hold);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+
+    const follow = () => {
+      top.current = element.scrollTop;
+      setAway(element.scrollTop > LIVE_EDGE_PX);
+    };
+    element.addEventListener("scroll", follow, { passive: true });
+    // The list may already be scrolled when this mounts, which is what happens
+    // when the page is switched away from and back.
+    follow();
+    return () => element.removeEventListener("scroll", follow);
+  }, [scroller]);
+
+  return (
+    <div className="scroll-top-anchor">
+      {away && (
+        <button
+          type="button"
+          className="scroll-top"
+          onClick={() =>
+            scroller.current?.scrollTo({
+              top: 0,
+              // A list holding its own place moves the scroll as items arrive, which would cut a
+              // smooth scroll short, so it jumps. Not `scroll-behavior` on the list, which would
+              // animate the corrections below too.
+              behavior:
+                !hold || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+            })
+          }
+        >
+          <span aria-hidden="true">↑</span> Back to top
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Browser scroll anchoring cannot be relied on; corrections are instant. */
+function useHeldScroll(
+  scroller: RefObject<HTMLElement | null>,
+  // A plain box rather than `RefObject`, whose `current` React types as
+  // read-only; this one is written on both sides.
+  top: { current: number },
+  hold: boolean,
+): void {
+  // Undefined until the first measurement rather than zero, which would read as
+  // the list having grown its whole length on the first render.
+  const height = useRef<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element || !hold) return;
+
+    const previous = height.current;
+    height.current = element.scrollHeight;
+
+    if (previous === undefined) {
+      top.current = element.scrollTop;
+      return;
+    }
+
+    // Compared before `top` is refreshed, or the check for a position something
+    // else has already moved could never fire.
+    const next = heldScrollTop(element.scrollTop, top.current, previous, element.scrollHeight);
+    if (next !== element.scrollTop) {
+      element.scrollTop = next;
+    }
+    top.current = element.scrollTop;
+  });
+}

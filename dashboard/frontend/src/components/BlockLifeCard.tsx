@@ -142,7 +142,7 @@ export function BlockLifeCard(): ReactElement | null {
                       </em>
                     </span>
                     <span className="life-leader" title={leader.key ?? undefined}>
-                      {name}
+                      <span>{name}</span>
                     </span>
                     <Track stages={block.stages} marks={marks} />
                     <span className={`life-num life-replayed${lateReplay ? " tone-warn" : ""}`}>{ms(blockReplayed)}</span>

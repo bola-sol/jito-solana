@@ -3522,7 +3522,6 @@ body {
   display: grid;
   grid-template-columns: 104px 96px minmax(0, 1fr) 64px 64px 200px;
   column-gap: 12px;
-  align-items: center;
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -3531,8 +3530,12 @@ body {
   display: contents;
 }
 
+/* Every cell as tall as its row, so the rules between rows line up whatever each holds. */
 .life-grid > span,
 .life-row > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
   padding: 5px 0;
   border-top: 1px solid var(--panel-raised);
 }
@@ -3595,7 +3598,7 @@ body {
 }
 
 .life-num {
-  text-align: right;
+  justify-content: flex-end;
 }
 
 .life-dim {
@@ -3607,9 +3610,12 @@ body {
 }
 
 .life-leader {
-  overflow: hidden;
   font-family: var(--sans);
   color: var(--text-dim);
+}
+
+.life-leader > span {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

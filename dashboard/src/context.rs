@@ -43,27 +43,26 @@ impl DashboardContext {
         cluster_name(self.bank_forks.read().unwrap().root_bank().cluster_type())
     }
 
-    /// Votor's last certificate under Alpenglow, the blockstore's latest optimistic slot before it.
+    /// Votor's last certificate under Alpenglow, the blockstore's latest optimistic slot before it,
+    /// and in both the highest slot with shreds, which turbine keeps current while replay lags.
     pub fn cluster_tip(&self) -> Option<Slot> {
         let migration_status = self.bank_forks.read().unwrap().migration_status();
-        if migration_status.is_alpenglow_enabled() {
+        let decided = if migration_status.is_alpenglow_enabled() {
+            // Votor's own, so after a restart it trails with replay.
             self.highest_finalized
                 .read()
-                .ok()?
-                .as_ref()
-                .map(|cert| cert.block().slot)
+                .ok()
+                .and_then(|cert| cert.as_ref().map(|cert| cert.block().slot))
         } else {
-            // After a restart the confirmed slot predates the snapshot. The
-            // highest slot with shreds is the floor.
-            let confirmed = self
-                .blockstore
+            // After a restart the confirmed slot predates the snapshot.
+            self.blockstore
                 .get_latest_optimistic_slots(1)
                 .ok()
                 .and_then(|mut slots| slots.pop())
-                .map(|(slot, _, _)| slot);
-            let shredded = self.blockstore.highest_slot().ok().flatten();
-            confirmed.into_iter().chain(shredded).max()
-        }
+                .map(|(slot, _, _)| slot)
+        };
+        let shredded = self.blockstore.highest_slot().ok().flatten();
+        decided.into_iter().chain(shredded).max()
     }
 }
 

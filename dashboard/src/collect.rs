@@ -68,6 +68,9 @@ pub use self::{
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
+
+/// The tip counts the slot still arriving, so a node in step reads a slot or two behind it.
+const IN_STEP_SLOTS: u64 = 4;
 const SNAPSHOT_READ: Duration = Duration::from_secs(1);
 
 /// Replies to requests, encoded by the collector and handed out by the server as they stand.
@@ -1973,7 +1976,7 @@ impl Collector {
         let Some(tip) = cluster_tip else {
             return;
         };
-        if tip > self.last_completed_slot {
+        if tip > self.last_completed_slot.saturating_add(IN_STEP_SLOTS) {
             self.trailed_cluster = true;
             return;
         }
@@ -3398,6 +3401,24 @@ mod tests {
         );
 
         harness.advance_to(101);
+        collector.tick();
+        assert!(
+            harness
+                .published_key("summary", "caught_up_time_nanos")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_a_tip_a_slot_or_two_ahead_counts_as_caught_up() {
+        // The tip includes the slot still arriving, which replay cannot have finished.
+        let harness = fixture();
+        harness.advance_to(64);
+        let mut collector = harness.collector();
+        harness.set_cluster_tip(100);
+        collector.tick();
+
+        harness.advance_to(97);
         collector.tick();
         assert!(
             harness

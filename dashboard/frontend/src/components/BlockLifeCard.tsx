@@ -113,7 +113,7 @@ export function BlockLifeCard(): ReactElement | null {
         <div className="life-grid">
           <Axis />
           <span className="life-slot life-dim">
-            <Explain text="Each stage's own median over the window, so the stages need not add up to the total.">
+            <Explain text="Each stage's own median over the window.">
               Median
             </Explain>
           </span>

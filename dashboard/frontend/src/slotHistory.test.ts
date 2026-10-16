@@ -50,6 +50,7 @@ function row(over: Partial<Record<number, number>> = {}): WireRow {
     341,
     393,
     0,
+    9,
   ];
   return base.map((value, index) => over[index] ?? value) as WireRow;
 }
@@ -88,7 +89,7 @@ describe("entriesOf", () => {
     expect(entry.block?.priority_fees).toBe(12_480);
     expect(entry.block?.tips).toBe(7_400_000);
     expect(entry.block?.replay_micros).toBe(47_200);
-    expect(entry.shreds).toEqual({ count: 1_203, repaired: 63, full_millis: 341 });
+    expect(entry.shreds).toEqual({ count: 1_203, repaired: 63, recovered: 9, full_millis: 341 });
     expect(entry.replayed_millis).toBe(393);
   });
 

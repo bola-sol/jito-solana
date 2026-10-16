@@ -2307,6 +2307,7 @@ impl From<ShredFill> for ShredArrival {
         Self {
             count: fill.shreds,
             repaired: fill.repaired,
+            recovered: fill.recovered,
             full_millis: fill.full_millis,
         }
     }
@@ -2732,6 +2733,7 @@ mod tests {
                 entry.shreds = Some(ShredArrival {
                     count: 1,
                     repaired: 0,
+                    recovered: 0,
                     full_millis,
                 });
             });

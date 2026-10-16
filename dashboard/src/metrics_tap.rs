@@ -435,6 +435,8 @@ pub struct ShredFill {
     pub slot: Slot,
     pub shreds: u64,
     pub repaired: u64,
+    /// Rebuilt here from erasure coding rather than received.
+    pub recovered: u64,
     pub full_millis: u64,
     /// Unix nanoseconds when the block became full here, from the point's own clock.
     pub full_at_nanos: u64,
@@ -1443,6 +1445,7 @@ impl MetricsTap {
                 SLOT => slot = Some(number),
                 "last_index" => last_index = Some(number),
                 "num_repaired" => fill.repaired = number,
+                "num_recovered" => fill.recovered = number,
                 "total_time_ms" => fill.full_millis = number,
                 _ => (),
             }
@@ -2580,6 +2583,7 @@ mod tests {
         let fill = tap.shred_fill(444_422_652).unwrap();
         assert_eq!(fill.shreds, 928);
         assert_eq!(fill.repaired, 63);
+        assert_eq!(fill.recovered, 12);
         assert_eq!(fill.full_millis, 921);
         assert!(tap.shred_fill(444_422_651).is_none());
     }

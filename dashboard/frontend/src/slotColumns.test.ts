@@ -18,6 +18,7 @@ const row = (slot: number): WireRow => [
   380,
   60,
   12,
+  7,
 ];
 
 describe("SlotColumns", () => {

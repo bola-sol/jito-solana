@@ -10,7 +10,7 @@ function held(over: Partial<SlotEntry> = {}): SlotEntry {
     block: null,
     duration_nanos: null,
     time_millis: null,
-    shreds: { count: 928, repaired: 63, full_millis: 921 },
+    shreds: { count: 928, repaired: 63, recovered: 0, full_millis: 921 },
     replayed_millis: 932,
     reward: null,
     left_out: null,
@@ -28,7 +28,7 @@ describe("timelineOf", () => {
   });
 
   it("draws both spans against one fixed track", () => {
-    const timeline = timelineOf(held({ shreds: { count: 1_203, repaired: 0, full_millis: 341 }, replayed_millis: 393 }));
+    const timeline = timelineOf(held({ shreds: { count: 1_203, repaired: 0, recovered: 0, full_millis: 341 }, replayed_millis: 393 }));
     expect(timeline?.waitShare).toBeCloseTo(341 / TIMELINE_SPAN_MS);
     expect(timeline?.runShare).toBeCloseTo(52 / TIMELINE_SPAN_MS);
   });
@@ -36,7 +36,7 @@ describe("timelineOf", () => {
   it("never draws past the end of the track", () => {
     // A slot replayed long after it filled, which a catch-up produces. The
     // text still says the whole figure; only the bar is clamped.
-    const timeline = timelineOf(held({ shreds: { count: 900, repaired: 0, full_millis: 800 }, replayed_millis: 4_800 }));
+    const timeline = timelineOf(held({ shreds: { count: 900, repaired: 0, recovered: 0, full_millis: 800 }, replayed_millis: 4_800 }));
     expect(timeline?.waitShare).toBe(0.8);
     expect(timeline?.runShare).toBeCloseTo(0.2);
     expect(timeline?.label).toBe("800 + 4000 ms");
@@ -51,7 +51,7 @@ describe("timelineOf", () => {
   });
 
   it("does not let two clocks disagreeing read as replay finishing early", () => {
-    const timeline = timelineOf(held({ shreds: { count: 900, repaired: 0, full_millis: 400 }, replayed_millis: 399 }));
+    const timeline = timelineOf(held({ shreds: { count: 900, repaired: 0, recovered: 0, full_millis: 400 }, replayed_millis: 399 }));
     expect(timeline?.run).toBe(0);
   });
 

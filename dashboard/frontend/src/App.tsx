@@ -6,6 +6,7 @@ import { CachesCard } from "./components/CachesCard";
 import { HostCard } from "./components/HostCard";
 import { IngestCard } from "./components/IngestCard";
 import { NetworkCard } from "./components/NetworkCard";
+import { BlockLifeCard } from "./components/BlockLifeCard";
 import { ReplayCard } from "./components/ReplayCard";
 import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
@@ -107,6 +108,7 @@ function Overview() {
         <IngestCard />
       </div>
       <HostCard />
+      <BlockLifeCard />
       <ReplayCard />
       <CachesCard />
       <TpuPathCard />

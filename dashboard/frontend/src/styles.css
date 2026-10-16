@@ -3459,6 +3459,257 @@ body {
   padding-bottom: 4px;
 }
 
+/* ---- block life ---- */
+
+/* One block's path on this node, on a track from before the leader closed it. The grid narrows
+   by the card's own width: the note drops below the row, then the leader joins the slot's line. */
+.life-body {
+  container: block-life / inline-size;
+}
+
+.life-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.life-key b {
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--text);
+}
+
+.life-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.life-seg.is-building,
+.life-swatch.is-building {
+  background: var(--apricot);
+  opacity: 0.35;
+}
+
+.life-seg.is-reaching,
+.life-swatch.is-reaching {
+  background: var(--apricot);
+}
+
+.life-seg.is-replay,
+.life-swatch.is-replay {
+  background: var(--lavender);
+}
+
+.life-seg.is-vote,
+.life-swatch.is-vote {
+  background: var(--part-4);
+}
+
+.life-seg.is-finalize,
+.life-swatch.is-finalize {
+  background: var(--good);
+}
+
+.life-grid {
+  display: grid;
+  grid-template-columns: 104px 96px minmax(0, 1fr) 64px 64px 200px;
+  column-gap: 12px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.life-row {
+  display: contents;
+}
+
+.life-grid > span,
+.life-row > span {
+  padding: 5px 0;
+  border-top: 1px solid var(--panel-raised);
+}
+
+.life-grid > .life-axis {
+  padding: 0;
+  border-top: 0;
+  color: var(--text-faint);
+}
+
+.life-ticks {
+  position: relative;
+  height: 16px;
+}
+
+.life-ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.life-ticks span:first-child {
+  transform: none;
+}
+
+.life-track {
+  position: relative;
+  height: 24px;
+}
+
+.life-track.is-median {
+  height: 30px;
+}
+
+.life-seg {
+  position: absolute;
+  top: 7px;
+  height: 10px;
+}
+
+.life-track.is-median .life-seg {
+  height: 16px;
+}
+
+.life-close {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--text-dim);
+  opacity: 0.6;
+}
+
+.life-mark {
+  position: absolute;
+  top: 3px;
+  width: 1px;
+  height: 18px;
+  background: var(--text);
+  opacity: 0.4;
+}
+
+.life-num {
+  text-align: right;
+}
+
+.life-dim {
+  color: var(--text-dim);
+}
+
+.life-faint {
+  color: var(--text-faint);
+}
+
+.life-leader {
+  overflow: hidden;
+  font-family: var(--sans);
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.life-leader-in {
+  display: none;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 12px;
+  overflow: hidden;
+  font-family: var(--sans);
+  font-style: normal;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.life-note {
+  font-family: var(--sans);
+  color: var(--warn);
+}
+
+.life-sub {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.life-foot {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+@container block-life (width < 820px) {
+  .life-grid {
+    grid-template-columns: 104px minmax(0, 1fr) 64px 64px;
+  }
+
+  .life-grid > .life-leader,
+  .life-row > .life-leader,
+  .life-grid > .life-side {
+    display: none;
+  }
+
+  .life-slot {
+    display: flex;
+    min-width: 0;
+  }
+
+  .life-grid > .life-note,
+  .life-row > .life-note {
+    grid-column: 1 / -1;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .life-grid > .life-note:empty,
+  .life-ticks .is-minor {
+    display: none;
+  }
+}
+
+@container block-life (width < 560px) {
+  .life-grid {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .life-grid > .life-slot,
+  .life-row > .life-slot {
+    grid-column: 1 / -1;
+    padding: 6px 0 0;
+  }
+
+  .life-leader-in {
+    display: block;
+  }
+
+  .life-grid > .life-gap,
+  .life-grid > .life-replayed,
+  .life-row > .life-replayed,
+  .life-ticks .is-minor,
+  .life-ticks span:first-child {
+    display: none;
+  }
+
+  .life-row > .life-track,
+  .life-row > .life-final,
+  .life-grid > .life-track,
+  .life-grid > .life-final {
+    border-top: 0;
+  }
+}
+
+@container block-life (width < 400px) {
+  .life-ticks .is-before {
+    display: none;
+  }
+}
+
 /* ---- replay ---- */
 
 .replay-body {

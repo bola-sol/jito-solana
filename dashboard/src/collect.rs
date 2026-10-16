@@ -45,6 +45,7 @@ use {
     },
 };
 
+mod block_life;
 mod certificates;
 mod finalization;
 mod gossip_peers;
@@ -53,6 +54,7 @@ mod slot_clock;
 
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
+    block_life::{BlockLifeSummary, BlockLives},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     finalization::{FinalizationShare, FinalizationTally},
     skip_rate::{LeaderSlotCounts, SkipRateWalk},
@@ -395,6 +397,7 @@ struct Debounces {
     vote_credits: Debounced<Option<VoteCredits>>,
     vote_participation: Debounced<certs::Participation>,
     vote_cost: Debounced<VoteCost>,
+    block_life: Debounced<Option<BlockLifeSummary>>,
 }
 
 pub struct Collector {
@@ -425,6 +428,9 @@ pub struct Collector {
     /// The epoch before the root's, whose blocks the slot page holds for a while.
     previous_slots: SkipRateWalk,
     finalization: FinalizationTally,
+    block_lives: BlockLives,
+    /// Read once a tick.
+    cluster_tip: Option<Slot>,
     last_completed_slot: Slot,
     last_completed_at: Instant,
     certificates: CertificateWalk,
@@ -518,6 +524,8 @@ impl Collector {
             skip_rate: SkipRateWalk::default(),
             previous_slots: SkipRateWalk::default(),
             finalization: FinalizationTally::default(),
+            block_lives: BlockLives::default(),
+            cluster_tip: None,
             epoch_published: None,
             last_completed_slot: 0,
             last_completed_at: now,
@@ -618,6 +626,7 @@ impl Collector {
         // Read once: before Alpenglow it opens a blockstore iterator, and two
         // readers want it every tick.
         let cluster_tip = self.ctx.cluster_tip();
+        self.cluster_tip = cluster_tip;
         self.mark_caught_cluster(cluster_tip);
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank, &frozen);
@@ -692,6 +701,12 @@ impl Collector {
             self.collect_health();
             self.collect_skip_rate(&root_bank);
             self.collect_finalization_share(&working_bank);
+            self.debounces.block_life.publish(
+                &self.publisher,
+                TOPIC_SUMMARY,
+                "block_life",
+                self.block_lives.summary(timestamp()),
+            );
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.collect_gossip_peers(&working_bank, root_bank.slot(), &peers, timestamp());
@@ -1316,6 +1331,19 @@ impl Collector {
             }) {
                 if !was_full && entry.full_at().is_some() {
                     became_full.push(slot);
+                }
+                // Blocks this node replayed, on the clock their replay was timed on; none while it
+                // catches up after starting, when repair rather than turbine brings them.
+                let catching_up = self.trailed_cluster && !self.caught_cluster;
+                if !catching_up
+                    && let (Some(replayed), Some(shreds), Some(first)) = (
+                        replayed_millis,
+                        entry.shreds,
+                        entry.time_millis.or_else(|| self.first_shred_time(slot)),
+                    )
+                {
+                    self.block_lives
+                        .note_arrival(slot, first, &shreds, replayed, self.cluster_tip);
                 }
                 changed.push(entry);
             }

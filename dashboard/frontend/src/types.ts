@@ -549,6 +549,42 @@ export interface CpuUse {
 }
 
 /** How often blocks' finalization certificates carried each validator's vote, over ten minutes. */
+/** Milliseconds in each stage of a block's path on this node; null where it was not timed. */
+export interface BlockLifeStages {
+  /** From the first shred to the leader closing the block. */
+  building: number | null;
+  /** From the leader closing the block, by its clock, to the block being full here. */
+  reaching: number | null;
+  replay: number | null;
+  /** From replay finishing to our notarize vote. */
+  vote: number | null;
+  /** From our notarize vote, or from replay where this node did not vote, to finalization. */
+  finalize: number | null;
+}
+
+export type BlockLifeStage = "reaching" | "replay" | "vote" | "finalize";
+
+export interface SlowBlock {
+  slot: number;
+  stages: BlockLifeStages;
+  /** From the leader closing the block to its finalization. */
+  total: number | null;
+  /** The stage furthest over its median. */
+  cause: BlockLifeStage;
+  shreds: number;
+  repaired: number;
+  recovered: number;
+}
+
+export interface BlockLifeSummary {
+  /** Minutes the medians cover, an hour at most. */
+  minutes: number;
+  /** Each stage's own median. */
+  median: BlockLifeStages;
+  total: number | null;
+  slowest: SlowBlock[];
+}
+
 export interface FinalizationShare {
   blocks: number;
   validators: number;
@@ -1043,6 +1079,8 @@ export interface Published {
     vote_participation: VoteParticipation | null;
     turbine: Turbine | null;
     gossip: Gossip | null;
+    /** Alpenglow only; null until a replayed block's footer has been read. */
+    block_life: BlockLifeSummary | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

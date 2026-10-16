@@ -3588,6 +3588,12 @@ body {
   opacity: 0.6;
 }
 
+.life-track.is-skewed .life-close {
+  background: none;
+  border-left: 1px dashed var(--warn);
+  opacity: 1;
+}
+
 .life-mark {
   position: absolute;
   top: 3px;

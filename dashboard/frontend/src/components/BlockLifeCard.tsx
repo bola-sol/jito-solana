@@ -1,5 +1,6 @@
 import { useEffect, type ReactElement } from "react";
 import {
+  clockNote,
   lifeAt,
   lifeMarks,
   lifeSegments,
@@ -31,9 +32,20 @@ function ms(value: number | null): string {
   return value === null ? "—" : count(value);
 }
 
-function Track({ stages, marks, median }: { stages: BlockLifeStages; marks: number[]; median?: boolean }) {
+function Track({
+  stages,
+  marks,
+  median,
+  skewed,
+}: {
+  stages: BlockLifeStages;
+  marks: number[];
+  median?: boolean;
+  /** Drawn from our first shred, so the close line marks that instead. */
+  skewed?: boolean;
+}) {
   return (
-    <span className={`life-track${median ? " is-median" : ""}`} aria-hidden="true">
+    <span className={`life-track${median ? " is-median" : ""}${skewed ? " is-skewed" : ""}`} aria-hidden="true">
       <span className="life-close" style={{ left: CLOSE }} />
       {lifeSegments(stages).map((segment) => (
         <i
@@ -92,10 +104,12 @@ export function BlockLifeCard(): ReactElement | null {
       <>
         <b>{count(life.total)} ms</b> from the leader to finalized, median over {span}
       </>
-    ) : (
+    ) : replayed !== null ? (
       <>
-        <b>{ms(replayed)} ms</b> from the leader to replayed, median over {span}
+        <b>{count(replayed)} ms</b> from the leader to replayed, median over {span}
       </>
+    ) : (
+      <>no leader's close to time from yet</>
     );
 
   return (
@@ -130,7 +144,9 @@ export function BlockLifeCard(): ReactElement | null {
               {life.slowest.map((block) => {
                 const leader = store.leaderOf(block.slot, false);
                 const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : "unknown");
-                const blockReplayed = replayedAt(block.stages);
+                const clock = clockNote(block);
+                // Measured from the leader's close, which this row does not trust.
+                const blockReplayed = clock === null ? replayedAt(block.stages) : null;
                 const lateReplay = replayed !== null && blockReplayed !== null && blockReplayed > replayed * 1.15;
                 const lateFinal = life.total !== null && block.total !== null && block.total > life.total * 1.15;
                 return (
@@ -144,19 +160,28 @@ export function BlockLifeCard(): ReactElement | null {
                     <span className="life-leader" title={leader.key ?? undefined}>
                       <span>{name}</span>
                     </span>
-                    <Track stages={block.stages} marks={marks} />
+                    <Track stages={block.stages} marks={marks} skewed={clock !== null} />
                     <span className={`life-num life-replayed${lateReplay ? " tone-warn" : ""}`}>{ms(blockReplayed)}</span>
                     <span className={`life-num life-final${block.total === null ? " life-faint" : lateFinal ? " tone-warn" : ""}`}>
                       {ms(block.total)}
                     </span>
-                    <span className="life-note">{slowNote(block)}</span>
+                    <span className="life-note">
+                      <span>
+                        {slowNote(block)}
+                        {clock && (
+                          <>
+                            ; <Explain text={clock.tip}>{clock.label}</Explain>
+                          </>
+                        )}
+                      </span>
+                    </span>
                   </div>
                 );
               })}
             </div>
           </>
         ) : (
-          <div className="life-sub">No block in the last ten minutes ran 10 ms past a median.</div>
+          <div className="life-sub">No block in the last ten minutes ran 50 ms past a median.</div>
         )}
         <div className="life-foot">Our vote and finality are timed only for a leader window's first slot.</div>
       </div>

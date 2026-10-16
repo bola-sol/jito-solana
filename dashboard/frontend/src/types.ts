@@ -569,6 +569,9 @@ export interface SlowBlock {
   stages: BlockLifeStages;
   /** From the leader closing the block to its finalization. */
   total: number | null;
+  /** Milliseconds the leader's clock runs behind ours, ahead where negative, set only where its
+   *  close cannot be right. The stages then start from our first shred. */
+  leader_clock_off: number | null;
   /** The stage furthest over its median. */
   cause: BlockLifeStage;
   shreds: number;

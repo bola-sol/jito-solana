@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  clockNote,
   LIFE_FROM_MS,
   LIFE_SPAN_MS,
   lifeAt,
@@ -16,7 +17,17 @@ const full: BlockLifeStages = { building: 148, reaching: 103, replay: 9, vote: 3
 const untimed: BlockLifeStages = { building: 150, reaching: 102, replay: 8, vote: null, finalize: null };
 
 function slow(over: Partial<SlowBlock>): SlowBlock {
-  return { slot: 1, stages: untimed, total: null, cause: "reaching", shreds: 200, repaired: 0, recovered: 0, ...over };
+  return {
+    slot: 1,
+    stages: untimed,
+    total: null,
+    leader_clock_off: null,
+    cause: "reaching",
+    shreds: 200,
+    repaired: 0,
+    recovered: 0,
+    ...over,
+  };
 }
 
 describe("lifeAt", () => {
@@ -106,5 +117,20 @@ describe("slowNote", () => {
     expect(slowNote(slow({ cause: "finalize", stages: { ...full, vote: null, finalize: 90 } }))).toBe(
       "finalized 90 ms after replay",
     );
+  });
+});
+
+describe("clockNote", () => {
+  it("names the way on the row and keeps the amount for the tooltip", () => {
+    expect(clockNote(slow({ leader_clock_off: 870 }))).toEqual({
+      label: "leader clock behind",
+      tip: "About 870 ms behind ours, so this row starts from our first shred.",
+    });
+    expect(clockNote(slow({ leader_clock_off: -1_240 }))?.label).toBe("leader clock ahead");
+    expect(clockNote(slow({ leader_clock_off: -1_240 }))?.tip).toContain("1,240 ms ahead");
+  });
+
+  it("says nothing for a leader whose close is plausible", () => {
+    expect(clockNote(slow({}))).toBeNull();
   });
 });

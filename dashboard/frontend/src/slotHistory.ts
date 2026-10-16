@@ -16,7 +16,7 @@ export const REWARD_MASK = 0b11 << REWARD_SHIFT;
 const REWARDS: (Reward | null)[] = [null, "paid", "unpaid", "no_certificate"];
 
 /** One slot as the validator sends it, positional: level, flags, votes, non-votes, compute, fees,
- *  priority fees, tips, time, replay, shreds, repaired, full, replayed, left out. */
+ *  priority fees, tips, time, replay, shreds, repaired, full, replayed, left out, recovered. */
 export type WireRow = [
   level: number,
   flags: number,
@@ -33,6 +33,7 @@ export type WireRow = [
   fullMillis: number,
   replayedMillis: number,
   leftOut: number,
+  recovered: number,
 ];
 
 export interface SlotRange {
@@ -79,6 +80,7 @@ export function entryFromRow(
     fullMillis,
     replayedMillis,
     leftOut,
+    recovered,
   ] = row;
   const leader = leaderAt(epoch, slot);
   const timed = (flags & HAS_CLOCK) !== 0;
@@ -110,7 +112,7 @@ export function entryFromRow(
       return full !== null && previousFull !== null ? (full - previousFull) * 1_000_000 : null;
     })(),
     time_millis: timed ? timeMillis : null,
-    shreds: (flags & HAS_SHREDS) === 0 ? null : { count: shreds, repaired, full_millis: fullMillis },
+    shreds: (flags & HAS_SHREDS) === 0 ? null : { count: shreds, repaired, recovered, full_millis: fullMillis },
     replayed_millis: (flags & HAS_REPLAYED) === 0 ? null : replayedMillis,
     reward,
     left_out: reward === "paid" || reward === "unpaid" ? leftOut : null,

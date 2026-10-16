@@ -20,6 +20,7 @@ class Span {
   private readonly level: Uint8Array;
   private readonly flags: Uint16Array;
   private readonly leftOut: Uint16Array;
+  private readonly recovered: Uint16Array;
   private readonly small: Uint32Array;
   private readonly large: Float64Array;
 
@@ -30,18 +31,20 @@ class Span {
     this.level = new Uint8Array(rows.length);
     this.flags = new Uint16Array(rows.length);
     this.leftOut = new Uint16Array(rows.length);
+    this.recovered = new Uint16Array(rows.length);
     this.small = new Uint32Array(rows.length * SMALL);
     this.large = new Float64Array(rows.length * LARGE);
     rows.forEach((row, index) => {
       if (row === null) return;
       // Wire order: level, flags, votes, non-votes, compute, fees, priority, tips, time, replay,
-      // shreds, repaired, full, replayed, left out.
+      // shreds, repaired, full, replayed, left out, recovered.
       this.present[index] = 1;
       this.level[index] = row[0];
       this.flags[index] = row[1];
       this.small.set([row[2], row[3], row[4], row[9], row[10], row[11], row[12], row[13]], index * SMALL);
       this.large.set([row[5], row[6], row[7], row[8]], index * LARGE);
       this.leftOut[index] = row[14];
+      this.recovered[index] = row[15];
     });
   }
 
@@ -70,6 +73,7 @@ class Span {
       small[6] ?? 0,
       small[7] ?? 0,
       this.leftOut[index] ?? 0,
+      this.recovered[index] ?? 0,
     ];
   }
 }

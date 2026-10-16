@@ -41,6 +41,8 @@ pub struct SlotEntry {
 pub struct ShredArrival {
     pub count: u64,
     pub repaired: u64,
+    /// Rebuilt here from erasure coding rather than received.
+    pub recovered: u64,
     pub full_millis: u64,
 }
 
@@ -243,6 +245,7 @@ mod tests {
                     shreds: Some(ShredArrival {
                         count: u64::MAX,
                         repaired: u64::MAX,
+                        recovered: u64::MAX,
                         full_millis: u64::MAX,
                     }),
                     replayed_millis: Some(u64::MAX),

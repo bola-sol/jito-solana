@@ -30,6 +30,8 @@ export interface ShredArrival {
   count: number;
   /** Nought is the block arriving whole over turbine. */
   repaired: number;
+  /** Rebuilt here from erasure coding rather than received. */
+  recovered: number;
   full_millis: number;
 }
 

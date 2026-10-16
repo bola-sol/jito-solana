@@ -30,13 +30,16 @@ pub struct PackedSlot {
     pub full_millis: u32,
     pub replayed_millis: u32,
     pub left_out: u16,
+    /// Saturating into `u16`, which keeps the row at its size.
+    pub recovered: u16,
 }
 
 /// A full span of mainnet-sized rows is under half the frame ceiling; a test holds it there.
 pub const MAX_RANGE_SLOTS: usize = 4096;
 
 /// One slot on the wire, a JSON array: level, flags, votes, non-votes, compute, fees, priority
-/// fees, tips, time, replay, shreds, repaired, full, replayed, left out. The frontend mirrors it.
+/// fees, tips, time, replay, shreds, repaired, full, replayed, left out, recovered. The frontend
+/// mirrors it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireRow(
     pub u8,
@@ -53,6 +56,7 @@ pub struct WireRow(
     pub u32,
     pub u32,
     pub u32,
+    pub u16,
     pub u16,
 );
 
@@ -130,6 +134,7 @@ impl SlotHistory {
                         row.full_millis,
                         row.replayed_millis,
                         row.left_out,
+                        row.recovered,
                     )
                 })
             })
@@ -164,6 +169,7 @@ impl SlotHistory {
             row.flags |= HAS_SHREDS;
             row.shreds = clamp(shreds.count);
             row.repaired = clamp(shreds.repaired);
+            row.recovered = u16::try_from(shreds.recovered).unwrap_or(u16::MAX);
             row.full_millis = clamp(shreds.full_millis);
         }
         if let Some(millis) = entry.replayed_millis {
@@ -199,6 +205,7 @@ impl SlotHistory {
             full_millis: 999_999,
             replayed_millis: 999_999,
             left_out: 9_999,
+            recovered: 9_999,
         };
     }
 
@@ -390,6 +397,7 @@ mod tests {
             full,
             replayed,
             left_out,
+            recovered,
         ) = history.range(10, 1).rows[0].expect("recorded");
         assert_eq!(level, SlotLevel::Rooted as u8);
         assert_eq!(flags, HAS_BLOCK | HAS_CLOCK);
@@ -404,8 +412,17 @@ mod tests {
         assert_eq!(time, 1_756_000_000_123);
         assert_eq!(replay, 0);
         assert_eq!(flags & HAS_REPLAY, 0);
-        assert_eq!((shreds, repaired, full, replayed), (0, 0, 0, 0));
+        assert_eq!(
+            (shreds, repaired, recovered, full, replayed),
+            (0, 0, 0, 0, 0)
+        );
         assert_eq!(flags & (HAS_SHREDS | HAS_REPLAYED), 0);
+    }
+
+    #[test]
+    fn test_a_held_row_stays_eighty_bytes() {
+        // 432,000 of them is the thirty-five megabytes the ring is sized by.
+        assert_eq!(std::mem::size_of::<(Slot, PackedSlot)>(), 80);
     }
 
     #[test]
@@ -415,6 +432,7 @@ mod tests {
         filled.shreds = Some(ShredArrival {
             count: 928,
             repaired: 63,
+            recovered: 12,
             full_millis: 921,
         });
         history.record(&filled);
@@ -422,6 +440,7 @@ mod tests {
         replayed.shreds = Some(ShredArrival {
             count: 1_203,
             repaired: 0,
+            recovered: 70_000,
             full_millis: 341,
         });
         replayed.replayed_millis = Some(393);
@@ -430,13 +449,14 @@ mod tests {
         let dead = history.get(50).expect("recorded");
         assert_eq!(dead.flags, HAS_SHREDS);
         assert_eq!(
-            (dead.shreds, dead.repaired, dead.full_millis),
-            (928, 63, 921)
+            (dead.shreds, dead.repaired, dead.recovered, dead.full_millis),
+            (928, 63, 12, 921)
         );
         assert_eq!(dead.replayed_millis, 0);
 
         let live = history.get(51).expect("recorded");
         assert_eq!(live.flags, HAS_BLOCK | HAS_SHREDS | HAS_REPLAYED);
+        assert_eq!(live.recovered, u16::MAX);
         assert_eq!(live.full_millis, 341);
         assert_eq!(live.replayed_millis, 393);
     }
@@ -458,6 +478,7 @@ mod tests {
             big.shreds = Some(ShredArrival {
                 count: 99_999,
                 repaired: 99_999,
+                recovered: 9_999,
                 full_millis: 999_999,
             });
             big.replayed_millis = Some(999_999);

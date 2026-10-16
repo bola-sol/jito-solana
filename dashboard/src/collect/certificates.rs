@@ -224,6 +224,11 @@ impl Collector {
         );
         for (slot, nanos) in closed_at {
             self.metrics_tap.note_block_closed(slot, nanos);
+            self.block_lives.note_closed(slot, nanos);
+        }
+        for votes in self.metrics_tap.take_block_votes() {
+            self.block_lives
+                .note_votes(votes.slot, votes.vote_us, votes.finalized_us);
         }
         if let Some(read_to) = read_to {
             self.certificates.walk = Some((floor, read_to));

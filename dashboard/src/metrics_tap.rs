@@ -267,6 +267,9 @@ pub struct MetricsTap {
     /// Microseconds from the leader closing a block, by its clock, to its finalization here.
     from_leader: TimedSamples,
 
+    /// Held until the collector takes them.
+    block_votes: Mutex<VecDeque<BlockVotes>>,
+
     closed_blocks: Mutex<ClosedBlocks>,
 
     shred_fills: Mutex<BTreeMap<Slot, ShredFill>>,
@@ -446,6 +449,14 @@ pub struct ShredFill {
     pub full_millis: u64,
     /// Unix nanoseconds when the block became full here, from the point's own clock.
     pub full_at_nanos: u64,
+}
+
+/// Microseconds from a block's last shred to our notarize vote and to its finalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockVotes {
+    pub slot: Slot,
+    pub vote_us: Option<u64>,
+    pub finalized_us: Option<u64>,
 }
 
 /// When each block's leader closed it, and the finality waiting for that, kept until both meet.
@@ -1283,12 +1294,34 @@ impl MetricsTap {
         };
         let last_shred_us = first_shred_us.saturating_add(full_millis.saturating_mul(1_000));
         let now_millis = timestamp();
-        if let Some(micros) = finalized_us.and_then(|at| at.checked_sub(last_shred_us)) {
+        let finalized = finalized_us.and_then(|at| at.checked_sub(last_shred_us));
+        let vote = notarize_us.and_then(|at| at.checked_sub(last_shred_us));
+        if let Some(micros) = finalized {
             self.finality.push(now_millis, micros);
             self.time_from_leader(slot, micros, now_millis);
         }
-        if let Some(micros) = notarize_us.and_then(|at| at.checked_sub(last_shred_us)) {
+        if let Some(micros) = vote {
             self.vote_lag.push(now_millis, micros);
+        }
+        if (vote.is_some() || finalized.is_some())
+            && let Ok(mut votes) = self.block_votes.lock()
+        {
+            votes.push_back(BlockVotes {
+                slot,
+                vote_us: vote,
+                finalized_us: finalized,
+            });
+            if votes.len() > VOTE_TRACKS {
+                votes.pop_front();
+            }
+        }
+    }
+
+    /// Each slot's, once.
+    pub fn take_block_votes(&self) -> Vec<BlockVotes> {
+        match self.block_votes.lock() {
+            Ok(mut votes) => std::mem::take(&mut *votes).into_iter().collect(),
+            Err(_) => Vec::new(),
         }
     }
 
@@ -3146,6 +3179,15 @@ mod tests {
             None,
             "not finalized yet"
         );
+        assert_eq!(
+            tap.take_block_votes(),
+            vec![BlockVotes {
+                slot: 100,
+                vote_us: Some(12_000),
+                finalized_us: None,
+            }]
+        );
+        assert!(tap.take_block_votes().is_empty(), "taken once");
     }
 
     #[test]

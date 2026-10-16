@@ -17,13 +17,16 @@ const RECENT_MILLIS: u64 = 600_000;
 
 const SLOWEST: usize = 5;
 
-/// A block is listed only where one stage ran this far over its median.
-const SLOW_BY_MILLIS: u32 = 10;
+/// A block is listed only where one stage ran this far over its median, past ordinary spread.
+const SLOW_BY_MILLIS: u32 = 50;
 
 const MINUTE_MILLIS: u64 = 60_000;
 
 /// A block replayed this far behind the cluster's tip was caught up on, not received live.
 const BEHIND_SLOTS: u64 = 32;
+
+/// Our first shred arriving this long after the leader's close means its clock is behind ours.
+const CLOCK_SLACK_MILLIS: u64 = 100;
 
 /// What is known of one block, filled in as each report arrives.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -72,6 +75,9 @@ pub struct SlowBlock {
     pub stages: Stages,
     /// From the leader closing the block to its finalization.
     pub total: Option<u32>,
+    /// Milliseconds the leader's clock runs behind ours, ahead where negative, set only where its
+    /// close cannot be right. The stages then start from our first shred.
+    pub leader_clock_off: Option<i32>,
     /// The stage that ran furthest over its median.
     pub cause: Stage,
     pub shreds: u64,
@@ -95,13 +101,29 @@ struct Timed {
     at: u64,
     stages: Stages,
     total: Option<u32>,
+    /// From our first shred to the block being full, on our clock alone.
+    receiving: u32,
+    /// From the leader's close to the block being full, where that close cannot be right.
+    skewed_reach: Option<i64>,
     life: Life,
 }
 
 impl Life {
-    /// None until the footer is read, or where the leader's clock puts the close after the fill.
-    fn stages(&self) -> Option<(Stages, Option<u32>)> {
-        let reaching = self.full.checked_sub(self.closed?)?;
+    /// None until the footer is read. Where the leader's close lands well after our first shred, or
+    /// after the fill, its clock is off: the stages then start from our first shred.
+    fn timed(&self, slot: Slot) -> Option<Timed> {
+        let closed = self.closed?;
+        let receiving = self.full.saturating_sub(self.first_shred);
+        let skewed = closed > self.full
+            || self
+                .first_shred
+                .checked_sub(closed)
+                .is_some_and(|after| after > CLOCK_SLACK_MILLIS);
+        let reaching = if skewed {
+            receiving
+        } else {
+            self.full.saturating_sub(closed)
+        };
         let replay = self.replayed.saturating_sub(self.full);
         let vote_after = self
             .vote_after_full_us
@@ -112,14 +134,34 @@ impl Life {
         let finalize = finalized_after
             .map(|finalized| finalized.saturating_sub(vote_after.unwrap_or(replay).max(replay)));
         let stages = Stages {
-            building: self.closed?.checked_sub(self.first_shred).map(millis),
+            building: closed
+                .checked_sub(self.first_shred)
+                .filter(|_| !skewed)
+                .map(millis),
             reaching: Some(millis(reaching)),
             replay: Some(millis(replay)),
             vote: vote_after.map(|after| millis(after.saturating_sub(replay))),
             finalize: finalize.map(millis),
         };
-        let total = finalized_after.map(|after| millis(reaching.saturating_add(after)));
-        Some((stages, total))
+        let total = finalized_after
+            .filter(|_| !skewed)
+            .map(|after| millis(reaching.saturating_add(after)));
+        let skewed_reach = skewed
+            .then(|| {
+                i64::try_from(self.full)
+                    .ok()?
+                    .checked_sub(i64::try_from(closed).ok()?)
+            })
+            .flatten();
+        Some(Timed {
+            slot,
+            at: self.full,
+            stages,
+            total,
+            receiving: millis(receiving),
+            skewed_reach,
+            life: *self,
+        })
     }
 }
 
@@ -178,32 +220,27 @@ impl BlockLives {
             .blocks
             .iter()
             .filter(|(_, life)| now_millis.saturating_sub(life.full) <= WINDOW_MILLIS)
-            .filter_map(|(slot, life)| {
-                let (stages, total) = life.stages()?;
-                Some(Timed {
-                    slot: *slot,
-                    at: life.full,
-                    stages,
-                    total,
-                    life: *life,
-                })
-            })
+            .filter_map(|(slot, life)| life.timed(*slot))
             .collect();
         let oldest = timed.iter().map(|block| block.at).min()?;
+        // The leader's close starts the first two stages, so a block whose close is off is left out
+        // of them.
+        let trusted = || timed.iter().filter(|block| block.skewed_reach.is_none());
         let median = Stages {
-            building: upper_median(timed.iter().filter_map(|block| block.stages.building)),
-            reaching: upper_median(timed.iter().filter_map(|block| block.stages.reaching)),
+            building: upper_median(trusted().filter_map(|block| block.stages.building)),
+            reaching: upper_median(trusted().filter_map(|block| block.stages.reaching)),
             replay: upper_median(timed.iter().filter_map(|block| block.stages.replay)),
             vote: upper_median(timed.iter().filter_map(|block| block.stages.vote)),
             finalize: upper_median(timed.iter().filter_map(|block| block.stages.finalize)),
         };
         let total = upper_median(timed.iter().filter_map(|block| block.total));
+        let receiving = upper_median(timed.iter().map(|block| block.receiving));
 
         let mut slow: Vec<(u32, &Timed, Stage)> = timed
             .iter()
             .filter(|block| now_millis.saturating_sub(block.at) <= RECENT_MILLIS)
             .filter_map(|block| {
-                let (over, cause) = furthest_over(&block.stages, &median)?;
+                let (over, cause) = furthest_over(block, &median, receiving)?;
                 (over >= SLOW_BY_MILLIS).then_some((over, block, cause))
             })
             .collect();
@@ -215,6 +252,10 @@ impl BlockLives {
                 slot: block.slot,
                 stages: block.stages,
                 total: block.total,
+                leader_clock_off: block.skewed_reach.map(|reach| {
+                    let typical = median.reaching.map_or(0, i64::from);
+                    i32::try_from(reach.saturating_sub(typical)).unwrap_or(i32::MAX)
+                }),
                 cause,
                 shreds: block.life.shreds,
                 repaired: block.life.repaired,
@@ -233,11 +274,12 @@ impl BlockLives {
     }
 }
 
-/// The stage furthest over its median, and by how much. The leader's own building is left out:
-/// it does not hold up this node.
-fn furthest_over(stages: &Stages, median: &Stages) -> Option<(u32, Stage)> {
+/// The stage furthest over its median, and by how much, on this node's clock alone: reaching us is
+/// judged from the first shred, so a leader's clock cannot make its blocks look late.
+fn furthest_over(block: &Timed, median: &Stages, receiving: Option<u32>) -> Option<(u32, Stage)> {
+    let stages = &block.stages;
     [
-        (stages.reaching, median.reaching, Stage::Reaching),
+        (Some(block.receiving), receiving, Stage::Reaching),
         (stages.replay, median.replay, Stage::Replay),
         (stages.vote, median.vote, Stage::Vote),
         (stages.finalize, median.finalize, Stage::Finalize),
@@ -337,12 +379,62 @@ mod tests {
     }
 
     #[test]
-    fn test_a_close_after_the_fill_is_left_out() {
+    fn test_a_close_after_the_fill_is_kept_from_the_leader_stages() {
         // The leader's clock running ahead puts its close after the block was full here.
         let mut lives = BlockLives::default();
         lives.note_arrival(100, NOW.saturating_sub(1_000), &arrival(250), 260, None);
         lives.note_closed(100, NOW.saturating_mul(1_000_000));
-        assert_eq!(lives.summary(NOW), None);
+        let summary = lives.summary(NOW).expect("kept");
+        assert_eq!(summary.median.reaching, None);
+        assert_eq!(summary.median.replay, Some(10));
+    }
+
+    /// A block whose leader stamped its close `behind` milliseconds early, which otherwise arrived
+    /// like the rest.
+    fn skewed(lives: &mut BlockLives, slot: Slot, ago: u64, behind: u64, replay: u64) {
+        noted(lives, slot, ago, 100, replay);
+        let first = NOW.saturating_sub(ago);
+        lives.note_closed(
+            slot,
+            first
+                .saturating_add(150)
+                .saturating_sub(behind)
+                .saturating_mul(1_000_000),
+        );
+    }
+
+    #[test]
+    fn test_a_leader_clock_behind_ours_does_not_make_its_block_slow() {
+        let mut lives = BlockLives::default();
+        for slot in 0..20 {
+            noted(&mut lives, slot, 60_000, 100, 9);
+        }
+        skewed(&mut lives, 30, 30_000, 870, 9);
+
+        let summary = lives.summary(NOW).expect("blocks");
+        assert!(summary.slowest.is_empty(), "it arrived like the rest");
+        assert_eq!(
+            summary.median.reaching,
+            Some(100),
+            "left out of the leader's stages"
+        );
+    }
+
+    #[test]
+    fn test_a_slow_block_from_a_skewed_leader_says_so() {
+        let mut lives = BlockLives::default();
+        for slot in 0..20 {
+            noted(&mut lives, slot, 60_000, 100, 9);
+        }
+        skewed(&mut lives, 30, 30_000, 870, 60);
+
+        let summary = lives.summary(NOW).expect("blocks");
+        let block = &summary.slowest[0];
+        assert_eq!((block.slot, block.cause), (30, Stage::Replay));
+        assert_eq!(block.leader_clock_off, Some(870));
+        assert_eq!(block.stages.building, None);
+        assert_eq!(block.stages.reaching, Some(250), "from our first shred");
+        assert_eq!(block.total, None);
     }
 
     #[test]
@@ -361,9 +453,9 @@ mod tests {
             noted(&mut lives, slot, 60_000, 100, 9);
         }
         noted(&mut lives, 30, 30_000, 240, 9);
-        noted(&mut lives, 31, 20_000, 100, 41);
+        noted(&mut lives, 31, 20_000, 100, 70);
         // Under the threshold, so not listed.
-        noted(&mut lives, 32, 10_000, 105, 9);
+        noted(&mut lives, 32, 10_000, 140, 9);
 
         let summary = lives.summary(NOW).expect("blocks");
         let listed: Vec<(Slot, Stage)> = summary

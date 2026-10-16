@@ -86,6 +86,22 @@ export function lifeWindow(minutes: number): string {
   return minutes >= 60 ? "the last hour" : `the last ${count(minutes)} min`;
 }
 
+export interface ClockNote {
+  label: string;
+  tip: string;
+}
+
+/** For a leader whose close cannot be right: the words on the row, and the amount behind them. */
+export function clockNote(block: SlowBlock): ClockNote | null {
+  const off = block.leader_clock_off;
+  if (off === null || off === undefined) return null;
+  const way = off >= 0 ? "behind" : "ahead";
+  return {
+    label: `leader clock ${way}`,
+    tip: `About ${count(Math.abs(off))} ms ${way} ours, so this row starts from our first shred.`,
+  };
+}
+
 /** What made the block slow, in a few words. */
 export function slowNote(block: SlowBlock): string {
   const { stages } = block;

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { blockStamp, buildLabel, count, percent, shortKey, sol, solCompact } from "../format";
+import { blockStamp, buildLabel, clockTime, count, percent, shortKey, sol, solCompact } from "../format";
 import {
   certificateAt,
   certificateText,
@@ -7,12 +7,14 @@ import {
   matchesQuery,
   rewardTitle,
   SLOTS_PER_TURN,
+  unheldSlots,
   type Certificate,
   type Turn,
   type TurnSlot,
 } from "../schedule";
 import type { SlotRange } from "../slotHistory";
 import type { Store } from "../store";
+import { Stripes } from "../stripes";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
 import { readScheduleColumns, SCHEDULE_COLUMNS, writeScheduleColumns, type ScheduleColumns } from "../layout";
@@ -30,7 +32,7 @@ import { VirtualList } from "./VirtualList";
 const SPAN_SLOTS = 4096;
 
 /** A four-row turn's height on a desktop, used until one is measured. */
-const TURN_HEIGHT_GUESS = 170;
+const TURN_HEIGHT_GUESS = 108;
 
 /** How long a failed fetch waits before scrolling may ask again. */
 const RETRY_AFTER_MS = 5000;
@@ -228,6 +230,10 @@ export function SchedulePage({
     // `foundPages` stands for the results, which change in place.
   }, [index, numbers, found, foundPages, leaderRevision, searching, query, oursOnly]);
 
+  const [stripes] = useState(() => new Stripes());
+  const listed = searching ? `${oursOnly ? "ours" : "all"}:${query.trim()}` : "";
+  useMemo(() => stripes.update(listed, shown), [stripes, listed, shown]);
+
   const byIdentity = useStablePeers(peers);
   const turnOf = useCallback(
     (number: number) =>
@@ -260,6 +266,7 @@ export function SchedulePage({
         totalStake={stake?.total_stake}
         rates={rates}
         certificates={alpenglow ? turn.slots.map((slot) => certificateAt(slot.slot, entryOf)) : NO_CERTIFICATES}
+        tinted={stripes.tinted(number)}
       />
     );
   };
@@ -304,6 +311,13 @@ export function SchedulePage({
         ))}
       </div>
 
+      {/* The table's one header where every column fits; elsewhere each turn carries its own. */}
+      <div className="schedule-table-head">
+        <span>Leader</span>
+        <div className={`schedule-slots${alpenglow ? " has-certificate" : ""}`}>
+          <SlotHeadings alpenglow={alpenglow} />
+        </div>
+      </div>
       <div className="schedule-list" ref={list}>
         <ScrollTop scroller={list} hold={false} />
         {shown.length === 0 && !reading && (searching ? found !== null : true) && (
@@ -335,6 +349,7 @@ const TurnCard = memo(
     totalStake,
     rates,
     certificates,
+    tinted,
   }: {
     turn: Turn;
     peer: Peer | undefined;
@@ -342,52 +357,19 @@ const TurnCard = memo(
     rates: TipRates | undefined;
     /** Each row's certificate, in the rows' order; empty before alpenglow. */
     certificates: readonly Certificate[];
+    tinted: boolean;
   }) {
     const alpenglow = useAlpenglow();
     return (
-      <div className={`schedule-group${turn.mine ? " is-ours" : ""}`}>
+      <div className={`schedule-group${turn.mine ? " is-ours" : ""}${tinted ? " is-tinted" : ""}`}>
         <TurnLeader turn={turn} peer={peer} totalStake={totalStake} />
         <div className={`schedule-slots${alpenglow ? " has-certificate" : ""}`}>
-          <div className="schedule-row schedule-head">
-            <span className="schedule-slot">Slot</span>
-            <span className="sc-status">{alpenglow ? "Voted" : "Votes"}</span>
-            {alpenglow && (
-              <span
-                className="sc-status"
-                title="Who the reward certificate written in this slot left out, of the validators certificates usually pay."
-              >
-                <Heading wide="Certificate" narrow="Cert" />
-              </span>
-            )}
-            <span className="sc-status">
-              {alpenglow ? <Heading wide="Transactions" narrow="Txns" /> : "Non-votes"}
-            </span>
-            <span className="sc-fees">
-              <Heading wide="Base fee" narrow="Base" />
-            </span>
-            <span className="sc-fees">Priority</span>
-            <span
-              className="sc-fees sc-tips"
-              title="Reaching the distribution account, after jito's cut. Derived, not measured."
-            >
-              Tips
-            </span>
-            <span className="sc-timing" title="From the previous block filling here to this one filling.">
-              Duration
-            </span>
-            <span className="sc-load" title="Data shreds in the block, and how many were repaired.">
-              Shreds
-            </span>
-            <span
-              className="sc-timing"
-              title="First shred to block full, then to replay finishing, drawn against one second."
-            >
-              <Heading wide="Received to replayed" narrow="Recv + replay" />
-            </span>
-            <span className="sc-load">Compute</span>
-          </div>
+          <SlotHeadings alpenglow={alpenglow} />
           {turn.slots.map((slot, row) => (
             <SlotRow key={slot.slot} slot={slot} rates={rates} certificate={certificates[row]} />
+          ))}
+          {unheldSlots(turn).map((slot) => (
+            <SlotRow key={slot} slot={{ slot, entry: null }} rates={rates} certificate={undefined} unheld />
           ))}
         </div>
       </div>
@@ -400,9 +382,53 @@ const TurnCard = memo(
     before.peer === after.peer &&
     before.totalStake === after.totalStake &&
     before.rates === after.rates &&
+    before.tinted === after.tinted &&
     before.certificates.length === after.certificates.length &&
     before.certificates.every((certificate, row) => certificate === after.certificates[row]),
 );
+
+function SlotHeadings({ alpenglow }: { alpenglow: boolean }) {
+  return (
+    <div className="schedule-row schedule-head">
+      <span className="schedule-slot">Slot</span>
+      <span className="sc-status">{alpenglow ? "Voted" : "Votes"}</span>
+      {alpenglow && (
+        <span
+          className="sc-status"
+          title="Who the reward certificate written in this slot left out, of the validators certificates usually pay."
+        >
+          <Heading wide="Certificate" narrow="Cert" />
+        </span>
+      )}
+      <span className="sc-status">
+        {alpenglow ? <Heading wide="Transactions" narrow="Txns" /> : "Non-votes"}
+      </span>
+      <span className="sc-fees">
+        <Heading wide="Base fee" narrow="Base" />
+      </span>
+      <span className="sc-fees">Priority</span>
+      <span
+        className="sc-fees sc-tips"
+        title="Reaching the distribution account, after jito's cut. Derived, not measured."
+      >
+        Tips
+      </span>
+      <span className="sc-timing" title="From the previous block filling here to this one filling.">
+        Duration
+      </span>
+      <span className="sc-load" title="Data shreds in the block, and how many were repaired.">
+        Shreds
+      </span>
+      <span
+        className="sc-timing"
+        title="First shred to block full, then to replay finishing, drawn against one second."
+      >
+        <Heading wide="Received to replayed" narrow="Recv + replay" />
+      </span>
+      <span className="sc-load">Compute</span>
+    </div>
+  );
+}
 
 function TurnLeader({
   turn,
@@ -418,12 +444,15 @@ function TurnLeader({
   const share = peer && totalStake ? peer.stake / totalStake : null;
   const began = turn.slots[turn.slots.length - 1]?.entry?.time_millis ?? null;
   const version = peer?.version ? buildLabel(peer.client ?? undefined, peer.version) : "";
+  const name = turn.leader_name ?? (turn.leader ? shortKey(turn.leader, 6, 5) : "unknown");
 
   return (
     <div className="schedule-leader">
       <div className="schedule-leader-name">
         <Logo url={turn.leader_icon} size={16} />
-        {turn.leader_name ?? (turn.leader ? shortKey(turn.leader, 6, 5) : "unknown")}
+        <span className="schedule-leader-title" title={turn.leader_name ?? turn.leader ?? undefined}>
+          {name}
+        </span>
         {turn.mine && <span className="schedule-mine">ours</span>}
       </div>
       {turn.leader && (
@@ -436,20 +465,28 @@ function TurnLeader({
       {/* Both always drawn, empty or not, so a turn does not grow a line when the stamp or the peer
           table lands. */}
       <span className="schedule-leader-when">{began === null ? "" : blockStamp(began)}</span>
+      {/* Where every column fits, two lines: version and stake, then address and time of day. */}
       <div className="schedule-leader-meta">
-        <span className="schedule-version" title={version || undefined}>
-          {version}
+        <span className="schedule-leader-client">
+          <span className="schedule-version" title={version || undefined}>
+            {version}
+          </span>
+          <span className="schedule-stake">
+            {peer && peer.stake > 0 && (
+              <>
+                {solCompact(peer.stake)} SOL
+                {share !== null && <span className="schedule-share">{percent(share, 3)}</span>}
+              </>
+            )}
+          </span>
         </span>
-        <span className="schedule-stake">
-          {peer && peer.stake > 0 && (
-            <>
-              {solCompact(peer.stake)} SOL
-              {share !== null && <span className="schedule-share">{percent(share, 3)}</span>}
-            </>
-          )}
-        </span>
-        <span className="schedule-ip" title={peer?.ip ?? undefined}>
-          {peer?.ip ?? ""}
+        <span className="schedule-leader-where">
+          <span className="schedule-ip" title={peer?.ip ?? undefined}>
+            {peer?.ip ?? ""}
+          </span>
+          <span className="schedule-leader-time" title={began === null ? undefined : blockStamp(began)}>
+            {began === null ? "" : clockTime(began)}
+          </span>
         </span>
       </div>
     </div>
@@ -496,10 +533,13 @@ function SlotRow({
   slot,
   rates,
   certificate,
+  unheld = false,
 }: {
   slot: TurnSlot;
   rates: TipRates | undefined;
   certificate: Certificate;
+  /** Below what is held, drawn so the turn keeps four rows. */
+  unheld?: boolean;
 }) {
   const alpenglow = useAlpenglow();
   const entry = slot.entry;
@@ -511,10 +551,10 @@ function SlotRow({
   const level = entry?.level ?? "scheduled";
 
   return (
-    <div className={`schedule-row level-${level}`}>
-      <span className="schedule-slot">
+    <div className={`schedule-row level-${level}${unheld ? " is-unheld" : ""}`}>
+      <span className="schedule-slot" title={unheld ? "Not read yet, or older than the validator keeps." : undefined}>
         {entry?.mine ? <SlotLink slot={slot.slot} /> : count(slot.slot)}
-        <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />
+        {!unheld && <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />}
       </span>
       {alpenglow ? (
         <VoteMark reward={entry?.reward ?? null} />

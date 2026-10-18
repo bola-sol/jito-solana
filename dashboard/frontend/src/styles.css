@@ -5502,7 +5502,19 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.schedule-leader-meta > span {
+/* The two lines' wrappers count only where every column fits. */
+.schedule-leader-client,
+.schedule-leader-where {
+  display: contents;
+}
+
+.schedule-leader-time,
+.schedule-table-head,
+.schedule-row.is-unheld {
+  display: none;
+}
+
+.schedule-leader-meta :is(.schedule-version, .schedule-stake, .schedule-ip) {
   min-height: 14px;
   line-height: 14px;
   overflow: hidden;
@@ -6329,6 +6341,170 @@ body {
 @container schedule (max-width: 300px) {
   .schedule.columns-load .schedule-fill {
     display: none;
+  }
+}
+
+/* ---- schedule, every column: one header, turns of one height ---- */
+
+/* Every turn 108px whatever its leader's name: four 24px rows, one identity line beside each. */
+@container schedule (min-width: 1182px) {
+  /* Above the list rather than sticky in it: the turns are translated items of a virtual list. */
+  .schedule-table-head {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    column-gap: 24px;
+    align-items: center;
+    height: 36px;
+    margin-bottom: calc(-1 * var(--gap));
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .schedule-table-head .schedule-head {
+    margin: 0;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .schedule-group .schedule-head {
+    display: none;
+  }
+
+  .schedule-list .virtual-item {
+    padding-bottom: 0;
+  }
+
+  .schedule-group {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 0 24px;
+    padding: 6px 8px;
+    border-top: 0;
+  }
+
+  .schedule-group.is-tinted {
+    background: color-mix(in srgb, var(--text) 4%, var(--bg));
+  }
+
+  /* Drawn inside the padding, so our turns' columns stay under the header's. */
+  .schedule-group.is-ours {
+    padding-left: 8px;
+    border-left: 0;
+    box-shadow: inset 2px 0 0 var(--ours);
+  }
+
+  .schedule-leader {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(4, 24px);
+    align-items: center;
+    gap: 0;
+  }
+
+  .schedule-leader-name {
+    grid-row: 1;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .schedule-leader-name > :not(.schedule-leader-title) {
+    flex: none;
+  }
+
+  .schedule-leader-title {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .schedule-mine {
+    font-weight: 400;
+  }
+
+  .schedule-leader-key {
+    grid-row: 2;
+    justify-self: start;
+    font-size: 11px;
+  }
+
+  .schedule-leader-when {
+    display: none;
+  }
+
+  .schedule-leader-meta {
+    display: contents;
+  }
+
+  .schedule-leader-client,
+  .schedule-leader-where {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .schedule-leader-client {
+    grid-row: 3;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .schedule-leader-where {
+    grid-row: 4;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
+  .schedule-leader-meta :is(.schedule-version, .schedule-stake, .schedule-ip) {
+    min-height: 0;
+    line-height: normal;
+  }
+
+  /* The version and the address give way first; stake and time stay whole. */
+  .schedule-version,
+  .schedule-ip {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .schedule-stake,
+  .schedule-leader-time {
+    flex: none;
+  }
+
+  .schedule-leader-time {
+    display: inline;
+  }
+
+  .schedule-version:not(:empty) + .schedule-stake:not(:empty)::before,
+  .schedule-ip:not(:empty) + .schedule-leader-time:not(:empty)::before {
+    content: "·";
+    margin: 0 6px;
+  }
+
+  .schedule-group .schedule-row {
+    align-items: center;
+    height: 24px;
+    padding: 0;
+  }
+
+  .schedule-group .schedule-slot {
+    font-weight: 600;
+  }
+
+  .schedule-row.is-unheld {
+    display: grid;
+    color: var(--text-faint);
+  }
+
+  .schedule-row.is-unheld .schedule-slot {
+    color: var(--text-faint);
   }
 }
 

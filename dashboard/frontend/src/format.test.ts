@@ -4,6 +4,7 @@ import {
   blockTime,
   buildLabel,
   bytes,
+  clockTime,
   count,
   decimal,
   micros,
@@ -226,5 +227,16 @@ describe("blockStamp", () => {
     const stamp = blockStamp(Date.UTC(2026, 7, 22, 9, 29, 57));
     expect(stamp).toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(stamp.split(" ").length).toBeGreaterThan(2);
+  });
+});
+
+describe("clockTime", () => {
+  it("says nothing when the blockstore held no timing", () => {
+    expect(clockTime(null)).toBe("—");
+    expect(clockTime(Number.NaN)).toBe("—");
+  });
+
+  it("gives the time of day alone", () => {
+    expect(clockTime(Date.UTC(2026, 7, 22, 9, 29, 57, 626))).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 });

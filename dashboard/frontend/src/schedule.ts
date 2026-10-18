@@ -93,6 +93,14 @@ export function turnsOf(
     });
 }
 
+/** The turn's slots below its oldest held one: none, unless what is held starts partway through it. */
+export function unheldSlots(turn: Turn): number[] {
+  const lowest = turn.slots[turn.slots.length - 1]?.slot;
+  if (lowest === undefined) return [];
+  const start = Math.floor(lowest / SLOTS_PER_TURN) * SLOTS_PER_TURN;
+  return Array.from({ length: lowest - start }, (_, below) => lowest - 1 - below);
+}
+
 export function matchesQuery(turn: Turn, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;

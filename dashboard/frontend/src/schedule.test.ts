@@ -9,6 +9,7 @@ import {
   matchesQuery,
   turnKey,
   turnsOf,
+  unheldSlots,
   type LeaderRef,
 } from "./schedule";
 import type { SlotEntry } from "./types";
@@ -100,6 +101,19 @@ describe("turnsOf", () => {
 
   it("has nothing to say about an empty list", () => {
     expect(turnsOf([], resolver())).toEqual([]);
+  });
+});
+
+describe("unheldSlots", () => {
+  it("is empty for a turn held from its first slot", () => {
+    const [turn] = turnsOf([held(100)], resolver());
+    expect(unheldSlots(turn)).toEqual([]);
+  });
+
+  it("lists the slots below where what is held starts", () => {
+    const [turn] = turnsOf([held(102)], resolver());
+    expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102]);
+    expect(unheldSlots(turn)).toEqual([101, 100]);
   });
 });
 

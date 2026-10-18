@@ -73,6 +73,14 @@ export function blockTime(millis: number | null | undefined): string {
   return `${day} ${time}.${String(at.getMilliseconds()).padStart(3, "0")}`;
 }
 
+/** The time of day alone, for where the day and zone are given elsewhere. */
+export function clockTime(millis: number | null | undefined): string {
+  if (millis === null || millis === undefined) return "—";
+  const at = new Date(millis);
+  if (Number.isNaN(at.getTime())) return "—";
+  return at.toLocaleTimeString(undefined, { hour12: false });
+}
+
 export function blockStamp(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);

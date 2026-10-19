@@ -36,6 +36,9 @@ pub struct CertFormation {
     pub notarized_millis: Option<u64>,
     pub fast_final_millis: Option<u64>,
     pub second_round_millis: Option<u64>,
+    /// The most notarize votes any ranked validator's average is over: about the slots this node
+    /// timed that epoch, fewer where it started partway through.
+    pub slots: Option<u64>,
 }
 
 /// Arrivals in microseconds against stake, earliest first. A zero mean is votor's floor, not a
@@ -91,6 +94,7 @@ fn formation(
     total_stake: u64,
     votes: &[(u64, Option<u64>, Option<u64>)],
     slot_nanos: Option<u64>,
+    slots: Option<u64>,
 ) -> Option<CertFormation> {
     let total = u128::from(total_stake);
     let notarize = sorted_arrivals(votes.iter().map(|(stake, n, _)| (*stake, *n)));
@@ -114,6 +118,7 @@ fn formation(
         notarized_millis: crossing(&notarize, total, NOTARIZED_PERCENT),
         fast_final_millis: crossing(&notarize, total, FAST_FINAL_PERCENT),
         second_round_millis: crossing(&finalize, total, SECOND_ROUND_PERCENT),
+        slots,
     })
 }
 
@@ -151,18 +156,31 @@ fn cert_formation(
 ) -> Option<CertFormation> {
     let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(epoch);
     let rank_map = bank.get_rank_map(first_slot)?;
-    let votes: Vec<(u64, Option<u64>, Option<u64>)> = (0..rank_map.len())
+    let ranked: Vec<(u64, Option<&VoteArrival>)> = (0..rank_map.len())
         .filter_map(|rank| rank_map.get_pubkey_stake_entry(rank))
-        .map(|entry| {
-            let arrival = arrivals.get(&entry.vote_account_pubkey);
+        .map(|entry| (entry.stake.get(), arrivals.get(&entry.vote_account_pubkey)))
+        .collect();
+    let votes: Vec<(u64, Option<u64>, Option<u64>)> = ranked
+        .iter()
+        .map(|(stake, arrival)| {
             (
-                entry.stake.get(),
+                *stake,
                 arrival.map(|arrival| arrival.notarize_mean_micros),
                 arrival.and_then(|arrival| arrival.finalize_mean_micros),
             )
         })
         .collect();
-    formation(epoch, rank_map.total_stake().get(), &votes, slot_nanos)
+    let slots = ranked
+        .iter()
+        .filter_map(|(_, arrival)| arrival.and_then(|arrival| arrival.notarize_count))
+        .max();
+    formation(
+        epoch,
+        rank_map.total_stake().get(),
+        &votes,
+        slot_nanos,
+        slots,
+    )
 }
 
 #[cfg(test)]
@@ -210,7 +228,7 @@ mod tests {
             (20, Some(600_000), Some(700_000)),
             (10, None, None),
         ];
-        let built = formation(1_063, 100, &votes, Some(222_000_000)).unwrap();
+        let built = formation(1_063, 100, &votes, Some(222_000_000), Some(12_700)).unwrap();
         // Late votes count toward the totals but not the curves.
         assert_eq!(built.notarize_total, 9_000);
         assert_eq!(built.notarize[480], 7_000);
@@ -221,11 +239,18 @@ mod tests {
         assert_eq!(built.fast_final_millis, Some(600));
         assert_eq!(built.second_round_millis, None);
         assert_eq!(built.slot_nanos, Some(222_000_000));
+        assert_eq!(built.slots, Some(12_700));
     }
 
     #[test]
     fn test_nothing_without_a_notarize_vote() {
-        assert_eq!(formation(1, 100, &[(100, None, Some(300_000))], None), None);
-        assert_eq!(formation(1, 0, &[(0, Some(300_000), None)], None), None);
+        assert_eq!(
+            formation(1, 100, &[(100, None, Some(300_000))], None, None),
+            None
+        );
+        assert_eq!(
+            formation(1, 0, &[(0, Some(300_000), None)], None, None),
+            None
+        );
     }
 }

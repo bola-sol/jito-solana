@@ -7236,6 +7236,12 @@ body {
   stroke-width: 1.25;
 }
 
+.cert-total-halo {
+  stroke: var(--panel);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+
 .cert-slot-label {
   font-size: 11px;
   color: var(--text-faint);

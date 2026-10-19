@@ -605,6 +605,8 @@ export interface CertFormation {
   notarized_millis: number | null;
   fast_final_millis: number | null;
   second_round_millis: number | null;
+  /** About the slots this node timed that epoch, fewer where it started partway through. */
+  slots: number | null;
 }
 
 export interface FinalizationShare {

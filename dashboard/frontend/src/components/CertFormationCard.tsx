@@ -36,9 +36,6 @@ const HOLD_LABELS: Record<MilestoneKey, string> = {
   second: "second round",
 };
 
-/** Where votor times a leader window's later slots from this node's replay rather than their start. */
-const REPLAY_NOTE = "Average arrival per validator; a window's later slots are timed from our replay.";
-
 interface StatSpec {
   key: MilestoneKey;
   label: string;
@@ -139,6 +136,7 @@ function Chart({
   frame,
   hover,
   onHover,
+  fromReplay,
 }: {
   g: Geometry;
   formation: CertFormation;
@@ -146,6 +144,7 @@ function Chart({
   frame: ReplayFrame | null;
   hover: number | null;
   onHover: (ms: number | null) => void;
+  fromReplay: boolean;
 }) {
   const up = useMemo(() => bars(g, formation.notarize), [g, formation]);
   const down = useMemo(() => bars(g, formation.finalize), [g, formation]);
@@ -317,7 +316,7 @@ function Chart({
           {lowerHalf}
         </div>
       )}
-      {ticks(g).map((tick) => (
+      {ticks(g, fromReplay).map((tick) => (
         <div
           key={tick.ms}
           className={`cert-tick is-${tick.align}`}
@@ -448,12 +447,12 @@ function FormationPanel({ formation, fromReplay }: { formation: CertFormation; f
             frame={frame}
             hover={frame ? null : hover}
             onHover={setHover}
+            fromReplay={fromReplay}
           />
         )}
       </div>
       <div className="card-footnote">
-        {fromReplay ? REPLAY_NOTE : "Average arrival per validator after each slot began."} Bars: stake per{" "}
-        {g?.bin ?? 5} ms.
+        Average arrival per validator. Bars: stake per {g?.bin ?? 5} ms.
       </div>
     </section>
   );

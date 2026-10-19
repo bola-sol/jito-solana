@@ -588,6 +588,23 @@ export interface BlockLifeSummary {
   slowest: SlowBlock[];
 }
 
+/** Under Alpenglow, the stake whose average vote had arrived by each millisecond after a slot began
+ *  here, over the last epoch votor reported. Shares are in hundredths of a percent. */
+export interface CertFormation {
+  epoch: number;
+  /** This node's mean slot time over that epoch; null until enough of it was timed. */
+  slot_nanos: number | null;
+  /** Index `t` is the share arrived before `t` ms. */
+  notarize: number[];
+  finalize: number[];
+  /** Every measured vote, later ones included. */
+  notarize_total: number;
+  finalize_total: number;
+  notarized_millis: number | null;
+  fast_final_millis: number | null;
+  second_round_millis: number | null;
+}
+
 export interface FinalizationShare {
   blocks: number;
   validators: number;
@@ -1084,6 +1101,8 @@ export interface Published {
     gossip: Gossip | null;
     /** Alpenglow only; null until a replayed block's footer has been read. */
     block_life: BlockLifeSummary | null;
+    /** Alpenglow only; null until votor has reported a finished epoch. */
+    cert_formation: CertFormation | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

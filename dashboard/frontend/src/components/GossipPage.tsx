@@ -35,6 +35,7 @@ import { unitFor } from "../network";
 import type { Gossip, GossipPeers } from "../types";
 import { useStore } from "../useStore";
 import { CertificatesSection } from "./CertificatesSection";
+import { CertFormationCard } from "./CertFormationCard";
 import { FinalizationCard } from "./FinalizationCard";
 import { Copyable } from "./Copyable";
 import { Card, Meter, Stat } from "./primitives";
@@ -86,6 +87,7 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
         </>
       )}
       {alpenglow && <FinalizationCard />}
+      {alpenglow && <CertFormationCard />}
       {alpenglow && <CertificatesSection peers={list} onFind={findInPeers} />}
       <PeersCard
         list={list}

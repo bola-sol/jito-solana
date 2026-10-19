@@ -65,7 +65,7 @@ Gossip sends these points itself and clears each counter when it sends it. The d
 
 | Point | Fields read | Feeds |
 | --- | --- | --- |
-| `consensus_vote_metrics` | tag `address` (a vote account); `epoch`, `notar_vote_count`, `notar_vote_us_mean`, `notar_vote_us_stddev`, `notar_vote_us_maximum`, `finalize_vote_us_mean` | Under alpenglow, the Gossip peers table's vote arrival: how long after a slot began here each validator's votes arrived, over the last finished epoch, and how many notarize votes that covers. Votor reports each epoch once, after a later one's slot is finalized; only the newest epoch is kept. Our own votes do not pass through it. |
+| `consensus_vote_metrics` | tag `address` (a vote account); `epoch`, `notar_vote_count`, `notar_vote_us_mean`, `notar_vote_us_stddev`, `notar_vote_us_maximum`, `finalize_vote_us_mean` | Under alpenglow, the Gossip peers table's vote arrival: how long after a slot began here each validator's votes arrived, over the last finished epoch, and how many notarize votes that covers. The Gossip page's certificate formation: the stake whose average notarize and finalize votes had arrived by each millisecond. Votor reports each epoch once, after a later one's slot is finalized; only the newest epoch is kept. Our own votes do not pass through it. |
 
 ### Read once, or on change
 
@@ -114,6 +114,7 @@ The collector polls every 200 ms and holds the bank forks read lock only to clon
 | `Bank::cluster_type` on the root bank | The cluster name in the header |
 | `Bank::clock` | The measured slot rate, for the epoch countdown |
 | `Bank::get_rank_map` | Our rank in the BLS rank map, to find our bit in a certificate |
+| `Bank::get_rank_map` for the epoch votor last reported | Each ranked validator's stake that epoch, and the total the certificates count against: the weights in the certificate formation |
 | `Bank::get_filtered_indexed_accounts`, `account_indexes_include_key` | Validator names and icons from the config program: before the wait and at attach |
 | `BankForks::sharable_banks`, then `Bank::transaction_count`, `non_vote_transaction_count_since_restart` on its working bank | TPS, as the difference each second |
 | `Bank::is_frozen`, `parent_slot` on the working bank | The working fork's newest frozen bank, whose failed count TPS reads |
@@ -126,7 +127,7 @@ The collector polls every 200 ms and holds the bank forks read lock only to clon
 | `ClusterInfo::all_peers`, with each contact's `rpc`, `outset` and local timestamp, and `gossip.crds` read with `get` for each peer's `SnapshotHashes` and `LowestSlot` | The Gossip page's peers table: RPC port, last heard, start time, snapshot lag behind our root, and ledger depth. Read every five seconds, only while a page asks. |
 | `ClusterInfo::all_peers`, with each contact's `rpc`, and `socket_addr_space` | The RPC node count: peers other than us with an RPC address in our address space |
 | `ClusterInfo::tvu_peers`, with each contact's wallclock | Who counts as seen during the supermajority wait |
-| `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times, skipped slots, how far back our blocks can be read, and the ledger's filesystem |
+| `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times, and from them each epoch's mean slot time once caught up, the slot length in the certificate formation. Skipped slots, how far back our blocks can be read, and the ledger's filesystem |
 | `Blockstore::is_root`, and `get_slot_components_with_shred_info` on a rooted block's last two FEC sets | Under alpenglow, the reward certificates in each rooted block's footer, read with the rank map. A skipped block paid nobody. If our vote was paid for each slot, and how many slots each rank was paid this epoch. The cause of each unpaid slot, and the writer of each certificate. The count starts when the dashboard starts. The footer's `block_producer_time_nanos`, the leader's clock when it closed the block, is read for every rooted block, seat or not: the slot strip's time from the leader, and where Block life starts each block. |
 | `Blockstore::get_slot_entries` on our slots, once full | Our blocks' non-vote transactions by message version: legacy, v0, v1 |
 | `Blockstore::get_latest_optimistic_slots`, `highest_slot` | The cluster tip under TowerBFT: the last confirmed slot, but not below the highest slot with shreds. After a restart, the confirmed slot is older than the snapshot. The highest slot with shreds is the floor under alpenglow too. |

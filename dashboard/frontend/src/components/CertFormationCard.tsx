@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement } from "react";
 import {
-  axisEnd,
+  axisRange,
   barTone,
   bars,
   geometry,
+  halfLabelClear,
   growth,
   labelWidth,
+  milestoneLabel,
   milestones,
   msAt,
+  overlaps,
   replayAt,
   runningPath,
   shareBy,
+  timedFromReplay,
   ticks,
   unmeasured,
   xAt,
@@ -31,6 +35,9 @@ const HOLD_LABELS: Record<MilestoneKey, string> = {
   fast: "fast final",
   second: "second round",
 };
+
+/** Where votor times a leader window's later slots from this node's replay rather than their start. */
+const REPLAY_NOTE = "Average arrival per validator; a window's later slots are timed from our replay.";
 
 interface StatSpec {
   key: MilestoneKey;
@@ -69,7 +76,11 @@ function prefersReducedMotion(): boolean {
 }
 
 /** Plays epoch averages at a tenth of speed; null while stopped. */
-function useCertReplay(marks: readonly number[], end: number): { frame: ReplayFrame | null; toggle: () => void } {
+function useCertReplay(
+  marks: readonly number[],
+  floor: number,
+  end: number,
+): { frame: ReplayFrame | null; toggle: () => void } {
   const [frame, setFrame] = useState<ReplayFrame | null>(null);
   const raf = useRef(0);
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
@@ -82,7 +93,7 @@ function useCertReplay(marks: readonly number[], end: number): { frame: ReplayFr
     }
     const start = performance.now();
     const step = (now: number) => {
-      const next = replayAt(now - start, marks, end);
+      const next = replayAt(now - start, marks, floor, end);
       if (next.done) {
         raf.current = 0;
         setFrame(null);
@@ -92,7 +103,7 @@ function useCertReplay(marks: readonly number[], end: number): { frame: ReplayFr
       raf.current = requestAnimationFrame(step);
     };
     raf.current = requestAnimationFrame(step);
-  }, [marks, end]);
+  }, [marks, floor, end]);
   return { frame, toggle };
 }
 
@@ -115,29 +126,10 @@ function ReplayIcon({ playing }: { playing: boolean }) {
   );
 }
 
-function MilestoneLabel({ g, mark, text, show }: { g: Geometry; mark: Milestone; text: string; show: boolean }) {
-  const x = xAt(g, mark.ms);
-  const width = labelWidth(text);
-  let left: number;
-  let top: number;
-  if (mark.key === "notarized") {
-    left = x + 5;
-    top = g.top - 16;
-  } else if (mark.key === "fast") {
-    // Under the 80% line: the running total runs above it from here on.
-    left = x + 5;
-    top = g.base - mark.level * g.half + 3;
-  } else {
-    // Past the lower 60% line and left of the rule, where the total has not yet reached.
-    left = x - 5 - width;
-    top = g.base + mark.level * g.half + 3;
-  }
-  if (mark.key !== "second" && left + width > g.right + 2) left = x - 5 - width;
-  return (
-    <div className="cert-label" style={{ left, top, opacity: show ? 1 : 0 }}>
-      {text}
-    </div>
-  );
+function milestoneText(g: Geometry, mark: Milestone): string {
+  if (mark.key === "notarized") return `notarized ${mark.ms}`;
+  if (mark.key === "fast") return `${g.phone ? "fast" : "fast final"} ${mark.ms}`;
+  return `${g.phone ? "2nd round" : "second round"} ${mark.ms}`;
 }
 
 function Chart({
@@ -161,6 +153,21 @@ function Chart({
   const finalizeLine = useMemo(() => runningPath(g, formation.finalize, formation.finalize_total, 1), [g, formation]);
   const replayMs = frame?.ms ?? null;
   const breakAt = g.left + g.stub;
+  const labels = useMemo(
+    () =>
+      new Map(
+        marks.map((mark) => [
+          mark.key,
+          milestoneLabel(g, mark, milestoneText(g, mark), mark.direction === 1 ? down : up),
+        ]),
+      ),
+    [g, marks, up, down],
+  );
+  const upperHalf = `notarize, stake per ${g.bin} ms`;
+  const lowerHalf = g.phone ? "finalize" : `finalize, stake per ${g.bin} ms`;
+  const upperPlace = { left: g.left, top: g.top - 16, width: labelWidth(upperHalf) };
+  const lowerPlace = { left: g.left, top: g.bottom - 14, width: labelWidth(lowerHalf) };
+  const placed = [...labels.values()];
   const slotMs = formation.slot_nanos === null ? null : formation.slot_nanos / 1e6;
   const thresholds: [number, 1 | -1][] = [
     [0.6, -1],
@@ -212,6 +219,8 @@ function Chart({
   const cursorX = replayMs === null ? 0 : xAt(g, replayMs);
   const cursorLeft =
     cursorX + 5 + labelWidth(cursorText) + 4 > g.right + 4 ? cursorX - 5 - labelWidth(cursorText) - 4 : cursorX + 5;
+  const cursorPlace =
+    replayMs === null ? null : { left: cursorLeft, top: g.top - 16, width: labelWidth(cursorText) + 8 };
 
   return (
     <div
@@ -237,13 +246,22 @@ function Chart({
         {slotMs !== null && (
           <path className="cert-slot-rule" d={`M${xAt(g, slotMs).toFixed(1)} ${g.top}V${g.bottom}`} />
         )}
-        <path className="cert-axis" d={`M${g.left} ${g.base}H${breakAt - 7} M${breakAt - 2} ${g.base}H${g.right}`} />
         <path
-          className="cert-axis-break"
-          d={`M${breakAt - 9} ${g.base + 4}L${breakAt - 5} ${g.base - 4} M${breakAt - 4} ${g.base + 4}L${breakAt} ${
-            g.base - 4
-          }`}
+          className="cert-axis"
+          d={
+            g.stub === 0
+              ? `M${g.left} ${g.base}H${g.right}`
+              : `M${g.left} ${g.base}H${breakAt - 7} M${breakAt - 2} ${g.base}H${g.right}`
+          }
         />
+        {g.stub > 0 && (
+          <path
+            className="cert-axis-break"
+            d={`M${breakAt - 9} ${g.base + 4}L${breakAt - 5} ${g.base - 4} M${breakAt - 4} ${g.base + 4}L${breakAt} ${
+              g.base - 4
+            }`}
+          />
+        )}
         {marks.map((mark, index) => {
           const x = xAt(g, mark.ms).toFixed(1);
           const length = (mark.key === "notarized" ? g.half + 14 : g.half - 2) * reach(mark, index);
@@ -272,29 +290,33 @@ function Chart({
           {Math.round(level * 100)}%
         </div>
       ))}
-      {marks.map((mark) => (
-        <MilestoneLabel
-          key={mark.key}
-          g={g}
-          mark={mark}
-          show={formed(mark)}
-          text={
-            mark.key === "notarized"
-              ? `notarized ${mark.ms}`
-              : mark.key === "fast"
-                ? `${g.phone ? "fast" : "fast final"} ${mark.ms}`
-                : `${g.phone ? "2nd round" : "second round"} ${mark.ms}`
-          }
-        />
-      ))}
-      {!g.phone && (
-        <div className="cert-half-label" style={{ left: g.left, top: g.top - 16 }}>
-          notarize, stake per {g.bin} ms
+      {marks.map((mark) => {
+        const place = labels.get(mark.key);
+        // The replay's own label says which certificate formed, so it takes the row.
+        const covered = cursorPlace !== null && place !== undefined && overlaps(place, cursorPlace);
+        return (
+          place &&
+          !covered && (
+            <div
+              key={mark.key}
+              className="cert-label"
+              style={{ left: place.left, top: place.top, opacity: formed(mark) ? 1 : 0 }}
+            >
+              {milestoneText(g, mark)}
+            </div>
+          )
+        );
+      })}
+      {!g.phone && halfLabelClear(g, upperPlace, placed, up, -1) && (
+        <div className="cert-half-label" style={{ left: upperPlace.left, top: upperPlace.top }}>
+          {upperHalf}
         </div>
       )}
-      <div className="cert-half-label" style={{ left: g.left, top: g.bottom - 14 }}>
-        {g.phone ? "finalize" : `finalize, stake per ${g.bin} ms`}
-      </div>
+      {halfLabelClear(g, lowerPlace, placed, down, 1) && (
+        <div className="cert-half-label" style={{ left: lowerPlace.left, top: lowerPlace.top }}>
+          {lowerHalf}
+        </div>
+      )}
       {ticks(g).map((tick) => (
         <div
           key={tick.ms}
@@ -358,17 +380,17 @@ function CertPulse({ g, mark, fraction }: { g: Geometry; mark: Milestone; fracti
   );
 }
 
-function FormationPanel({ formation }: { formation: CertFormation }): ReactElement {
+function FormationPanel({ formation, fromReplay }: { formation: CertFormation; fromReplay: boolean }): ReactElement {
   const body = useRef<HTMLDivElement>(null);
   const measured = useWidth(body);
   const [hover, setHover] = useState<number | null>(null);
   const [still] = useState(prefersReducedMotion);
-  const end = axisEnd(formation);
-  const marks = useMemo(() => milestones(formation, end), [formation, end]);
+  const range = useMemo(() => axisRange(formation), [formation]);
+  const marks = useMemo(() => milestones(formation, range.end), [formation, range]);
   const times = useMemo(() => marks.map((mark) => mark.ms), [marks]);
-  const { frame, toggle } = useCertReplay(times, end);
+  const { frame, toggle } = useCertReplay(times, range.floor, range.end);
   const width = measured === null ? null : Math.floor(measured);
-  const g = useMemo(() => (width === null ? null : geometry(width, end)), [width, end]);
+  const g = useMemo(() => (width === null ? null : geometry(width, range)), [width, range]);
   const phone = g?.phone ?? false;
   const aside = <span className="card-aside">epoch {count(formation.epoch)} averages</span>;
 
@@ -430,7 +452,8 @@ function FormationPanel({ formation }: { formation: CertFormation }): ReactEleme
         )}
       </div>
       <div className="card-footnote">
-        Each validator at its average arrival after the slot began here. Bars are stake arriving per {g?.bin ?? 5} ms.
+        {fromReplay ? REPLAY_NOTE : "Average arrival per validator after each slot began."} Bars: stake per{" "}
+        {g?.bin ?? 5} ms.
       </div>
     </section>
   );
@@ -438,7 +461,9 @@ function FormationPanel({ formation }: { formation: CertFormation }): ReactEleme
 
 /** Under Alpenglow, how the certificates typically form, from last epoch's average vote arrivals. */
 export function CertFormationCard(): ReactElement | null {
-  const formation = useStore().get("summary", "cert_formation");
+  const store = useStore();
+  const formation = store.get("summary", "cert_formation");
+  const fromReplay = timedFromReplay(store.get("summary", "version"));
   if (!formation) return null;
-  return <FormationPanel formation={formation} />;
+  return <FormationPanel formation={formation} fromReplay={fromReplay} />;
 }

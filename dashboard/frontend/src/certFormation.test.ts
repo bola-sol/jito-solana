@@ -52,6 +52,7 @@ function testnet(over: Partial<CertFormation> = {}): CertFormation {
     notarized_millis: 285,
     fast_final_millis: 310,
     second_round_millis: 412,
+    slots: 431_000,
     ...over,
   };
 }
@@ -77,6 +78,7 @@ function early(): CertFormation {
     notarized_millis: 70,
     fast_final_millis: 150,
     second_round_millis: 87,
+    slots: 12_700,
   };
 }
 

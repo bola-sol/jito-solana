@@ -272,6 +272,9 @@ function Chart({
             />
           );
         })}
+        {/* Outlined so each total reads where it crosses its own bars. */}
+        <path className="cert-total-halo" d={notarizeLine} />
+        <path className="cert-total-halo" d={finalizeLine} />
         <path className="cert-total is-notarize" d={notarizeLine} />
         <path className="cert-total is-finalize" d={finalizeLine} />
       </svg>
@@ -391,7 +394,11 @@ function FormationPanel({ formation, fromReplay }: { formation: CertFormation; f
   const width = measured === null ? null : Math.floor(measured);
   const g = useMemo(() => (width === null ? null : geometry(width, range)), [width, range]);
   const phone = g?.phone ?? false;
-  const aside = <span className="card-aside">epoch {count(formation.epoch)} averages</span>;
+  const aside = (
+    <span className="card-aside">
+      epoch {count(formation.epoch)} averages{formation.slots !== null && `, ${count(formation.slots)} slots`}
+    </span>
+  );
 
   return (
     <section className="card cert-card">

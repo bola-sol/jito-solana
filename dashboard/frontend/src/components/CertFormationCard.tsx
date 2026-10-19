@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement } from "react";
 import {
   axisRange,
+  binAt,
   barTone,
   bars,
   geometry,
@@ -17,6 +18,7 @@ import {
   timedFromReplay,
   ticks,
   unmeasured,
+  votersIn,
   xAt,
   type Bar,
   type Geometry,
@@ -25,7 +27,8 @@ import {
   type ReplayFrame,
 } from "../certFormation";
 import { count } from "../format";
-import type { CertFormation } from "../types";
+import { gossipPeers, type ArrivalKind } from "../gossip";
+import type { CertFormation, GossipPeers } from "../types";
 import { useStore } from "../useStore";
 import { useWidth } from "../useWidth";
 import { Explain } from "./primitives";
@@ -35,6 +38,19 @@ const HOLD_LABELS: Record<MilestoneKey, string> = {
   fast: "fast final",
   second: "second round",
 };
+
+interface Hover {
+  ms: number;
+  /** Notarize above the axis, finalize below. */
+  direction: 1 | -1;
+}
+
+export interface Pick {
+  label: string;
+  /** Which of the peers' arrivals the pick was made by. */
+  kind: ArrivalKind;
+  identities: Set<string>;
+}
 
 interface StatSpec {
   key: MilestoneKey;
@@ -137,14 +153,18 @@ function Chart({
   hover,
   onHover,
   fromReplay,
+  peers,
+  onPick,
 }: {
   g: Geometry;
   formation: CertFormation;
   marks: Milestone[];
   frame: ReplayFrame | null;
-  hover: number | null;
-  onHover: (ms: number | null) => void;
+  hover: Hover | null;
+  onHover: (hover: Hover | null) => void;
   fromReplay: boolean;
+  peers: GossipPeers | null;
+  onPick: (pick: Pick) => void;
 }) {
   const up = useMemo(() => bars(g, formation.notarize), [g, formation]);
   const down = useMemo(() => bars(g, formation.finalize), [g, formation]);
@@ -182,11 +202,47 @@ function Chart({
     return 1;
   };
 
+  // Names only where the peers list describes the same epoch.
+  const decoded = useMemo(
+    () => (peers && peers.vote_arrival_epoch === formation.epoch ? gossipPeers(peers) : null),
+    [peers, formation.epoch],
+  );
+  const barOf = (at: Hover | null) => {
+    if (!at || !decoded) return null;
+    const from = binAt(g, at.ms);
+    if (from === null) return null;
+    const to = Math.min(from + g.bin, g.end);
+    const voters = votersIn(decoded, at.direction, from, to);
+    return voters.length > 0 ? { from, to, direction: at.direction, voters } : null;
+  };
+  const read = (event: PointerEvent<HTMLDivElement>): Hover | null => {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (box.width === 0) return null;
+    return {
+      ms: msAt(g, ((event.clientX - box.left) / box.width) * g.width),
+      direction: ((event.clientY - box.top) / box.height) * g.height > g.base ? 1 : -1,
+    };
+  };
+  const pick = (target: NonNullable<ReturnType<typeof barOf>>) =>
+    onPick({
+      label: `${target.direction === -1 ? "notarize" : "finalize"} ${target.from}–${target.to} ms`,
+      kind: target.direction === -1 ? "notarize" : "finalize",
+      identities: new Set(target.voters),
+    });
+  const hovered = barOf(hover);
   const point = (event: PointerEvent<HTMLDivElement>) => {
     if (frame) return;
-    const box = event.currentTarget.getBoundingClientRect();
-    if (box.width === 0) return;
-    onHover(msAt(g, ((event.clientX - box.left) / box.width) * g.width));
+    onHover(read(event));
+  };
+  // A mouse click lists the bar's validators; on touch, a second tap on the same bar does.
+  const press = (event: PointerEvent<HTMLDivElement>) => {
+    if (frame) return;
+    const at = read(event);
+    const target = barOf(at);
+    const again =
+      target !== null && hovered !== null && target.from === hovered.from && target.direction === hovered.direction;
+    if (target && (event.pointerType === "mouse" || again)) pick(target);
+    else onHover(at);
   };
 
   const bar = (direction: 1 | -1) => (item: Bar) => (
@@ -194,7 +250,7 @@ function Chart({
       key={`${direction}-${item.from}`}
       className={`mirror-bar is-${barTone(direction, item.middle, formation, replayMs)}${
         item.capped ? (direction === 1 ? " is-capped is-down" : " is-capped") : ""
-      }`}
+      }${hovered && hovered.direction === direction && hovered.from === item.from ? " is-hovered" : ""}`}
       style={{
         left: item.left,
         width: item.width,
@@ -206,7 +262,7 @@ function Chart({
     />
   );
 
-  const hoverX = hover === null ? null : xAt(g, hover);
+  const hoverX = hover === null ? null : xAt(g, hover.ms);
   const bubbleWidth = g.phone ? Math.min(230, g.width - 8) : 250;
   const bubbleLeft =
     hoverX === null ? 0 : Math.max(0, hoverX + 10 + bubbleWidth > g.width ? hoverX - 10 - bubbleWidth : hoverX + 10);
@@ -228,7 +284,7 @@ function Chart({
       role="img"
       aria-label="Stake whose votes had arrived, by milliseconds after the slot began"
       onPointerMove={point}
-      onPointerDown={point}
+      onPointerDown={press}
       onPointerLeave={(event) => {
         if (event.pointerType === "mouse") onHover(null);
       }}
@@ -353,11 +409,11 @@ function Chart({
           <div className="cert-hover-line" style={{ left: hoverX, top: g.top, height: g.bottom - g.top }} />
           <div className="cert-bubble" style={{ left: bubbleLeft, top: g.base + 10, width: bubbleWidth }}>
             <div>
-              <b>{Math.round(hover)} ms</b> after the slot began
+              <b>{Math.round(hover.ms)} ms</b> after the slot began
             </div>
             <div>
-              notarize <b>{(shareBy(formation.notarize, hover) * 100).toFixed(1)}%</b> · finalize{" "}
-              <b>{(shareBy(formation.finalize, hover) * 100).toFixed(1)}%</b>
+              notarize <b>{(shareBy(formation.notarize, hover.ms) * 100).toFixed(1)}%</b> · finalize{" "}
+              <b>{(shareBy(formation.finalize, hover.ms) * 100).toFixed(1)}%</b>
             </div>
           </div>
         </>
@@ -382,10 +438,20 @@ function CertPulse({ g, mark, fraction }: { g: Geometry; mark: Milestone; fracti
   );
 }
 
-function FormationPanel({ formation, fromReplay }: { formation: CertFormation; fromReplay: boolean }): ReactElement {
+function FormationPanel({
+  formation,
+  fromReplay,
+  peers,
+  onPick,
+}: {
+  formation: CertFormation;
+  fromReplay: boolean;
+  peers: GossipPeers | null;
+  onPick: (pick: Pick) => void;
+}): ReactElement {
   const body = useRef<HTMLDivElement>(null);
   const measured = useWidth(body);
-  const [hover, setHover] = useState<number | null>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   const [still] = useState(prefersReducedMotion);
   const range = useMemo(() => axisRange(formation), [formation]);
   const marks = useMemo(() => milestones(formation, range.end), [formation, range]);
@@ -455,6 +521,8 @@ function FormationPanel({ formation, fromReplay }: { formation: CertFormation; f
             hover={frame ? null : hover}
             onHover={setHover}
             fromReplay={fromReplay}
+            peers={peers}
+            onPick={onPick}
           />
         )}
       </div>
@@ -466,10 +534,16 @@ function FormationPanel({ formation, fromReplay }: { formation: CertFormation; f
 }
 
 /** Under Alpenglow, how the certificates typically form, from last epoch's average vote arrivals. */
-export function CertFormationCard(): ReactElement | null {
+export function CertFormationCard({
+  peers,
+  onPick,
+}: {
+  peers: GossipPeers | null;
+  onPick: (pick: Pick) => void;
+}): ReactElement | null {
   const store = useStore();
   const formation = store.get("summary", "cert_formation");
   const fromReplay = timedFromReplay(store.get("summary", "version"));
   if (!formation) return null;
-  return <FormationPanel formation={formation} fromReplay={fromReplay} />;
+  return <FormationPanel formation={formation} fromReplay={fromReplay} peers={peers} onPick={onPick} />;
 }

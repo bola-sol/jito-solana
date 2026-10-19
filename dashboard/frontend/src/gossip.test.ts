@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ariaSort,
   arrivalMedian,
+  arrivalText,
   arrivalTitle,
   entryRows,
   filterCounts,
@@ -92,6 +93,26 @@ describe("vote arrival", () => {
     );
     expect(arrivalTitle(PEERS[1].voteArrival!, null)).toBe(
       "Notarize votes reached us 412 ms after the slot began on average over 1 vote.",
+    );
+  });
+});
+
+describe("finalize arrival", () => {
+  it("reads, marks and sorts by finalize votes when asked", () => {
+    expect(arrivalText(PEERS[0].voteArrival!, "finalize")).toBe("141 ms");
+    expect(arrivalText(PEERS[1].voteArrival!, "finalize")).toBe("—");
+    expect(arrivalMedian(PEERS, "finalize")).toBe(203_000);
+    expect(
+      sortPeers(PEERS, { column: "arrival", reversed: false }, NOW, "finalize").map((peer) => peer.identity),
+    ).toEqual(["Big1111", "Old4444", "Mid2222", "Rpc3333"]);
+  });
+
+  it("titles a row by its finalize votes", () => {
+    expect(arrivalTitle(PEERS[3].voteArrival!, 1_048, "finalize")).toBe(
+      "Finalize votes reached us 203 ms after the slot began on average in epoch 1,048; notarize votes 151 ms.",
+    );
+    expect(arrivalTitle(PEERS[1].voteArrival!, null, "finalize")).toBe(
+      "No finalize vote was timed; notarize votes 412 ms.",
     );
   });
 });

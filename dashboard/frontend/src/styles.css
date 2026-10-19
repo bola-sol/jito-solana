@@ -7354,6 +7354,19 @@ body {
   pointer-events: none;
 }
 
+.mirror-bar.is-hovered {
+  outline: 1px solid var(--text);
+  outline-offset: 1px;
+}
+
+.cert-mirror .mirror-bar {
+  cursor: pointer;
+}
+
+.gossip-chip.is-pick span {
+  color: var(--text-dim);
+}
+
 .cert-bubble b {
   font-family: var(--mono);
   font-weight: 600;

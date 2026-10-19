@@ -75,19 +75,40 @@ function arrivalOf(cell: GossipPeers["vote_arrival"][number]): VoteArrival | nul
   return { mean, spread, worst, finalize, votes: votes ?? null };
 }
 
+/** Which of a peer's votes the arrival column shows: notarize unless a finalize bar was picked. */
+export type ArrivalKind = "notarize" | "finalize";
+
+export function arrivalMicros(arrival: VoteArrival | null, kind: ArrivalKind): number | null {
+  if (!arrival) return null;
+  return kind === "notarize" ? arrival.mean : arrival.finalize;
+}
+
 /** The middle peer's mean, which a peer far above is marked against. */
-export function arrivalMedian(peers: readonly GossipPeer[]): number | null {
-  const means = peers.flatMap((peer) => (peer.voteArrival ? [peer.voteArrival.mean] : [])).sort((a, b) => a - b);
+export function arrivalMedian(peers: readonly GossipPeer[], kind: ArrivalKind = "notarize"): number | null {
+  const means = peers
+    .flatMap((peer) => {
+      const micros = arrivalMicros(peer.voteArrival, kind);
+      return micros === null ? [] : [micros];
+    })
+    .sort((a, b) => a - b);
   return means.length === 0 ? null : (means[Math.floor(means.length / 2)] ?? null);
 }
 
 const millis = (micros: number) => `${count(Math.round(micros / 1000))} ms`;
 
-export function arrivalText(arrival: VoteArrival): string {
-  return millis(arrival.mean);
+export function arrivalText(arrival: VoteArrival, kind: ArrivalKind = "notarize"): string {
+  const micros = arrivalMicros(arrival, kind);
+  return micros === null ? "—" : millis(micros);
 }
 
-export function arrivalTitle(arrival: VoteArrival, epoch: number | null): string {
+export function arrivalTitle(arrival: VoteArrival, epoch: number | null, kind: ArrivalKind = "notarize"): string {
+  if (kind === "finalize") {
+    const when =
+      arrival.finalize === null
+        ? "No finalize vote was timed"
+        : `Finalize votes reached us ${millis(arrival.finalize)} after the slot began on average`;
+    return `${when}${epoch === null ? "" : ` in epoch ${count(epoch)}`}; notarize votes ${millis(arrival.mean)}.`;
+  }
   const votes = arrival.votes === null ? "" : ` over ${count(arrival.votes)} vote${arrival.votes === 1 ? "" : "s"}`;
   const over = `${votes}${epoch === null ? "" : ` in epoch ${count(epoch)}`}`;
   const spread = arrival.spread === null ? "" : `, spread ${millis(arrival.spread)}`;
@@ -196,8 +217,15 @@ function compareKeys(a: number | string, b: number | string): number {
 }
 
 /** Ties fall back to stake, then identity, so a reload keeps the order. */
-export function sortPeers(peers: GossipPeer[], sort: PeerSort, nowMillis: number): GossipPeer[] {
-  const { key, ascending } = COLUMNS[sort.column];
+export function sortPeers(
+  peers: GossipPeer[],
+  sort: PeerSort,
+  nowMillis: number,
+  kind: ArrivalKind = "notarize",
+): GossipPeer[] {
+  const { ascending } = COLUMNS[sort.column];
+  const key: Key =
+    sort.column === "arrival" ? (peer) => arrivalMicros(peer.voteArrival, kind) : COLUMNS[sort.column].key;
   const sign = ascending !== sort.reversed ? 1 : -1;
   const keyed = peers.map((peer) => ({ peer, value: key(peer, nowMillis) }));
   keyed.sort((a, b) => {

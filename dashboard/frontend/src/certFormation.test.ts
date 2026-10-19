@@ -161,21 +161,31 @@ describe("runningPath", () => {
 
 describe("ticks", () => {
   it("steps from past the floor and names the ends", () => {
-    const list = ticks(geometry(1_000, { floor: 200, end: 480 }));
+    const list = ticks(geometry(1_000, { floor: 200, end: 480 }), false);
     expect(list.map((tick) => tick.ms)).toEqual([0, 240, 280, 320, 360, 400, 440, 480]);
     expect(list[0]).toEqual({ ms: 0, label: "slot start", align: "start" });
     expect(list.at(-1)).toEqual({ ms: 480, label: "480 ms", align: "end" });
   });
 
   it("steps from zero without a floor", () => {
-    expect(ticks(geometry(1_000, { floor: 0, end: 400 })).map((tick) => tick.ms)).toEqual([
+    expect(ticks(geometry(1_000, { floor: 0, end: 400 }), false).map((tick) => tick.ms)).toEqual([
       0, 40, 80, 120, 160, 200, 240, 280, 320, 360, 400,
     ]);
   });
 
+  it("names the zero after the replay where slots are timed from it", () => {
+    expect(ticks(geometry(1_000, { floor: 0, end: 400 }), true)[0]).toEqual({
+      ms: 0,
+      label: "replayed",
+      align: "start",
+    });
+    // On a phone the longer label leaves no room for the first step.
+    expect(ticks(geometry(240, { floor: 0, end: 400 }), true).map((tick) => tick.ms)).toEqual([0, 160, 240, 400]);
+  });
+
   it("leaves out a step whose label would meet the end's", () => {
-    expect(ticks(geometry(240, { floor: 200, end: 480 })).map((tick) => tick.ms)).toEqual([0, 240, 320, 480]);
-    expect(ticks(geometry(240, { floor: 0, end: 400 })).map((tick) => tick.ms)).toEqual([0, 80, 160, 240, 400]);
+    expect(ticks(geometry(240, { floor: 200, end: 480 }), false).map((tick) => tick.ms)).toEqual([0, 240, 320, 480]);
+    expect(ticks(geometry(240, { floor: 0, end: 400 }), false).map((tick) => tick.ms)).toEqual([0, 80, 160, 240, 400]);
   });
 });
 

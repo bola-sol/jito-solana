@@ -3,6 +3,7 @@ import { count, percent, shortKey } from "../format";
 import {
   ariaSort,
   arrivalMedian,
+  arrivalMicros,
   arrivalText,
   arrivalTitle,
   entryRows,
@@ -27,6 +28,7 @@ import {
   type GossipPeer,
   type Part,
   type PeerColumn,
+  type ArrivalKind,
   type PeerFilter,
   type PeerSort,
 } from "../gossip";
@@ -35,7 +37,7 @@ import { unitFor } from "../network";
 import type { Gossip, GossipPeers } from "../types";
 import { useStore } from "../useStore";
 import { CertificatesSection } from "./CertificatesSection";
-import { CertFormationCard } from "./CertFormationCard";
+import { CertFormationCard, type Pick } from "./CertFormationCard";
 import { FinalizationCard } from "./FinalizationCard";
 import { Copyable } from "./Copyable";
 import { Card, Meter, Stat } from "./primitives";
@@ -62,7 +64,15 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
   const verdict = gossipVerdict(gossip, list);
   const alpenglow = useAlpenglow();
   const [filter, setFilter] = useState<PeerFilter>("all");
+  const [picked, setPicked] = useState<Pick | null>(null);
+  const listPicked = (pick: Pick) => {
+    setPicked(pick);
+    setFilter("all");
+    onQuery("");
+    document.getElementById(PEER_SEARCH_ID)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
   const findInPeers = (identity: string) => {
+    setPicked(null);
     setFilter("all");
     onQuery(identity);
     document.getElementById(PEER_SEARCH_ID)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -87,14 +97,19 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
         </>
       )}
       {alpenglow && <FinalizationCard />}
-      {alpenglow && <CertFormationCard />}
+      {alpenglow && <CertFormationCard peers={list} onPick={listPicked} />}
       {alpenglow && <CertificatesSection peers={list} onFind={findInPeers} />}
       <PeersCard
         list={list}
         query={query}
         onQuery={onQuery}
         filter={filter}
-        onFilter={setFilter}
+        onFilter={(next) => {
+          setPicked(null);
+          setFilter(next);
+        }}
+        picked={picked}
+        onUnpick={() => setPicked(null)}
         ours={ours}
         slotMillis={slotMillis}
       />
@@ -345,6 +360,8 @@ function PeersCard({
   onQuery,
   filter,
   onFilter,
+  picked,
+  onUnpick,
   ours,
   slotMillis,
 }: {
@@ -353,22 +370,28 @@ function PeersCard({
   onQuery: (query: string) => void;
   filter: PeerFilter;
   onFilter: (filter: PeerFilter) => void;
+  picked: Pick | null;
+  onUnpick: () => void;
   ours: string | null;
   slotMillis: number | null;
 }) {
   const [sort, setSort] = useState<PeerSort>(FIRST_SORT);
   const onSort = useCallback((column: PeerColumn) => setSort((was) => nextSort(was, column)), []);
   // Read when the list arrives, so the filters and the table agree until the next one.
+  const arrivalKind: ArrivalKind = picked?.kind ?? "notarize";
   const { peers, now } = useMemo(() => ({ peers: list ? gossipPeers(list) : [], now: Date.now() }), [list]);
   const counts = useMemo(() => filterCounts(peers, now), [peers, now]);
   const rows = useMemo(
     () =>
       sortPeers(
-        peers.filter((peer) => inFilter(peer, filter, now) && matchesSearch(peer, query)),
+        peers.filter((peer) =>
+          picked ? picked.identities.has(peer.identity) : inFilter(peer, filter, now) && matchesSearch(peer, query),
+        ),
         sort,
         now,
+        arrivalKind,
       ),
-    [peers, filter, query, sort, now],
+    [peers, filter, query, sort, now, picked, arrivalKind],
   );
 
   return (
@@ -383,12 +406,19 @@ function PeersCard({
     >
       <div className="gossip-tools">
         <div className="gossip-chips" role="group" aria-label="Which peers to list">
+          {picked && (
+            <button type="button" className="gossip-chip is-pick" aria-pressed="true" onClick={onUnpick}>
+              {picked.label}
+              <b>{count(picked.identities.size)}</b>
+              <span aria-label="clear">×</span>
+            </button>
+          )}
           {PEER_FILTERS.map((entry) => (
             <button
               key={entry.filter}
               type="button"
               className="gossip-chip"
-              aria-pressed={filter === entry.filter}
+              aria-pressed={!picked && filter === entry.filter}
               onClick={() => onFilter(entry.filter)}
             >
               {entry.label}
@@ -405,7 +435,10 @@ function PeersCard({
           aria-label="Search peers by name, client, IP or identity"
           autoComplete="off"
           spellCheck={false}
-          onChange={(event) => onQuery(event.target.value)}
+          onChange={(event) => {
+            onUnpick();
+            onQuery(event.target.value);
+          }}
         />
       </div>
       {list === null ? (
@@ -413,7 +446,7 @@ function PeersCard({
       ) : (
         // Keyed so a new filter, search or order starts again from the top.
         <PeersTable
-          key={`${filter}|${query}|${sort.column}|${sort.reversed}`}
+          key={`${picked?.label ?? filter}|${query}|${sort.column}|${sort.reversed}`}
           rows={rows}
           sort={sort}
           onSort={onSort}
@@ -422,6 +455,7 @@ function PeersCard({
           slotMillis={slotMillis}
           searched={query.trim() !== ""}
           arrivalEpoch={list.vote_arrival_epoch ?? null}
+          arrivalKind={arrivalKind}
         />
       )}
       <div className="card-footnote">
@@ -441,6 +475,7 @@ const PeersTable = memo(function PeersTable({
   slotMillis,
   searched,
   arrivalEpoch,
+  arrivalKind,
 }: {
   rows: GossipPeer[];
   sort: PeerSort;
@@ -450,15 +485,16 @@ const PeersTable = memo(function PeersTable({
   slotMillis: number | null;
   searched: boolean;
   arrivalEpoch: number | null;
+  arrivalKind: ArrivalKind;
 }) {
   const [limit, setLimit] = useState(ROWS_PER_PAGE);
   // Only under Alpenglow, where the shares exist, and the arrivals once votor has reported an epoch.
   const finalization = useMemo(() => rows.some((row) => row.finalization !== null), [rows]);
   const arrivals = useMemo(() => rows.some((row) => row.voteArrival !== null), [rows]);
   const lateAfter = useMemo(() => {
-    const median = arrivalMedian(rows);
+    const median = arrivalMedian(rows, arrivalKind);
     return median === null ? null : median * LATE_ARRIVAL;
-  }, [rows]);
+  }, [rows, arrivalKind]);
   const headings = HEADINGS.filter(
     (heading) => (finalization || heading.column !== "finalization") && (arrivals || heading.column !== "arrival"),
   );
@@ -498,9 +534,9 @@ const PeersTable = memo(function PeersTable({
                     type="button"
                     className="gossip-sort"
                     onClick={() => onSort(heading.column)}
-                    title={heading.column === "arrival" ? arrivalHeadingTitle(arrivalEpoch) : undefined}
+                    title={heading.column === "arrival" ? arrivalHeadingTitle(arrivalEpoch, arrivalKind) : undefined}
                   >
-                    {heading.label}
+                    {heading.column === "arrival" && arrivalKind === "finalize" ? "Finalize arrival" : heading.label}
                     {/* Out of the button's name; `aria-sort` says the same. */}
                     {order && <span aria-hidden="true">{order === "ascending" ? " ↑" : " ↓"}</span>}
                   </button>
@@ -520,6 +556,7 @@ const PeersTable = memo(function PeersTable({
               finalization={finalization}
               arrivals={arrivals}
               arrivalEpoch={arrivalEpoch}
+              arrivalKind={arrivalKind}
               lateAfter={lateAfter}
             />
           ))}
@@ -545,6 +582,7 @@ const PeerLine = memo(function PeerLine({
   finalization,
   arrivals,
   arrivalEpoch,
+  arrivalKind,
   lateAfter,
 }: {
   peer: GossipPeer;
@@ -554,9 +592,11 @@ const PeerLine = memo(function PeerLine({
   finalization: boolean;
   arrivals: boolean;
   arrivalEpoch: number | null;
+  arrivalKind: ArrivalKind;
   lateAfter: number | null;
 }) {
   const arrival = peer.voteArrival;
+  const arrivalAt = arrivalMicros(arrival, arrivalKind);
   return (
     <tr className={ours ? "is-ours" : undefined}>
       <td className="is-num">{stakeText(peer.stake)}</td>
@@ -580,10 +620,16 @@ const PeerLine = memo(function PeerLine({
       )}
       {arrivals && (
         <td
-          className={`is-num${arrival && lateAfter !== null && arrival.mean > lateAfter ? " tone-warn" : ""}`}
-          title={arrival ? arrivalTitle(arrival, arrivalEpoch) : ours ? "Our own votes are not timed." : undefined}
+          className={`is-num${arrivalAt !== null && lateAfter !== null && arrivalAt > lateAfter ? " tone-warn" : ""}`}
+          title={
+            arrival
+              ? arrivalTitle(arrival, arrivalEpoch, arrivalKind)
+              : ours
+                ? "Our own votes are not timed."
+                : undefined
+          }
         >
-          {arrival ? arrivalText(arrival) : "—"}
+          {arrival ? arrivalText(arrival, arrivalKind) : "—"}
         </td>
       )}
       <td>{peer.client || "—"}</td>
@@ -636,7 +682,7 @@ function SnapshotAges({ peer }: { peer: GossipPeer }) {
   );
 }
 
-function arrivalHeadingTitle(epoch: number | null): string {
+function arrivalHeadingTitle(epoch: number | null, kind: ArrivalKind): string {
   const over = epoch === null ? "the last epoch" : `epoch ${count(epoch)}`;
-  return `When each validator's notarize votes reached us after the slot began, on average over ${over}.`;
+  return `When each validator's ${kind} votes reached us after the slot began, on average over ${over}.`;
 }

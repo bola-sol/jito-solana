@@ -3,6 +3,7 @@ import {
   HOLD_MS,
   REPLAY_SLOWDOWN,
   axisRange,
+  binAt,
   barTone,
   bars,
   geometry,
@@ -17,10 +18,12 @@ import {
   ticks,
   timedFromReplay,
   unmeasured,
+  votersIn,
   xAt,
   type Milestone,
 } from "./certFormation";
-import type { CertFormation } from "./types";
+import { gossipPeers } from "./gossip";
+import type { CertFormation, GossipPeers } from "./types";
 
 /** A curve with `steps` of `[ms, share in hundredths of a percent]` arriving at each ms. */
 function curve(steps: [number, number][]): number[] {
@@ -304,5 +307,41 @@ describe("timedFromReplay", () => {
     expect(timedFromReplay("4.3.2")).toBe(true);
     expect(timedFromReplay("4.4.0-beta.1")).toBe(false);
     expect(timedFromReplay(null)).toBe(false);
+  });
+});
+
+describe("picking a bar", () => {
+  it("finds the bar under a time, or none off the bars", () => {
+    const g = geometry(1_000, { floor: 200, end: 480 });
+    expect(binAt(g, 272.3)).toBe(270);
+    expect(binAt(g, 150)).toBeNull();
+    expect(binAt(g, 480)).toBeNull();
+  });
+
+  it("lists the validators whose vote of the half's kind landed in it", () => {
+    const list: GossipPeers = {
+      root: 0,
+      total_stake: 100,
+      clients: [["Agave", "4.3.2"]],
+      identity: ["A", "B", "C"],
+      name: [null, null, null],
+      stake: [50, 30, 20],
+      client: [0, 0, 0],
+      ip: [null, null, null],
+      rpc: [null, null, null],
+      heard_ago: [0, 0, 0],
+      started: [0, 0, 0],
+      snapshot_full: [null, null, null],
+      snapshot_incremental: [null, null, null],
+      lowest: [null, null, null],
+      finalization: [null, null, null],
+      vote_arrival_epoch: 19,
+      vote_arrival: [[70_400, null, null, 88_000, 10], [74_900, null, null, 0, 10], [75_000, null, null, null, 10]],
+    };
+    const peers = gossipPeers(list);
+    expect(votersIn(peers, -1, 70, 75)).toEqual(["A", "B"]);
+    // A zero finalize mean is no measurement.
+    expect(votersIn(peers, 1, 85, 90)).toEqual(["A"]);
+    expect(votersIn(peers, 1, 0, 5)).toEqual([]);
   });
 });

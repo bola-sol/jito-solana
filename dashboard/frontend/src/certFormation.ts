@@ -1,3 +1,4 @@
+import type { GossipPeer } from "./gossip";
 import type { CertFormation } from "./types";
 
 export const HOLD_MS = 400;
@@ -339,4 +340,20 @@ export function halfLabelClear(
 ): boolean {
   const blocked = others.some((other) => other !== undefined && overlaps(place, other));
   return !blocked && !onBars(g, place, halfBars, direction);
+}
+
+/** The bar's first millisecond under `ms`, or null off the bars. */
+export function binAt(g: Geometry, ms: number): number | null {
+  if (ms < g.floor || ms >= g.end) return null;
+  return g.floor + Math.floor((ms - g.floor) / g.bin) * g.bin;
+}
+
+/** Validators whose average vote of the half's kind landed in the bar. */
+export function votersIn(peers: readonly GossipPeer[], direction: 1 | -1, from: number, to: number): string[] {
+  return peers.flatMap((peer) => {
+    const micros = direction === -1 ? peer.voteArrival?.mean : peer.voteArrival?.finalize;
+    if (micros === undefined || micros === null || micros <= 0) return [];
+    const ms = micros / 1000;
+    return ms >= from && ms < to ? [peer.identity] : [];
+  });
 }

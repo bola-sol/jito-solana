@@ -30,9 +30,20 @@ const EPOCH_RATE_MIN_ELAPSED_SLOTS: u64 = 4_000;
 
 const EPOCH_END_DRIFT_DIVISOR: u32 = 64;
 
+/// Votor reports an epoch after it ends, so the one asked for can trail the current by two.
+const EPOCH_SPANS_HELD: usize = 3;
+
 const MAX_SLOTS_TIMED_PER_TICK: u64 = 512;
 
 pub(crate) const CATCH_UP_SLOTS_PER_SECOND: f64 = 20.0;
+
+/// An epoch's first and last slots timed after catching up, with their arrivals.
+#[derive(Debug, Clone, Copy)]
+struct EpochSpan {
+    epoch: Epoch,
+    first: (Slot, u64),
+    last: (Slot, u64),
+}
 
 #[derive(Debug, Default)]
 pub(super) struct SlotClock {
@@ -44,6 +55,7 @@ pub(super) struct SlotClock {
     replayed_behind: bool,
     /// Held so the readout does not chase its own estimate.
     epoch_end: Option<(Epoch, SystemTime)>,
+    epoch_spans: VecDeque<EpochSpan>,
 }
 
 impl SlotClock {
@@ -74,6 +86,43 @@ impl SlotClock {
             self.window.pop_front();
         }
         elapsed
+    }
+
+    /// Extends `epoch`'s span with a slot timed after catching up.
+    pub(super) fn record_in_epoch(&mut self, epoch: Epoch, slot: Slot, arrived: u64) {
+        if !self.caught_up_at.is_some_and(|from| slot >= from) {
+            return;
+        }
+        match self.epoch_spans.back_mut() {
+            Some(span) if span.epoch == epoch => {
+                if slot > span.last.0 {
+                    span.last = (slot, arrived);
+                }
+            }
+            Some(span) if span.epoch > epoch => (),
+            _ => {
+                self.epoch_spans.push_back(EpochSpan {
+                    epoch,
+                    first: (slot, arrived),
+                    last: (slot, arrived),
+                });
+                while self.epoch_spans.len() > EPOCH_SPANS_HELD {
+                    self.epoch_spans.pop_front();
+                }
+            }
+        }
+    }
+
+    /// `epoch`'s mean slot time over the span this node timed, once the span is long enough.
+    pub(super) fn epoch_mean_nanos(&self, epoch: Epoch) -> Option<u64> {
+        let span = self.epoch_spans.iter().find(|span| span.epoch == epoch)?;
+        let slots = span
+            .last
+            .0
+            .checked_sub(span.first.0)
+            .filter(|slots| *slots >= EPOCH_RATE_MIN_ELAPSED_SLOTS)?;
+        let millis = span.last.1.checked_sub(span.first.1)?;
+        millis.checked_mul(1_000_000)?.checked_div(slots)
     }
 
     /// Never cleared: falling behind later is real.
@@ -223,6 +272,35 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn test_an_epoch_mean_spans_its_slots_timed_after_catching_up() {
+        let mut clock = SlotClock::default();
+        clock.record_in_epoch(7, 100, 1_000);
+        assert!(clock.epoch_spans.is_empty());
+        clock.caught_up_at = Some(100);
+        for index in 0..=5_000u64 {
+            clock.record_in_epoch(
+                7,
+                index.saturating_add(100),
+                index.saturating_mul(220).saturating_add(1_000),
+            );
+        }
+        assert_eq!(clock.epoch_mean_nanos(7), Some(220_000_000));
+        assert_eq!(clock.epoch_mean_nanos(8), None);
+        // Too short a span is not believed.
+        clock.record_in_epoch(8, 6_000, 2_000_000);
+        clock.record_in_epoch(8, 6_100, 2_022_000);
+        assert_eq!(clock.epoch_mean_nanos(8), None);
+        // A slot from an earlier epoch than the newest leaves the spans alone.
+        clock.record_in_epoch(7, 6_200, 9_000_000);
+        assert_eq!(clock.epoch_mean_nanos(7), Some(220_000_000));
+        for epoch in 9..12u64 {
+            clock.record_in_epoch(epoch, epoch.saturating_mul(10_000), 0);
+        }
+        assert_eq!(clock.epoch_spans.len(), EPOCH_SPANS_HELD);
+        assert_eq!(clock.epoch_mean_nanos(7), None);
     }
 
     #[test]

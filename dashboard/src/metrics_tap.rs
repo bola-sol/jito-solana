@@ -1795,6 +1795,10 @@ impl MetricsTap {
     }
 
     /// The epoch they describe, and each vote account's arrivals.
+    pub fn vote_arrival_epoch(&self) -> Option<Epoch> {
+        self.vote_arrivals.lock().ok()?.epoch
+    }
+
     pub fn vote_arrivals(&self) -> (Option<Epoch>, HashMap<Pubkey, VoteArrival>) {
         self.vote_arrivals
             .lock()

@@ -46,6 +46,7 @@ use {
 };
 
 mod block_life;
+mod cert_formation;
 mod certificates;
 mod finalization;
 mod gossip_peers;
@@ -55,6 +56,7 @@ mod slot_clock;
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
     block_life::{BlockLifeSummary, BlockLives},
+    cert_formation::CertFormation,
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     finalization::{FinalizationShare, FinalizationTally},
     skip_rate::{LeaderSlotCounts, SkipRateWalk},
@@ -401,6 +403,7 @@ struct Debounces {
     vote_participation: Debounced<certs::Participation>,
     vote_cost: Debounced<VoteCost>,
     block_life: Debounced<Option<BlockLifeSummary>>,
+    cert_formation: Debounced<Option<CertFormation>>,
 }
 
 pub struct Collector {
@@ -432,6 +435,8 @@ pub struct Collector {
     previous_slots: SkipRateWalk,
     finalization: FinalizationTally,
     block_lives: BlockLives,
+    /// The epoch and slot time the published formation was built for.
+    cert_formation_for: Option<(Epoch, Option<u64>)>,
     /// Read once a tick.
     cluster_tip: Option<Slot>,
     last_completed_slot: Slot,
@@ -528,6 +533,7 @@ impl Collector {
             previous_slots: SkipRateWalk::default(),
             finalization: FinalizationTally::default(),
             block_lives: BlockLives::default(),
+            cert_formation_for: None,
             cluster_tip: None,
             epoch_published: None,
             last_completed_slot: 0,
@@ -704,6 +710,7 @@ impl Collector {
             self.collect_health();
             self.collect_skip_rate(&root_bank);
             self.collect_finalization_share(&working_bank);
+            self.collect_cert_formation(&root_bank);
             self.debounces.block_life.publish(
                 &self.publisher,
                 TOPIC_SUMMARY,
@@ -813,7 +820,7 @@ impl Collector {
             "completed_slot",
             completed,
         );
-        self.collect_slot_durations(completed);
+        self.collect_slot_durations(root_bank, completed);
         self.clock.mark_caught_up(highest_slot, completed);
         self.observe_slot_duration(root_bank, completed);
     }
@@ -864,7 +871,8 @@ impl Collector {
     }
 
     /// Timed from the blockstore's first-shred record rather than a 200ms poll.
-    fn collect_slot_durations(&mut self, up_to: Slot) {
+    fn collect_slot_durations(&mut self, root_bank: &Bank, up_to: Slot) {
+        let schedule = root_bank.epoch_schedule();
         let mut changed = Vec::new();
         let mut filled = Vec::new();
         for slot in self.clock.slots_to_time(up_to) {
@@ -877,6 +885,8 @@ impl Collector {
             // The minute's mean stays on first shreds: it is the same over a window, and needs no
             // block to fill.
             self.clock.record(slot, arrived);
+            self.clock
+                .record_in_epoch(schedule.get_epoch(slot), slot, arrived);
             let shreds = self.metrics_tap.shred_fill(slot).map(ShredArrival::from);
             let was_full = self.slots.get(slot).and_then(SlotEntry::full_at).is_some();
             if let Some(entry) = self.slots.update(slot, |entry| {

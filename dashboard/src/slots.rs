@@ -1,4 +1,4 @@
-//! Rolling history of recent slots, backing the slot strip and the sidebar.
+//! Rolling history of recent slots, backing the slot strip and the schedule.
 
 use {
     crate::certs::Reward,

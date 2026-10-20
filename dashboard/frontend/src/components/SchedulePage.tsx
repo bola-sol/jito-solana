@@ -286,7 +286,7 @@ export function SchedulePage({
           aria-label="Filter the schedule by leader name, pubkey or slot"
           onChange={(event) => onFilter(event.target.value, oursOnly)}
         />
-        <div className="sidebar-filter" role="group" aria-label="Which leaders to list">
+        <div className="toggle-group" role="group" aria-label="Which leaders to list">
           <button type="button" aria-pressed={!oursOnly} onClick={() => onFilter(query, false)}>
             All
           </button>
@@ -322,7 +322,7 @@ export function SchedulePage({
       <div className="schedule-list" ref={list}>
         <ScrollTop scroller={list} hold={false} />
         {shown.length === 0 && !reading && (searching ? found !== null : true) && (
-          <div className="sidebar-empty">{live.length === 0 ? "waiting for slots…" : "nothing matches that"}</div>
+          <div className="list-empty">{live.length === 0 ? "waiting for slots…" : "nothing matches that"}</div>
         )}
         <VirtualList
           keys={shown}

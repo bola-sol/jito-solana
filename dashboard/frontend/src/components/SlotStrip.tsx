@@ -62,6 +62,8 @@ export function SlotStrip(): ReactElement {
   const [cursor, setCursor] = useState<number | null>(null);
   const live = store.getSlots().slice(-STRIP_LENGTH);
   const slots = pinned ?? live;
+  // From the live strip, so a pinned strip does not hold the leader still.
+  const newest: SlotEntry | undefined = live[live.length - 1];
   const active =
     cursor === null ? null : (slots.find((entry) => entry.slot === cursor) ?? null);
   // Bars are drawn against what the cluster is configured for, so a nominal
@@ -185,7 +187,7 @@ export function SlotStrip(): ReactElement {
         <span className="slot-strip-title">Slots</span>
         {/* In the head, not on the strip: a minute covers more slots than
             the strip holds. */}
-        <span>
+        <span className="slot-strip-figures">
           <Explain text="Mean time between slots arriving here over the last minute: the cluster's rate as seen from this node.">
             slot time
           </Explain>{" "}
@@ -217,6 +219,7 @@ export function SlotStrip(): ReactElement {
           )}{" "}
           over the last minute
         </span>
+        {newest && <StripLeader mine={newest.mine} leader={store.leaderOf(newest.slot, newest.mine)} />}
       </div>
 
       <div
@@ -334,6 +337,21 @@ function SlotAnchor({ positions }: { positions: Position[] }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/** No title with the full name: it changes every few slots, and a live title blinks. */
+function StripLeader({ mine, leader }: { mine: boolean; leader: LeaderRef }) {
+  const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : "unknown");
+  return (
+    <span className="slot-strip-leader">
+      <Explain text="The validator scheduled to lead the newest slot this node has seen.">Leader</Explain>
+      <span className="slot-strip-leader-name">
+        {mine && <span className="slot-strip-mine" aria-label="our slot" />}
+        <Logo url={leader.icon} size={14} />
+        <span className="slot-strip-leader-text">{name}</span>
+      </span>
+    </span>
   );
 }
 

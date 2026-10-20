@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactElement } from "react";
-import { readSidebarCollapsed, writeSidebarCollapsed } from "./layout";
 import { EpochCard, ClusterCard, TransactionsCard } from "./components/cards";
 import { Header } from "./components/Header";
 import { CachesCard } from "./components/CachesCard";
@@ -10,7 +9,6 @@ import { BlockLifeCard } from "./components/BlockLifeCard";
 import { ReplayCard } from "./components/ReplayCard";
 import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
-import { Sidebar } from "./components/Sidebar";
 import { Verdict } from "./components/Verdict";
 import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
@@ -28,7 +26,6 @@ export function App(): ReactElement {
   const name = store.get("summary", "identity_name");
   const identity = store.get("summary", "identity_key");
   const cluster = store.get("summary", "cluster");
-  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [route, go] = useRoute();
   const page = route.page;
 
@@ -36,10 +33,7 @@ export function App(): ReactElement {
     document.title = pageTitle(name, identity, cluster);
   }, [name, identity, cluster]);
 
-  const rail = page === "overview";
   const classes = ["app"];
-  if (rail && collapsed) classes.push("is-collapsed");
-  if (!rail) classes.push("is-full");
   // While the validator boots, everything but the boot sequence is blurred, by the same test the
   // verdict uses.
   const startup = store.get("summary", "startup_progress");
@@ -47,16 +41,6 @@ export function App(): ReactElement {
 
   return (
     <div className={classes.join(" ")}>
-      {rail && (
-        <Sidebar
-          collapsed={collapsed}
-          onToggle={() => {
-            const next = !collapsed;
-            setCollapsed(next);
-            writeSidebarCollapsed(next);
-          }}
-        />
-      )}
       <main className="main">
         <Header />
         {connection === "closed" && (

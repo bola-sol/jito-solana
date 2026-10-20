@@ -1,15 +1,5 @@
 import { readStored, writeStored } from "./storage";
 
-export const SIDEBAR_STORAGE_KEY = "agave-dashboard-sidebar";
-
-export function readSidebarCollapsed(): boolean {
-  return readStored(SIDEBAR_STORAGE_KEY) === "collapsed";
-}
-
-export function writeSidebarCollapsed(collapsed: boolean): void {
-  writeStored(SIDEBAR_STORAGE_KEY, collapsed ? "collapsed" : "expanded");
-}
-
 /** Null where the viewer has never chosen, so the card defaults by width. */
 export const THREADS_STORAGE_KEY = "agave-dashboard-threads";
 

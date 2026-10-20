@@ -238,8 +238,8 @@ no Rust rebuild.
 
 ## Validator names
 
-The sidebar and the schedule show validator names where it can find them, and
-truncated pubkeys where it cannot.
+The slot strip and the schedule show validator names where it can find them,
+and truncated pubkeys where it cannot.
 
 Names live in accounts owned by the config program. Their addresses are not
 derived from the identity they describe, because the tool that publishes one

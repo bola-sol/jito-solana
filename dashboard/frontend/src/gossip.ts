@@ -16,6 +16,7 @@ export interface GossipPeer {
   stake: number;
   client: string;
   ip: string | null;
+  country: string | null;
   rpc: number | null;
   heardAgo: number;
   started: number;
@@ -50,12 +51,14 @@ export function gossipPeers(list: GossipPeers): GossipPeer[] {
     const name = list.name[index] ?? null;
     const client = clients[list.client[index]] ?? "";
     const ip = list.ip[index] ?? null;
+    const country = list.country[index] ?? null;
     return {
       identity,
       name,
       stake: list.stake[index] ?? 0,
       client,
       ip,
+      country,
       rpc: list.rpc[index] ?? null,
       heardAgo: list.heard_ago[index] ?? 0,
       started: list.started[index] ?? 0,
@@ -64,7 +67,7 @@ export function gossipPeers(list: GossipPeers): GossipPeer[] {
       ledger: behind(list.root, list.lowest[index]),
       finalization: list.finalization[index] ?? null,
       voteArrival: arrivalOf(list.vote_arrival?.[index] ?? null),
-      haystack: [name ?? "", client, ip ?? "", identity].join(" ").toLowerCase(),
+      haystack: [name ?? "", client, ip ?? "", country ?? "", identity].join(" ").toLowerCase(),
     };
   });
 }
@@ -150,7 +153,7 @@ export function filterCounts(peers: GossipPeer[], nowMillis: number): Record<Pee
   return counts;
 }
 
-/** Any part of a name, client, IP or identity, ignoring case. */
+/** Any part of a name, client, IP, country code or identity, ignoring case. */
 export function matchesSearch(peer: GossipPeer, query: string): boolean {
   const needle = query.trim().toLowerCase();
   return needle === "" || peer.haystack.includes(needle);

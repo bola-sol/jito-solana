@@ -5,3 +5,5 @@
 * text=auto eol=lf
 # Images pass through untouched.
 *.png binary
+# The country table is gzip.
+*.gz binary

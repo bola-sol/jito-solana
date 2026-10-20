@@ -167,3 +167,7 @@ The validator does not own these inputs. The dashboard reads them directly:
 - CPU governor: `/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor`.
 
 The kernel counts socket drops but not deliveries. The delivered counts come from the datapoints above.
+
+## Built in
+
+- `geoip/country-ipv4.bin.gz`: DB-IP's IP to Country Lite, IPv4 rows, October 2026, packed by `geoip/generate.py`. Each peer's gossip address is looked up in it for the country code on the Schedule and Gossip pages. Unpacked once, on first use.

@@ -5,6 +5,7 @@ use {
     crate::{
         certs,
         context::{DashboardContext, StartProgress},
+        geoip,
         history::SlotHistory,
         meters::QuicPort,
         metrics_tap::{
@@ -223,6 +224,7 @@ pub struct Peer {
     pub client: Option<String>,
     pub stake: u64,
     pub ip: Option<String>,
+    pub country: Option<&'static str>,
     pub name: Option<String>,
     pub icon: Option<String>,
 }
@@ -232,6 +234,7 @@ struct Heard {
     version: Option<String>,
     client: Option<String>,
     ip: Option<String>,
+    country: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1186,6 +1189,9 @@ impl Collector {
                     version: Some(contact_info.version().to_string()),
                     client: Some(contact_info.version().client().to_string()),
                     ip: contact_info.gossip().map(|addr| addr.ip().to_string()),
+                    country: contact_info
+                        .gossip()
+                        .and_then(|addr| geoip::country(addr.ip())),
                 },
             );
         }
@@ -1197,6 +1203,7 @@ impl Collector {
                     version,
                     client,
                     ip,
+                    country,
                 } = gossip.remove(&identity).unwrap_or_default();
                 let (name, icon) = self.peer_display(&identity);
                 Peer {
@@ -1204,6 +1211,7 @@ impl Collector {
                     version,
                     client,
                     ip,
+                    country,
                     name,
                     icon,
                     identity: identity.to_string(),

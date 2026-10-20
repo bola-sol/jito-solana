@@ -82,6 +82,11 @@ export function App(): ReactElement {
           />
         )}
         {page === "gossip" && <GossipPage query={route.query} onQuery={(query) => go({ ...route, query }, true)} />}
+        <footer className="footer">
+          <a href="https://db-ip.com" target="_blank" rel="noreferrer">
+            IP Geolocation by DB-IP
+          </a>
+        </footer>
       </main>
     </div>
   );

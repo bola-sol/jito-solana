@@ -59,6 +59,7 @@ function samePeer(a: Peer, b: Peer): boolean {
     a.version === b.version &&
     a.client === b.client &&
     a.ip === b.ip &&
+    a.country === b.country &&
     a.name === b.name &&
     a.icon === b.icon
   );
@@ -483,6 +484,7 @@ function TurnLeader({
         <span className="schedule-leader-where">
           <span className="schedule-ip" title={peer?.ip ?? undefined}>
             {peer?.ip ?? ""}
+            {peer?.country && <span className="country-code">{peer.country}</span>}
           </span>
           <span className="schedule-leader-time" title={began === null ? undefined : blockStamp(began)}>
             {began === null ? "" : clockTime(began)}

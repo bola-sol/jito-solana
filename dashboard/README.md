@@ -264,6 +264,20 @@ write thereafter. Restricted to the config program it costs two hash lookups per
 account and stores a few thousand entries, which against the work index
 generation already does per account is not measurable.
 
+## IP geolocation
+
+The Schedule and Gossip pages show a country code beside each gossip address,
+looked up in `geoip/country-ipv4.bin.gz`. That table is DB-IP's
+[IP to Country Lite](https://db-ip.com/db/download/ip-to-country-lite),
+October 2026 release, under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the page footer
+carries the attribution DB-IP asks for. Only its form is changed: the IPv4 rows,
+repacked by `geoip/generate.py`. IPv6 addresses get no code.
+
+To refresh it:
+
+    python3 geoip/generate.py YYYY-MM
+
 ## Not yet implemented
 
 Two things have no equivalent here, because the data behind them does not exist

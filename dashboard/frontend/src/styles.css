@@ -399,6 +399,30 @@ body {
   color: var(--text);
 }
 
+.footer {
+  margin-top: auto;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.footer a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.country-code {
+  margin-left: 6px;
+  color: var(--text-faint);
+}
+
+.gossip-ip {
+  display: flex;
+  align-items: baseline;
+}
+
 /* ---- verdict ---- */
 
 /* The only serif on the page, across the whole row; a wrap tries to avoid a short last line. */

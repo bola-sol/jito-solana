@@ -6,14 +6,11 @@ import {
   readCertificatesOpen,
   readInterfacesOpen,
   readScheduleColumns,
-  readSidebarCollapsed,
   SCHEDULE_COLUMNS_STORAGE_KEY,
-  SIDEBAR_STORAGE_KEY,
   writeBalancesHidden,
   writeCertificatesOpen,
   writeInterfacesOpen,
   writeScheduleColumns,
-  writeSidebarCollapsed,
 } from "./layout";
 
 function storage(): Storage {
@@ -136,35 +133,5 @@ describe("the network card's interface list", () => {
     });
     expect(() => writeInterfacesOpen(true)).not.toThrow();
     expect(readInterfacesOpen()).toBe(false);
-  });
-});
-
-describe("sidebar collapse", () => {
-  it("starts expanded when nothing has been chosen", () => {
-    expect(readSidebarCollapsed()).toBe(false);
-  });
-
-  it("remembers the choice both ways", () => {
-    writeSidebarCollapsed(true);
-    expect(readSidebarCollapsed()).toBe(true);
-    writeSidebarCollapsed(false);
-    expect(readSidebarCollapsed()).toBe(false);
-  });
-
-  it("treats an unrecognised value as expanded", () => {
-    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "yes");
-    expect(readSidebarCollapsed()).toBe(false);
-  });
-
-  it("survives storage being refused", () => {
-    // Private browsing and some embedded webviews throw on access rather than
-    // returning null, which would otherwise take the whole app down at render.
-    vi.stubGlobal("window", {
-      get localStorage(): Storage {
-        throw new Error("denied");
-      },
-    });
-    expect(() => writeSidebarCollapsed(true)).not.toThrow();
-    expect(readSidebarCollapsed()).toBe(false);
   });
 });

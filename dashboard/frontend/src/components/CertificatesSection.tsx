@@ -86,7 +86,7 @@ export function CertificatesSection({
     <section className="misses-panel written" aria-label="Reward certificates this epoch">
       <div className="written-top">
         <b>Reward certificates this epoch</b>
-        <div className="sidebar-filter" role="group" aria-label="Which side to show">
+        <div className="toggle-group" role="group" aria-label="Which side to show">
           <button type="button" aria-pressed={side === "ours"} onClick={() => setSide("ours")}>
             Left out by us
           </button>

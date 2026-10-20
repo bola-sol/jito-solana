@@ -39,11 +39,11 @@ export interface Requests {
   "produced.detail": { params: { first: number; last: number }; reply: ProducedDetail | null };
 }
 
-/** Slots kept for the strip and sidebar. Matches the server's overview length. */
+/** Slots kept for the strip and the schedule. Matches the server's overview length. */
 const MAX_SLOTS = 512;
 
 /** This validator's own leader slots kept beyond that window, for the
- *  sidebar rail. Matches `OWN_SLOTS_KEPT` on the server. */
+ *  schedule. Matches `OWN_SLOTS_KEPT` on the server. */
 const MAX_OWN_SLOTS = 64;
 
 /** Our newest blocks, waterfalls and costs kept live; the slot page asks for the rest. Matches

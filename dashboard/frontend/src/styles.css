@@ -119,21 +119,9 @@ body {
 /* The dynamic viewport, so the column reaches the bottom once a phone browser hides its toolbars. */
 .app {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   height: 100dvh;
-}
-
-/* Collapsed to a rail rather than to nothing, so the control that brings the
-   list back is still on screen. */
-.app.is-collapsed {
-  grid-template-columns: 34px minmax(0, 1fr);
-}
-
-/* No rail at all where there is nothing to bring back. Declared after the
-   collapsed rule so it wins when both would apply. */
-.app.is-full {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .main {
@@ -1177,6 +1165,7 @@ body {
 /* ---- slot strip ---- */
 
 .slot-strip {
+  container: slot-strip / inline-size;
   margin-top: 8px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
@@ -1188,7 +1177,6 @@ body {
   display: flex;
   align-items: baseline;
   gap: 18px;
-  flex-wrap: wrap;
   font-size: 12px;
   color: var(--text-dim);
 }
@@ -1203,6 +1191,68 @@ body {
   font-family: var(--mono);
   font-weight: 500;
   color: var(--text);
+}
+
+.slot-strip-figures {
+  min-width: 0;
+}
+
+/* Never wraps: the name is cut instead. */
+.slot-strip-leader {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Aligned on the name's baseline, or a logo moves the head by half a pixel as leaders change. */
+.slot-strip-leader-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 20ch;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text);
+}
+
+.slot-strip-leader-name .logo {
+  align-self: center;
+  margin: -3px 0;
+}
+
+.slot-strip-leader-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slot-strip-mine {
+  flex: none;
+  align-self: center;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ours);
+}
+
+/* Where the figures and the leader do not share a line, the figures go below it. */
+@container slot-strip (max-width: 760px) {
+  .slot-strip-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .slot-strip-figures {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .slot-strip-leader-name {
+    max-width: 16ch;
+  }
 }
 
 .slot-axis {
@@ -1901,57 +1951,9 @@ body {
   box-shadow: inset 0 2px 0 var(--ours);
 }
 
-/* ---- sidebar ---- */
+/* ---- lists ---- */
 
-.sidebar {
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.sidebar-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 12px 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* Narrower gutters when only the button is left, or it does not fit the rail. */
-.app.is-collapsed .sidebar-head {
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-.sidebar-collapse {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 20px;
-  height: 20px;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: none;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.sidebar-collapse:hover {
-  background: var(--panel-raised);
-  color: var(--text-dim);
-}
-
-.sidebar-collapse:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.sidebar-filter {
+.toggle-group {
   margin-left: auto;
   display: flex;
   border: 1px solid var(--border);
@@ -1959,7 +1961,7 @@ body {
   overflow: hidden;
 }
 
-.sidebar-filter button {
+.toggle-group button {
   margin: 0;
   padding: 3px 10px;
   border: 0;
@@ -1971,33 +1973,22 @@ body {
   cursor: pointer;
 }
 
-.sidebar-filter button + button {
+.toggle-group button + button {
   border-left: 1px solid var(--border);
 }
 
-.sidebar-filter button:hover {
+.toggle-group button:hover {
   color: var(--text-dim);
 }
 
-.sidebar-filter button[aria-pressed="true"] {
+.toggle-group button[aria-pressed="true"] {
   background: var(--panel-raised);
   color: var(--text);
 }
 
-.sidebar-filter button:focus-visible {
+.toggle-group button:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
-}
-
-.sidebar-rows {
-  overflow-y: auto;
-  min-height: 0;
-  /* Five hundred rows make the bar a useless sliver; the button below goes back to the top. */
-  scrollbar-width: none;
-}
-
-.sidebar-rows::-webkit-scrollbar {
-  display: none;
 }
 
 /* Carries no height, so the button hangs over the rows; sticky so it tracks the list. */
@@ -2038,71 +2029,10 @@ body {
   outline-offset: 2px;
 }
 
-.sidebar-empty {
+.list-empty {
   padding: 12px;
   color: var(--text-faint);
   font-size: 12px;
-}
-
-.sidebar-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 6px;
-  gap: 6px;
-  align-items: center;
-  padding: 4px 10px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-}
-
-.sidebar-row.mine {
-  background: color-mix(in srgb, var(--ours) 10%, transparent);
-}
-
-.sidebar-leader {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.sidebar-mine-marker {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 5px;
-  border-radius: 50%;
-  background: var(--ours);
-}
-
-.sidebar-slot {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.sidebar-level {
-  width: 6px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--level-incomplete);
-}
-
-.sidebar-level.level-completed {
-  background: var(--level-completed);
-}
-.sidebar-level.level-optimistically_confirmed {
-  background: var(--level-optimistically_confirmed);
-}
-.sidebar-level.level-rooted {
-  background: var(--level-rooted);
-}
-.sidebar-level.level-finalized {
-  background: var(--level-finalized);
-}
-.sidebar-level.level-skipped {
-  background: var(--level-skipped);
 }
 
 /* ---- transactions ---- */
@@ -5151,17 +5081,6 @@ body {
 }
 
 @media (max-width: 900px) {
-  /* The collapsed rail is named too, or its two-column template outranks this and squeezes the main
-     column into the rail's track. */
-  .app,
-  .app.is-collapsed {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    display: none;
-  }
-
   .transactions-body,
   .validators-body {
     grid-template-columns: 1fr;
@@ -6246,7 +6165,7 @@ body {
 
 /* ---- schedule, one group of columns at a time ---- */
 
-/* Named, so the table can switch to one group of columns wherever it stops fitting, sidebar or not. */
+/* Named, so the table can switch to one group of columns wherever it stops fitting. */
 .schedule {
   container: schedule / inline-size;
 }

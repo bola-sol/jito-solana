@@ -210,7 +210,7 @@ export function SlotDetailsPage({
   if (heads.length === 0) {
     return (
       <section className="slot-details">
-        <div className="sidebar-empty">
+        <div className="list-empty">
           {reading
             ? "reading the blocks this validator holds…"
             : "nothing produced yet. Blocks appear here as this validator leads."}

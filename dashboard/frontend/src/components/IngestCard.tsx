@@ -36,13 +36,10 @@ export function IngestCard(): ReactElement | null {
         ))}
       </div>
       <div className="card-footnote">
-        Dropped packets per UDP port, shown as a share of everything that
-        arrived wherever the traffic is counted in whole packets.{" "}
-        {elsewhere
-          ? "Serve repair is the one row with no received count, and the QUIC ports are on the TPU path card instead."
-          : "Serve repair and the QUIC ports have no such count, and their rows are drop figures alone."}{" "}
-        {votor && "Votor counts the votes it took rather than packets, so its row has no share. "}
-        <Explain text="The kernel counts what a socket discarded but not what it delivered, so the delivered count comes from the validator's own receivers. Serve repair never reports one, and the QUIC ports count transactions rather than datagrams.">
+        Packets the kernel dropped per UDP port, as a share of those received where both are counted.{" "}
+        {elsewhere ? "The QUIC ports are on the TPU path card." : "Serve repair and the QUIC ports show drops only."}{" "}
+        {votor && "Votor counts votes, not packets, so its row has no share. "}
+        <Explain text="The kernel counts drops but not deliveries, so the received count comes from the validator's own receivers. Serve repair reports none, and QUIC counts transactions, not packets.">
           Why?
         </Explain>
       </div>

@@ -3,7 +3,7 @@
 
 use {
     super::Collector,
-    crate::metrics_tap::VoteArrival,
+    crate::{geoip, metrics_tap::VoteArrival},
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_gossip::{
@@ -40,6 +40,8 @@ pub struct GossipPeers {
     pub stake: Vec<u64>,
     pub client: Vec<usize>,
     pub ip: Vec<Option<String>>,
+    /// Two-letter country code of `ip`.
+    pub country: Vec<Option<&'static str>>,
     pub rpc: Vec<Option<u16>>,
     /// Milliseconds since this node last received the peer's contact record.
     pub heard_ago: Vec<u64>,
@@ -162,8 +164,9 @@ impl Collector {
                 .push(info.get(key).and_then(|info| info.name.clone()));
             list.stake.push(stake_of(key));
             list.client.push(index);
-            list.ip
-                .push(contact.gossip().map(|addr| addr.ip().to_string()));
+            let ip = contact.gossip().map(|addr| addr.ip());
+            list.ip.push(ip.map(|ip| ip.to_string()));
+            list.country.push(ip.and_then(geoip::country));
             list.rpc.push(contact.rpc().map(|addr| addr.port()));
             list.heard_ago.push(now_millis.saturating_sub(*heard_at));
             list.started

@@ -9,6 +9,7 @@ pub mod config;
 pub mod context;
 #[cfg(test)]
 pub(crate) mod fixture;
+pub mod geoip;
 pub mod history;
 pub mod host_stats;
 pub mod meters;

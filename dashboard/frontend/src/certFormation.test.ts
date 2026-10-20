@@ -333,6 +333,7 @@ describe("picking a bar", () => {
       stake: [50, 30, 20],
       client: [0, 0, 0],
       ip: [null, null, null],
+      country: [null, null, null],
       rpc: [null, null, null],
       heard_ago: [0, 0, 0],
       started: [0, 0, 0],

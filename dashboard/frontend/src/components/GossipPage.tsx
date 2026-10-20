@@ -633,7 +633,16 @@ const PeerLine = memo(function PeerLine({
         </td>
       )}
       <td>{peer.client || "—"}</td>
-      <td className="is-mono">{peer.ip ? <Copyable text={peer.ip} /> : "—"}</td>
+      <td className="is-mono">
+        {peer.ip ? (
+          <span className="gossip-ip">
+            <Copyable text={peer.ip} />
+            {peer.country && <span className="country-code">{peer.country}</span>}
+          </span>
+        ) : (
+          "—"
+        )}
+      </td>
       <td className="is-num">{peer.rpc ?? "—"}</td>
       <td className={`is-num${peer.heardAgo > SILENT_MILLIS ? " tone-warn" : ""}`}>
         <Parts parts={spanParts(peer.heardAgo)} />

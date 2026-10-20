@@ -36,6 +36,7 @@ const LIST: GossipPeers = {
   stake: [600, 300, 0, 50],
   client: [0, 1, 0, 0],
   ip: ["189.1.171.215", "67.202.63.79", "198.51.100.7", null],
+  country: ["BR", "US", null, null],
   rpc: [null, null, 8899, null],
   heard_ago: [1_000, 2_000, 3_000, 74_000],
   started: [NOW - 6 * 86_400_000, NOW - 3_600_000, NOW - 840_000, 0],
@@ -69,6 +70,11 @@ describe("gossipPeers", () => {
     });
     expect(PEERS[1].client).toBe("JitoLabs v4.3.0");
     expect(PEERS[2]).toMatchObject({ full: null, incremental: null, rpc: 8899 });
+  });
+
+  it("carries each address's country and finds a peer by it", () => {
+    expect(PEERS.map((peer) => peer.country)).toEqual(["BR", "US", null, null]);
+    expect(PEERS.filter((peer) => matchesSearch(peer, "br")).map((peer) => peer.identity)).toEqual(["Big1111"]);
   });
 });
 

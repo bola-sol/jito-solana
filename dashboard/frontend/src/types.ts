@@ -97,6 +97,8 @@ export interface Peer {
   client: string | null;
   stake: number;
   ip: string | null;
+  /** Two-letter country code of `ip`. */
+  country: string | null;
   name: string | null;
   icon: string | null;
 }
@@ -164,6 +166,8 @@ export interface GossipPeers {
   stake: number[];
   client: number[];
   ip: (string | null)[];
+  /** Two-letter country code of `ip`. */
+  country: (string | null)[];
   rpc: (number | null)[];
   /** Milliseconds since its contact record last arrived. */
   heard_ago: number[];

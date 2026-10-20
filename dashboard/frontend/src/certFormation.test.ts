@@ -11,6 +11,7 @@ import {
   milestoneLabel,
   milestones,
   msAt,
+  pathShare,
   overlaps,
   replayAt,
   runningPath,
@@ -56,6 +57,8 @@ function testnet(over: Partial<CertFormation> = {}): CertFormation {
     fast_final_millis: 310,
     second_round_millis: 412,
     slots: 431_000,
+    fast_slots: null,
+    second_round_slots: null,
     ...over,
   };
 }
@@ -82,6 +85,8 @@ function early(): CertFormation {
     fast_final_millis: 150,
     second_round_millis: 87,
     slots: 12_700,
+    fast_slots: 2_070,
+    second_round_slots: 99_660,
   };
 }
 
@@ -343,5 +348,26 @@ describe("picking a bar", () => {
     // A zero finalize mean is no measurement.
     expect(votersIn(peers, 1, 85, 90)).toEqual(["A"]);
     expect(votersIn(peers, 1, 0, 5)).toEqual([]);
+  });
+});
+
+describe("pathShare", () => {
+  it("gives whole percents with the winner marked", () => {
+    expect(pathShare(99_660, 2_070)).toEqual({ text: "won 98%", won: true });
+    expect(pathShare(2_070, 99_660)).toEqual({ text: "won 2%", won: false });
+  });
+
+  it("keeps a tenth near either end and bounds the extremes", () => {
+    expect(pathShare(500, 99_500)).toEqual({ text: "won 0.5%", won: false });
+    expect(pathShare(99_127, 3)).toEqual({ text: "won >99.9%", won: true });
+    expect(pathShare(3, 99_127)).toEqual({ text: "won <0.1%", won: false });
+    expect(pathShare(432_000, 0)).toEqual({ text: "won 100%", won: true });
+    expect(pathShare(0, 432_000)).toEqual({ text: "won 0%", won: false });
+  });
+
+  it("marks no winner on an even split and shows nothing without counts", () => {
+    expect(pathShare(50, 50)?.won).toBe(false);
+    expect(pathShare(null, 5)).toBeNull();
+    expect(pathShare(0, 0)).toBeNull();
   });
 });

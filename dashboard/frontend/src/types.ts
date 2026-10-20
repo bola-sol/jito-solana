@@ -605,6 +605,9 @@ export interface CertFormation {
   second_round_millis: number | null;
   /** About the slots this node timed that epoch, fewer where it started partway through. */
   slots: number | null;
+  /** Slots each path finalized first, over the same epoch since this node started. */
+  fast_slots: number | null;
+  second_round_slots: number | null;
 }
 
 export interface FinalizationShare {

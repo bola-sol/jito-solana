@@ -9,7 +9,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::collections::HashMap,
+    std::collections::{BTreeMap, HashMap},
 };
 
 /// The curves run from the slot's start to this many milliseconds.
@@ -21,6 +21,34 @@ const SHARE_SCALE: u128 = 10_000;
 const NOTARIZED_PERCENT: u128 = 60;
 const FAST_FINAL_PERCENT: u128 = 80;
 const SECOND_ROUND_PERCENT: u128 = 60;
+
+/// What a published formation was built from: the epoch, its slot time and its path counts.
+pub(super) type FormationKey = (Epoch, Option<u64>, Option<(u64, u64)>);
+
+/// The epoch votor reports can trail the current one by two.
+const PATH_EPOCHS_HELD: usize = 3;
+
+/// Finalized slots per epoch, by the certificate votor tracked as finalizing them.
+#[derive(Debug, Default)]
+pub(super) struct FinalizedPaths {
+    /// Fast, then second round.
+    by_epoch: BTreeMap<Epoch, (u64, u64)>,
+}
+
+impl FinalizedPaths {
+    fn note(&mut self, epoch: Epoch, fast: bool) {
+        let (fast_slots, second_slots) = self.by_epoch.entry(epoch).or_default();
+        let count = if fast { fast_slots } else { second_slots };
+        *count = count.saturating_add(1);
+        while self.by_epoch.len() > PATH_EPOCHS_HELD {
+            self.by_epoch.pop_first();
+        }
+    }
+
+    fn counts(&self, epoch: Epoch) -> Option<(u64, u64)> {
+        self.by_epoch.get(&epoch).copied()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CertFormation {
@@ -39,6 +67,10 @@ pub struct CertFormation {
     /// The most notarize votes any ranked validator's average is over: about the slots this node
     /// timed that epoch, fewer where it started partway through.
     pub slots: Option<u64>,
+    /// Slots the fast certificate finalized, and the second round, over the same epoch since this
+    /// node started.
+    pub fast_slots: Option<u64>,
+    pub second_round_slots: Option<u64>,
 }
 
 /// Arrivals in microseconds against stake, earliest first. A zero mean is votor's floor, not a
@@ -119,17 +151,28 @@ fn formation(
         fast_final_millis: crossing(&notarize, total, FAST_FINAL_PERCENT),
         second_round_millis: crossing(&finalize, total, SECOND_ROUND_PERCENT),
         slots,
+        fast_slots: None,
+        second_round_slots: None,
     })
 }
 
 impl Collector {
-    /// Rebuilt only when votor reports a new epoch or that epoch's slot time first becomes known.
+    /// Read every tick, so a page left closed loses no slot.
+    pub(super) fn collect_finalized_paths(&mut self, root_bank: &Bank) {
+        let schedule = root_bank.epoch_schedule();
+        for (slot, fast) in self.metrics_tap.take_finalized_paths() {
+            self.finalized_paths.note(schedule.get_epoch(slot), fast);
+        }
+    }
+
+    /// Rebuilt only when votor reports a new epoch, or that epoch's slot time or path counts move.
     pub(super) fn collect_cert_formation(&mut self, bank: &Bank) {
         let Some(epoch) = self.metrics_tap.vote_arrival_epoch() else {
             return;
         };
         let slot_nanos = self.clock.epoch_mean_nanos(epoch);
-        if self.cert_formation_for == Some((epoch, slot_nanos)) {
+        let paths = self.finalized_paths.counts(epoch);
+        if self.cert_formation_for == Some((epoch, slot_nanos, paths)) {
             return;
         }
         let (held, arrivals) = self.metrics_tap.vote_arrivals();
@@ -137,8 +180,13 @@ impl Collector {
         if held != Some(epoch) {
             return;
         }
-        self.cert_formation_for = Some((epoch, slot_nanos));
-        let formation = cert_formation(bank, epoch, &arrivals, slot_nanos);
+        self.cert_formation_for = Some((epoch, slot_nanos, paths));
+        let formation =
+            cert_formation(bank, epoch, &arrivals, slot_nanos).map(|formation| CertFormation {
+                fast_slots: paths.map(|(fast, _)| fast),
+                second_round_slots: paths.map(|(_, second)| second),
+                ..formation
+            });
         self.debounces.cert_formation.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -240,6 +288,21 @@ mod tests {
         assert_eq!(built.second_round_millis, None);
         assert_eq!(built.slot_nanos, Some(222_000_000));
         assert_eq!(built.slots, Some(12_700));
+    }
+
+    #[test]
+    fn test_paths_are_counted_per_epoch_and_the_oldest_dropped() {
+        let mut paths = FinalizedPaths::default();
+        for fast in [true, true, false] {
+            paths.note(20, fast);
+        }
+        assert_eq!(paths.counts(20), Some((2, 1)));
+        assert_eq!(paths.counts(21), None);
+        for epoch in 21..24 {
+            paths.note(epoch, false);
+        }
+        assert_eq!(paths.counts(20), None, "four epochs held is one too many");
+        assert_eq!(paths.counts(23), Some((0, 1)));
     }
 
     #[test]

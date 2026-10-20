@@ -56,7 +56,7 @@ mod slot_clock;
 pub(crate) use self::slot_clock::CATCH_UP_SLOTS_PER_SECOND;
 use self::{
     block_life::{BlockLifeSummary, BlockLives},
-    cert_formation::CertFormation,
+    cert_formation::{CertFormation, FinalizedPaths, FormationKey},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     finalization::{FinalizationShare, FinalizationTally},
     skip_rate::{LeaderSlotCounts, SkipRateWalk},
@@ -435,8 +435,8 @@ pub struct Collector {
     previous_slots: SkipRateWalk,
     finalization: FinalizationTally,
     block_lives: BlockLives,
-    /// The epoch and slot time the published formation was built for.
-    cert_formation_for: Option<(Epoch, Option<u64>)>,
+    cert_formation_for: Option<FormationKey>,
+    finalized_paths: FinalizedPaths,
     /// Read once a tick.
     cluster_tip: Option<Slot>,
     last_completed_slot: Slot,
@@ -534,6 +534,7 @@ impl Collector {
             finalization: FinalizationTally::default(),
             block_lives: BlockLives::default(),
             cert_formation_for: None,
+            finalized_paths: FinalizedPaths::default(),
             cluster_tip: None,
             epoch_published: None,
             last_completed_slot: 0,
@@ -641,6 +642,7 @@ impl Collector {
         self.collect_slot_levels(&root_bank, &frozen);
         self.store_failed(&working_bank);
         self.collect_vote_certs(&root_bank);
+        self.collect_finalized_paths(&root_bank);
         self.collect_turns(completed);
         // From the working bank: the root trails the tip by the thirty-two slots it
         // takes to root.

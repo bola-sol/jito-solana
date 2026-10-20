@@ -7153,6 +7153,16 @@ body {
   color: var(--good);
 }
 
+/* After the figure's own sub line; the path that finalized most slots reads in the figure's green. */
+.cert-won {
+  order: 4;
+}
+
+.cert-won.is-winner {
+  color: var(--good);
+  font-weight: 500;
+}
+
 .cert-mirror {
   position: relative;
   margin-top: 16px;

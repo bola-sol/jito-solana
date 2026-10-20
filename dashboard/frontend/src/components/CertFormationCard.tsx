@@ -10,6 +10,7 @@ import {
   labelWidth,
   milestoneLabel,
   milestones,
+  pathShare,
   msAt,
   overlaps,
   replayAt,
@@ -58,6 +59,8 @@ interface StatSpec {
   sub: string;
   tip: string;
   ms: (formation: CertFormation) => number | null;
+  /** The slots this path finalized first, then the other path's. */
+  won?: (formation: CertFormation) => [number | null, number | null];
 }
 
 const STATS: StatSpec[] = [
@@ -74,6 +77,7 @@ const STATS: StatSpec[] = [
     sub: "80% notarize votes",
     tip: "When notarize votes from 80% of stake had arrived on average, enough to finalize in one round.",
     ms: (formation) => formation.fast_final_millis,
+    won: (formation) => [formation.fast_slots, formation.second_round_slots],
   },
   {
     key: "second",
@@ -81,6 +85,7 @@ const STATS: StatSpec[] = [
     sub: "60% finalize votes",
     tip: "When finalize votes from 60% of stake had arrived on average, the fallback when the fast path misses.",
     ms: (formation) => formation.second_round_millis,
+    won: (formation) => [formation.second_round_slots, formation.fast_slots],
   },
 ];
 
@@ -494,6 +499,7 @@ function FormationPanel({
           {STATS.map((stat) => {
             const ms = stat.ms(formation);
             const shown = ms !== null && (frame === null || frame.ms >= ms);
+            const won = stat.won ? pathShare(...stat.won(formation)) : null;
             return (
               <div key={stat.key} className="stat">
                 <div className="stat-label has-explain">
@@ -501,6 +507,7 @@ function FormationPanel({
                 </div>
                 <div className={`stat-value cert-value is-${stat.key}`}>{shown ? `${ms} ms` : "—"}</div>
                 <div className="stat-sub">{stat.sub}</div>
+                {won && <div className={`stat-sub cert-won${won.won ? " is-winner" : ""}`}>{won.text}</div>}
               </div>
             );
           })}

@@ -112,6 +112,34 @@ export function timedFromReplay(version: string | null | undefined): boolean {
   return version?.startsWith("4.3.") ?? false;
 }
 
+export interface PathShare {
+  text: string;
+  /** Finalized more than half the slots. */
+  won: boolean;
+}
+
+/** One path's share of the finalized slots, short enough for a figure's sub line; whole percents
+ *  but for the tenths near either end, where a whole percent would round to 0 or 100. */
+export function pathShare(slots: number | null, other: number | null): PathShare | null {
+  if (slots === null || other === null) return null;
+  const total = slots + other;
+  if (total === 0) return null;
+  const share = (100 * slots) / total;
+  const text =
+    slots === 0
+      ? "0%"
+      : slots === total
+        ? "100%"
+        : share < 0.1
+          ? "<0.1%"
+          : share > 99.9
+            ? ">99.9%"
+            : share < 1 || share > 99
+              ? `${share.toFixed(1)}%`
+              : `${Math.round(share)}%`;
+  return { text: `won ${text}`, won: 2 * slots > total };
+}
+
 export function unmeasured(formation: CertFormation): number {
   return Math.max(0, SHARE_SCALE - formation.notarize_total) / SHARE_SCALE;
 }

@@ -257,6 +257,8 @@ pub struct MetricsTap {
     /// Kept one by one because the panel wants the worst slot as well as the mean.
     replay_slots: Mutex<BTreeMap<Slot, ReplaySlotTimes>>,
     vote_tracks: Mutex<BTreeMap<Slot, VoteSent>>,
+    /// Each finalized slot votor tracked, and whether its fast certificate finalized it.
+    finalized_paths: Mutex<VecDeque<(Slot, bool)>>,
 
     /// Microseconds from a slot's last shred to its finalization, stamped when votor reported it.
     finality: TimedSamples,
@@ -1257,6 +1259,21 @@ impl MetricsTap {
         let Some(slot) = field(SLOT) else {
             return;
         };
+        // Only a late fast certificate can make this read fast for a slot the second round
+        // finalized, and the pool prunes a slot too soon after its root for that to be common.
+        let fast = point
+            .fields
+            .iter()
+            .find(|(name, _)| *name == "is_fast_finalization")
+            .map(|(_, value)| value == "true");
+        if let Some(fast) = fast
+            && let Ok(mut paths) = self.finalized_paths.lock()
+        {
+            paths.push_back((slot, fast));
+            if paths.len() > VOTE_TRACKS {
+                paths.pop_front();
+            }
+        }
         let vote = VoteSent {
             first_shred_us: field("first_shred"),
             parent_ready_us: field("parent_ready"),
@@ -1399,6 +1416,13 @@ impl MetricsTap {
 
     pub fn reports_bundles_processed(&self) -> bool {
         self.bundles_processed_reported.load(Ordering::Relaxed)
+    }
+
+    pub fn take_finalized_paths(&self) -> Vec<(Slot, bool)> {
+        match self.finalized_paths.lock() {
+            Ok(mut paths) => std::mem::take(&mut *paths).into_iter().collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     pub fn take_vote_tracks(&self) -> Vec<(Slot, VoteSent)> {
@@ -3192,6 +3216,26 @@ mod tests {
             }]
         );
         assert!(tap.take_block_votes().is_empty(), "taken once");
+    }
+
+    #[test]
+    fn test_finalized_paths_are_taken_once() {
+        let tap = MetricsTap::default();
+        for (slot, fast) in [("100i", "true"), ("101i", "false")] {
+            tap.observe(&named(
+                VOTE_TRACKING,
+                &[
+                    ("slot", slot),
+                    ("finalized", "180000i"),
+                    ("is_fast_finalization", fast),
+                ],
+            ));
+        }
+        // Not finalized yet, so no path.
+        tap.observe(&named(VOTE_TRACKING, &[("slot", "102i")]));
+
+        assert_eq!(tap.take_finalized_paths(), vec![(100, true), (101, false)]);
+        assert!(tap.take_finalized_paths().is_empty(), "taken once");
     }
 
     #[test]

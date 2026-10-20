@@ -1207,13 +1207,13 @@ body {
   white-space: nowrap;
 }
 
-/* Aligned on the name's baseline, or a logo moves the head by half a pixel as leaders change. */
+/* Aligned on the name's baseline, or a logo moves the head by half a pixel as leaders change. A
+   fixed width, so "Leader" stays put whatever the name's length. */
 .slot-strip-leader-name {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  max-width: 20ch;
-  min-width: 0;
+  width: 20ch;
   font-size: 13px;
   line-height: 1;
   color: var(--text);
@@ -1224,9 +1224,12 @@ body {
   margin: -3px 0;
 }
 
+/* Room below the baseline for descenders, which the clip would otherwise cut, without adding height. */
 .slot-strip-leader-text {
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-bottom: 0.25em;
+  margin-bottom: -0.25em;
 }
 
 .slot-strip-mine {
@@ -1251,7 +1254,7 @@ body {
   }
 
   .slot-strip-leader-name {
-    max-width: 16ch;
+    width: 16ch;
   }
 }
 

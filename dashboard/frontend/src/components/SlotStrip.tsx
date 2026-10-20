@@ -345,7 +345,7 @@ function StripLeader({ mine, leader }: { mine: boolean; leader: LeaderRef }) {
   const name = leader.name ?? (leader.key ? shortKey(leader.key, 4, 4) : "unknown");
   return (
     <span className="slot-strip-leader">
-      <Explain text="The validator scheduled to lead the newest slot this node has seen.">Leader</Explain>
+      Leader
       <span className="slot-strip-leader-name">
         {mine && <span className="slot-strip-mine" aria-label="our slot" />}
         <Logo url={leader.icon} size={14} />

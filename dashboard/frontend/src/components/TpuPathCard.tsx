@@ -236,11 +236,9 @@ function Elsewhere({
     <Fold id="tpu" title="TPU path" summary={summary}>
       <div className="path-body">
       <div className="path-notice">
-        The TPU address this validator advertises in gossip is{" "}
-        <b>not a socket on this host</b>, so the cluster's connections are
-        answered somewhere else. The stages below count what the scheduler was
-        given however it arrived; the ports at the foot are only what still
-        reaches this host directly.
+        This validator's advertised TPU address is <b>on another host</b>. The stages below count
+        everything the scheduler received; the ports at the foot count only traffic that still reaches
+        this host.
       </div>
 
       {stages}
@@ -248,12 +246,9 @@ function Elsewhere({
       {ports}
 
       <div className="card-footnote">
-        This epoch's totals from this host's own workers, with the ports at the
-        foot on the same five minutes as everywhere else. Each section is drawn
-        against its own total; the sections do not add up against each other,
-        because nothing counts a transaction across all of them. What the
-        scheduler then did with a leader slot's traffic is on that slot's own
-        page.
+        This epoch's totals from this host's workers; the ports at the foot cover the last five
+        minutes. Each section is measured against its own total, so sections don't add up across
+        each other. What the scheduler did with a leader slot is on that slot's page.
       </div>
       </div>
     </Fold>

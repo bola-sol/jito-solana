@@ -412,9 +412,11 @@ body {
   color: var(--text);
 }
 
+/* Its line only as tall as the text, descenders and underline need. */
 .footer {
   margin-top: auto;
   font-size: 11px;
+  line-height: 13px;
   text-align: center;
   color: var(--text-faint);
 }
@@ -2797,6 +2799,11 @@ body {
   .produced-list {
     flex: none;
     height: 80dvh;
+  }
+
+  /* Held at its content's height, or the footer after it lands among the rows. */
+  .main > .slot-details {
+    flex: none;
   }
 }
 
@@ -6978,16 +6985,26 @@ body {
     background: var(--bg);
   }
 
+  /* Room below for the footer's line and the 6px above it. */
   .schedule-list {
     flex: none;
-    height: calc(100dvh - 62px - var(--gap));
+    height: calc(100dvh - 62px - var(--gap) - 19px);
   }
 
-  /* The page's padding moves onto the header, so the bar sticks at the very top, and nothing sits
-     below the list, so scrolled to the end the list meets the bar rather than going under it. */
+  /* Held at its content's height, or the footer after it lands among the rows. */
+  .main > .schedule {
+    flex: none;
+  }
+
+  /* The page's padding moves onto the header, so the bar sticks at the very top, and only the footer
+     sits below the list, so scrolled to the end the list meets the bar rather than going under it. */
   .main:has(> .schedule) {
     padding-top: 0;
     padding-bottom: 0;
+  }
+
+  .main:has(> .schedule) > .footer {
+    margin-top: calc(6px - var(--gap));
   }
 
   .main:has(> .schedule) > .header {

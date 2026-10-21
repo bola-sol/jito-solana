@@ -180,12 +180,37 @@ body {
   color: var(--good);
 }
 
-/* Third-party images of unknown dimensions, so they are boxed and clipped. */
+/* Third-party images of unknown dimensions, so they are boxed and clipped. Nothing in the box is in
+   flow, so it sits on the line as an image would. */
 .logo {
-  border-radius: 50%;
-  object-fit: cover;
+  position: relative;
+  display: inline-block;
   flex: none;
+  overflow: hidden;
+  border-radius: 50%;
   background: var(--panel-raised);
+  /* Under the image, so only a stand-in shows it; seen on the raised rows it would otherwise match. */
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.logo-letter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sans);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-dim);
+}
+
+.logo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* Sized to its text so a full address shows when the header has room, and

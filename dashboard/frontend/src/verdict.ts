@@ -12,7 +12,8 @@ export interface Verdict {
 /** A slot or two is the ordinary lag of hearing about the tip. */
 export const IN_STEP_SLOTS = 4;
 
-/** A stalled replay outranks the vote, and delinquent the rest. */
+/** A stalled replay outranks the vote, and delinquent the rest. Kept short enough for one line
+ *  beside the cluster figures. */
 export function verdictOf(
   health: Health | undefined,
   behindCluster: number | null | undefined,
@@ -21,28 +22,27 @@ export function verdictOf(
   if (!health) return { tone: "muted", headline: "Waiting for the validator." };
 
   const behind = behindCluster ?? 0;
-  const distance = behind > IN_STEP_SLOTS ? `, ${count(behind)} slots behind the cluster` : "";
+  const distance = behind > IN_STEP_SLOTS ? `, ${count(behind)} behind` : "";
   if (health.replay === "stalled") {
-    const at = completedSlot === undefined ? "" : ` at slot ${count(completedSlot)}`;
-    return { tone: "bad", headline: `Replay has stalled${at}${distance}.` };
+    return {
+      tone: "bad",
+      headline:
+        completedSlot === undefined
+          ? `Replay stalled${distance}.`
+          : `Replay stalled at ${count(completedSlot)}.`,
+    };
   }
 
   switch (health.vote) {
     case "delinquent":
-      return {
-        tone: "bad",
-        headline:
-          behind > 0
-            ? `Delinquent, ${count(behind)} slots behind the cluster.`
-            : "Delinquent.",
-      };
+      return { tone: "bad", headline: behind > 0 ? `Delinquent, ${count(behind)} behind.` : "Delinquent." };
     case "not_voting":
-      return { tone: "warn", headline: `Running without voting${distance}.` };
+      return { tone: "warn", headline: distance ? `Not voting${distance}.` : "Running without voting." };
     case "not_started":
-      return { tone: "muted", headline: `Running, not voting yet${distance}.` };
+      return { tone: "muted", headline: distance ? `Not voting${distance}.` : "Running, not voting yet." };
     case "voting":
       return behind > IN_STEP_SLOTS
-        ? { tone: "warn", headline: `Voting, ${count(behind)} slots behind the cluster.` }
+        ? { tone: "warn", headline: `Voting, ${count(behind)} behind.` }
         : { tone: "good", headline: "Voting, in step with the cluster." };
   }
 }

@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
 };
 
-/// An epoch, two days at 400 ms, in thirty-five megabytes, allocated by the service since the
+/// An epoch, two days at 400 ms, in thirty-eight megabytes, allocated by the service since the
 /// server answers range queries before the collector exists.
 pub const PACKED_SLOTS: usize = 432_000;
 
@@ -32,6 +32,9 @@ pub struct PackedSlot {
     pub left_out: u16,
     /// Saturating into `u16`, which keeps the row at its size.
     pub recovered: u16,
+    pub failed: u32,
+    /// From the last shred to finalization, saturating.
+    pub finality_micros: u32,
 }
 
 /// A full span of mainnet-sized rows is under half the frame ceiling; a test holds it there.
@@ -81,6 +84,7 @@ pub const REWARD_MASK: u16 = 0b11 << REWARD_SHIFT;
 pub const REWARD_PAID: u16 = 1 << REWARD_SHIFT;
 pub const REWARD_UNPAID: u16 = 2 << REWARD_SHIFT;
 pub const REWARD_NONE: u16 = 3 << REWARD_SHIFT;
+pub const HAS_FINALITY: u16 = 1 << 8;
 
 fn reward_bits(reward: Option<Reward>) -> u16 {
     match reward {
@@ -153,6 +157,7 @@ impl SlotHistory {
                     .saturating_sub(block.non_vote_transactions),
             );
             row.non_votes = clamp(block.non_vote_transactions);
+            row.failed = clamp(block.failed_transactions);
             row.compute = clamp(block.block_cost);
             row.fees = block.total_fees;
             row.priority_fees = block.priority_fees;
@@ -178,6 +183,18 @@ impl SlotHistory {
         }
         row.flags = (row.flags & !REWARD_MASK) | reward_bits(entry.reward);
         row.left_out = entry.left_out.unwrap_or(0);
+    }
+
+    pub fn record_finality(&mut self, slot: Slot, micros: u64) {
+        let row = self.row(slot);
+        row.flags |= HAS_FINALITY;
+        row.finality_micros = clamp(micros);
+    }
+
+    /// One row written directly, for tests elsewhere in the crate.
+    #[cfg(test)]
+    pub(crate) fn record_test_row(&mut self, slot: Slot, fill: impl FnOnce(&mut PackedSlot)) {
+        fill(self.row(slot));
     }
 
     pub fn record_time(&mut self, slot: Slot, millis: u64) {
@@ -206,6 +223,8 @@ impl SlotHistory {
             replayed_millis: 999_999,
             left_out: 9_999,
             recovered: 9_999,
+            failed: 99_999,
+            finality_micros: 9_999_999,
         };
     }
 
@@ -420,9 +439,9 @@ mod tests {
     }
 
     #[test]
-    fn test_a_held_row_stays_eighty_bytes() {
-        // 432,000 of them is the thirty-five megabytes the ring is sized by.
-        assert_eq!(std::mem::size_of::<(Slot, PackedSlot)>(), 80);
+    fn test_a_held_row_stays_eighty_eight_bytes() {
+        // 432,000 of them is the thirty-eight megabytes the ring is sized by.
+        assert_eq!(std::mem::size_of::<(Slot, PackedSlot)>(), 88);
     }
 
     #[test]
@@ -510,6 +529,24 @@ mod tests {
         assert_eq!(read.replay_micros, 47_200);
         let built = history.get(41).expect("recorded");
         assert_eq!(built.flags & HAS_REPLAY, 0);
+    }
+
+    #[test]
+    fn test_finality_outlasts_the_slots_own_record() {
+        let mut history = SlotHistory::new(64);
+        let mut block = with_block(40, 100, 10);
+        if let Some(detail) = block.block.as_mut() {
+            detail.failed_transactions = 37;
+        }
+        history.record(&block);
+        history.record_finality(40, 45_300);
+        history.record(&block);
+
+        let read = history.get(40).expect("recorded");
+        assert_eq!(read.failed, 37);
+        assert_eq!(read.flags & HAS_FINALITY, HAS_FINALITY);
+        assert_eq!(read.finality_micros, 45_300);
+        assert_eq!(history.get(41), None);
     }
 
     #[test]

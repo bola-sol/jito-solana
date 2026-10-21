@@ -592,6 +592,30 @@ export interface BlockLifeSummary {
   slowest: SlowBlock[];
 }
 
+/** The 5th, 50th and 95th percentiles. */
+export interface Spread {
+  p05: number;
+  p50: number;
+  p95: number;
+}
+
+/** The cluster over the root's epoch; each figure null until it has enough samples. */
+export interface ClusterFigures {
+  epoch: number;
+  /** Set where the held slots start after the epoch did, as after a restart. */
+  since_millis: number | null;
+  /** Percent of the block limit, per block. */
+  cu_used: Spread | null;
+  slot_time_millis: Spread | null;
+  /** Percent of each leader's slots. */
+  skip_rate: Spread | null;
+  /** Over runs of 300 slots. */
+  tps: Spread | null;
+  failed_tps: Spread | null;
+  /** From the last shred to finalization, for each turn's first block; null under TowerBFT. */
+  finality_millis: Spread | null;
+}
+
 /** Quartiles of handoff gaps in milliseconds. */
 export interface HandoffBand {
   p25: number;
@@ -1167,6 +1191,7 @@ export interface Published {
     cert_formation: CertFormation | null;
     handoff: HandoffSummary | null;
     handoff_now: HandoffNow | null;
+    cluster_figures: ClusterFigures | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

@@ -49,6 +49,7 @@ use {
 mod block_life;
 mod cert_formation;
 mod certificates;
+mod cluster_figures;
 mod finalization;
 mod gossip_peers;
 mod handoff;
@@ -60,6 +61,7 @@ use self::{
     block_life::{BlockLifeSummary, BlockLives},
     cert_formation::{CertFormation, FinalizedPaths, FormationKey},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
+    cluster_figures::ClusterFigures,
     finalization::{FinalizationShare, FinalizationTally},
     handoff::{HandoffNow, HandoffSummary, Handoffs},
     skip_rate::{LeaderSlotCounts, SkipRateWalk},
@@ -73,6 +75,8 @@ pub use self::{
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
+/// An epoch's spread moves slowly, and each pass reads the whole ring.
+const CLUSTER_FIGURES_EVERY: Duration = Duration::from_secs(30);
 
 /// The tip counts the slot still arriving, so a node in step reads a slot or two behind it.
 const IN_STEP_SLOTS: u64 = 4;
@@ -417,6 +421,7 @@ struct Debounces {
     cert_formation: Debounced<Option<CertFormation>>,
     handoff: Debounced<Option<HandoffSummary>>,
     handoff_now: Debounced<Option<HandoffNow>>,
+    cluster_figures: Debounced<Option<ClusterFigures>>,
 }
 
 pub struct Collector {
@@ -470,6 +475,7 @@ pub struct Collector {
     /// False on a backup identity.
     voting: bool,
     last_slow_tick: Instant,
+    cluster_figures_at: Instant,
     subscribers: usize,
 
     tips: Option<TipMeter>,
@@ -571,6 +577,7 @@ impl Collector {
             // voting before then would flash the wrong status on startup.
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
+            cluster_figures_at: now.checked_sub(CLUSTER_FIGURES_EVERY).unwrap_or(now),
             subscribers: 0,
             tips,
             commission_bps,
@@ -735,6 +742,10 @@ impl Collector {
             let votes = self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
+            if now.duration_since(self.cluster_figures_at) >= CLUSTER_FIGURES_EVERY {
+                self.cluster_figures_at = now;
+                self.collect_cluster_figures(&root_bank);
+            }
             self.collect_finalization_share(&working_bank);
             self.collect_cert_formation(&root_bank);
             self.debounces.block_life.publish(
@@ -2002,6 +2013,35 @@ impl Collector {
     }
 
     /// `None` means the schedule is not known yet, which is not an empty list.
+    /// The root's epoch, from its first slot; skips come from the root bank's slot history.
+    fn collect_cluster_figures(&mut self, root_bank: &Bank) {
+        let epoch = root_bank.epoch();
+        let Some(slot_history) = root_bank.get_slot_history() else {
+            return;
+        };
+        let epochs = self.epochs.read().unwrap();
+        let Some(info) = epochs
+            .iter()
+            .find(|info| info.epoch == epoch && !info.turns.is_empty())
+        else {
+            return;
+        };
+        let samples = cluster_figures::samples(
+            &self.history.read().unwrap(),
+            info,
+            self.newest_arrival,
+            root_bank.slot(),
+            |slot| slot_history.check(slot),
+        );
+        drop(epochs);
+        self.debounces.cluster_figures.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "cluster_figures",
+            Some(samples.figures()),
+        );
+    }
+
     fn leader_slots_in_epoch(&self, bank: &Bank, epoch: Epoch) -> Option<Vec<Slot>> {
         let epoch_schedule = bank.epoch_schedule();
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);

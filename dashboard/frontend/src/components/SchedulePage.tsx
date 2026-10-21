@@ -450,7 +450,7 @@ function TurnLeader({
   return (
     <div className="schedule-leader">
       <div className="schedule-leader-name">
-        <Logo url={turn.leader_icon} size={16} />
+        <Logo url={turn.leader_icon} size={16} name={turn.leader_name} />
         <span className="schedule-leader-title" title={turn.leader_name ?? turn.leader ?? undefined}>
           {name}
         </span>

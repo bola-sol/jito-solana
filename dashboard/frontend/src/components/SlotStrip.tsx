@@ -1,5 +1,6 @@
-import { memo, useState, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
+import { memo, useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
 import { count, shortKey, slotDelta } from "../format";
+import { preloadLogo, upcomingIcons } from "../logo";
 import type { LeaderRef } from "../schedule";
 import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
@@ -9,6 +10,9 @@ import { Logo } from "./Logo";
 import { Explain, PeakLine } from "./primitives";
 
 const STRIP_LENGTH = 64;
+
+/** Four turns ahead, so a leader's logo is cached before its name appears. */
+const PRELOAD_SLOTS = 16;
 
 const LEVELS: Array<[SlotLevel, string, string]> = [
   ["incomplete", "pending", "Received but not yet replayed, or still arriving"],
@@ -64,6 +68,15 @@ export function SlotStrip(): ReactElement {
   const slots = pinned ?? live;
   // From the live strip, so a pinned strip does not hold the leader still.
   const newest: SlotEntry | undefined = live[live.length - 1];
+  const newestSlot = newest?.slot;
+
+  useEffect(() => {
+    if (newestSlot === undefined) return;
+    for (const icon of upcomingIcons(newestSlot, PRELOAD_SLOTS, (slot) => store.leaderOf(slot, false).icon)) {
+      preloadLogo(icon);
+    }
+  }, [store, newestSlot]);
+
   const active =
     cursor === null ? null : (slots.find((entry) => entry.slot === cursor) ?? null);
   // Bars are drawn against what the cluster is configured for, so a nominal
@@ -348,7 +361,7 @@ function StripLeader({ mine, leader }: { mine: boolean; leader: LeaderRef }) {
       Leader
       <span className="slot-strip-leader-name">
         <span className="slot-strip-logo">
-          <Logo url={leader.icon} size={14} />
+          <Logo url={leader.icon} size={14} name={leader.name} />
         </span>
         <span className="slot-strip-leader-text">{name}</span>
         {mine && <span className="slot-strip-mine" aria-label="our slot" />}
@@ -376,7 +389,7 @@ function SlotDetail({ entry, leader }: { entry: SlotEntry | null | undefined; le
       {durationMs !== null && <span>{Math.round(durationMs)} ms</span>}
       {name && (
         <span className="slot-detail-leader">
-          <Logo url={leader.icon} size={12} />
+          <Logo url={leader.icon} size={12} name={leader.name} />
           {name}
         </span>
       )}

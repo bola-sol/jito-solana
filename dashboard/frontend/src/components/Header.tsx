@@ -38,7 +38,8 @@ export function Header(): ReactElement {
   const connection = store.getConnection();
   const feedLag = store.getFeedLag();
 
-  const name = store.get("summary", "identity_name") ?? "Private";
+  const identityName = store.get("summary", "identity_name");
+  const name = identityName ?? "Private";
   const icon = store.get("summary", "identity_icon") ?? null;
   const build = buildLabel(client, version);
   // The balances can be taken off a screen others see; remembered per host.
@@ -50,7 +51,7 @@ export function Header(): ReactElement {
     <header className="header">
       <div className="who">
         <span className="who-name">
-          <Logo url={icon} size={22} />
+          <Logo url={icon} size={22} name={identityName} />
           {name}
         </span>
         {identity ? (

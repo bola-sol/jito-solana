@@ -8,6 +8,7 @@ import {
   leaderSlotsLeft,
   matchesQuery,
   turnKey,
+  turnSpan,
   turnsOf,
   unheldSlots,
   type LeaderRef,
@@ -246,5 +247,18 @@ describe("followingRun", () => {
   it("has nothing after the epoch's last run", () => {
     expect(followingRun([100, 101, 102, 103], 100)).toBeNull();
     expect(followingRun([100, 101], 200)).toBeNull();
+  });
+});
+
+describe("turnSpan", () => {
+  it("finds the turn's slots among those held, however many have arrived", () => {
+    expect(turnSpan([96, 97, 98, 99, 100], 100)).toEqual({ first: 4, count: 1 });
+    expect(turnSpan([97, 98, 99, 100, 101, 102], 102)).toEqual({ first: 3, count: 3 });
+    expect(turnSpan([100, 101, 102, 103], 103)).toEqual({ first: 0, count: 4 });
+  });
+
+  it("is null when none of the turn is held, as on a strip paused before it began", () => {
+    expect(turnSpan([90, 91, 92, 93], 100)).toBeNull();
+    expect(turnSpan([], 100)).toBeNull();
   });
 });

@@ -22,6 +22,20 @@ export function leaderAt(epoch: EpochInfo | undefined, slot: number): string | n
   return epoch.leaders[index] ?? null;
 }
 
+/** Where the turn holding `slot` sits among `slots`, which ascend: its first index and how many of
+ *  its slots are there. Null when none are. */
+export function turnSpan(
+  slots: readonly number[],
+  slot: number,
+): { first: number; count: number } | null {
+  const turn = Math.floor(slot / SLOTS_PER_TURN);
+  const first = slots.findIndex((held) => Math.floor(held / SLOTS_PER_TURN) === turn);
+  if (first === -1) return null;
+  let count = 1;
+  while (first + count < slots.length && Math.floor(slots[first + count] / SLOTS_PER_TURN) === turn) count += 1;
+  return { first, count };
+}
+
 /** Counted from the current epoch's start at its constant length. Null without an epoch. */
 export function epochOf(epoch: EpochInfo | undefined, slot: number): number | null {
   if (!epoch || epoch.slots_in_epoch <= 0) return null;

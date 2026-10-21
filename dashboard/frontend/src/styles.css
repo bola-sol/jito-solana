@@ -1503,12 +1503,27 @@ body {
 }
 
 .slot-bars {
+  --bar-gap: 3px;
   display: flex;
   align-items: flex-end;
-  gap: 3px;
+  gap: var(--bar-gap);
   height: 84px;
   margin-top: 10px;
   position: relative;
+}
+
+/* In the gap above the bars, over the turn the head's leader holds. */
+.slot-turn {
+  --bar: calc((100% - (var(--bars) - 1) * var(--bar-gap)) / var(--bars));
+  position: absolute;
+  top: -8px;
+  left: calc(var(--first) * (var(--bar) + var(--bar-gap)));
+  width: calc(var(--count) * var(--bar) + (var(--count) - 1) * var(--bar-gap));
+  height: 5px;
+  border: 2px solid var(--text);
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  pointer-events: none;
 }
 
 .peak-line {
@@ -1733,10 +1748,16 @@ body {
   color: var(--ours);
 }
 
-/* Sixty-four bars on a phone leave no room for a three pixel gap. */
+/* Sixty-four bars on a phone leave no room for a three pixel gap, and a bar of two or three pixels
+   none for the bracket's two pixel ends. */
 @media (max-width: 700px) {
   .slot-bars {
-    gap: 2px;
+    --bar-gap: 2px;
+  }
+
+  .slot-turn {
+    border-left-width: 1px;
+    border-right-width: 1px;
   }
 }
 

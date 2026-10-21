@@ -601,6 +601,8 @@ export interface HandoffBand {
 
 export interface LateLeader {
   leader: string;
+  /** From the leader's gossip address. */
+  country: string | null;
   n: number;
   p50: number;
   /** Handoffs with a gap above the cluster's p75. */
@@ -623,12 +625,13 @@ export interface HandoffSummary {
   /** Latest first. */
   late: LateLeader[];
   late_count: number;
-  ours: { n: number; p50: number | null; over: number };
+  ours: { country: string | null; n: number; p50: number | null; over: number };
 }
 
 /** The leader whose turn is arriving now. */
 export interface HandoffNow {
   leader: string;
+  country: string | null;
   slot: number;
   /** Null until the slot before has filled, or where that slot was ours or skipped. */
   gap: number | null;

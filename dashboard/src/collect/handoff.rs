@@ -49,6 +49,8 @@ pub struct Band {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LateLeader {
     pub leader: String,
+    /// From the leader's gossip address.
+    pub country: Option<&'static str>,
     pub n: u32,
     pub p50: i32,
     /// Handoffs with a gap above the cluster's p75.
@@ -57,6 +59,7 @@ pub struct LateLeader {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OurHandoffs {
+    pub country: Option<&'static str>,
     pub n: u32,
     /// Only once settled.
     pub p50: Option<i32>,
@@ -85,6 +88,7 @@ pub struct HandoffSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HandoffNow {
     pub leader: String,
+    pub country: Option<&'static str>,
     /// The first slot of the leader's run of turns.
     pub slot: Slot,
     /// None until the slot before has filled, or where that slot was ours or skipped.
@@ -158,18 +162,27 @@ impl Handoffs {
     }
 
     /// Recomputed only when the last is older than ten seconds.
-    pub(super) fn summary(&mut self, now_millis: u64, ours: &Pubkey) -> Option<HandoffSummary> {
+    pub(super) fn summary(
+        &mut self,
+        now_millis: u64,
+        ours: &Pubkey,
+        country: impl Fn(&Pubkey) -> Option<&'static str>,
+    ) -> Option<HandoffSummary> {
         let fresh = self
             .stats_at
             .is_some_and(|at| now_millis.saturating_sub(at) < STATS_EVERY_MILLIS);
         if !fresh {
-            self.stats = self.compute(ours);
+            self.stats = self.compute(ours, country);
             self.stats_at = Some(now_millis);
         }
         self.stats.clone()
     }
 
-    fn compute(&self, ours: &Pubkey) -> Option<HandoffSummary> {
+    fn compute(
+        &self,
+        ours: &Pubkey,
+        country: impl Fn(&Pubkey) -> Option<&'static str>,
+    ) -> Option<HandoffSummary> {
         let since_millis = self.held.values().map(|handoff| handoff.at).min()?;
         let mut all: Vec<i32> = self.held.values().map(|handoff| handoff.gap).collect();
         all.sort_unstable();
@@ -202,8 +215,10 @@ impl Handoffs {
             };
             settled = settled.saturating_add(1);
             if own_band.p25 > cluster.p75 {
+                let key = self.keys.get(usize::from(*leader));
                 late.push(LateLeader {
-                    leader: self.key_string(*leader),
+                    leader: key.map(Pubkey::to_string).unwrap_or_default(),
+                    country: key.and_then(&country),
                     n: count(own.len()),
                     p50: own_band.p50,
                     over: over(own, cluster.p75),
@@ -225,11 +240,13 @@ impl Handoffs {
             .and_then(|index| by_leader.get(index))
             .map_or(
                 OurHandoffs {
+                    country: country(ours),
                     n: 0,
                     p50: None,
                     over: 0,
                 },
                 |own| OurHandoffs {
+                    country: country(ours),
                     n: count(own.len()),
                     p50: (own.len() >= SETTLED)
                         .then(|| band(own).map(|own| own.p50))
@@ -253,7 +270,13 @@ impl Handoffs {
     }
 
     /// The leader of the turn arriving now, measured against the last computed cluster band.
-    pub(super) fn now(&self, leader: &Pubkey, slot: Slot, now_millis: u64) -> HandoffNow {
+    pub(super) fn now(
+        &self,
+        leader: &Pubkey,
+        country: Option<&'static str>,
+        slot: Slot,
+        now_millis: u64,
+    ) -> HandoffNow {
         let cluster = self.stats.as_ref().map(|stats| stats.cluster);
         let mut own: Vec<i32> = self
             .index
@@ -284,6 +307,7 @@ impl Handoffs {
             .and_then(|mean| i32::try_from(mean).ok());
         HandoffNow {
             leader: leader.to_string(),
+            country,
             slot,
             gap: self.held.get(&slot).map(|handoff| handoff.gap),
             n: count(own.len()),
@@ -293,13 +317,6 @@ impl Handoffs {
             gaps: if settled { Vec::new() } else { own },
             minute_mean,
         }
-    }
-
-    fn key_string(&self, leader: u16) -> String {
-        self.keys
-            .get(usize::from(leader))
-            .map(Pubkey::to_string)
-            .unwrap_or_default()
     }
 }
 
@@ -345,6 +362,10 @@ mod tests {
         Pubkey::new_from_array([byte; 32])
     }
 
+    fn no_country(_: &Pubkey) -> Option<&'static str> {
+        None
+    }
+
     /// Ten leaders with ten handoffs each at 60 ms, and one at 220 ms.
     fn cluster() -> Handoffs {
         let mut handoffs = Handoffs::default();
@@ -362,7 +383,7 @@ mod tests {
     #[test]
     fn test_a_leader_late_on_most_turns_is_listed_and_kept_out_of_the_medians() {
         let mut handoffs = cluster();
-        let summary = handoffs.summary(0, &key(1)).unwrap();
+        let summary = handoffs.summary(0, &key(1), no_country).unwrap();
         assert_eq!(summary.handoffs, 110);
         assert_eq!(summary.settled, 11);
         assert_eq!(summary.late_count, 1);
@@ -377,6 +398,15 @@ mod tests {
     }
 
     #[test]
+    fn test_the_late_list_and_our_row_carry_each_country() {
+        let mut handoffs = cluster();
+        let country = |leader: &Pubkey| (leader == &key(99)).then_some("JP").or(Some("DE"));
+        let summary = handoffs.summary(0, &key(1), country).unwrap();
+        assert_eq!(summary.late[0].country, Some("JP"));
+        assert_eq!(summary.ours.country, Some("DE"));
+    }
+
+    #[test]
     fn test_the_window_rolls_after_an_epoch_of_slots() {
         let mut handoffs = Handoffs::default();
         handoffs.note(10, key(1), 50, 1);
@@ -384,7 +414,7 @@ mod tests {
         assert!(handoffs.holds(10));
         handoffs.note(WINDOW_SLOTS.saturating_add(11), key(2), 50, 3);
         assert!(!handoffs.holds(10));
-        let summary = handoffs.summary(0, &key(1)).unwrap();
+        let summary = handoffs.summary(0, &key(1), no_country).unwrap();
         assert!(summary.full);
         assert_eq!(summary.since_millis, 2);
     }
@@ -392,19 +422,25 @@ mod tests {
     #[test]
     fn test_the_summary_is_kept_for_ten_seconds() {
         let mut handoffs = cluster();
-        let first = handoffs.summary(0, &key(1)).unwrap();
+        let first = handoffs.summary(0, &key(1), no_country).unwrap();
         handoffs.note(50_000, key(3), 500, 2_000);
-        assert_eq!(handoffs.summary(9_999, &key(1)).unwrap(), first);
-        assert_eq!(handoffs.summary(10_000, &key(1)).unwrap().handoffs, 111);
+        assert_eq!(handoffs.summary(9_999, &key(1), no_country).unwrap(), first);
+        assert_eq!(
+            handoffs
+                .summary(10_000, &key(1), no_country)
+                .unwrap()
+                .handoffs,
+            111
+        );
     }
 
     #[test]
     fn test_a_leader_with_few_handoffs_sends_each_gap() {
         let mut handoffs = cluster();
-        handoffs.summary(0, &key(1));
+        handoffs.summary(0, &key(1), no_country);
         handoffs.note(50_000, key(42), 80, 1_010);
         handoffs.note(50_004, key(42), 90, 1_011);
-        let now = handoffs.now(&key(42), 50_004, 1_011);
+        let now = handoffs.now(&key(42), None, 50_004, 1_011);
         assert_eq!(now.gap, Some(90));
         assert_eq!(now.n, 2);
         assert_eq!(now.band, None);
@@ -415,9 +451,10 @@ mod tests {
     #[test]
     fn test_a_late_leader_reads_late_now() {
         let mut handoffs = cluster();
-        handoffs.summary(0, &key(1));
-        let now = handoffs.now(&key(99), 1_000, 1_009);
+        handoffs.summary(0, &key(1), no_country);
+        let now = handoffs.now(&key(99), Some("JP"), 1_000, 1_009);
         assert!(now.late);
+        assert_eq!(now.country, Some("JP"));
         assert_eq!(now.over, 10);
         assert!(now.gaps.is_empty());
         assert_eq!(now.band.map(|band| band.p50), Some(220));
@@ -429,7 +466,7 @@ mod tests {
         handoffs.note(4, key(1), 1_000, 0);
         handoffs.note(8, key(2), 40, 100_000);
         handoffs.note(12, key(3), 60, 120_000);
-        let now = handoffs.now(&key(3), 12, 120_000);
+        let now = handoffs.now(&key(3), None, 12, 120_000);
         assert_eq!(now.minute_mean, Some(50));
     }
 
@@ -438,7 +475,7 @@ mod tests {
         let mut handoffs = Handoffs::default();
         handoffs.note(4, key(1), -40, 1);
         handoffs.note(8, key(1), 5_000, 2);
-        let summary = handoffs.summary(0, &key(9)).unwrap();
+        let summary = handoffs.summary(0, &key(9), no_country).unwrap();
         assert_eq!(summary.gaps[0], 1);
         assert_eq!(summary.gaps.last(), Some(&1));
         assert_eq!(summary.ours.n, 0);

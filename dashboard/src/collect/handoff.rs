@@ -1,0 +1,459 @@
+//! The gap before each leader's turn: from the previous slot's block filling here to the first
+//! shred of the next leader's slot arriving here, kept for an epoch of slots.
+
+use {
+    serde::Serialize,
+    solana_clock::Slot,
+    solana_pubkey::Pubkey,
+    std::collections::{BTreeMap, HashMap},
+};
+
+/// An epoch of slots, rolling, so the figures do not empty at each boundary.
+const WINDOW_SLOTS: u64 = 432_000;
+
+/// Percentiles over an epoch of gaps are recomputed no more often than this.
+const STATS_EVERY_MILLIS: u64 = 10_000;
+
+/// A leader's own band means something from this many handoffs.
+const SETTLED: usize = 10;
+
+const MINUTE_MILLIS: u64 = 60_000;
+
+/// The histogram's bins in milliseconds; the last also holds every longer gap.
+const GAP_BIN_MILLIS: i32 = 10;
+const GAP_BINS: usize = 60;
+
+/// Bins for the settled leaders' medians; the last also holds every longer median.
+const MEDIAN_BIN_MILLIS: i32 = 6;
+const MEDIAN_BINS: usize = 100;
+
+/// Enough rows for any real cluster; more would need a virtual list.
+const LATE_LISTED: usize = 200;
+
+#[derive(Debug, Clone, Copy)]
+struct Handoff {
+    leader: u16,
+    /// Milliseconds; negative where the next leader's first shred arrived before the block filled.
+    gap: i32,
+    /// When the next leader's first shred arrived, unix milliseconds.
+    at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Band {
+    pub p25: i32,
+    pub p50: i32,
+    pub p75: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LateLeader {
+    pub leader: String,
+    pub n: u32,
+    pub p50: i32,
+    /// Handoffs with a gap above the cluster's p75.
+    pub over: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OurHandoffs {
+    pub n: u32,
+    /// Only once settled.
+    pub p50: Option<i32>,
+    pub over: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HandoffSummary {
+    /// When the oldest held handoff arrived, unix milliseconds.
+    pub since_millis: u64,
+    /// Whether the window has rolled, so it covers a whole epoch of slots.
+    pub full: bool,
+    pub handoffs: u32,
+    pub cluster: Band,
+    /// Handoffs per 10 ms of gap from nought; negative gaps count in the first bin.
+    pub gaps: Vec<u32>,
+    /// Settled leaders that are not late, per 6 ms of their median gap.
+    pub medians: Vec<u32>,
+    pub settled: u32,
+    /// Settled leaders whose p25 is above the cluster's p75, latest first.
+    pub late: Vec<LateLeader>,
+    pub late_count: u32,
+    pub ours: OurHandoffs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HandoffNow {
+    pub leader: String,
+    /// The first slot of the leader's run of turns.
+    pub slot: Slot,
+    /// None until the slot before has filled, or where that slot was ours or skipped.
+    pub gap: Option<i32>,
+    pub n: u32,
+    /// Only once settled.
+    pub band: Option<Band>,
+    pub over: u32,
+    pub late: bool,
+    /// Each handoff, while too few for a band.
+    pub gaps: Vec<i32>,
+    /// The mean handoff gap over the last minute.
+    pub minute_mean: Option<i32>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct Handoffs {
+    keys: Vec<Pubkey>,
+    index: HashMap<Pubkey, u16>,
+    held: BTreeMap<Slot, Handoff>,
+    rolled: bool,
+    stats: Option<HandoffSummary>,
+    stats_at: Option<u64>,
+}
+
+impl Handoffs {
+    pub(super) fn holds(&self, slot: Slot) -> bool {
+        self.held.contains_key(&slot)
+    }
+
+    pub(super) fn note(&mut self, slot: Slot, leader: Pubkey, gap: i64, at_millis: u64) {
+        let Some(leader) = self.intern(leader) else {
+            return;
+        };
+        let gap = i32::try_from(gap).unwrap_or(if gap < 0 { i32::MIN } else { i32::MAX });
+        self.held.insert(
+            slot,
+            Handoff {
+                leader,
+                gap,
+                at: at_millis,
+            },
+        );
+        let floor = self
+            .held
+            .last_key_value()
+            .map_or(0, |(newest, _)| newest.saturating_sub(WINDOW_SLOTS));
+        while self
+            .held
+            .first_key_value()
+            .is_some_and(|(oldest, _)| *oldest < floor)
+        {
+            self.held.pop_first();
+            self.rolled = true;
+        }
+    }
+
+    fn intern(&mut self, key: Pubkey) -> Option<u16> {
+        if let Some(index) = self.index.get(&key) {
+            return Some(*index);
+        }
+        let index = u16::try_from(self.keys.len()).ok()?;
+        self.keys.push(key);
+        self.index.insert(key, index);
+        Some(index)
+    }
+
+    /// When the summary was last computed, so the leader now can be measured again against it.
+    pub(super) fn computed_at(&self) -> Option<u64> {
+        self.stats_at
+    }
+
+    /// Recomputed only when the last is older than ten seconds.
+    pub(super) fn summary(&mut self, now_millis: u64, ours: &Pubkey) -> Option<HandoffSummary> {
+        let fresh = self
+            .stats_at
+            .is_some_and(|at| now_millis.saturating_sub(at) < STATS_EVERY_MILLIS);
+        if !fresh {
+            self.stats = self.compute(ours);
+            self.stats_at = Some(now_millis);
+        }
+        self.stats.clone()
+    }
+
+    fn compute(&self, ours: &Pubkey) -> Option<HandoffSummary> {
+        let since_millis = self.held.values().map(|handoff| handoff.at).min()?;
+        let mut all: Vec<i32> = self.held.values().map(|handoff| handoff.gap).collect();
+        all.sort_unstable();
+        let cluster = band(&all)?;
+
+        let mut gaps = vec![0u32; GAP_BINS];
+        for gap in &all {
+            bump(&mut gaps, bin(*gap, GAP_BIN_MILLIS, GAP_BINS));
+        }
+
+        let mut by_leader: HashMap<u16, Vec<i32>> = HashMap::new();
+        for handoff in self.held.values() {
+            by_leader
+                .entry(handoff.leader)
+                .or_default()
+                .push(handoff.gap);
+        }
+        for own in by_leader.values_mut() {
+            own.sort_unstable();
+        }
+        let mut medians = vec![0u32; MEDIAN_BINS];
+        let mut settled = 0u32;
+        let mut late = Vec::new();
+        for (leader, own) in &by_leader {
+            if own.len() < SETTLED {
+                continue;
+            }
+            let Some(own_band) = band(own) else {
+                continue;
+            };
+            settled = settled.saturating_add(1);
+            if own_band.p25 > cluster.p75 {
+                late.push(LateLeader {
+                    leader: self.key_string(*leader),
+                    n: count(own.len()),
+                    p50: own_band.p50,
+                    over: over(own, cluster.p75),
+                });
+            } else {
+                bump(
+                    &mut medians,
+                    bin(own_band.p50, MEDIAN_BIN_MILLIS, MEDIAN_BINS),
+                );
+            }
+        }
+        late.sort_by(|a, b| b.p50.cmp(&a.p50).then_with(|| a.leader.cmp(&b.leader)));
+        let late_count = count(late.len());
+        late.truncate(LATE_LISTED);
+
+        let ours = self
+            .index
+            .get(ours)
+            .and_then(|index| by_leader.get(index))
+            .map_or(
+                OurHandoffs {
+                    n: 0,
+                    p50: None,
+                    over: 0,
+                },
+                |own| OurHandoffs {
+                    n: count(own.len()),
+                    p50: (own.len() >= SETTLED)
+                        .then(|| band(own).map(|own| own.p50))
+                        .flatten(),
+                    over: over(own, cluster.p75),
+                },
+            );
+
+        Some(HandoffSummary {
+            since_millis,
+            full: self.rolled,
+            handoffs: count(all.len()),
+            cluster,
+            gaps,
+            medians,
+            settled,
+            late,
+            late_count,
+            ours,
+        })
+    }
+
+    /// The leader of the turn arriving now, measured against the last computed cluster band.
+    pub(super) fn now(&self, leader: &Pubkey, slot: Slot, now_millis: u64) -> HandoffNow {
+        let cluster = self.stats.as_ref().map(|stats| stats.cluster);
+        let mut own: Vec<i32> = self
+            .index
+            .get(leader)
+            .map(|index| {
+                self.held
+                    .values()
+                    .filter(|handoff| handoff.leader == *index)
+                    .map(|handoff| handoff.gap)
+                    .collect()
+            })
+            .unwrap_or_default();
+        own.sort_unstable();
+        let settled = own.len() >= SETTLED;
+        let own_band = settled.then(|| band(&own)).flatten();
+        let late =
+            matches!((own_band, cluster), (Some(own), Some(cluster)) if own.p25 > cluster.p75);
+        let recent: Vec<i64> = self
+            .held
+            .values()
+            .rev()
+            .take_while(|handoff| now_millis.saturating_sub(handoff.at) <= MINUTE_MILLIS)
+            .map(|handoff| i64::from(handoff.gap))
+            .collect();
+        let minute_mean = i64::try_from(recent.len())
+            .ok()
+            .and_then(|len| recent.iter().sum::<i64>().checked_div(len))
+            .and_then(|mean| i32::try_from(mean).ok());
+        HandoffNow {
+            leader: leader.to_string(),
+            slot,
+            gap: self.held.get(&slot).map(|handoff| handoff.gap),
+            n: count(own.len()),
+            band: own_band,
+            over: cluster.map_or(0, |cluster| over(&own, cluster.p75)),
+            late,
+            gaps: if settled { Vec::new() } else { own },
+            minute_mean,
+        }
+    }
+
+    fn key_string(&self, leader: u16) -> String {
+        self.keys
+            .get(usize::from(leader))
+            .map(Pubkey::to_string)
+            .unwrap_or_default()
+    }
+}
+
+/// Quartiles of sorted values, each the value at that share of the count.
+fn band(sorted: &[i32]) -> Option<Band> {
+    let at = |quarter: usize| {
+        let index = sorted.len().saturating_mul(quarter).checked_div(4)?;
+        sorted
+            .get(index.min(sorted.len().saturating_sub(1)))
+            .copied()
+    };
+    Some(Band {
+        p25: at(1)?,
+        p50: at(2)?,
+        p75: at(3)?,
+    })
+}
+
+fn bin(millis: i32, width: i32, bins: usize) -> usize {
+    let index = usize::try_from(millis.max(0).checked_div(width).unwrap_or(0)).unwrap_or(0);
+    index.min(bins.saturating_sub(1))
+}
+
+fn bump(bins: &mut [u32], index: usize) {
+    if let Some(bin) = bins.get_mut(index) {
+        *bin = bin.saturating_add(1);
+    }
+}
+
+fn over(gaps: &[i32], threshold: i32) -> u32 {
+    count(gaps.iter().filter(|gap| **gap > threshold).count())
+}
+
+fn count(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(byte: u8) -> Pubkey {
+        Pubkey::new_from_array([byte; 32])
+    }
+
+    /// Ten leaders with ten handoffs each at 60 ms, and one at 220 ms.
+    fn cluster() -> Handoffs {
+        let mut handoffs = Handoffs::default();
+        let mut slot: Slot = 1_000;
+        for round in 0..10u64 {
+            for leader in (1..=10u8).chain([99]) {
+                slot = slot.saturating_add(4);
+                let gap = if leader == 99 { 220 } else { 60 };
+                handoffs.note(slot, key(leader), gap, round.saturating_add(1_000));
+            }
+        }
+        handoffs
+    }
+
+    #[test]
+    fn test_a_leader_late_on_most_turns_is_listed_and_kept_out_of_the_medians() {
+        let mut handoffs = cluster();
+        let summary = handoffs.summary(0, &key(1)).unwrap();
+        assert_eq!(summary.handoffs, 110);
+        assert_eq!(summary.settled, 11);
+        assert_eq!(summary.late_count, 1);
+        assert_eq!(summary.late[0].leader, key(99).to_string());
+        assert_eq!(summary.late[0].p50, 220);
+        assert_eq!(summary.late[0].over, 10);
+        assert_eq!(summary.medians.iter().sum::<u32>(), 10);
+        assert_eq!(summary.gaps.iter().sum::<u32>(), 110);
+        assert_eq!(summary.ours.n, 10);
+        assert_eq!(summary.ours.p50, Some(60));
+        assert!(!summary.full);
+    }
+
+    #[test]
+    fn test_the_window_rolls_after_an_epoch_of_slots() {
+        let mut handoffs = Handoffs::default();
+        handoffs.note(10, key(1), 50, 1);
+        handoffs.note(WINDOW_SLOTS.saturating_add(10), key(2), 50, 2);
+        assert!(handoffs.holds(10));
+        handoffs.note(WINDOW_SLOTS.saturating_add(11), key(2), 50, 3);
+        assert!(!handoffs.holds(10));
+        let summary = handoffs.summary(0, &key(1)).unwrap();
+        assert!(summary.full);
+        assert_eq!(summary.since_millis, 2);
+    }
+
+    #[test]
+    fn test_the_summary_is_kept_for_ten_seconds() {
+        let mut handoffs = cluster();
+        let first = handoffs.summary(0, &key(1)).unwrap();
+        handoffs.note(50_000, key(3), 500, 2_000);
+        assert_eq!(handoffs.summary(9_999, &key(1)).unwrap(), first);
+        assert_eq!(handoffs.summary(10_000, &key(1)).unwrap().handoffs, 111);
+    }
+
+    #[test]
+    fn test_a_leader_with_few_handoffs_sends_each_gap() {
+        let mut handoffs = cluster();
+        handoffs.summary(0, &key(1));
+        handoffs.note(50_000, key(42), 80, 1_010);
+        handoffs.note(50_004, key(42), 90, 1_011);
+        let now = handoffs.now(&key(42), 50_004, 1_011);
+        assert_eq!(now.gap, Some(90));
+        assert_eq!(now.n, 2);
+        assert_eq!(now.band, None);
+        assert_eq!(now.gaps, vec![80, 90]);
+        assert!(!now.late);
+    }
+
+    #[test]
+    fn test_a_late_leader_reads_late_now() {
+        let mut handoffs = cluster();
+        handoffs.summary(0, &key(1));
+        let now = handoffs.now(&key(99), 1_000, 1_009);
+        assert!(now.late);
+        assert_eq!(now.over, 10);
+        assert!(now.gaps.is_empty());
+        assert_eq!(now.band.map(|band| band.p50), Some(220));
+    }
+
+    #[test]
+    fn test_the_minute_mean_counts_only_the_last_minute() {
+        let mut handoffs = Handoffs::default();
+        handoffs.note(4, key(1), 1_000, 0);
+        handoffs.note(8, key(2), 40, 100_000);
+        handoffs.note(12, key(3), 60, 120_000);
+        let now = handoffs.now(&key(3), 12, 120_000);
+        assert_eq!(now.minute_mean, Some(50));
+    }
+
+    #[test]
+    fn test_negative_and_long_gaps_land_in_the_end_bins() {
+        let mut handoffs = Handoffs::default();
+        handoffs.note(4, key(1), -40, 1);
+        handoffs.note(8, key(1), 5_000, 2);
+        let summary = handoffs.summary(0, &key(9)).unwrap();
+        assert_eq!(summary.gaps[0], 1);
+        assert_eq!(summary.gaps.last(), Some(&1));
+        assert_eq!(summary.ours.n, 0);
+    }
+
+    #[test]
+    fn test_quartiles_take_the_value_at_each_share() {
+        assert_eq!(
+            band(&[1, 2, 3, 4, 5, 6, 7, 8]),
+            Some(Band {
+                p25: 3,
+                p50: 5,
+                p75: 7
+            })
+        );
+        assert_eq!(band(&[]), None);
+    }
+}

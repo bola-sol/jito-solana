@@ -51,6 +51,7 @@ mod cert_formation;
 mod certificates;
 mod finalization;
 mod gossip_peers;
+mod handoff;
 mod skip_rate;
 mod slot_clock;
 
@@ -60,6 +61,7 @@ use self::{
     cert_formation::{CertFormation, FinalizedPaths, FormationKey},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     finalization::{FinalizationShare, FinalizationTally},
+    handoff::{HandoffNow, HandoffSummary, Handoffs},
     skip_rate::{LeaderSlotCounts, SkipRateWalk},
     slot_clock::SlotClock,
 };
@@ -169,6 +171,12 @@ const SLOT_OVERVIEW_LEN: usize = 512;
 
 /// How far back a slot's duration looks for an earlier block that filled.
 const FULL_REACH_SLOTS: u64 = 64;
+
+/// A slot arriving this far behind the cluster's tip was caught up on, not received live.
+const HANDOFF_BEHIND_SLOTS: u64 = 32;
+
+/// How far back a leader's run of consecutive turns is followed to its first slot.
+const HANDOFF_RUN_TURNS: usize = 8;
 
 const SLOT_HISTORY: usize = 4096;
 
@@ -407,6 +415,8 @@ struct Debounces {
     vote_cost: Debounced<VoteCost>,
     block_life: Debounced<Option<BlockLifeSummary>>,
     cert_formation: Debounced<Option<CertFormation>>,
+    handoff: Debounced<Option<HandoffSummary>>,
+    handoff_now: Debounced<Option<HandoffNow>>,
 }
 
 pub struct Collector {
@@ -438,6 +448,11 @@ pub struct Collector {
     previous_slots: SkipRateWalk,
     finalization: FinalizationTally,
     block_lives: BlockLives,
+    handoffs: Handoffs,
+    /// The newest slot whose first shred has arrived.
+    newest_arrival: Slot,
+    /// The turn, whether its gap was known, and the summary it was measured against.
+    handoff_now_for: Option<(Slot, bool, Option<u64>)>,
     cert_formation_for: Option<FormationKey>,
     finalized_paths: FinalizedPaths,
     /// Read once a tick.
@@ -536,6 +551,9 @@ impl Collector {
             previous_slots: SkipRateWalk::default(),
             finalization: FinalizationTally::default(),
             block_lives: BlockLives::default(),
+            handoffs: Handoffs::default(),
+            newest_arrival: 0,
+            handoff_now_for: None,
             cert_formation_for: None,
             finalized_paths: FinalizedPaths::default(),
             cluster_tip: None,
@@ -704,6 +722,9 @@ impl Collector {
         if subscribers > 0 && self.produced_unsent {
             self.publish_produced();
         }
+        if subscribers > 0 {
+            self.collect_handoff_now(&root_bank);
+        }
 
         if subscribers > 0 && now.duration_since(self.last_slow_tick) >= SLOW_TICK {
             self.last_slow_tick = now;
@@ -721,6 +742,13 @@ impl Collector {
                 TOPIC_SUMMARY,
                 "block_life",
                 self.block_lives.summary(timestamp()),
+            );
+            let ours = self.ctx.identity();
+            self.debounces.handoff.publish(
+                &self.publisher,
+                TOPIC_SUMMARY,
+                "handoff",
+                self.handoffs.summary(timestamp(), &ours),
             );
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
@@ -892,6 +920,7 @@ impl Collector {
             self.clock.record(slot, arrived);
             self.clock
                 .record_in_epoch(schedule.get_epoch(slot), slot, arrived);
+            self.newest_arrival = self.newest_arrival.max(slot);
             let shreds = self.metrics_tap.shred_fill(slot).map(ShredArrival::from);
             let was_full = self.slots.get(slot).and_then(SlotEntry::full_at).is_some();
             if let Some(entry) = self.slots.update(slot, |entry| {
@@ -930,12 +959,105 @@ impl Collector {
         }
 
         let retimed = self.retime(&filled, &mut changed);
+        let touched: BTreeSet<Slot> = changed
+            .iter()
+            .flat_map(|entry| [entry.slot, entry.slot.saturating_add(1)])
+            .collect();
+        for slot in touched {
+            self.note_handoff(root_bank, slot);
+        }
         for entry in &changed {
             self.publish_slot(entry);
         }
         if retimed {
             self.publish_produced();
         }
+    }
+
+    /// The gap before a leader's turn, once this slot's first shred and the previous slot's fill are
+    /// both known. Not after our own turn, where the gap is a round trip to the next leader, nor
+    /// while catching up, when repair rather than turbine brings the blocks.
+    fn note_handoff(&mut self, root_bank: &Bank, slot: Slot) {
+        if self.handoffs.holds(slot)
+            || (self.trailed_cluster && !self.caught_cluster)
+            || self
+                .cluster_tip
+                .is_some_and(|tip| tip.saturating_sub(slot) > HANDOFF_BEHIND_SLOTS)
+        {
+            return;
+        }
+        let Some(previous) = slot.checked_sub(1) else {
+            return;
+        };
+        let (Some(arrived), Some(filled)) = (
+            self.slots.get(slot).and_then(|entry| entry.time_millis),
+            self.slots.get(previous).and_then(SlotEntry::full_at),
+        ) else {
+            return;
+        };
+        let cache = &self.ctx.leader_schedule_cache;
+        let (Some(leader), Some(before)) = (
+            cache.slot_leader_at(slot, Some(root_bank)),
+            cache.slot_leader_at(previous, Some(root_bank)),
+        ) else {
+            return;
+        };
+        if leader.id == before.id || before.id == self.ctx.identity() {
+            return;
+        }
+        let (Ok(arrived_at), Ok(filled_at)) = (i64::try_from(arrived), i64::try_from(filled))
+        else {
+            return;
+        };
+        self.handoffs.note(
+            slot,
+            leader.id,
+            arrived_at.saturating_sub(filled_at),
+            arrived,
+        );
+    }
+
+    /// The leader whose turn is arriving now, from the first slot of its run of turns.
+    fn collect_handoff_now(&mut self, root_bank: &Bank) {
+        let slot = self.newest_arrival;
+        if slot == 0 {
+            return;
+        }
+        let cache = &self.ctx.leader_schedule_cache;
+        let Some(leader) = cache.slot_leader_at(slot, Some(root_bank)) else {
+            return;
+        };
+        let stride = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
+        let (_, index) = root_bank.epoch_schedule().get_epoch_and_slot_index(slot);
+        let mut first = slot.saturating_sub(index.checked_rem(stride).unwrap_or(0));
+        for _ in 0..HANDOFF_RUN_TURNS {
+            let Some(before) = first.checked_sub(stride) else {
+                break;
+            };
+            if cache
+                .slot_leader_at(before, Some(root_bank))
+                .is_none_or(|earlier| earlier.id != leader.id)
+            {
+                break;
+            }
+            first = before;
+        }
+        let key = (
+            first,
+            self.handoffs.holds(first),
+            self.handoffs.computed_at(),
+        );
+        if self.handoff_now_for == Some(key) {
+            return;
+        }
+        self.handoff_now_for = Some(key);
+        let now = self.handoffs.now(&leader.id, first, timestamp());
+        self.debounces.handoff_now.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "handoff_now",
+            Some(now),
+        );
     }
 
     /// From the last earlier block that filled here to this one filling, so a slot's figure lines up
@@ -1378,6 +1500,11 @@ impl Collector {
             }
         }
         let retimed = self.retime(&became_full, &mut changed);
+        // The next slot's first shred usually arrives before this block fills.
+        for slot in &became_full {
+            self.note_handoff(root_bank, *slot);
+            self.note_handoff(root_bank, slot.saturating_add(1));
+        }
 
         // The loop above no longer covers slots that have fallen out of bank
         // forks, so their levels advance from the roots directly.

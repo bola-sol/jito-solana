@@ -49,7 +49,7 @@ describe("values", () => {
   });
 });
 
-describe("nameOf", () => {
+describe("nameOf and countryOf", () => {
   it("names our node from the header's values and others from the peer table", () => {
     const store = new Store();
     store.apply(envelope("summary", "identity_key", "Ours1"));
@@ -58,6 +58,13 @@ describe("nameOf", () => {
     expect(store.nameOf("Ours1")).toBe("Lantern");
     expect(store.nameOf("Peer1")).toBe("Vyra Labs");
     expect(store.nameOf("Unknown")).toBeNull();
+  });
+
+  it("gives a peer's country, and none for a validator gossip does not list", () => {
+    const store = new Store();
+    store.apply(envelope("peers", "all", [{ identity: "Peer1", name: null, country: "JP" }]));
+    expect(store.countryOf("Peer1")).toBe("JP");
+    expect(store.countryOf("Unknown")).toBeNull();
   });
 });
 

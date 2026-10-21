@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactElement } from "react";
-import { count, decimal, duration, percent, sol, solCompact } from "../format";
+import { count, decimal, duration, percent, solCompact } from "../format";
 import { MATRIX_WINDOW_SECONDS, readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
 import { creditsShare, participationShare, shareText, standingText, withStanding } from "../credits";
@@ -8,7 +8,6 @@ import { leaderSlotsLeft } from "../schedule";
 import type { Admission, EpochInfo, VoteParticipation } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
-import { useBalancesHidden } from "../balances";
 import { useNarrow } from "../narrow";
 import { useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
@@ -69,21 +68,15 @@ function VoteCreditsStat({ epoch }: { epoch: EpochInfo }) {
   const credits = store.get("summary", "vote_credits");
   const participation = store.get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
-  const balancesHidden = useBalancesHidden();
   if (!credits || credits.epoch !== epoch.epoch) return null;
   if (alpenglow) {
-    const earned = balancesHidden ? undefined : `${sol(credits.credits)} SOL earned, leader slots included`;
     const share = participationShare(participation, epoch.epoch);
-    if (share === null || !participation) {
-      if (earned === undefined) return null;
-      return <Stat label="earned this epoch, SOL" value={sol(credits.credits)} />;
-    }
+    if (share === null || !participation) return null;
     const best = participation.cluster_max;
     return (
       <Stat
         label={`of the best since slot ${count(participation.since_slot)}, votes rewarded in ${count(participation.paid)} of ${count(participation.rewarded)} slots`}
         value={shareText(share)}
-        sub={earned}
         explain={withStanding(
           "Slots whose reward certificate included this validator's vote, against the validator rewarded for the most of them",
           standingText(participation.paid, best, participation.cluster_median, "slot"),

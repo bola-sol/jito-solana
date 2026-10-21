@@ -45,10 +45,6 @@ export function Header(): ReactElement {
   const balancesHidden = useBalancesHidden();
 
   const up = duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6);
-  const upLabel =
-    boot && boot.catchUpMillis !== null
-      ? `up, caught up after ${duration(boot.catchUpMillis)}`
-      : "up";
 
   return (
     <header className="header">
@@ -109,7 +105,7 @@ export function Header(): ReactElement {
         )}
         <Bls />
         <Seat />
-        <Figure value={up} label={upLabel} detail={boot && <Boot boot={boot} />} />
+        <Figure value={up} label="uptime" detail={boot && <Boot boot={boot} />} />
       </div>
     </header>
   );

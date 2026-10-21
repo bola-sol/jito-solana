@@ -33,7 +33,7 @@ These points are running counters. The dashboard subtracts the previous reading 
 
 | Point | Fields read | Feeds |
 | --- | --- | --- |
-| `shred_fetch_receiver`, `shred_fetch_repair_receiver` | `packets_count` | Repaired shreds in the verdict line. The turbine row of the socket ingest card. |
+| `shred_fetch_receiver`, `shred_fetch_repair_receiver` | `packets_count` | "Repaired" in the verdict line. The turbine row of the socket ingest card. |
 | `retransmit-stage` | tag `is_xdp`; `num_shreds_dropped_xdp_full` | Host network card: shreds dropped because the XDP channel was full |
 | `gossip_receiver`, `tpu_vote_receiver` | `packets_count` | Packets delivered on the gossip and vote rows of the socket ingest card |
 | `votor_datagram_server` | `datagrams_received` | Under alpenglow: votes delivered on the votor row of the socket ingest card |

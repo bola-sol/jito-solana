@@ -466,6 +466,10 @@ body {
   visibility: hidden;
 }
 
+.verdict-clause {
+  white-space: nowrap;
+}
+
 .verdict-sub b {
   font-family: var(--mono);
   font-weight: 500;

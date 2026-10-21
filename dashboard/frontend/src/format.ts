@@ -49,18 +49,21 @@ export function percent(fraction: number | null | undefined, digits = 2): string
   return `${(fraction * 100).toFixed(digits)}%`;
 }
 
-export function duration(millis: number | undefined): string {
+/** The largest unit that applies and up to `units - 1` below it. */
+export function duration(millis: number | undefined, units = 3): string {
   if (millis === undefined || millis < 0) return "—";
   const total = Math.floor(millis / 1000);
-  const days = Math.floor(total / 86400);
-  const hours = Math.floor((total % 86400) / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
+  const parts: Array<[number, string]> = [
+    [Math.floor(total / 86400), "d"],
+    [Math.floor((total % 86400) / 3600), "h"],
+    [Math.floor((total % 3600) / 60), "m"],
+    [total % 60, "s"],
+  ];
+  const first = parts.findIndex(([value], index) => value > 0 || index === parts.length - 1);
+  return parts
+    .slice(first, first + units)
+    .map(([value, unit]) => `${value}${unit}`)
+    .join(" ");
 }
 
 /** To the millisecond, since two blocks in a row can be under two hundred apart. */

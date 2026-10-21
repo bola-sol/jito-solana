@@ -347,9 +347,11 @@ function StripLeader({ mine, leader }: { mine: boolean; leader: LeaderRef }) {
     <span className="slot-strip-leader">
       Leader
       <span className="slot-strip-leader-name">
-        {mine && <span className="slot-strip-mine" aria-label="our slot" />}
-        <Logo url={leader.icon} size={14} />
+        <span className="slot-strip-logo">
+          <Logo url={leader.icon} size={14} />
+        </span>
         <span className="slot-strip-leader-text">{name}</span>
+        {mine && <span className="slot-strip-mine" aria-label="our slot" />}
       </span>
     </span>
   );

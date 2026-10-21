@@ -52,6 +52,11 @@ export function dotBottom(level: number): number {
   return 4 + level * DOT_STEP;
 }
 
+/** Handoffs above the cluster's p75 out of all of them, without separators to stay narrow. */
+export function tally(over: number, total: number): string {
+  return `${over}/${total}`;
+}
+
 /** Late on most turns: its own p25 is above the cluster's p75. */
 export function isLate(band: HandoffBand | null, cluster: HandoffBand | null): boolean {
   return band !== null && cluster !== null && band.p25 > cluster.p75;
@@ -68,7 +73,7 @@ export function leadingLine(now: HandoffNow | null): LeadingLine {
     return {
       kind: "settled",
       usual: `usual ${now.band.p25}–${now.band.p75} ms`,
-      late: `late ${now.over} of ${now.n}`,
+      late: `late ${tally(now.over, now.n)}`,
       isLate: now.late,
     };
   }

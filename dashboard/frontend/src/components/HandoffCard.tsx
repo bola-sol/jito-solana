@@ -9,6 +9,7 @@ import {
   foldBins,
   leadingLine,
   place,
+  tally,
   stackLevels,
   windowLabel,
 } from "../handoff";
@@ -134,13 +135,35 @@ function NowMarks({ now, max }: { now: HandoffNow | null; max: number }) {
   );
 }
 
-function Leading({ now, name, ours }: { now: HandoffNow | null; name: string | null; ours: boolean }) {
+/** A leader's name, shortened before the country code is. */
+function Who({ name, country }: { name: string; country: string | null }) {
+  return (
+    <span className="handoff-who">
+      <span className="handoff-who-name">{name}</span>
+      {country && <span className="country-code">{country}</span>}
+    </span>
+  );
+}
+
+function Leading({
+  now,
+  name,
+  country,
+  ours,
+}: {
+  now: HandoffNow | null;
+  name: string | null;
+  country: string | null;
+  ours: boolean;
+}) {
   const line = leadingLine(now);
   const className = ["card", "handoff-leading", now?.late && "is-late", ours && "is-ours"].filter(Boolean).join(" ");
   return (
     <section className={className}>
       <div className="handoff-leading-label">Leading now</div>
-      <div className="handoff-leading-name">{now === null ? "—" : `${name}${ours ? " (ours)" : ""}`}</div>
+      <div className="handoff-leading-name">
+        {now === null ? "—" : <Who name={`${name}${ours ? " (ours)" : ""}`} country={country} />}
+      </div>
       <div className="handoff-leading-figure">
         {now?.gap != null ? `${count(now.gap)} ms` : "—"}
         <small>this handoff</small>
@@ -162,23 +185,27 @@ function Leading({ now, name, ours }: { now: HandoffNow | null; name: string | n
 
 function LateRow({
   name,
+  country,
   median,
-  tally,
+  late,
   current,
   ours,
 }: {
   name: string;
+  country: string | null;
   median: string;
-  tally: ReactNode;
+  late: ReactNode;
   current?: boolean;
   ours?: boolean;
 }) {
   const className = ["handoff-late-row", current && "is-current", ours && "is-ours"].filter(Boolean).join(" ");
   return (
     <div className={className}>
-      <span className="handoff-late-name">{name}</span>
+      <span className="handoff-late-name">
+        <Who name={name} country={country} />
+      </span>
       <span className="handoff-late-median">{median}</span>
-      <span className="handoff-late-count">{tally}</span>
+      <span className="handoff-late-count">{late}</span>
     </div>
   );
 }
@@ -187,34 +214,39 @@ function LateCard({
   summary,
   current,
   oursName,
+  oursCountry,
   nameOf,
+  countryOf,
 }: {
   summary: HandoffSummary | null;
   current: string | null;
   oursName: string;
+  oursCountry: string | null;
   nameOf: (key: string) => string;
+  countryOf: (key: string) => string | null;
 }) {
   const ours = summary?.ours;
   return (
     <section className="card handoff-late-card">
       <div className="card-head">
         <h3 className="card-title">
-          <Explain text="Leaders whose p25 gap is above the cluster's p75.">Late on most turns</Explain>
+          <Explain text="Leaders whose p25 gap is above the cluster's p75.">Latest to arrive here</Explain>
         </h3>
         <span className="card-aside">{summary ? `${count(summary.late_count)} leaders` : "—"}</span>
       </div>
-      <div className="handoff-late-scroll" tabIndex={0} aria-label="Leaders late on most turns">
+      <div className="handoff-late-scroll" tabIndex={0} aria-label="Leaders latest to arrive here">
         {summary === null ? (
           <div className="handoff-late-row is-empty">—</div>
         ) : summary.late.length === 0 ? (
-          <div className="handoff-late-row is-empty">No leader starts late on most turns</div>
+          <div className="handoff-late-row is-empty">No leader usually arrives late here</div>
         ) : (
           summary.late.map((leader) => (
             <LateRow
               key={leader.leader}
               name={nameOf(leader.leader)}
+              country={countryOf(leader.leader)}
               median={`${count(leader.p50)} ms`}
-              tally={`${count(leader.over)} of ${count(leader.n)}`}
+              late={tally(leader.over, leader.n)}
               current={leader.leader === current}
             />
           ))
@@ -222,10 +254,11 @@ function LateCard({
       </div>
       <LateRow
         name={`${oursName} (ours)`}
+        country={oursCountry}
         median={ours?.p50 != null ? `${count(ours.p50)} ms` : "—"}
-        tally={
-          <Explain text="Handoffs with a gap above the cluster's p75.">
-            {ours === undefined ? "—" : ours.p50 != null ? `${count(ours.over)} of ${count(ours.n)}` : `${count(ours.n)} only`}
+        late={
+          <Explain text="Handoffs with a gap above the cluster's p75." className="is-leftward">
+            {ours === undefined ? "—" : ours.p50 != null ? tally(ours.over, ours.n) : `${count(ours.n)} only`}
           </Explain>
         }
         ours
@@ -247,7 +280,11 @@ function Key() {
       </span>
       <span>
         <i className="handoff-key-dot" aria-hidden="true" />
-        leader late on most turns
+        leader usually late here
+      </span>
+      <span>
+        <i className="handoff-key-own" aria-hidden="true" />
+        this leader's p25–p75
       </span>
       <span>
         <i className="handoff-key-line" aria-hidden="true" />
@@ -274,6 +311,7 @@ export function HandoffCard(): ReactElement {
   }, [store, named]);
 
   const nameOf = (key: string) => store.nameOf(key) ?? shortKey(key, 4, 4);
+  const countryOf = (key: string) => store.countryOf(key);
   const cluster = summary?.cluster ?? null;
   const ours = now !== null && now.leader === oursKey;
   const tone: Tone = ours ? "ours" : now?.late ? "late" : "plain";
@@ -291,7 +329,7 @@ export function HandoffCard(): ReactElement {
         between leaders
       </Explain>{" "}
       over the last minute, <b className="handoff-fig">{lateCount === null ? "—" : count(lateCount)}</b>{" "}
-      {lateCount === 1 ? "leader starts" : "leaders start"} late on most turns
+      {lateCount === 1 ? "leader usually arrives" : "leaders usually arrive"} late here
     </>
   );
   const bandText = cluster ? `, cluster p25 ${cluster.p25} ms to p75 ${cluster.p75} ms` : "";
@@ -317,7 +355,7 @@ export function HandoffCard(): ReactElement {
                 <Strip
                   kind="leaders"
                   caption={summary ? `${settled} leaders by median` : "leaders by median"}
-                  label={`Settled leaders by median gap, ${lateCount ?? 0} late on most turns`}
+                  label={`Settled leaders by median gap, ${lateCount ?? 0} usually late here`}
                 >
                   <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} />
                   {summary && <Bars values={medians} className="handoff-lead-bars" current={currentBin} />}
@@ -346,12 +384,19 @@ export function HandoffCard(): ReactElement {
             </div>
           </section>
           <div className="handoff-side">
-            <Leading now={now} name={now === null ? null : nameOf(now.leader)} ours={ours} />
+            <Leading
+              now={now}
+              name={now === null ? null : nameOf(now.leader)}
+              country={now === null ? null : countryOf(now.leader)}
+              ours={ours}
+            />
             <LateCard
               summary={summary}
               current={now?.leader ?? null}
               oursName={oursKey ? nameOf(oursKey) : "ours"}
+              oursCountry={oursKey ? countryOf(oursKey) : null}
               nameOf={nameOf}
+              countryOf={countryOf}
             />
           </div>
         </div>

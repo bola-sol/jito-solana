@@ -267,6 +267,7 @@ generation already does per account is not measurable.
 ## IP geolocation
 
 The Schedule and Gossip pages show a country code beside each gossip address,
+and Leader handoff beside each leader's name,
 looked up in `geoip/country-ipv4.bin.gz`. That table is DB-IP's
 [IP to Country Lite](https://db-ip.com/db/download/ip-to-country-lite),
 October 2026 release, under

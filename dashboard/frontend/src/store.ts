@@ -283,6 +283,11 @@ export class Store {
     return this.peersByIdentity().get(key)?.name ?? this.displays.get(key)?.name ?? null;
   }
 
+  /** A validator's two-letter country, from the peer table. */
+  countryOf(key: string): string | null {
+    return this.peersByIdentity().get(key)?.country ?? null;
+  }
+
   /** The peer table by identity, rebuilt when the array is replaced. */
   private peersByIdentity(): Map<string, Peer> {
     const peers = this.get("peers", "all") ?? [];

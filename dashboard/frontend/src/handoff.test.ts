@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { axisMax, binOf, dotBottom, foldBins, isLate, leadingLine, place, stackLevels, windowLabel } from "./handoff";
+import {
+  axisMax,
+  binOf,
+  dotBottom,
+  foldBins,
+  isLate,
+  leadingLine,
+  place,
+  stackLevels,
+  tally,
+  windowLabel,
+} from "./handoff";
 import type { HandoffNow } from "./types";
 
 function now(over: Partial<HandoffNow>): HandoffNow {
@@ -58,6 +69,13 @@ describe("stackLevels", () => {
   });
 });
 
+describe("tally", () => {
+  it("writes the late count over the total", () => {
+    expect(tally(10, 10)).toBe("10/10");
+    expect(tally(1089, 1089)).toBe("1089/1089");
+  });
+});
+
 describe("isLate", () => {
   it("needs the leader's p25 above the cluster's p75", () => {
     const cluster = { p25: 55, p50: 71, p75: 91 };
@@ -72,7 +90,7 @@ describe("leadingLine", () => {
     expect(leadingLine(now({ late: true, over: 25, n: 25, band: { p25: 198, p50: 220, p75: 232 } }))).toEqual({
       kind: "settled",
       usual: "usual 198–232 ms",
-      late: "late 25 of 25",
+      late: "late 25/25",
       isLate: true,
     });
   });

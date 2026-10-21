@@ -4,6 +4,7 @@ import { followingRun } from "../schedule";
 import { agoLabel, snapshotLine } from "../snapshot";
 import { catchUpClause, verdictOf } from "../verdict";
 import { useStore } from "../useStore";
+import { ClusterRow } from "./ClusterRow";
 import { Card, Explain } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 
@@ -37,7 +38,7 @@ export function Verdict(): ReactElement {
   const verdict = verdictOf(health, behindCluster, store.get("summary", "completed_slot"));
 
   return (
-    <>
+    <div className="verdict-hero">
       <h1 className="verdict">
         <span className={`verdict-dot tone-${verdict.tone}`} aria-hidden="true" />
         {verdict.headline}
@@ -52,7 +53,8 @@ export function Verdict(): ReactElement {
           <Clauses room />
         </span>
       </p>
-    </>
+      <ClusterRow />
+    </div>
   );
 }
 

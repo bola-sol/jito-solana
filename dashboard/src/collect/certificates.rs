@@ -226,7 +226,16 @@ impl Collector {
             self.metrics_tap.note_block_closed(slot, nanos);
             self.block_lives.note_closed(slot, nanos);
         }
-        for votes in self.metrics_tap.take_block_votes() {
+        let block_votes = self.metrics_tap.take_block_votes();
+        if block_votes.iter().any(|votes| votes.finalized_us.is_some()) {
+            let mut history = self.history.write().unwrap();
+            for votes in &block_votes {
+                if let Some(micros) = votes.finalized_us {
+                    history.record_finality(votes.slot, micros);
+                }
+            }
+        }
+        for votes in block_votes {
             self.block_lives
                 .note_votes(votes.slot, votes.vote_us, votes.finalized_us);
         }

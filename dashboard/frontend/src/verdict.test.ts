@@ -19,7 +19,7 @@ describe("verdictOf", () => {
   it("says how far behind once past the allowance", () => {
     expect(verdictOf({ replay: "running", vote: "voting" }, 1_200)).toEqual({
       tone: "warn",
-      headline: "Voting, 1,200 slots behind the cluster.",
+      headline: "Voting, 1,200 behind.",
     });
   });
 
@@ -29,7 +29,7 @@ describe("verdictOf", () => {
 
   it("names delinquency with the distance where there is one", () => {
     expect(verdictOf({ replay: "running", vote: "delinquent" }, 300).headline).toBe(
-      "Delinquent, 300 slots behind the cluster.",
+      "Delinquent, 300 behind.",
     );
     expect(verdictOf({ replay: "running", vote: "delinquent" }, null).headline).toBe(
       "Delinquent.",
@@ -40,20 +40,22 @@ describe("verdictOf", () => {
     expect(verdictOf({ replay: "running", vote: "not_voting" }, 0).tone).toBe("warn");
   });
 
-  it("keeps the distance on the branches a restart passes through", () => {
+  it("keeps the distance, or the stalled slot, on the branches a restart passes through", () => {
     expect(verdictOf({ replay: "stalled", vote: "not_started" }, 5_212, 448_419_378).headline).toBe(
-      "Replay has stalled at slot 448,419,378, 5,212 slots behind the cluster.",
+      "Replay stalled at 448,419,378.",
     );
-    expect(verdictOf({ replay: "stalled", vote: "voting" }, 0).headline).toBe("Replay has stalled.");
+    expect(verdictOf({ replay: "stalled", vote: "voting" }, 0).headline).toBe("Replay stalled.");
+    expect(verdictOf({ replay: "stalled", vote: "voting" }, 900).headline).toBe("Replay stalled, 900 behind.");
     expect(verdictOf({ replay: "running", vote: "not_started" }, 4_180).headline).toBe(
-      "Running, not voting yet, 4,180 slots behind the cluster.",
+      "Not voting, 4,180 behind.",
     );
     expect(verdictOf({ replay: "running", vote: "not_voting" }, 90).headline).toBe(
-      "Running without voting, 90 slots behind the cluster.",
+      "Not voting, 90 behind.",
     );
     expect(verdictOf({ replay: "running", vote: "not_voting" }, IN_STEP_SLOTS).headline).toBe(
       "Running without voting.",
     );
+    expect(verdictOf({ replay: "running", vote: "not_started" }, 0).headline).toBe("Running, not voting yet.");
   });
 });
 

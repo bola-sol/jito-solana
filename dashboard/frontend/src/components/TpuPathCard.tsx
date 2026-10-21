@@ -131,11 +131,9 @@ export function TpuPathCard(): ReactElement | null {
       {ports}
 
       <div className="card-footnote">
-        Five minutes of the QUIC listener's own counters, except Verify and
-        Executed, which are this epoch's. Each section is drawn against its own
-        total; the sections do not add up against each other, because nothing
-        counts a transaction across all of them. What the scheduler then did
-        with a leader slot's traffic is on that slot's own page.
+        The QUIC listener's last five minutes; Verify and Executed cover this epoch. Each section is
+        measured against its own total, so sections don't add up across each other. What the
+        scheduler did with a leader slot is on that slot's page.
       </div>
       </div>
     </Fold>

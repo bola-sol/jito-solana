@@ -449,10 +449,21 @@ body {
 }
 
 .verdict-sub {
+  display: grid;
   margin: -4px 0 0;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-dim);
+}
+
+/* The line and its reserve share one cell, so the taller sets the height. */
+.verdict-sub > * {
+  grid-area: 1 / 1;
+}
+
+.verdict-sub-room {
+  display: none;
+  visibility: hidden;
 }
 
 .verdict-sub b {
@@ -469,6 +480,10 @@ body {
 @media (max-width: 700px) {
   .verdict {
     font-size: 24px;
+  }
+
+  .verdict-sub-room {
+    display: block;
   }
 }
 
@@ -1213,7 +1228,7 @@ body {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  width: 20ch;
+  width: 30ch;
   font-size: 13px;
   line-height: 1;
   color: var(--text);
@@ -1242,7 +1257,7 @@ body {
 }
 
 /* Where the figures and the leader do not share a line, the figures go below it. */
-@container slot-strip (max-width: 760px) {
+@container slot-strip (max-width: 860px) {
   .slot-strip-head {
     flex-wrap: wrap;
     row-gap: 4px;
@@ -1253,8 +1268,9 @@ body {
     flex-basis: 100%;
   }
 
+  /* Whatever the head leaves beside "Slots" and "Leader", where that is less than 30ch. */
   .slot-strip-leader-name {
-    width: 16ch;
+    max-width: calc(100cqw - 100px);
   }
 }
 

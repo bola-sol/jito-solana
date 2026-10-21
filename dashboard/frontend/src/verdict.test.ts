@@ -60,9 +60,9 @@ describe("verdictOf", () => {
 describe("catchUpClause", () => {
   const slot400ms = 400_000_000;
 
-  it("says the rate and the time to close the gap", () => {
+  it("says the time to close the gap", () => {
     // 38 a second against the cluster's 2.5: a net 35.5, so 4,180 slots take 117 seconds.
-    expect(catchUpClause(4_180, 38, slot400ms)).toBe("Catching up at 38 slots/s, about 1m 57s to go.");
+    expect(catchUpClause(4_180, 38, slot400ms)).toBe("Catching up, about 1m 57s to go.");
   });
 
   it("says so when replay is no faster than the cluster", () => {

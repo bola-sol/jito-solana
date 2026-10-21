@@ -7,6 +7,10 @@ import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 
+/** A catch-up clause short of an hour, held in reserve on phones so a moment behind does not push
+ *  the page down. */
+const CATCH_UP_ROOM = `Catching up, about ${duration(3_599_000)} to go. `;
+
 export function Verdict(): ReactElement {
   const store = useStore();
   const startup = store.get("summary", "startup_progress");
@@ -33,12 +37,27 @@ export function Verdict(): ReactElement {
         {verdict.headline}
       </h1>
       <p className="verdict-sub">
-        <CatchUp />
-        <Leader />
-        <Skips />
-        <Repair />
-        <Snapshot />
+        <span>
+          <CatchUp />
+          <Clauses />
+        </span>
+        <span className="verdict-sub-room" aria-hidden="true">
+          {CATCH_UP_ROOM}
+          <Clauses />
+        </span>
       </p>
+    </>
+  );
+}
+
+/** Everything on the line after the catch-up clause. */
+function Clauses() {
+  return (
+    <>
+      <Leader />
+      <Skips />
+      <Repair />
+      <Snapshot />
     </>
   );
 }

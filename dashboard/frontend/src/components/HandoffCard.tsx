@@ -244,7 +244,7 @@ function LateCard({
             <LateRow
               key={leader.leader}
               name={nameOf(leader.leader)}
-              country={countryOf(leader.leader)}
+              country={leader.country ?? countryOf(leader.leader)}
               median={`${count(leader.p50)} ms`}
               late={tally(leader.over, leader.n)}
               current={leader.leader === current}
@@ -387,14 +387,14 @@ export function HandoffCard(): ReactElement {
             <Leading
               now={now}
               name={now === null ? null : nameOf(now.leader)}
-              country={now === null ? null : countryOf(now.leader)}
+              country={now === null ? null : (now.country ?? countryOf(now.leader))}
               ours={ours}
             />
             <LateCard
               summary={summary}
               current={now?.leader ?? null}
               oursName={oursKey ? nameOf(oursKey) : "ours"}
-              oursCountry={oursKey ? countryOf(oursKey) : null}
+              oursCountry={summary?.ours.country ?? (oursKey ? countryOf(oursKey) : null)}
               nameOf={nameOf}
               countryOf={countryOf}
             />

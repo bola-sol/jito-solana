@@ -748,7 +748,9 @@ impl Collector {
                 &self.publisher,
                 TOPIC_SUMMARY,
                 "handoff",
-                self.handoffs.summary(timestamp(), &ours),
+                self.handoffs.summary(timestamp(), &ours, |key| {
+                    country_of(&self.ctx.cluster_info, key)
+                }),
             );
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
@@ -1051,7 +1053,8 @@ impl Collector {
             return;
         }
         self.handoff_now_for = Some(key);
-        let now = self.handoffs.now(&leader.id, first, timestamp());
+        let country = country_of(&self.ctx.cluster_info, &leader.id);
+        let now = self.handoffs.now(&leader.id, country, first, timestamp());
         self.debounces.handoff_now.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -2275,6 +2278,14 @@ fn count_epoch_credits(view: &solana_vote::vote_state_view::VoteStateView, epoch
 }
 
 /// Most settled first: the thresholds cross while the commitment cache lags the root at startup.
+/// The country of a validator's gossip address, for one not on the peer table.
+fn country_of(cluster_info: &ClusterInfo, key: &Pubkey) -> Option<&'static str> {
+    cluster_info
+        .lookup_contact_info(key, |contact| contact.gossip())
+        .flatten()
+        .and_then(|addr| geoip::country(addr.ip()))
+}
+
 fn classify_slot(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> SlotLevel {
     if slot <= finalized {
         SlotLevel::Finalized

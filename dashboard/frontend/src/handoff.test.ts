@@ -16,6 +16,7 @@ import type { HandoffNow } from "./types";
 function now(over: Partial<HandoffNow>): HandoffNow {
   return {
     leader: "L",
+    country: null,
     slot: 1,
     gap: 80,
     n: 40,

@@ -277,6 +277,12 @@ export class Store {
     return this.ours;
   }
 
+  /** A validator's display name by identity, from the same sources as a slot's leader. */
+  nameOf(key: string): string | null {
+    if (key === this.get("summary", "identity_key")) return this.get("summary", "identity_name") ?? null;
+    return this.peersByIdentity().get(key)?.name ?? this.displays.get(key)?.name ?? null;
+  }
+
   /** The peer table by identity, rebuilt when the array is replaced. */
   private peersByIdentity(): Map<string, Peer> {
     const peers = this.get("peers", "all") ?? [];

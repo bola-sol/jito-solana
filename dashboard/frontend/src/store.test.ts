@@ -49,6 +49,18 @@ describe("values", () => {
   });
 });
 
+describe("nameOf", () => {
+  it("names our node from the header's values and others from the peer table", () => {
+    const store = new Store();
+    store.apply(envelope("summary", "identity_key", "Ours1"));
+    store.apply(envelope("summary", "identity_name", "Lantern"));
+    store.apply(envelope("peers", "all", [{ identity: "Peer1", name: "Vyra Labs" }]));
+    expect(store.nameOf("Ours1")).toBe("Lantern");
+    expect(store.nameOf("Peer1")).toBe("Vyra Labs");
+    expect(store.nameOf("Unknown")).toBeNull();
+  });
+});
+
 describe("clock offset", () => {
   afterEach(() => vi.useRealTimers());
 

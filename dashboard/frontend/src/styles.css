@@ -3752,6 +3752,413 @@ body {
   }
 }
 
+/* ---- leader handoff ---- */
+
+.handoff-wrap {
+  container: handoff / inline-size;
+}
+
+/* The right column ends level with the chart; its late list takes the height left under Leading now. */
+.handoff-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--gap);
+  align-items: stretch;
+}
+
+.handoff-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+}
+
+.handoff-axis {
+  display: flex;
+  flex-direction: column;
+}
+
+.handoff-strip {
+  position: relative;
+  border-bottom: 1px solid var(--border);
+}
+
+.handoff-strip.is-hist {
+  height: 110px;
+}
+
+.handoff-strip.is-leaders {
+  height: 76px;
+}
+
+.handoff-strip.is-now {
+  height: 26px;
+  border-bottom: 0;
+}
+
+.handoff-strip-cap {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  z-index: 3;
+  padding-right: 6px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-faint);
+  background: var(--panel);
+}
+
+.handoff-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--panel-raised);
+}
+
+.handoff-slot-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  border-left: 1px dashed var(--text-faint);
+}
+
+.handoff-slot-line span {
+  position: absolute;
+  font-style: normal;
+  top: 2px;
+  left: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.handoff-cur-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+}
+
+.handoff-cur-line.is-late {
+  background: var(--warn);
+}
+
+.handoff-cur-line.is-ours {
+  background: var(--ours);
+}
+
+/* Bars start under the caption row. */
+.handoff-hist,
+.handoff-lead-bars {
+  position: absolute;
+  top: 18px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.handoff-hist i,
+.handoff-lead-bars i {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 1px 1px 0 0;
+}
+
+.handoff-hist i {
+  background: var(--text-faint);
+}
+
+.handoff-lead-bars i {
+  background: var(--text-dim);
+  opacity: 0.55;
+}
+
+.handoff-lead-bars i.is-current {
+  background: var(--text);
+  opacity: 1;
+}
+
+.handoff-dot {
+  position: absolute;
+  z-index: 3;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.handoff-dot.is-current {
+  box-shadow:
+    0 0 0 2px var(--panel),
+    0 0 0 3px var(--text);
+}
+
+/* Below the caption, which covers the strip's first 16px. */
+.handoff-now-band {
+  position: absolute;
+  top: 17px;
+  z-index: 2;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+
+.handoff-now-band.is-late {
+  background: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+
+.handoff-now-tick {
+  position: absolute;
+  top: 16px;
+  z-index: 2;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  background: var(--text-dim);
+}
+
+.handoff-x {
+  position: relative;
+  height: 16px;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.handoff-x span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.handoff-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.handoff-key i {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.handoff-key-band {
+  width: 14px;
+  height: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+}
+
+.handoff-key-bar {
+  width: 6px;
+  height: 10px;
+  background: var(--text-dim);
+  opacity: 0.55;
+}
+
+.handoff-key-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.handoff-key-line {
+  width: 2px;
+  height: 12px;
+  background: var(--text);
+}
+
+.handoff-foot {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.handoff-leading {
+  gap: 4px;
+}
+
+.handoff-leading.is-ours {
+  box-shadow: inset 2px 0 0 var(--ours);
+}
+
+.handoff-leading-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.handoff-leading-name {
+  height: 20px;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.handoff-leading-figure {
+  height: 28px;
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.handoff-leading.is-late .handoff-leading-figure {
+  color: var(--warn);
+}
+
+.handoff-leading-figure small {
+  margin-left: 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.handoff-leading-sub {
+  height: 18px;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.handoff-late-card {
+  flex: 1 1 auto;
+  gap: 8px;
+  min-height: 0;
+}
+
+.handoff-late-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.handoff-late-scroll:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.handoff-late-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 84px;
+  gap: 8px;
+  align-items: center;
+  height: 28px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.handoff-late-row.is-empty {
+  display: flex;
+  color: var(--text-faint);
+}
+
+.handoff-late-name {
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.handoff-late-median {
+  font-family: var(--mono);
+  color: var(--warn);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.handoff-late-count {
+  justify-self: end;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.handoff-late-row.is-current .handoff-late-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.handoff-late-row.is-ours {
+  padding-left: 8px;
+  box-shadow: inset 2px 0 0 var(--ours);
+}
+
+.handoff-late-row.is-ours .handoff-late-median {
+  color: var(--text);
+}
+
+/* Figures keep their width as they change, so the summary never rewraps. */
+.handoff-fig {
+  display: inline-block;
+  min-width: 3ch;
+  text-align: right;
+}
+
+.handoff-fig.is-ms {
+  min-width: 6ch;
+}
+
+@container handoff (width <= 700px) {
+  .handoff-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .handoff-late-card {
+    flex: none;
+  }
+
+  .handoff-late-scroll {
+    flex: none;
+    height: 224px;
+  }
+}
+
+/* The title keeps two lines whether or not its window label wraps, and the aside its own. */
+@container handoff (width <= 480px) {
+  .handoff-chart .card-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .handoff-chart .card-title {
+    display: -webkit-box;
+    min-height: 36px;
+    overflow: hidden;
+    line-height: 18px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
+
 /* ---- replay ---- */
 
 .replay-body {

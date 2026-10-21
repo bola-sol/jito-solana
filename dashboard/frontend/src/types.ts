@@ -592,6 +592,56 @@ export interface BlockLifeSummary {
   slowest: SlowBlock[];
 }
 
+/** Quartiles of handoff gaps in milliseconds. */
+export interface HandoffBand {
+  p25: number;
+  p50: number;
+  p75: number;
+}
+
+export interface LateLeader {
+  leader: string;
+  n: number;
+  p50: number;
+  /** Handoffs with a gap above the cluster's p75. */
+  over: number;
+}
+
+/** The gap before each leader's turn, from the previous slot's block filling here to the next
+ *  leader's first shred arriving here, over an epoch of slots. */
+export interface HandoffSummary {
+  since_millis: number;
+  /** Whether the window covers a whole epoch of slots. */
+  full: boolean;
+  handoffs: number;
+  cluster: HandoffBand;
+  /** Handoffs per 10 ms from nought; the first bin holds negative gaps, the last every longer one. */
+  gaps: number[];
+  /** Settled leaders that are not late, per 6 ms of their median. */
+  medians: number[];
+  settled: number;
+  /** Latest first. */
+  late: LateLeader[];
+  late_count: number;
+  ours: { n: number; p50: number | null; over: number };
+}
+
+/** The leader whose turn is arriving now. */
+export interface HandoffNow {
+  leader: string;
+  slot: number;
+  /** Null until the slot before has filled, or where that slot was ours or skipped. */
+  gap: number | null;
+  n: number;
+  /** Null until settled. */
+  band: HandoffBand | null;
+  over: number;
+  late: boolean;
+  /** Each handoff while too few for a band. */
+  gaps: number[];
+  minute_mean: number | null;
+}
+
 /** Under Alpenglow, the stake whose average vote had arrived by each millisecond after a slot began
  *  here, over the last epoch votor reported. Shares are in hundredths of a percent. */
 export interface CertFormation {
@@ -1112,6 +1162,8 @@ export interface Published {
     block_life: BlockLifeSummary | null;
     /** Alpenglow only; null until votor has reported a finished epoch. */
     cert_formation: CertFormation | null;
+    handoff: HandoffSummary | null;
+    handoff_now: HandoffNow | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

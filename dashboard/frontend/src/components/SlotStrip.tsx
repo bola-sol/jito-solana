@@ -1,7 +1,15 @@
-import { memo, useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
+import {
+  memo,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 import { count, shortKey, slotDelta } from "../format";
 import { preloadLogo, upcomingIcons } from "../logo";
-import type { LeaderRef } from "../schedule";
+import { turnSpan, type LeaderRef } from "../schedule";
 import { barHeight } from "../slotScale";
 import type { SlotEntry, SlotLevel } from "../types";
 import { useStore } from "../useStore";
@@ -77,6 +85,8 @@ export function SlotStrip(): ReactElement {
     }
   }, [store, newestSlot]);
 
+  // The head's leader holds the newest live slot; its turn is marked wherever the shown bars hold it.
+  const turn = newestSlot === undefined ? null : turnSpan(slots.map((entry) => entry.slot), newestSlot);
   const active =
     cursor === null ? null : (slots.find((entry) => entry.slot === cursor) ?? null);
   // Bars are drawn against what the cluster is configured for, so a nominal
@@ -267,6 +277,7 @@ export function SlotStrip(): ReactElement {
             onPoint={setCursor}
           />
         ))}
+        {turn && <TurnBracket first={turn.first} count={turn.count} bars={slots.length} />}
       </div>
 
       <div className="slot-axis">
@@ -368,6 +379,13 @@ function StripLeader({ mine, leader }: { mine: boolean; leader: LeaderRef }) {
       </span>
     </span>
   );
+}
+
+/** Over the bars of the turn the head's leader holds. Placed from the bar index alone, the bars
+ *  being equal and evenly spaced. */
+function TurnBracket({ first, count, bars }: { first: number; count: number; bars: number }) {
+  const place = { "--bars": bars, "--first": first, "--count": count } as CSSProperties;
+  return <div className="slot-turn" aria-hidden="true" style={place} />;
 }
 
 /** Always on the row, empty until a slot is pointed at, so it never changes the card's height. */

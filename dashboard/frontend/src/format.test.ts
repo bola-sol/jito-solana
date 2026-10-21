@@ -80,6 +80,13 @@ describe("duration", () => {
     expect(duration(604_740_000)).toBe("6d 23h 59m");
   });
 
+  it("stops at two units where asked", () => {
+    expect(duration(45_000, 2)).toBe("45s");
+    expect(duration(171_000, 2)).toBe("2m 51s");
+    expect(duration(3_723_000, 2)).toBe("1h 2m");
+    expect(duration(604_740_000, 2)).toBe("6d 23h");
+  });
+
   it("refuses a negative rather than rendering a wrapped figure", () => {
     expect(duration(-1)).toBe("—");
   });

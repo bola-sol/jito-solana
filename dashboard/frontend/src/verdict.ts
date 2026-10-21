@@ -58,5 +58,5 @@ export function catchUpClause(
   const gain = replayRate - clusterRate;
   if (gain <= 0) return "Not gaining on the cluster.";
   const toGoMs = (behindCluster / gain) * 1000;
-  return `Catching up, about ${duration(toGoMs)} to go.`;
+  return `Catching up, ${duration(toGoMs, 2)} to go.`;
 }

@@ -48,7 +48,7 @@ function nextDue(
   const due = (kind: string, interval: number | null): string | null =>
     interval === null
       ? null
-      : `next ${kind} in about ${duration(blocksUntil(blockHeight, interval) * slotMillis)}`;
+      : `next ${kind} in about ${duration(blocksUntil(blockHeight, interval) * slotMillis, 2)}`;
   const clauses = [due("incremental", snapshots.incremental_interval), due("full", snapshots.full_interval)]
     .filter((clause): clause is string => clause !== null);
   if (clauses.length === 0) return undefined;
@@ -63,7 +63,7 @@ export function snapshotWriting(
   const writing = snapshots?.writing;
   if (!writing) return null;
   const soFar =
-    nowMillis === undefined ? "" : `, ${duration(Math.max(0, nowMillis - writing.since_millis))} so far`;
+    nowMillis === undefined ? "" : `, ${duration(Math.max(0, nowMillis - writing.since_millis), 2)} so far`;
   return `writing snapshot ${count(writing.slot)}${soFar}`;
 }
 
@@ -72,5 +72,5 @@ export function snapshotWritten(written: SnapshotWritten): string {
     written.fell_behind_slots > 0
       ? `, replay fell ${count(written.fell_behind_slots)} slots behind the cluster`
       : "";
-  return `last snapshot ${count(written.slot)} took ${duration(written.took_millis)}${behind}`;
+  return `last snapshot ${count(written.slot)} took ${duration(written.took_millis, 2)}${behind}`;
 }

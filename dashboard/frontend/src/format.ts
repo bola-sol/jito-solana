@@ -35,6 +35,17 @@ export function units(value: number | null | undefined): string {
   return String(value);
 }
 
+const REGIONS = new Intl.DisplayNames(["en"], { type: "region" });
+
+/** A country's English name from its two-letter code, or the code where it has none. */
+export function countryName(code: string): string {
+  try {
+    return REGIONS.of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
 export function count(value: number | undefined): string {
   return value === undefined ? "—" : PLAIN.format(value);
 }

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { bandHeights, bandOf, minuteLabel, minuteXs, nearestMinute, trendLines } from "./finalization";
-import type { FinalizationMinute } from "./types";
+import {
+  bandHeights,
+  bandOf,
+  isLowShare,
+  markerPlace,
+  minuteLabel,
+  minuteXs,
+  nearestMinute,
+  trendLines,
+} from "./finalization";
+import type { CountryShare, FinalizationMinute } from "./types";
 
 const MINUTE = 60_000;
 
@@ -21,6 +30,28 @@ describe("bandOf", () => {
     expect(bandOf(0.93, 10)).toBe(9);
     expect(bandOf(1, 10)).toBe(9);
     expect(bandOf(0.25, 10)).toBe(2);
+  });
+});
+
+describe("isLowShare", () => {
+  const country = (median: number): CountryShare => ({ code: "SG", validators: 45, median, bands: [] });
+
+  it("warns under half only where the share also trails its country", () => {
+    expect(isLowShare(0.12, null)).toBe(true);
+    expect(isLowShare(0.12, country(0.11))).toBe(false);
+    expect(isLowShare(0.12, country(0.25))).toBe(true);
+    expect(isLowShare(0.6, country(1))).toBe(false);
+    expect(isLowShare(null, null)).toBe(false);
+  });
+});
+
+describe("markerPlace", () => {
+  it("places a share inside its band", () => {
+    expect(markerPlace(0, 10)).toEqual({ cells: 0, within: 0 });
+    expect(markerPlace(1, 10)).toEqual({ cells: 1, within: 1 });
+    const place = markerPlace(0.125, 10);
+    expect(place.cells).toBeCloseTo(0.125);
+    expect(place.within).toBeCloseTo(0.25);
   });
 });
 

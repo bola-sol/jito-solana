@@ -746,7 +746,7 @@ impl Collector {
                 self.cluster_figures_at = now;
                 self.collect_cluster_figures(&root_bank);
             }
-            self.collect_finalization_share(&working_bank);
+            self.collect_finalization_share(&working_bank, &peers);
             self.collect_cert_formation(&root_bank);
             self.debounces.block_life.publish(
                 &self.publisher,

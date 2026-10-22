@@ -705,6 +705,17 @@ export interface FinalizationShare {
   trend: FinalizationMinute[];
   /** Median from a block's last shred to our notarize vote, over the last minute. */
   vote_micros: number | null;
+  /** Validators whose gossip address is in our country, ours among them; null where too few. */
+  country: CountryShare | null;
+}
+
+export interface CountryShare {
+  /** Two-letter code. */
+  code: string;
+  validators: number;
+  median: number;
+  /** Those validators per tenth of the share, lowest first. */
+  bands: number[];
 }
 
 export interface FinalizationMinute {

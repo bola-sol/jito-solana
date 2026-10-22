@@ -6,6 +6,7 @@ import {
   bytes,
   clockTime,
   count,
+  countryName,
   decimal,
   micros,
   duration,
@@ -102,6 +103,14 @@ describe("bytes", () => {
 
   it("stops at the largest unit it knows", () => {
     expect(bytes(1024 ** 6)).toContain("TB");
+  });
+});
+
+describe("countryName", () => {
+  it("names a country from its code and keeps a code it cannot name", () => {
+    expect(countryName("SG")).toBe("Singapore");
+    expect(countryName("DE")).toBe("Germany");
+    expect(countryName("ZZZ")).toBe("ZZZ");
   });
 });
 

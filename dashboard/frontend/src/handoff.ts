@@ -1,4 +1,4 @@
-import type { HandoffBand, HandoffNow } from "./types";
+import type { HandoffBand, HandoffNow, HandoffTrend } from "./types";
 
 /** A leader's own band means something from this many handoffs. */
 export const SETTLED = 10;
@@ -78,6 +78,64 @@ export function leadingLine(now: HandoffNow | null): LeadingLine {
     };
   }
   return { kind: "few", text: `${now.n} ${now.n === 1 ? "handoff" : "handoffs"} so far, too few to call usual` };
+}
+
+export interface TrendShape {
+  /** Milliseconds at the top of the chart. */
+  top: number;
+  /** One path, broken where a minute had no handoff. */
+  line: string;
+  /** A closed outline per unbroken run of p25 to p75. */
+  bands: string[];
+  /** Height of the hour's median, or null. */
+  median: number | null;
+  /** The lowest and highest mean, or null without any. */
+  range: [number, number] | null;
+}
+
+/** The trend drawn in a box `width` by `height`, oldest at the left, nought at the bottom. */
+export function trendShape(trend: HandoffTrend, width: number, height: number): TrendShape {
+  const means = trend.mean.filter((value): value is number => value !== null);
+  const highest = Math.max(0, ...trend.p75.map((value) => value ?? 0), ...means);
+  const top = Math.max(150, Math.ceil(highest / 50) * 50);
+  const last = Math.max(1, trend.mean.length - 1);
+  const x = (index: number) => ((index / last) * width).toFixed(1);
+  const y = (millis: number) => (height - (Math.min(top, Math.max(0, millis)) / top) * height).toFixed(1);
+
+  let line = "";
+  let drawing = false;
+  trend.mean.forEach((value, index) => {
+    if (value === null) {
+      drawing = false;
+      return;
+    }
+    line += `${drawing ? "L" : "M"}${x(index)},${y(value)}`;
+    drawing = true;
+  });
+
+  const bands: string[] = [];
+  let run: number[] = [];
+  const close = () => {
+    if (run.length > 1) {
+      const upper = run.map((index, at) => `${at ? "L" : "M"}${x(index)},${y(trend.p75[index] ?? 0)}`).join("");
+      const lower = [...run].reverse().map((index) => `L${x(index)},${y(trend.p25[index] ?? 0)}`).join("");
+      bands.push(`${upper}${lower}Z`);
+    }
+    run = [];
+  };
+  trend.p25.forEach((low, index) => {
+    if (low === null || trend.p75[index] === null) close();
+    else run.push(index);
+  });
+  close();
+
+  return {
+    top,
+    line,
+    bands,
+    median: trend.hour_p50 === null ? null : Number(y(trend.hour_p50)),
+    range: means.length ? [Math.min(...means), Math.max(...means)] : null,
+  };
 }
 
 /** Where the window starts: an epoch of slots once full, else the time of its oldest handoff. */

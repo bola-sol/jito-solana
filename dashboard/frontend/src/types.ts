@@ -652,6 +652,18 @@ export interface HandoffSummary {
   late: LateLeader[];
   late_count: number;
   ours: { country: string | null; n: number; p50: number | null; over: number };
+  trend: HandoffTrend;
+}
+
+/** The mean gap over each minute of the last hour, a point each `step_millis`, oldest first; null for
+ *  a minute without a handoff. */
+export interface HandoffTrend {
+  end_millis: number;
+  step_millis: number;
+  mean: (number | null)[];
+  p25: (number | null)[];
+  p75: (number | null)[];
+  hour_p50: number | null;
 }
 
 /** The leader whose turn is arriving now. */

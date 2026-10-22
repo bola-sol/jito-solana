@@ -11,9 +11,10 @@ import {
   place,
   tally,
   stackLevels,
+  trendShape,
   windowLabel,
 } from "../handoff";
-import type { HandoffBand, HandoffNow, HandoffSummary, LateLeader } from "../types";
+import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend, LateLeader } from "../types";
 import { useStore } from "../useStore";
 import { useWidth } from "../useWidth";
 import { Explain, Fold } from "./primitives";
@@ -267,6 +268,40 @@ function LateCard({
   );
 }
 
+const TREND_WIDTH = 1000;
+const TREND_HEIGHT = 44;
+
+/** The last hour of the minute's mean, under the gap axis, on its own time axis. */
+function Trend({ trend, minute }: { trend: HandoffTrend | null; minute: number | null }) {
+  const shape = useMemo(() => (trend ? trendShape(trend, TREND_WIDTH, TREND_HEIGHT) : null), [trend]);
+  const label = shape?.range
+    ? `The 60 second mean gap over the last hour, ${shape.range[0]} to ${shape.range[1]} ms`
+    : "No handoffs in the last hour yet";
+  return (
+    <div className="handoff-trend">
+      <div className="handoff-trend-head">
+        <span>60 s mean, last hour</span>
+        <span>
+          now <b>{minute !== null ? `${count(minute)} ms` : "—"}</b> · hour{" "}
+          <b>{shape?.range ? `${shape.range[0]}–${shape.range[1]}` : "—"}</b>
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${TREND_WIDTH} ${TREND_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={label}>
+        {shape?.bands.map((band, index) => <path key={index} className="handoff-trend-band" d={band} />)}
+        {shape?.median != null && (
+          <line className="handoff-trend-median" x1={0} x2={TREND_WIDTH} y1={shape.median} y2={shape.median} />
+        )}
+        {shape && <path className="handoff-trend-line" d={shape.line} />}
+      </svg>
+      <div className="handoff-trend-x" aria-hidden="true">
+        <span>−60 min</span>
+        <span>dashed: hour median {trend?.hour_p50 != null ? `${count(trend.hour_p50)} ms` : "—"}</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
 function Key() {
   return (
     <div className="handoff-key">
@@ -377,6 +412,7 @@ export function HandoffCard(): ReactElement {
                 <span style={{ left: "100%", transform: "translateX(-100%)" }}>{max} ms</span>
               </div>
             </div>
+            <Trend trend={summary?.trend ?? null} minute={now?.minute_mean ?? null} />
             <Key />
             <div className="handoff-foot">
               Each gap runs from the previous block filling here to the next leader's first shred arriving here, so it

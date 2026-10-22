@@ -9,6 +9,7 @@ import {
   place,
   stackLevels,
   tally,
+  trendShape,
   windowLabel,
 } from "./handoff";
 import type { HandoffNow } from "./types";
@@ -67,6 +68,36 @@ describe("stackLevels", () => {
   it("stacks dots that would touch and keeps apart ones that would not", () => {
     expect(stackLevels([100, 103, 105, 120, 101])).toEqual([0, 1, 2, 0, 3]);
     expect(dotBottom(2)).toBe(18);
+  });
+});
+
+describe("trendShape", () => {
+  const trend = {
+    end_millis: 0,
+    step_millis: 15_000,
+    mean: [100, 120, null, 90, 110],
+    p25: [60, 70, null, 50, 60],
+    p75: [140, 160, null, 120, 130],
+    hour_p50: 75,
+  };
+
+  it("breaks the line and the band where a minute had no handoff", () => {
+    const shape = trendShape(trend, 400, 40);
+    expect(shape.line).toBe("M0.0,20.0L100.0,16.0M300.0,22.0L400.0,18.0");
+    expect(shape.bands).toHaveLength(2);
+    expect(shape.range).toEqual([90, 120]);
+    expect(shape.median).toBe(25);
+    expect(shape.top).toBe(200);
+  });
+
+  it("keeps at least 150 ms and rounds the top up to the next 50 ms over the highest p75", () => {
+    expect(trendShape({ ...trend, p75: [140, 120, null, 120, 130] }, 400, 40).top).toBe(150);
+    expect(trendShape({ ...trend, p75: [140, 260, null, 120, 130] }, 400, 40).top).toBe(300);
+  });
+
+  it("draws nothing without a mean", () => {
+    const shape = trendShape({ ...trend, mean: [null, null], p25: [null, null], p75: [null, null], hour_p50: null }, 400, 40);
+    expect(shape).toEqual({ top: 150, line: "", bands: [], median: null, range: null });
   });
 });
 

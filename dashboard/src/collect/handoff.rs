@@ -19,6 +19,11 @@ const SETTLED: usize = 10;
 
 const MINUTE_MILLIS: u64 = 60_000;
 
+/// The trend covers the last hour, a point each 15 seconds, each the minute up to it.
+const HOUR_MILLIS: u64 = 3_600_000;
+const TREND_STEP_MILLIS: u64 = 15_000;
+const TREND_POINTS: u64 = 241;
+
 /// The histogram's bins in milliseconds; the last also holds every longer gap.
 const GAP_BIN_MILLIS: i32 = 10;
 const GAP_BINS: usize = 60;
@@ -83,6 +88,21 @@ pub struct HandoffSummary {
     pub late: Vec<LateLeader>,
     pub late_count: u32,
     pub ours: OurHandoffs,
+    pub trend: Trend,
+}
+
+/// The mean gap over each minute of the last hour, a point each 15 seconds, oldest first, with that
+/// minute's p25 and p75. A point with no handoffs in its minute is none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Trend {
+    /// When the last point ends, unix milliseconds.
+    pub end_millis: u64,
+    pub step_millis: u64,
+    pub mean: Vec<Option<i32>>,
+    pub p25: Vec<Option<i32>>,
+    pub p75: Vec<Option<i32>>,
+    /// The median gap over the whole hour.
+    pub hour_p50: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -172,7 +192,7 @@ impl Handoffs {
             .stats_at
             .is_some_and(|at| now_millis.saturating_sub(at) < STATS_EVERY_MILLIS);
         if !fresh {
-            self.stats = self.compute(ours, country);
+            self.stats = self.compute(now_millis, ours, country);
             self.stats_at = Some(now_millis);
         }
         self.stats.clone()
@@ -180,6 +200,7 @@ impl Handoffs {
 
     fn compute(
         &self,
+        now_millis: u64,
         ours: &Pubkey,
         country: impl Fn(&Pubkey) -> Option<&'static str>,
     ) -> Option<HandoffSummary> {
@@ -266,7 +287,62 @@ impl Handoffs {
             late,
             late_count,
             ours,
+            trend: self.trend(now_millis),
         })
+    }
+
+    fn trend(&self, now_millis: u64) -> Trend {
+        let first = now_millis.saturating_sub(HOUR_MILLIS);
+        let mut recent: Vec<(u64, i32)> = self
+            .held
+            .values()
+            .filter(|handoff| {
+                handoff.at > first.saturating_sub(MINUTE_MILLIS) && handoff.at <= now_millis
+            })
+            .map(|handoff| (handoff.at, handoff.gap))
+            .collect();
+        recent.sort_unstable_by_key(|(at, _)| *at);
+
+        let mut trend = Trend {
+            end_millis: now_millis,
+            step_millis: TREND_STEP_MILLIS,
+            mean: Vec::new(),
+            p25: Vec::new(),
+            p75: Vec::new(),
+            hour_p50: None,
+        };
+        let mut minute = Vec::new();
+        for point in 0..TREND_POINTS {
+            let end = first.saturating_add(point.saturating_mul(TREND_STEP_MILLIS));
+            let from = recent.partition_point(|(at, _)| *at <= end.saturating_sub(MINUTE_MILLIS));
+            let to = recent.partition_point(|(at, _)| *at <= end);
+            minute.clear();
+            minute.extend(
+                recent
+                    .get(from..to)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|(_, gap)| *gap),
+            );
+            minute.sort_unstable();
+            let sum: i64 = minute.iter().map(|gap| i64::from(*gap)).sum();
+            let mean = i64::try_from(minute.len())
+                .ok()
+                .and_then(|len| sum.checked_div(len))
+                .and_then(|mean| i32::try_from(mean).ok());
+            let quartiles = band(&minute);
+            trend.mean.push(mean);
+            trend.p25.push(quartiles.map(|band| band.p25));
+            trend.p75.push(quartiles.map(|band| band.p75));
+        }
+        let mut hour: Vec<i32> = recent
+            .iter()
+            .filter(|(at, _)| *at > first)
+            .map(|(_, gap)| *gap)
+            .collect();
+        hour.sort_unstable();
+        trend.hour_p50 = band(&hour).map(|band| band.p50);
+        trend
     }
 
     /// The leader of the turn arriving now, measured against the last computed cluster band.
@@ -404,6 +480,29 @@ mod tests {
         let summary = handoffs.summary(0, &key(1), country).unwrap();
         assert_eq!(summary.late[0].country, Some("JP"));
         assert_eq!(summary.ours.country, Some("DE"));
+    }
+
+    #[test]
+    fn test_the_trend_means_each_minute_and_leaves_empty_minutes_out() {
+        let mut handoffs = Handoffs::default();
+        // Two handoffs ten minutes before the end, one a minute before it.
+        handoffs.note(4, key(1), 40, 3_000_000);
+        handoffs.note(8, key(2), 80, 3_010_000);
+        handoffs.note(12, key(3), 200, 3_560_000);
+        let trend = handoffs
+            .summary(3_600_000, &key(9), no_country)
+            .unwrap()
+            .trend;
+        assert_eq!(trend.mean.len(), 241);
+        assert_eq!(trend.end_millis, 3_600_000);
+        // The point at 3,015,000 holds the first two; the last holds only the third.
+        let at = |millis: u64| usize::try_from(millis.checked_div(15_000).unwrap()).unwrap();
+        assert_eq!(trend.mean[at(3_015_000)], Some(60));
+        assert_eq!(trend.p25[at(3_015_000)], Some(40));
+        assert_eq!(trend.p75[at(3_015_000)], Some(80));
+        assert_eq!(trend.mean.last(), Some(&Some(200)));
+        assert_eq!(trend.mean[at(3_300_000)], None);
+        assert_eq!(trend.hour_p50, Some(80));
     }
 
     #[test]

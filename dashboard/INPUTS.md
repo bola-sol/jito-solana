@@ -126,6 +126,7 @@ The collector polls every 200 ms and holds the bank forks read lock only to clon
 | `ClusterInfo::all_peers`, `my_shred_version`, `my_contact_info`, `id` | Cluster versions. Each peer's client, version and address. Our identity, shred version and ports, which match the socket ingest rows to `/proc/net/udp`. When we last heard each validator: "no gossip" after five minutes. |
 | `ClusterInfo::all_peers`, with each contact's `rpc`, `outset` and local timestamp, and `gossip.crds` read with `get` for each peer's `SnapshotHashes` and `LowestSlot` | The Gossip page's peers table: RPC port, last heard, start time, snapshot lag behind our root, and ledger depth. Read every five seconds, only while a page asks. |
 | `ClusterInfo::all_peers`, with each contact's `rpc`, and `socket_addr_space` | The RPC node count: peers other than us with an RPC address in our address space |
+| `ClusterInfo::all_peers` and `my_contact_info`, each contact's `gossip` address, with `Bank::vote_accounts` (alpenglow only) | The country of each staked vote account's node and of ours, looked up in the country table every five seconds: the finalization share's median among validators in our country |
 | `ClusterInfo::lookup_contact_info` for a contact's `gossip` address | The country of each leader on Leader handoff's late list, of the leader now and of our node, looked up in the country table every few seconds |
 | `ClusterInfo::tvu_peers`, with each contact's wallclock | Who counts as seen during the supermajority wait |
 | `Blockstore::meta`, `is_full`, `lowest_slot`, `ledger_path` | First shred times, and from them each epoch's mean slot time once caught up, the slot length in the certificate formation, and the end of each gap on Leader handoff. Skipped slots, how far back our blocks can be read, and the ledger's filesystem |
@@ -171,4 +172,4 @@ The kernel counts socket drops but not deliveries. The delivered counts come fro
 
 ## Built in
 
-- `geoip/country-ipv4.bin.gz`: DB-IP's IP to Country Lite, IPv4 rows, October 2026, packed by `geoip/generate.py`. Each peer's gossip address is looked up in it for the country code on the Schedule and Gossip pages and on Leader handoff. Unpacked once, on first use.
+- `geoip/country-ipv4.bin.gz`: DB-IP's IP to Country Lite, IPv4 rows, October 2026, packed by `geoip/generate.py`. Each peer's gossip address is looked up in it for the country code on the Schedule and Gossip pages and on Leader handoff, and for the finalization share in our country. Unpacked once, on first use.

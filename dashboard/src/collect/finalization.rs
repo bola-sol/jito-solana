@@ -4,8 +4,10 @@
 
 use {
     super::{Collector, TOPIC_SUMMARY},
+    crate::geoip,
     serde::Serialize,
     solana_clock::Slot,
+    solana_gossip::contact_info::ContactInfo,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_time_utils::timestamp,
@@ -27,6 +29,9 @@ const BANDS: usize = 10;
 
 /// Behind the time to vote, as for finality.
 const VOTE_WINDOW_MILLIS: u64 = 60_000;
+
+/// Fewer validators than this in our country and the share is compared with the cluster alone.
+const MIN_COUNTRY_VALIDATORS: usize = 5;
 
 #[derive(Debug, Default)]
 struct Minute {
@@ -56,6 +61,25 @@ pub struct FinalizationShare {
     pub trend: Vec<TrendMinute>,
     /// Median from a block's last shred to our notarize vote over the last minute.
     pub vote_micros: Option<u64>,
+    /// Validators whose gossip address is in our country, ours among them.
+    pub country: Option<CountryShare>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CountryShare {
+    /// Two-letter code.
+    pub code: &'static str,
+    pub validators: usize,
+    pub median: f64,
+    /// Those validators per tenth of the share, lowest first.
+    pub bands: [u32; BANDS],
+}
+
+/// Our country and each staked vote account's, from gossip addresses.
+#[derive(Debug, Default)]
+pub(super) struct Places {
+    pub(super) ours: Option<&'static str>,
+    pub(super) by_vote: HashMap<Pubkey, &'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -118,6 +142,7 @@ impl FinalizationTally {
         ours: &Pubkey,
         now_millis: u64,
         vote_micros: Option<u64>,
+        places: &Places,
     ) -> Option<FinalizationShare> {
         let since = now_millis.saturating_sub(WINDOW_MINUTES.saturating_mul(MINUTE_MILLIS));
         let window: Vec<&Minute> = self
@@ -140,11 +165,9 @@ impl FinalizationTally {
             let below = values.iter().filter(|share| **share < own).count();
             Some(below as f64 / others as f64)
         });
-        let mut bands = [0u32; BANDS];
-        for share in &values {
-            let band = ((share * BANDS as f64) as usize).min(BANDS.saturating_sub(1));
-            bands[band] = bands[band].saturating_add(1);
-        }
+        let country = places
+            .ours
+            .and_then(|code| country_share(code, &shares, &places.by_vote));
         let current = self.minutes.back().map(|minute| minute.start_millis);
         let trend = self
             .minutes
@@ -167,9 +190,10 @@ impl FinalizationTally {
             ours: own,
             median: median(&values),
             above,
-            bands,
+            bands: bands_of(&values),
             trend,
             vote_micros,
+            country,
         })
     }
 }
@@ -190,7 +214,7 @@ impl Collector {
         self.finalization.observe(&votes, timestamp());
     }
 
-    pub(super) fn collect_finalization_share(&mut self, bank: &Bank) {
+    pub(super) fn collect_finalization_share(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let now_millis = timestamp();
         let share = bank
             .is_alpenglow()
@@ -198,8 +222,9 @@ impl Collector {
                 let vote_micros = self
                     .metrics_tap
                     .vote_lag_micros(now_millis, VOTE_WINDOW_MILLIS);
+                let places = self.places(bank, peers);
                 self.finalization
-                    .summary(&self.ctx.vote_account, now_millis, vote_micros)
+                    .summary(&self.ctx.vote_account, now_millis, vote_micros, &places)
             })
             .flatten();
         self.debounces.finalization_share.publish(
@@ -208,6 +233,37 @@ impl Collector {
             "finalization_share",
             share,
         );
+    }
+
+    /// Countries from gossip addresses; empty when our own address has none.
+    fn places(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) -> Places {
+        let Some(ours) = self
+            .ctx
+            .cluster_info
+            .my_contact_info()
+            .gossip()
+            .and_then(|addr| geoip::country(addr.ip()))
+        else {
+            return Places::default();
+        };
+        let by_node: HashMap<Pubkey, &'static str> = peers
+            .iter()
+            .filter_map(|(contact, _)| {
+                Some((*contact.pubkey(), geoip::country(contact.gossip()?.ip())?))
+            })
+            .collect();
+        let mut by_vote: HashMap<Pubkey, &'static str> = bank
+            .vote_accounts()
+            .iter()
+            .filter(|(_, (stake, _))| *stake > 0)
+            .filter_map(|(vote, (_, account))| Some((*vote, *by_node.get(account.node_pubkey())?)))
+            .collect();
+        // The gossip table's copy leaves this node out.
+        by_vote.insert(self.ctx.vote_account, ours);
+        Places {
+            ours: Some(ours),
+            by_vote,
+        }
     }
 
     /// Each node's share over the window, for the peers list.
@@ -243,6 +299,38 @@ fn shares_of<'a>(minutes: impl Iterator<Item = &'a Minute>) -> HashMap<Pubkey, f
         .filter(|(_, (_, seen))| seen.saturating_mul(2) >= blocks && *seen > 0)
         .map(|(vote, (carried, seen))| (vote, f64::from(carried) / f64::from(seen)))
         .collect()
+}
+
+/// The validators in `code`, or none where there are too few to compare with.
+fn country_share(
+    code: &'static str,
+    shares: &HashMap<Pubkey, f64>,
+    by_vote: &HashMap<Pubkey, &'static str>,
+) -> Option<CountryShare> {
+    let mut values: Vec<f64> = shares
+        .iter()
+        .filter(|(vote, _)| by_vote.get(*vote) == Some(&code))
+        .map(|(_, share)| *share)
+        .collect();
+    if values.len() < MIN_COUNTRY_VALIDATORS {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    Some(CountryShare {
+        code,
+        validators: values.len(),
+        median: median(&values)?,
+        bands: bands_of(&values),
+    })
+}
+
+fn bands_of(values: &[f64]) -> [u32; BANDS] {
+    let mut bands = [0u32; BANDS];
+    for share in values {
+        let band = ((share * BANDS as f64) as usize).min(BANDS.saturating_sub(1));
+        bands[band] = bands[band].saturating_add(1);
+    }
+    bands
 }
 
 /// The upper middle of sorted values.
@@ -286,7 +374,9 @@ mod tests {
             );
         }
 
-        let summary = tally.summary(&ours, MINUTE, Some(11_400)).unwrap();
+        let summary = tally
+            .summary(&ours, MINUTE, Some(11_400), &Places::default())
+            .unwrap();
         assert_eq!(summary.blocks, 10);
         assert_eq!(summary.validators, 3);
         assert_eq!(summary.ours, Some(0.5));
@@ -310,7 +400,7 @@ mod tests {
         }
         let now = MINUTE.saturating_add(69u64.saturating_mul(MINUTE_MILLIS));
 
-        let summary = tally.summary(&ours, now, None).unwrap();
+        let summary = tally.summary(&ours, now, None, &Places::default()).unwrap();
         assert_eq!(summary.ours, Some(1.0), "only the last ten minutes count");
         assert_eq!(
             summary.trend.len(),
@@ -334,11 +424,60 @@ mod tests {
         }
 
         assert_eq!(tally.shares(MINUTE).len(), 1);
-        assert_eq!(tally.summary(&ours, MINUTE, None).unwrap().validators, 1);
+        assert_eq!(
+            tally
+                .summary(&ours, MINUTE, None, &Places::default())
+                .unwrap()
+                .validators,
+            1
+        );
         assert!(
             FinalizationTally::default()
-                .summary(&ours, MINUTE, None)
+                .summary(&ours, MINUTE, None, &Places::default())
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn test_the_country_compares_only_validators_placed_there() {
+        let (ours, away) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let here: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let mut tally = FinalizationTally::default();
+        for slot in 100u64..110 {
+            // Ours is carried every time, the others in our country never.
+            let mut votes = vec![(ours, slot), (away, slot)];
+            votes.extend(here.iter().map(|vote| (*vote, slot.saturating_sub(8))));
+            block(&mut tally, &votes, MINUTE);
+        }
+        let mut places = Places {
+            ours: Some("SG"),
+            by_vote: here.iter().map(|vote| (*vote, "SG")).collect(),
+        };
+        places.by_vote.insert(ours, "SG");
+        places.by_vote.insert(away, "DE");
+
+        let country = tally
+            .summary(&ours, MINUTE, None, &places)
+            .unwrap()
+            .country
+            .unwrap();
+        assert_eq!(country.code, "SG");
+        assert_eq!(
+            country.validators, 5,
+            "ours among them, the one elsewhere not"
+        );
+        assert_eq!(country.median, 0.0);
+        assert_eq!(country.bands[0], 4);
+        assert_eq!(country.bands[9], 1);
+
+        places.by_vote.remove(&here[0]);
+        assert!(
+            tally
+                .summary(&ours, MINUTE, None, &places)
+                .unwrap()
+                .country
+                .is_none(),
+            "four are too few to compare with"
         );
     }
 }

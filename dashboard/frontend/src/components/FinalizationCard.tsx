@@ -1,6 +1,14 @@
 import { useState, type KeyboardEvent, type PointerEvent, type ReactElement } from "react";
-import { bandHeights, bandOf, LOW_SHARE, minuteLabel, minuteXs, nearestMinute, trendLines } from "../finalization";
-import { count, percent } from "../format";
+import {
+  bandHeights,
+  isLowShare,
+  markerPlace,
+  minuteLabel,
+  minuteXs,
+  nearestMinute,
+  trendLines,
+} from "../finalization";
+import { count, countryName, percent } from "../format";
 import type { FinalizationMinute } from "../types";
 import { useStore } from "../useStore";
 import { Card, Stat } from "./primitives";
@@ -15,13 +23,22 @@ function counted(n: number, noun: string): string {
   return `${count(n)} ${noun}${n === 1 ? "" : "s"}`;
 }
 
-/** Under Alpenglow, how often blocks' finalization certificates carried our vote, against the cluster. */
+/** Under Alpenglow, how often blocks' finalization certificates carried our vote, against our country
+ *  and the cluster. */
 export function FinalizationCard(): ReactElement | null {
   const share = useStore().get("summary", "finalization_share");
   if (!share) return null;
 
   const heights = bandHeights(share.bands);
-  const ourBand = share.ours === null ? null : bandOf(share.ours, BANDS);
+  const country = share.country;
+  const place = country === null ? null : countryName(country.code);
+  const marker = share.ours === null ? null : markerPlace(share.ours, BANDS);
+  let sub: string | undefined;
+  if (country !== null && place !== null) {
+    sub = `${place} median ${percent(country.median, 0)}, ${counted(country.validators, "validator")}`;
+  } else if (share.above !== null) {
+    sub = `above ${percent(share.above, 0)} of validators`;
+  }
 
   return (
     <Card title="Finalization certificates" aside="last 10 minutes">
@@ -29,8 +46,8 @@ export function FinalizationCard(): ReactElement | null {
         <Stat
           label="of blocks carried our vote in their finalization certificate"
           value={percent(share.ours, 0)}
-          sub={share.above === null ? undefined : `above ${percent(share.above, 0)} of validators`}
-          tone={share.ours !== null && share.ours < LOW_SHARE ? "warn" : undefined}
+          sub={sub}
+          tone={isLowShare(share.ours, country) ? "warn" : undefined}
           explain="Share of blocks over the last ten minutes whose finalization certificate included this node's vote."
         />
         <Stat
@@ -47,16 +64,33 @@ export function FinalizationCard(): ReactElement | null {
       </div>
       <div className="final-charts">
         <figure className="final-chart">
-          <figcaption>Validators by share, ours highlighted</figcaption>
+          <figcaption>
+            {place === null ? "Validators by share, ours marked" : `Validators by share, ${place} shaded, ours marked`}
+          </figcaption>
           <div className="final-bands" role="img" aria-label="Validators in each tenth of the share">
-            {heights.map((height, band) => (
-              <div
-                key={band}
-                className={band === ourBand ? "is-ours" : undefined}
-                style={{ height: `${Math.max(2, height * 100)}%` }}
-                title={`${count(share.bands[band] ?? 0)} validators at ${band * 10} to ${band * 10 + 10}%`}
+            {heights.map((height, band) => {
+              const validators = share.bands[band] ?? 0;
+              const local = Math.min(validators, country?.bands[band] ?? 0);
+              const range = `${count(validators)} validators at ${band * 10} to ${band * 10 + 10}%`;
+              return (
+                <div
+                  key={band}
+                  style={{ height: `${Math.max(2, height * 100)}%` }}
+                  title={place === null ? range : `${range}, ${count(local)} in ${place}`}
+                >
+                  {local > 0 && <i style={{ height: `${(local / validators) * 100}%` }} />}
+                </div>
+              );
+            })}
+          </div>
+          <div className="final-marker" aria-hidden="true">
+            {marker !== null && (
+              <i
+                style={{
+                  left: `calc((100% + var(--final-band-gap)) * ${marker.cells} - var(--final-band-gap) * ${marker.within})`,
+                }}
               />
-            ))}
+            )}
           </div>
           <div className="final-axis">
             <span>0%</span>

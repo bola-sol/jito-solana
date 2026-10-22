@@ -1,7 +1,10 @@
-import type { FinalizationMinute } from "./types";
+import type { CountryShare, FinalizationMinute } from "./types";
 
 /** Under this share a validator's votes usually reach the certificate's builder too late. */
 export const LOW_SHARE = 0.5;
+
+/** How far under its country's median a low share must be to warn. */
+const COUNTRY_MARGIN = 0.1;
 
 const HOUR_MILLIS = 3_600_000;
 
@@ -16,6 +19,19 @@ export function bandHeights(bands: number[]): number[] {
 /** The band a share falls in; a share of 1 is in the top one. */
 export function bandOf(share: number, bands: number): number {
   return Math.max(0, Math.min(bands - 1, Math.floor(share * bands)));
+}
+
+/** Low only where it also trails validators in the same country, since distance sets most of it. */
+export function isLowShare(ours: number | null, country: CountryShare | null): boolean {
+  if (ours === null || ours >= LOW_SHARE) return false;
+  return country === null || ours < country.median - COUNTRY_MARGIN;
+}
+
+/** Where a share sits across bands drawn with gaps: whole cells before it, and how far into its own. */
+export function markerPlace(share: number, bands: number): { cells: number; within: number } {
+  const band = bandOf(share, bands);
+  const within = Math.max(0, Math.min(1, share * bands - band));
+  return { cells: (band + within) / bands, within };
 }
 
 /**

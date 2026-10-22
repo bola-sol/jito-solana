@@ -7571,6 +7571,7 @@ body {
 }
 
 .final-chart {
+  --final-band-gap: 4px;
   margin: 0;
   min-width: 0;
 }
@@ -7584,18 +7585,41 @@ body {
 .final-bands {
   display: flex;
   align-items: flex-end;
-  gap: 4px;
+  gap: var(--final-band-gap);
   height: 90px;
 }
 
 .final-bands > div {
+  position: relative;
   flex: 1;
+  overflow: hidden;
   border-radius: 2px 2px 0 0;
   background: var(--path-3);
 }
 
-.final-bands > div.is-ours {
-  background: var(--ours);
+/* Validators in our country, at the foot of each band. */
+.final-bands > div > i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--path-1);
+}
+
+/* A caret under the bands at our share. */
+.final-marker {
+  position: relative;
+  height: 6px;
+  margin-top: 2px;
+}
+
+.final-marker > i {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid var(--ours);
+  border-left: 5px solid transparent;
 }
 
 .final-trend {

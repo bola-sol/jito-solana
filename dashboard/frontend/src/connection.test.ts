@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { connect } from "./connection";
 import { Store } from "./store";
 
@@ -40,15 +40,19 @@ class FakeSocket {
 const sockets = () => FakeSocket.live;
 const latest = () => FakeSocket.live[FakeSocket.live.length - 1];
 
+beforeAll(() => {
+  // Set for the whole file, since a store's render timer can fire after a real-timer test ends.
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  }) as typeof globalThis.requestAnimationFrame;
+});
+
 beforeEach(() => {
   vi.useFakeTimers();
   FakeSocket.live = [];
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal("location", { protocol: "http:", host: "validator:10999" });
-  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    cb(0);
-    return 0;
-  });
 });
 
 afterEach(() => {

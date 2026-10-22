@@ -68,6 +68,32 @@ describe("nameOf and countryOf", () => {
   });
 });
 
+describe("render notifications", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("notifies at once after a quiet spell, then at most once per interval", () => {
+    // Animation frames stay the immediate stub above.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const store = new Store();
+    let renders = 0;
+    store.subscribe(() => (renders += 1));
+
+    store.apply(envelope("summary", "root_slot", 1));
+    expect(renders).toBe(1);
+
+    store.apply(envelope("summary", "root_slot", 2));
+    store.apply(envelope("summary", "root_slot", 3));
+    vi.advanceTimersByTime(149);
+    expect(renders).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(renders).toBe(2);
+    expect(store.get("summary", "root_slot")).toBe(3);
+
+    vi.advanceTimersByTime(1_000);
+    expect(renders).toBe(2);
+  });
+});
+
 describe("clock offset", () => {
   afterEach(() => vi.useRealTimers());
 

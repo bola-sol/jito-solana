@@ -9,7 +9,7 @@ function useStoreInstance(): Store {
   return store;
 }
 
-/** Coarse on purpose; the store coalesces to one update per frame. */
+/** Coarse on purpose; the store coalesces to one update per `RENDER_INTERVAL_MS`. */
 export function useStore(): Store {
   const store = useStoreInstance();
   useSyncExternalStore(store.subscribe, store.getRevision, store.getRevision);

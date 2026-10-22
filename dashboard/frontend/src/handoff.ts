@@ -138,11 +138,14 @@ export function trendShape(trend: HandoffTrend, width: number, height: number): 
   };
 }
 
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
+const WEEKDAY = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
+
 /** Where the window starts: an epoch of slots once full, else the time of its oldest handoff. */
 export function windowLabel(full: boolean, sinceMillis: number, nowMillis: number): string {
   if (full) return "the last 432,000 slots";
   const since = new Date(sinceMillis);
-  const clock = since.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const clock = CLOCK.format(since);
   const today = new Date(nowMillis).toDateString() === since.toDateString();
-  return today ? `since ${clock}` : `since ${since.toLocaleDateString("en-GB", { weekday: "short" })} ${clock}`;
+  return today ? `since ${clock}` : `since ${WEEKDAY.format(since)} ${clock}`;
 }

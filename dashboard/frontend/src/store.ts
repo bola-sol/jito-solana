@@ -1,5 +1,5 @@
-/** Everything the websocket has told us. Notifications are coalesced to one
- *  per animation frame. */
+/** Everything the websocket has told us. Notifications are coalesced to at
+ *  most one per `RENDER_INTERVAL_MS`, on an animation frame. */
 
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
 import type { SlotRange } from "./slotHistory";
@@ -57,6 +57,10 @@ const CLOCK_READINGS = 60;
 
 /** Thread samples kept: the minute the host card draws. */
 const MAX_THREAD_SAMPLES = 60;
+
+/** The shortest gap between renders, under a slot so each block still draws on its own. A render
+ *  every frame starved message handling and left the page seconds behind the feed. */
+const RENDER_INTERVAL_MS = 150;
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
@@ -120,7 +124,8 @@ export class Store {
   private leaderRevision = 0;
 
   private listeners = new Set<() => void>();
-  private frame: number | null = null;
+  private notifyPending = false;
+  private notifiedAt = Number.NEGATIVE_INFINITY;
   /** Bumped on every change so `useSyncExternalStore` sees a new snapshot. */
   private revision = 0;
 
@@ -429,11 +434,17 @@ export class Store {
   }
 
   private touch(): void {
-    if (this.frame !== null) return;
-    this.frame = requestAnimationFrame(() => {
-      this.frame = null;
-      this.revision += 1;
-      for (const listener of this.listeners) listener();
-    });
+    if (this.notifyPending) return;
+    this.notifyPending = true;
+    const notify = () =>
+      requestAnimationFrame(() => {
+        this.notifyPending = false;
+        this.notifiedAt = performance.now();
+        this.revision += 1;
+        for (const listener of this.listeners) listener();
+      });
+    const wait = this.notifiedAt + RENDER_INTERVAL_MS - performance.now();
+    if (wait > 0) setTimeout(notify, wait);
+    else notify();
   }
 }

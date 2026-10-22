@@ -37,6 +37,17 @@ export function units(value: number | null | undefined): string {
 
 const REGIONS = new Intl.DisplayNames(["en"], { type: "region" });
 
+/** Date formatters built once, since `toLocale*String` builds an `Intl.DateTimeFormat` per call. */
+const DAY = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "numeric", second: "numeric", hour12: false });
+const TIME_ZONED = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+  hour12: false,
+  timeZoneName: "short",
+});
+
 /** A country's English name from its two-letter code, or the code where it has none. */
 export function countryName(code: string): string {
   try {
@@ -82,9 +93,7 @@ export function blockTime(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);
   if (Number.isNaN(at.getTime())) return "—";
-  const day = at.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  const time = at.toLocaleTimeString(undefined, { hour12: false });
-  return `${day} ${time}.${String(at.getMilliseconds()).padStart(3, "0")}`;
+  return `${DAY.format(at)} ${TIME.format(at)}.${String(at.getMilliseconds()).padStart(3, "0")}`;
 }
 
 /** The time of day alone, for where the day and zone are given elsewhere. */
@@ -92,16 +101,14 @@ export function clockTime(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);
   if (Number.isNaN(at.getTime())) return "—";
-  return at.toLocaleTimeString(undefined, { hour12: false });
+  return TIME.format(at);
 }
 
 export function blockStamp(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);
   if (Number.isNaN(at.getTime())) return "—";
-  const day = at.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  const time = at.toLocaleTimeString(undefined, { hour12: false, timeZoneName: "short" });
-  return `${day} ${time}`;
+  return `${DAY.format(at)} ${TIME_ZONED.format(at)}`;
 }
 
 /** Mirrors `strip_prerelease` in `collect.rs`, which keys the version rows. */

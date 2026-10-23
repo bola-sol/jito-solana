@@ -7,9 +7,6 @@ export const SETTLED = 10;
 export const GAP_BIN = 10;
 export const MEDIAN_BIN = 6;
 
-/** Late dots stack this many pixels apart, across and up. */
-const DOT_STEP = 7;
-
 /** Wide enough for a slot and a little past it, and never below 300 ms. */
 export function axisMax(slotMillis: number | null): number {
   const slot = slotMillis !== null && Number.isFinite(slotMillis) ? slotMillis : 0;
@@ -37,19 +34,22 @@ export function binOf(millis: number, width: number, count: number): number {
   return Math.min(count - 1, Math.max(0, Math.floor(millis / width)));
 }
 
-/** A level for each dot, in order: the lowest at which it keeps clear of every dot already placed. */
-export function stackLevels(positions: readonly number[]): number[] {
-  const levels: number[][] = [];
-  return positions.map((x) => {
-    let level = 0;
-    while ((levels[level] ?? []).some((other) => Math.abs(other - x) < DOT_STEP)) level += 1;
-    (levels[level] ??= []).push(x);
-    return level;
-  });
+/** One bin of settled leaders: heights in percent of the strip, both parts of one bar. */
+export interface StackedBin {
+  onTime: number;
+  late: number;
 }
 
-export function dotBottom(level: number): number {
-  return 4 + level * DOT_STEP;
+/** Each bin's total on a square-root scale against the fullest bin, split between its two parts. */
+export function stackedBins(onTime: readonly number[], late: readonly number[]): StackedBin[] {
+  const totals = onTime.map((count, index) => count + (late[index] ?? 0));
+  const top = Math.sqrt(Math.max(1, ...totals));
+  return totals.map((total, index) => {
+    if (total === 0) return { onTime: 0, late: 0 };
+    const height = (Math.sqrt(total) / top) * 100;
+    const lateCount = late[index] ?? 0;
+    return { onTime: (height * (total - lateCount)) / total, late: (height * lateCount) / total };
+  });
 }
 
 /** Handoffs above the cluster's p75 out of all of them, without separators to stay narrow. */

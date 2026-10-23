@@ -3995,40 +3995,45 @@ body {
 }
 
 .handoff-hist i,
-.handoff-lead-bars i {
+.handoff-lead-bars > span {
   flex: 1 1 0;
   min-width: 0;
-  border-radius: 1px 1px 0 0;
 }
 
 .handoff-hist i {
+  border-radius: 1px 1px 0 0;
   background: var(--text-faint);
 }
 
+/* A bin's on-time part at the bottom, its late part stacked above. */
+.handoff-lead-bars > span {
+  display: flex;
+  flex-direction: column-reverse;
+  height: 100%;
+}
+
 .handoff-lead-bars i {
+  flex: none;
+}
+
+.handoff-lead-bars .is-on-time {
   background: var(--text-dim);
   opacity: 0.55;
 }
 
-.handoff-lead-bars i.is-current {
+.handoff-lead-bars .is-late {
+  border-radius: 1px 1px 0 0;
+  background: var(--warn);
+  opacity: 0.75;
+}
+
+.handoff-lead-bars .is-current .is-on-time {
   background: var(--text);
   opacity: 1;
 }
 
-.handoff-dot {
-  position: absolute;
-  z-index: 3;
-  width: 6px;
-  height: 6px;
-  margin-left: -3px;
-  border-radius: 50%;
-  background: var(--warn);
-}
-
-.handoff-dot.is-current {
-  box-shadow:
-    0 0 0 2px var(--panel),
-    0 0 0 3px var(--text);
+.handoff-lead-bars .is-current-late .is-late {
+  opacity: 1;
 }
 
 /* Below the caption, which covers the strip's first 16px. */
@@ -4100,8 +4105,8 @@ body {
 
 .handoff-key-dot {
   width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  height: 10px;
+  border-radius: 1px;
   background: var(--warn);
 }
 

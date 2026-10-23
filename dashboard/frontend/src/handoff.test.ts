@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   axisMax,
   binOf,
-  dotBottom,
   foldBins,
   isLate,
   leadingLine,
   place,
-  stackLevels,
+  stackedBins,
   tally,
   trendShape,
   windowLabel,
@@ -64,10 +63,22 @@ describe("binOf", () => {
   });
 });
 
-describe("stackLevels", () => {
-  it("stacks dots that would touch and keeps apart ones that would not", () => {
-    expect(stackLevels([100, 103, 105, 120, 101])).toEqual([0, 1, 2, 0, 3]);
-    expect(dotBottom(2)).toBe(18);
+describe("stackedBins", () => {
+  it("scales each bin's total by its square root and splits it between its parts", () => {
+    const bins = stackedBins([100, 9, 0, 0], [0, 16, 4, 0]);
+    expect(bins[0]).toEqual({ onTime: 100, late: 0 });
+    // 25 leaders of 100 at the top: half the height, split 9 to 16.
+    expect(bins[1]?.onTime).toBeCloseTo(18);
+    expect(bins[1]?.late).toBeCloseTo(32);
+    expect(bins[2]).toEqual({ onTime: 0, late: 20 });
+    expect(bins[3]).toEqual({ onTime: 0, late: 0 });
+  });
+
+  it("draws nothing for an empty strip", () => {
+    expect(stackedBins([0, 0], [0, 0])).toEqual([
+      { onTime: 0, late: 0 },
+      { onTime: 0, late: 0 },
+    ]);
   });
 });
 

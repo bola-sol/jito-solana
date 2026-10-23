@@ -157,7 +157,6 @@ function Chart({
   frame,
   hover,
   onHover,
-  fromReplay,
   peers,
   onPick,
 }: {
@@ -167,7 +166,6 @@ function Chart({
   frame: ReplayFrame | null;
   hover: Hover | null;
   onHover: (hover: Hover | null) => void;
-  fromReplay: boolean;
   peers: GossipPeers | null;
   onPick: (pick: Pick) => void;
 }) {
@@ -380,7 +378,7 @@ function Chart({
           {lowerHalf}
         </div>
       )}
-      {ticks(g, fromReplay).map((tick) => (
+      {ticks(g).map((tick) => (
         <div
           key={tick.ms}
           className={`cert-tick is-${tick.align}`}
@@ -445,12 +443,10 @@ function CertPulse({ g, mark, fraction }: { g: Geometry; mark: Milestone; fracti
 
 function FormationPanel({
   formation,
-  fromReplay,
   peers,
   onPick,
 }: {
   formation: CertFormation;
-  fromReplay: boolean;
   peers: GossipPeers | null;
   onPick: (pick: Pick) => void;
 }): ReactElement {
@@ -527,7 +523,6 @@ function FormationPanel({
             frame={frame}
             hover={frame ? null : hover}
             onHover={setHover}
-            fromReplay={fromReplay}
             peers={peers}
             onPick={onPick}
           />
@@ -550,7 +545,8 @@ export function CertFormationCard({
 }): ReactElement | null {
   const store = useStore();
   const formation = store.get("summary", "cert_formation");
-  const fromReplay = timedFromReplay(store.get("summary", "version"));
-  if (!formation) return null;
-  return <FormationPanel formation={formation} fromReplay={fromReplay} peers={peers} onPick={onPick} />;
+  const version = store.get("summary", "version");
+  // Not on 4.3, whose arrival times lean late.
+  if (!formation || version === undefined || timedFromReplay(version)) return null;
+  return <FormationPanel formation={formation} peers={peers} onPick={onPick} />;
 }

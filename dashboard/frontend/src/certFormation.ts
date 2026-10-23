@@ -107,7 +107,8 @@ export function shareBy(curve: readonly number[], ms: number): number {
   return (curve[index] ?? 0) / SHARE_SCALE;
 }
 
-/** 4.3's votor times a leader window's later slots from this node finishing their replay. */
+/** 4.3's votor times a leader window's later slots from this node finishing their replay, and drops
+ *  the votes that arrive before it, so its averages lean late. */
 export function timedFromReplay(version: string | null | undefined): boolean {
   return version?.startsWith("4.3.") ?? false;
 }
@@ -205,12 +206,11 @@ function tickSpan(g: Geometry, tick: Tick): [number, number] {
   return [x - width / 2, x + width / 2];
 }
 
-/** The clock's zero, steps from just past the floor, and the end; a step whose label would run into
- *  a neighbour is left out. Where most slots are timed from our replay, zero says so. */
-export function ticks(g: Geometry, fromReplay: boolean): Tick[] {
+/** The slot's start, steps from just past the floor, and the end; a step whose label would run into
+ *  a neighbour is left out. */
+export function ticks(g: Geometry): Tick[] {
   const step = g.phone ? 2 * AXIS_STEP_MS : AXIS_STEP_MS;
-  const zero = fromReplay ? "replayed" : g.phone ? "0" : "slot start";
-  const start: Tick = { ms: 0, label: zero, align: "start" };
+  const start: Tick = { ms: 0, label: g.phone ? "0" : "slot start", align: "start" };
   const end: Tick = { ms: g.end, label: `${g.end} ms`, align: "end" };
   const endSpan = tickSpan(g, end);
   const kept = [start];

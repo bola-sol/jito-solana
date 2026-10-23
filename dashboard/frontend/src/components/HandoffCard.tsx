@@ -1,10 +1,11 @@
-import { useEffect, useMemo, type ReactElement, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { count, shortKey } from "../format";
 import {
   GAP_BIN,
   MEDIAN_BIN,
   axisMax,
   binOf,
+  binRange,
   foldBins,
   leadingLine,
   place,
@@ -13,7 +14,7 @@ import {
   trendShape,
   windowLabel,
 } from "../handoff";
-import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend } from "../types";
+import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend, LeaderFigures } from "../types";
 import { useStore } from "../useStore";
 import { Explain, Fold } from "./primitives";
 
@@ -45,7 +46,7 @@ function Backdrop({
       {cluster && <i className="handoff-band" style={span(cluster, max)} />}
       {slotMillis !== null && (
         <i className="handoff-slot-line" style={{ left: `${place(slotMillis, max)}%` }}>
-          {slotLabel && <span>1 slot</span>}
+          {slotLabel && <span>avg slot</span>}
         </i>
       )}
       {gap !== null && (
@@ -59,15 +60,17 @@ function Strip({
   kind,
   caption,
   label,
+  role = "img",
   children,
 }: {
   kind: "hist" | "leaders" | "now";
   caption: string;
   label: string;
+  role?: "img" | "group";
   children: ReactNode;
 }) {
   return (
-    <div className={`handoff-strip is-${kind}`} role="img" aria-label={label}>
+    <div className={`handoff-strip is-${kind}`} role={role} aria-label={label}>
       {children}
       <span className="handoff-strip-cap" aria-hidden="true">
         {caption}
@@ -111,6 +114,32 @@ function LeaderBars({
           <i className="is-on-time" style={{ height: `${bin.onTime}%` }} />
           <i className="is-late" style={{ height: `${bin.late}%` }} />
         </span>
+      ))}
+    </div>
+  );
+}
+
+/** A button over each bin, across the strip's height, to list that bin's leaders. */
+function PickLayer({
+  count: bins,
+  picked,
+  onPick,
+}: {
+  count: number;
+  picked: number | null;
+  onPick: (index: number) => void;
+}) {
+  return (
+    <div className="handoff-pick">
+      {Array.from({ length: bins }, (_, index) => (
+        <button
+          key={index}
+          type="button"
+          className={index === picked ? "is-picked" : undefined}
+          aria-pressed={index === picked}
+          aria-label={`Leaders at ${binRange(index, bins, MEDIAN_BIN).label} ms`}
+          onClick={() => onPick(index)}
+        />
       ))}
     </div>
   );
@@ -168,6 +197,8 @@ function Leading({
           <>
             {line.usual}, <span className={line.isLate ? "tone-warn" : undefined}>{line.late}</span>
           </>
+        ) : line.kind === "unjudged" ? (
+          `${line.usual}, not judged`
         ) : line.kind === "few" ? (
           line.text
         ) : (
@@ -185,6 +216,7 @@ function LateRow({
   late,
   current,
   ours,
+  onTime,
 }: {
   name: string;
   country: string | null;
@@ -192,6 +224,8 @@ function LateRow({
   late: ReactNode;
   current?: boolean;
   ours?: boolean;
+  /** A median in plain text, for a leader not late. */
+  onTime?: boolean;
 }) {
   const className = ["handoff-late-row", current && "is-current", ours && "is-ours"].filter(Boolean).join(" ");
   return (
@@ -199,9 +233,97 @@ function LateRow({
       <span className="handoff-late-name">
         <Who name={name} country={country} />
       </span>
-      <span className="handoff-late-median">{median}</span>
+      <span className={`handoff-late-median${onTime ? " is-on-time" : ""}`}>{median}</span>
       <span className="handoff-late-count">{late}</span>
     </div>
+  );
+}
+
+/** Our own row, under either list. */
+function OursRow({ summary, name, country }: { summary: HandoffSummary | null; name: string; country: string | null }) {
+  const ours = summary?.ours;
+  const share =
+    ours === undefined
+      ? "—"
+      : ours.p50 === null
+        ? `${count(ours.n)} only`
+        : ours.judged
+          ? tally(ours.over, ours.n)
+          : "—";
+  return (
+    <LateRow
+      name={`${name} (ours)`}
+      country={country}
+      median={ours?.p50 != null ? `${count(ours.p50)} ms` : "—"}
+      late={
+        <Explain text="Handoffs above the p75 of the leader's country." className="is-leftward">
+          {share}
+        </Explain>
+      }
+      ours
+    />
+  );
+}
+
+/** The leaders in a picked bin of the leaders strip, in place of the late list. */
+function BinCard({
+  label,
+  rows,
+  current,
+  onBack,
+  summary,
+  oursName,
+  oursCountry,
+  nameOf,
+  countryOf,
+}: {
+  label: string;
+  rows: LeaderFigures[] | null;
+  current: string | null;
+  onBack: () => void;
+  summary: HandoffSummary | null;
+  oursName: string;
+  oursCountry: string | null;
+  nameOf: (key: string) => string;
+  countryOf: (key: string) => string | null;
+}) {
+  return (
+    <section className="card handoff-late-card">
+      <div className="card-head">
+        <h3 className="card-title">Leaders at {label} ms</h3>
+        <span className="card-aside">
+          {rows === null ? "—" : count(rows.length)} ·{" "}
+          <button type="button" className="handoff-back" onClick={onBack}>
+            back to late
+          </button>
+        </span>
+      </div>
+      <div className="handoff-late-scroll" tabIndex={0} aria-label={`Leaders at ${label} ms`}>
+        <div className="handoff-late-row is-head" aria-hidden="true">
+          <span>leader</span>
+          <span>median</span>
+          <span>p25–p75</span>
+        </div>
+        {rows === null ? (
+          <div className="handoff-late-row is-empty">—</div>
+        ) : rows.length === 0 ? (
+          <div className="handoff-late-row is-empty">No settled leader here now</div>
+        ) : (
+          rows.map((leader) => (
+            <LateRow
+              key={leader.leader}
+              name={nameOf(leader.leader)}
+              country={leader.country ?? countryOf(leader.leader)}
+              median={`${count(leader.p50)} ms`}
+              late={`${leader.p25}–${leader.p75}`}
+              current={leader.leader === current}
+              onTime={!leader.late}
+            />
+          ))
+        )}
+      </div>
+      <OursRow summary={summary} name={oursName} country={oursCountry} />
+    </section>
   );
 }
 
@@ -220,20 +342,32 @@ function LateCard({
   nameOf: (key: string) => string;
   countryOf: (key: string) => string | null;
 }) {
-  const ours = summary?.ours;
   return (
     <section className="card handoff-late-card">
       <div className="card-head">
         <h3 className="card-title">
-          <Explain text="Leaders whose p25 gap is above the cluster's p75.">Latest to arrive here</Explain>
+          <Explain text="Leaders whose p25 gap is 10 ms over the p75 of their country's leaders.">
+            Late for their country
+          </Explain>
         </h3>
-        <span className="card-aside">{summary ? `${count(summary.late_count)} leaders` : "—"}</span>
+        <span className="card-aside">
+          {summary ? (
+            <>
+              {count(summary.late_count)} late ·{" "}
+              <Explain text="Leaders whose country is unknown or has fewer than three settled leaders." className="is-leftward">
+                {count(summary.unjudged)} not judged
+              </Explain>
+            </>
+          ) : (
+            "—"
+          )}
+        </span>
       </div>
-      <div className="handoff-late-scroll" tabIndex={0} aria-label="Leaders latest to arrive here">
+      <div className="handoff-late-scroll" tabIndex={0} aria-label="Leaders late for their country">
         {summary === null ? (
           <div className="handoff-late-row is-empty">—</div>
         ) : summary.late.length === 0 ? (
-          <div className="handoff-late-row is-empty">No leader usually arrives late here</div>
+          <div className="handoff-late-row is-empty">No leader is late for its country</div>
         ) : (
           summary.late.map((leader) => (
             <LateRow
@@ -247,17 +381,7 @@ function LateCard({
           ))
         )}
       </div>
-      <LateRow
-        name={`${oursName} (ours)`}
-        country={oursCountry}
-        median={ours?.p50 != null ? `${count(ours.p50)} ms` : "—"}
-        late={
-          <Explain text="Handoffs with a gap above the cluster's p75." className="is-leftward">
-            {ours === undefined ? "—" : ours.p50 != null ? tally(ours.over, ours.n) : `${count(ours.n)} only`}
-          </Explain>
-        }
-        ours
-      />
+      <OursRow summary={summary} name={oursName} country={oursCountry} />
     </section>
   );
 }
@@ -309,7 +433,7 @@ function Key() {
       </span>
       <span>
         <i className="handoff-key-dot" aria-hidden="true" />
-        leader usually late here
+        late for its country
       </span>
       <span>
         <i className="handoff-key-own" aria-hidden="true" />
@@ -351,6 +475,28 @@ export function HandoffCard(): ReactElement {
   );
   const currentBin = now?.band != null ? binOf(now.band.p50, MEDIAN_BIN, Math.max(1, medians.length)) : undefined;
   const lateCount = summary?.late_count ?? null;
+  const [picked, setPicked] = useState<number | null>(null);
+  const [binLeaders, setBinLeaders] = useState<LeaderFigures[] | null>(null);
+  const pickedRange = picked === null ? null : binRange(picked, Math.max(1, medians.length), MEDIAN_BIN);
+  const from = pickedRange?.from ?? null;
+  const to = pickedRange?.to ?? null;
+  // Asked again with each summary, every ten seconds, while a bin stays picked.
+  useEffect(() => {
+    if (picked === null) {
+      setBinLeaders(null);
+      return;
+    }
+    let live = true;
+    store
+      .request("handoff.bin", { from, to })
+      .then((rows) => {
+        if (live) setBinLeaders(rows ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [store, picked, from, to, summary]);
 
   const fold = (
     <>
@@ -359,7 +505,7 @@ export function HandoffCard(): ReactElement {
         between leaders
       </Explain>{" "}
       over the last minute, <b className="handoff-fig">{lateCount === null ? "—" : count(lateCount)}</b>{" "}
-      {lateCount === 1 ? "leader usually arrives" : "leaders usually arrive"} late here
+      {lateCount === 1 ? "leader late for its country" : "leaders late for their country"}
     </>
   );
   const bandText = cluster ? `, cluster p25 ${cluster.p25} ms to p75 ${cluster.p75} ms` : "";
@@ -384,11 +530,19 @@ export function HandoffCard(): ReactElement {
               <Strip
                 kind="leaders"
                 caption={summary ? `${settled} leaders by median` : "leaders by median"}
-                label={`Settled leaders by median gap, ${lateCount ?? 0} usually late here`}
+                label={`Settled leaders by median gap, ${lateCount ?? 0} late for their country; pick a bin to list its leaders`}
+                role="group"
               >
                 <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} />
                 {summary && (
                   <LeaderBars onTime={medians} late={lateMedians} current={currentBin} currentLate={now?.late ?? false} />
+                )}
+                {summary && (
+                  <PickLayer
+                    count={medians.length}
+                    picked={picked}
+                    onPick={(index) => setPicked((was) => (was === index ? null : index))}
+                  />
                 )}
               </Strip>
               <Strip
@@ -420,14 +574,28 @@ export function HandoffCard(): ReactElement {
               country={now === null ? null : (now.country ?? countryOf(now.leader))}
               ours={ours}
             />
-            <LateCard
-              summary={summary}
-              current={now?.leader ?? null}
-              oursName={oursKey ? nameOf(oursKey) : "ours"}
-              oursCountry={summary?.ours.country ?? (oursKey ? countryOf(oursKey) : null)}
-              nameOf={nameOf}
-              countryOf={countryOf}
-            />
+            {pickedRange ? (
+              <BinCard
+                label={pickedRange.label}
+                rows={binLeaders}
+                current={now?.leader ?? null}
+                onBack={() => setPicked(null)}
+                summary={summary}
+                oursName={oursKey ? nameOf(oursKey) : "ours"}
+                oursCountry={summary?.ours.country ?? (oursKey ? countryOf(oursKey) : null)}
+                nameOf={nameOf}
+                countryOf={countryOf}
+              />
+            ) : (
+              <LateCard
+                summary={summary}
+                current={now?.leader ?? null}
+                oursName={oursKey ? nameOf(oursKey) : "ours"}
+                oursCountry={summary?.ours.country ?? (oursKey ? countryOf(oursKey) : null)}
+                nameOf={nameOf}
+                countryOf={countryOf}
+              />
+            )}
           </div>
         </div>
       </div>

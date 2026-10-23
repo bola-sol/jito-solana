@@ -4036,6 +4036,40 @@ body {
   opacity: 1;
 }
 
+/* A button over each bin, across the strip under its caption, to list that bin's leaders. */
+.handoff-pick {
+  position: absolute;
+  top: 18px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+}
+
+.handoff-pick button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px 2px 0 0;
+  background: none;
+  cursor: pointer;
+}
+
+.handoff-pick button:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.handoff-pick button.is-picked {
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.handoff-pick button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 /* Below the caption, which covers the strip's first 16px. */
 .handoff-now-band {
   position: absolute;
@@ -4266,8 +4300,37 @@ body {
   box-shadow: inset 2px 0 0 var(--ours);
 }
 
-.handoff-late-row.is-ours .handoff-late-median {
+.handoff-late-row.is-ours .handoff-late-median,
+.handoff-late-median.is-on-time {
   color: var(--text);
+}
+
+.handoff-late-row.is-head {
+  height: 20px;
+  border-top: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.handoff-late-row.is-head > span:not(:first-child) {
+  text-align: right;
+}
+
+.handoff-back {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.handoff-back:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* The hour's trend has its own time axis, so it sits apart under the gap axis's labels. */

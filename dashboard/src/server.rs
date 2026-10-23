@@ -740,6 +740,14 @@ struct DetailParams {
 }
 
 #[derive(serde::Deserialize)]
+struct HandoffBinParams {
+    /// Inclusive, in milliseconds; none for no lower bound.
+    from: Option<i32>,
+    /// Exclusive; none for no upper bound.
+    to: Option<i32>,
+}
+
+#[derive(serde::Deserialize)]
 struct SlotRangeParams {
     first_slot: Slot,
     /// Clamped by the history rather than refused.
@@ -878,6 +886,18 @@ fn respond(
             };
             let detail = replies.produced_detail(params.first, params.last);
             Some(encode_with_id("produced", "detail", id, &detail))
+        }
+        ("handoff", "bin") => {
+            let Ok(params) = serde_json::from_value::<HandoffBinParams>(request.params) else {
+                return Some(encode_with_id(
+                    "handoff",
+                    "bin",
+                    id,
+                    &serde_json::json!({ "error": "bin takes an optional from and to" }),
+                ));
+            };
+            let leaders = replies.handoff_leaders_between(params.from, params.to);
+            Some(encode_with_id("handoff", "bin", id, &leaders))
         }
         ("slot", "range") => {
             // A client waiting on an id cannot tell silence from slowness.
@@ -1096,6 +1116,47 @@ mod tests {
         assert!(reply.contains(r#""id":9"#), "{reply}");
         assert!(reply.contains(r#""first_slot":4"#), "{reply}");
         assert!(reply.contains(r#""rows":[null,null]"#), "{reply}");
+    }
+
+    #[test]
+    fn test_a_bin_lists_the_leaders_whose_median_falls_in_it() {
+        let replies = no_replies();
+        let leader = |name: &str, p50: i32| crate::collect::LeaderFigures {
+            leader: name.to_string(),
+            country: Some("DE"),
+            n: 20,
+            p25: p50,
+            p50,
+            p75: p50,
+            late: false,
+        };
+        *replies.handoff_leaders.write().unwrap() = vec![
+            leader("a", -5),
+            leader("b", 42),
+            leader("c", 47),
+            leader("d", 48),
+            leader("e", 400),
+        ];
+        let ask = |params: &str| {
+            respond(
+                format!(r#"{{"topic":"handoff","key":"bin","id":3,"params":{params}}}"#).as_bytes(),
+                &empty(),
+                &no_info(),
+                &no_epochs(),
+                &replies,
+            )
+            .unwrap()
+        };
+        let middle = ask(r#"{"from":42,"to":48}"#);
+        assert!(
+            middle.contains(r#""leader":"b""#) && middle.contains(r#""leader":"c""#),
+            "{middle}"
+        );
+        assert!(!middle.contains(r#""leader":"d""#), "{middle}");
+        // The first bin takes everything below it, the last everything above.
+        assert!(ask(r#"{"from":null,"to":6}"#).contains(r#""leader":"a""#));
+        assert!(ask(r#"{"from":294,"to":null}"#).contains(r#""leader":"e""#));
+        assert!(ask(r#"{"to":"x"}"#).contains("error"));
     }
 
     #[test]

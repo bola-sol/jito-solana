@@ -185,7 +185,8 @@ out of the packed history, which holds an epoch, `slot.search` for a page of
 the turns in it that match a leader's name or key, a slot number or this
 validator, answered off the async threads and one at a time, and
 `peers.gossip` for every node in gossip, which the server gathers only while it
-is being asked for.
+is being asked for, and `handoff.bin` for the settled leaders whose median handoff
+gap falls in a range, from the figures each ten-second handoff summary keeps.
 
 A client that offers the `deflate` websocket subprotocol is sent every message
 of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the

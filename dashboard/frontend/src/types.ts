@@ -629,8 +629,20 @@ export interface LateLeader {
   country: string | null;
   n: number;
   p50: number;
-  /** Handoffs with a gap above the cluster's p75. */
+  /** Handoffs with a gap above the p75 of its country's leaders. */
   over: number;
+}
+
+/** One settled leader, as listed for a bin of the leaders strip. */
+export interface LeaderFigures {
+  leader: string;
+  country: string | null;
+  n: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  /** Late for its country; false where the country has too few settled leaders to judge. */
+  late: boolean;
 }
 
 /** The gap before each leader's turn, from the previous slot's block filling here to the next
@@ -651,7 +663,9 @@ export interface HandoffSummary {
   /** Latest first. */
   late: LateLeader[];
   late_count: number;
-  ours: { country: string | null; n: number; p50: number | null; over: number };
+  /** Settled leaders whose country is unknown or has too few settled leaders. */
+  unjudged: number;
+  ours: { country: string | null; n: number; p50: number | null; over: number; judged: boolean };
   trend: HandoffTrend;
 }
 
@@ -678,6 +692,8 @@ export interface HandoffNow {
   band: HandoffBand | null;
   over: number;
   late: boolean;
+  /** Whether its country has enough settled leaders to judge against. */
+  judged: boolean;
   /** Each handoff while too few for a band. */
   gaps: number[];
   minute_mean: number | null;

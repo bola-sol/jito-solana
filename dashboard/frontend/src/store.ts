@@ -9,6 +9,7 @@ import type {
   Envelope,
   FiguresPage,
   GossipPeers,
+  LeaderFigures,
   MissList,
   NetworkSample,
   Peer,
@@ -35,6 +36,7 @@ export interface Requests {
   "summary.misses": { params: Record<string, never>; reply: MissList };
   "summary.written": { params: Record<string, never>; reply: WrittenList };
   "peers.gossip": { params: Record<string, never>; reply: GossipPeers | null };
+  "handoff.bin": { params: { from: number | null; to: number | null }; reply: LeaderFigures[] | null };
   "produced.figures": { params: { before?: number }; reply: FiguresPage | null };
   "produced.detail": { params: { first: number; last: number }; reply: ProducedDetail | null };
 }

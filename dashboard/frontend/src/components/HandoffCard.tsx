@@ -1,22 +1,20 @@
-import { useEffect, useMemo, useRef, type ReactElement, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactElement, type ReactNode } from "react";
 import { count, shortKey } from "../format";
 import {
   GAP_BIN,
   MEDIAN_BIN,
   axisMax,
   binOf,
-  dotBottom,
   foldBins,
   leadingLine,
   place,
   tally,
-  stackLevels,
+  stackedBins,
   trendShape,
   windowLabel,
 } from "../handoff";
-import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend, LateLeader } from "../types";
+import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend } from "../types";
 import { useStore } from "../useStore";
-import { useWidth } from "../useWidth";
 import { Explain, Fold } from "./primitives";
 
 type Tone = "plain" | "late" | "ours";
@@ -93,32 +91,28 @@ function Bars({ values, className, current }: { values: number[]; className: str
   );
 }
 
-function LateDots({
+/** Settled leaders by median, late ones stacked on top in orange; the current leader's part is lit. */
+function LeaderBars({
+  onTime,
   late,
-  max,
-  width,
   current,
+  currentLate,
 }: {
-  late: readonly LateLeader[];
-  max: number;
-  width: number | null;
-  current: string | null;
+  onTime: number[];
+  late: number[];
+  current?: number;
+  currentLate: boolean;
 }) {
-  const levels = useMemo(
-    () => stackLevels(late.map((leader) => (place(leader.p50, max) / 100) * (width ?? 0))),
-    [late, max, width],
-  );
-  if (width === null) return null;
+  const bins = useMemo(() => stackedBins(onTime, late), [onTime, late]);
   return (
-    <>
-      {late.map((leader, index) => (
-        <i
-          key={leader.leader}
-          className={`handoff-dot${leader.leader === current ? " is-current" : ""}`}
-          style={{ left: `${place(leader.p50, max)}%`, bottom: dotBottom(levels[index] ?? 0) }}
-        />
+    <div className="handoff-lead-bars" aria-hidden="true">
+      {bins.map((bin, index) => (
+        <span key={index} className={index === current ? (currentLate ? "is-current-late" : "is-current") : undefined}>
+          <i className="is-on-time" style={{ height: `${bin.onTime}%` }} />
+          <i className="is-late" style={{ height: `${bin.late}%` }} />
+        </span>
       ))}
-    </>
+    </div>
   );
 }
 
@@ -337,8 +331,6 @@ export function HandoffCard(): ReactElement {
   const slotNanos = store.get("summary", "observed_slot_duration_nanos") ?? store.get("summary", "estimated_slot_duration_nanos");
   const slotMillis = slotNanos ? slotNanos / 1e6 : null;
   const max = axisMax(slotMillis);
-  const leadersRef = useRef<HTMLDivElement>(null);
-  const leadersWidth = useWidth(leadersRef);
   const named = summary !== null && summary.late.length > 0;
   // Late leaders are rarely in gossip's own names, so the cluster's table is fetched once.
   useEffect(() => {
@@ -353,8 +345,11 @@ export function HandoffCard(): ReactElement {
   const gap = now?.gap ?? null;
   const gaps = useMemo(() => (summary ? foldBins(summary.gaps, GAP_BIN, max) : []), [summary, max]);
   const medians = useMemo(() => (summary ? foldBins(summary.medians, MEDIAN_BIN, max) : []), [summary, max]);
-  const currentBin =
-    now?.band != null && !now.late ? binOf(now.band.p50, MEDIAN_BIN, Math.max(1, medians.length)) : undefined;
+  const lateMedians = useMemo(
+    () => (summary ? foldBins(summary.late_medians, MEDIAN_BIN, max) : []),
+    [summary, max],
+  );
+  const currentBin = now?.band != null ? binOf(now.band.p50, MEDIAN_BIN, Math.max(1, medians.length)) : undefined;
   const lateCount = summary?.late_count ?? null;
 
   const fold = (
@@ -386,17 +381,16 @@ export function HandoffCard(): ReactElement {
                 <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} slotLabel />
                 {summary && <Bars values={gaps} className="handoff-hist" />}
               </Strip>
-              <div ref={leadersRef}>
-                <Strip
-                  kind="leaders"
-                  caption={summary ? `${settled} leaders by median` : "leaders by median"}
-                  label={`Settled leaders by median gap, ${lateCount ?? 0} usually late here`}
-                >
-                  <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} />
-                  {summary && <Bars values={medians} className="handoff-lead-bars" current={currentBin} />}
-                  {summary && <LateDots late={summary.late} max={max} width={leadersWidth} current={now?.leader ?? null} />}
-                </Strip>
-              </div>
+              <Strip
+                kind="leaders"
+                caption={summary ? `${settled} leaders by median` : "leaders by median"}
+                label={`Settled leaders by median gap, ${lateCount ?? 0} usually late here`}
+              >
+                <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} />
+                {summary && (
+                  <LeaderBars onTime={medians} late={lateMedians} current={currentBin} currentLate={now?.late ?? false} />
+                )}
+              </Strip>
               <Strip
                 kind="now"
                 caption="leading now"

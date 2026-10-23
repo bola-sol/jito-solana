@@ -645,6 +645,8 @@ export interface HandoffSummary {
   gaps: number[];
   /** Settled leaders that are not late, per 6 ms of their median. */
   medians: number[];
+  /** Settled leaders that are late, in the same bins; complete where `late` is cut. */
+  late_medians: number[];
   settled: number;
   /** Latest first. */
   late: LateLeader[];

@@ -83,6 +83,8 @@ pub struct HandoffSummary {
     pub gaps: Vec<u32>,
     /// Settled leaders that are not late, per 6 ms of their median gap.
     pub medians: Vec<u32>,
+    /// Settled leaders that are late, in the same bins, all of them where the list is cut.
+    pub late_medians: Vec<u32>,
     pub settled: u32,
     /// Settled leaders whose p25 is above the cluster's p75, latest first.
     pub late: Vec<LateLeader>,
@@ -225,6 +227,7 @@ impl Handoffs {
             own.sort_unstable();
         }
         let mut medians = vec![0u32; MEDIAN_BINS];
+        let mut late_medians = vec![0u32; MEDIAN_BINS];
         let mut settled = 0u32;
         let mut late = Vec::new();
         for (leader, own) in &by_leader {
@@ -236,6 +239,10 @@ impl Handoffs {
             };
             settled = settled.saturating_add(1);
             if own_band.p25 > cluster.p75 {
+                bump(
+                    &mut late_medians,
+                    bin(own_band.p50, MEDIAN_BIN_MILLIS, MEDIAN_BINS),
+                );
                 let key = self.keys.get(usize::from(*leader));
                 late.push(LateLeader {
                     leader: key.map(Pubkey::to_string).unwrap_or_default(),
@@ -283,6 +290,7 @@ impl Handoffs {
             cluster,
             gaps,
             medians,
+            late_medians,
             settled,
             late,
             late_count,
@@ -467,6 +475,8 @@ mod tests {
         assert_eq!(summary.late[0].p50, 220);
         assert_eq!(summary.late[0].over, 10);
         assert_eq!(summary.medians.iter().sum::<u32>(), 10);
+        assert_eq!(summary.late_medians.iter().sum::<u32>(), 1);
+        assert_eq!(summary.late_medians[36], 1);
         assert_eq!(summary.gaps.iter().sum::<u32>(), 110);
         assert_eq!(summary.ours.n, 10);
         assert_eq!(summary.ours.p50, Some(60));

@@ -72,6 +72,7 @@ pub use self::{
         MissList, MissReplies, MissRow, MissValidator, MissWriter, WrittenList, WrittenRow,
     },
     gossip_peers::GossipPeers,
+    handoff::LeaderFigures,
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
@@ -96,6 +97,28 @@ pub struct Replies {
     /// Unix milliseconds of the last request for the miss or written list, which are rebuilt
     /// every slow tick only while someone is asking.
     pub misses_wanted: AtomicU64,
+    /// Every settled leader's handoff figures, by median, for the leaders in a bin asked about.
+    pub handoff_leaders: RwLock<Vec<LeaderFigures>>,
+}
+
+impl Replies {
+    /// The settled leaders whose median gap is at least `from` and under `to`, each end open
+    /// where it is none.
+    pub fn handoff_leaders_between(
+        &self,
+        from: Option<i32>,
+        to: Option<i32>,
+    ) -> Vec<LeaderFigures> {
+        let Ok(leaders) = self.handoff_leaders.read() else {
+            return Vec::new();
+        };
+        leaders
+            .iter()
+            .filter(|leader| from.is_none_or(|from| leader.p50 >= from))
+            .filter(|leader| to.is_none_or(|to| leader.p50 < to))
+            .cloned()
+            .collect()
+    }
 }
 
 impl Replies {
@@ -144,6 +167,7 @@ impl Default for Replies {
             gossip_peers: RwLock::new(Arc::from("null")),
             gossip_peers_wanted: AtomicU64::new(0),
             misses_wanted: AtomicU64::new(0),
+            handoff_leaders: RwLock::default(),
         }
     }
 }
@@ -763,6 +787,11 @@ impl Collector {
                     country_of(&self.ctx.cluster_info, key)
                 }),
             );
+            if let Some(leaders) = self.handoffs.take_leaders()
+                && let Ok(mut held) = self.replies.handoff_leaders.write()
+            {
+                *held = leaders;
+            }
             let ahead = self.collect_upcoming(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.collect_gossip_peers(&working_bank, root_bank.slot(), &peers, timestamp());

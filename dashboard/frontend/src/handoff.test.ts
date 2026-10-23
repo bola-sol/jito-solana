@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   axisMax,
   binOf,
+  binRange,
   foldBins,
-  isLate,
   leadingLine,
   place,
   stackedBins,
@@ -24,6 +24,7 @@ function now(over: Partial<HandoffNow>): HandoffNow {
     over: 6,
     late: false,
     gaps: [],
+    judged: true,
     minute_mean: 78,
     ...over,
   };
@@ -119,12 +120,11 @@ describe("tally", () => {
   });
 });
 
-describe("isLate", () => {
-  it("needs the leader's p25 above the cluster's p75", () => {
-    const cluster = { p25: 55, p50: 71, p75: 91 };
-    expect(isLate({ p25: 198, p50: 220, p75: 232 }, cluster)).toBe(true);
-    expect(isLate({ p25: 91, p50: 120, p75: 140 }, cluster)).toBe(false);
-    expect(isLate(null, cluster)).toBe(false);
+describe("binRange", () => {
+  it("leaves the first bin open below and the last open above", () => {
+    expect(binRange(0, 50, 6)).toEqual({ from: null, to: 6, label: "0–5" });
+    expect(binRange(7, 50, 6)).toEqual({ from: 42, to: 48, label: "42–47" });
+    expect(binRange(49, 50, 6)).toEqual({ from: 294, to: null, label: "294+" });
   });
 });
 
@@ -136,6 +136,10 @@ describe("leadingLine", () => {
       late: "late 25/25",
       isLate: true,
     });
+  });
+
+  it("says when the leader's country cannot be judged", () => {
+    expect(leadingLine(now({ judged: false }))).toEqual({ kind: "unjudged", usual: "usual 60–90 ms" });
   });
 
   it("says when there are too few handoffs", () => {

@@ -1,4 +1,4 @@
-import type { HandoffBand, HandoffNow, HandoffTrend } from "./types";
+import type { HandoffNow, HandoffTrend } from "./types";
 
 /** A leader's own band means something from this many handoffs. */
 export const SETTLED = 10;
@@ -57,22 +57,38 @@ export function tally(over: number, total: number): string {
   return `${over}/${total}`;
 }
 
-/** Late on most turns: its own p25 is above the cluster's p75. */
-export function isLate(band: HandoffBand | null, cluster: HandoffBand | null): boolean {
-  return band !== null && cluster !== null && band.p25 > cluster.p75;
+/** The medians a bin of the leaders strip covers: the first also takes every lower one, the last
+ *  every higher one. */
+export interface BinRange {
+  from: number | null;
+  to: number | null;
+  label: string;
+}
+
+export function binRange(index: number, count: number, width: number): BinRange {
+  const low = index * width;
+  const last = index >= count - 1;
+  return {
+    from: index === 0 ? null : low,
+    to: last ? null : low + width,
+    label: last ? `${low}+` : `${low}–${low + width - 1}`,
+  };
 }
 
 export type LeadingLine =
   | { kind: "settled"; usual: string; late: string; isLate: boolean }
+  | { kind: "unjudged"; usual: string }
   | { kind: "few"; text: string }
   | { kind: "none" };
 
 export function leadingLine(now: HandoffNow | null): LeadingLine {
   if (now === null) return { kind: "none" };
   if (now.band !== null) {
+    const usual = `usual ${now.band.p25}–${now.band.p75} ms`;
+    if (!now.judged) return { kind: "unjudged", usual };
     return {
       kind: "settled",
-      usual: `usual ${now.band.p25}–${now.band.p75} ms`,
+      usual,
       late: `late ${tally(now.over, now.n)}`,
       isLate: now.late,
     };

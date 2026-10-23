@@ -35,6 +35,12 @@ const MEDIAN_BINS: usize = 100;
 /// Enough rows for any real cluster; more would need a virtual list.
 const LATE_LISTED: usize = 200;
 
+/// A leader is judged against its own country only where this many settled leaders share it.
+const COUNTRY_LEADERS: usize = 3;
+
+/// How far a leader's p25 must sit over its country's p75 to count as late.
+const LATE_MARGIN_MILLIS: i32 = 10;
+
 #[derive(Debug, Clone, Copy)]
 struct Handoff {
     leader: u16,
@@ -58,8 +64,21 @@ pub struct LateLeader {
     pub country: Option<&'static str>,
     pub n: u32,
     pub p50: i32,
-    /// Handoffs with a gap above the cluster's p75.
+    /// Handoffs with a gap above the p75 of its country's leaders.
     pub over: u32,
+}
+
+/// One settled leader's figures, for the leaders in a bin of the median strip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LeaderFigures {
+    pub leader: String,
+    pub country: Option<&'static str>,
+    pub n: u32,
+    pub p25: i32,
+    pub p50: i32,
+    pub p75: i32,
+    /// Late for its country; false where its country has too few settled leaders to judge.
+    pub late: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -69,6 +88,8 @@ pub struct OurHandoffs {
     /// Only once settled.
     pub p50: Option<i32>,
     pub over: u32,
+    /// Whether our country has enough settled leaders to judge against.
+    pub judged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -86,9 +107,11 @@ pub struct HandoffSummary {
     /// Settled leaders that are late, in the same bins, all of them where the list is cut.
     pub late_medians: Vec<u32>,
     pub settled: u32,
-    /// Settled leaders whose p25 is above the cluster's p75, latest first.
+    /// Settled leaders whose p25 is 10 ms over the p75 of their country's leaders, latest first.
     pub late: Vec<LateLeader>,
     pub late_count: u32,
+    /// Settled leaders whose country is unknown or has too few settled leaders.
+    pub unjudged: u32,
     pub ours: OurHandoffs,
     pub trend: Trend,
 }
@@ -120,10 +143,19 @@ pub struct HandoffNow {
     pub band: Option<Band>,
     pub over: u32,
     pub late: bool,
+    /// Whether its country has enough settled leaders to judge against.
+    pub judged: bool,
     /// Each handoff, while too few for a band.
     pub gaps: Vec<i32>,
     /// The mean handoff gap over the last minute.
     pub minute_mean: Option<i32>,
+}
+
+/// One summary with what it was judged against and every settled leader behind it.
+struct Computed {
+    summary: HandoffSummary,
+    country_p75: HashMap<&'static str, i32>,
+    leaders: Vec<LeaderFigures>,
 }
 
 #[derive(Debug, Default)]
@@ -134,6 +166,10 @@ pub(super) struct Handoffs {
     rolled: bool,
     stats: Option<HandoffSummary>,
     stats_at: Option<u64>,
+    /// Each judged country's p75, from the last summary.
+    country_p75: HashMap<&'static str, i32>,
+    /// Every settled leader's figures, from the last summary, until taken.
+    leaders: Option<Vec<LeaderFigures>>,
 }
 
 impl Handoffs {
@@ -194,10 +230,23 @@ impl Handoffs {
             .stats_at
             .is_some_and(|at| now_millis.saturating_sub(at) < STATS_EVERY_MILLIS);
         if !fresh {
-            self.stats = self.compute(now_millis, ours, country);
+            let computed = self.compute(now_millis, ours, country);
             self.stats_at = Some(now_millis);
+            match computed {
+                Some(computed) => {
+                    self.stats = Some(computed.summary);
+                    self.country_p75 = computed.country_p75;
+                    self.leaders = Some(computed.leaders);
+                }
+                None => self.stats = None,
+            }
         }
         self.stats.clone()
+    }
+
+    /// Every settled leader's figures, once after each summary.
+    pub(super) fn take_leaders(&mut self) -> Option<Vec<LeaderFigures>> {
+        self.leaders.take()
     }
 
     fn compute(
@@ -205,7 +254,7 @@ impl Handoffs {
         now_millis: u64,
         ours: &Pubkey,
         country: impl Fn(&Pubkey) -> Option<&'static str>,
-    ) -> Option<HandoffSummary> {
+    ) -> Option<Computed> {
         let since_millis = self.held.values().map(|handoff| handoff.at).min()?;
         let mut all: Vec<i32> = self.held.values().map(|handoff| handoff.gap).collect();
         all.sort_unstable();
@@ -226,64 +275,105 @@ impl Handoffs {
         for own in by_leader.values_mut() {
             own.sort_unstable();
         }
+        // Each settled leader with its country, then each country's handoffs pooled.
+        let settled_leaders: Vec<(u16, &Vec<i32>, Band, Option<&'static str>)> = by_leader
+            .iter()
+            .filter(|(_, own)| own.len() >= SETTLED)
+            .filter_map(|(leader, own)| {
+                let own_band = band(own)?;
+                let key = self.keys.get(usize::from(*leader))?;
+                Some((*leader, own, own_band, country(key)))
+            })
+            .collect();
+        let mut pooled: HashMap<&'static str, (usize, Vec<i32>)> = HashMap::new();
+        for (_, own, _, place) in &settled_leaders {
+            if let Some(place) = place {
+                let entry = pooled.entry(place).or_default();
+                entry.0 = entry.0.saturating_add(1);
+                entry.1.extend(own.iter());
+            }
+        }
+        let country_p75: HashMap<&'static str, i32> = pooled
+            .into_iter()
+            .filter(|(_, (leaders, _))| *leaders >= COUNTRY_LEADERS)
+            .filter_map(|(place, (_, mut gaps))| {
+                gaps.sort_unstable();
+                Some((place, band(&gaps)?.p75))
+            })
+            .collect();
+
         let mut medians = vec![0u32; MEDIAN_BINS];
         let mut late_medians = vec![0u32; MEDIAN_BINS];
-        let mut settled = 0u32;
         let mut late = Vec::new();
-        for (leader, own) in &by_leader {
-            if own.len() < SETTLED {
-                continue;
+        let mut leaders = Vec::new();
+        let mut unjudged = 0u32;
+        for (leader, own, own_band, place) in &settled_leaders {
+            let local = place.and_then(|place| country_p75.get(place).copied());
+            let is_late =
+                local.is_some_and(|local| own_band.p25 > local.saturating_add(LATE_MARGIN_MILLIS));
+            if local.is_none() {
+                unjudged = unjudged.saturating_add(1);
             }
-            let Some(own_band) = band(own) else {
-                continue;
-            };
-            settled = settled.saturating_add(1);
-            if own_band.p25 > cluster.p75 {
-                bump(
-                    &mut late_medians,
-                    bin(own_band.p50, MEDIAN_BIN_MILLIS, MEDIAN_BINS),
-                );
-                let key = self.keys.get(usize::from(*leader));
+            let key = self
+                .keys
+                .get(usize::from(*leader))
+                .map(Pubkey::to_string)
+                .unwrap_or_default();
+            let median_bin = bin(own_band.p50, MEDIAN_BIN_MILLIS, MEDIAN_BINS);
+            if is_late {
+                bump(&mut late_medians, median_bin);
                 late.push(LateLeader {
-                    leader: key.map(Pubkey::to_string).unwrap_or_default(),
-                    country: key.and_then(&country),
+                    leader: key.clone(),
+                    country: *place,
                     n: count(own.len()),
                     p50: own_band.p50,
-                    over: over(own, cluster.p75),
+                    over: local.map_or(0, |local| over(own, local)),
                 });
             } else {
-                bump(
-                    &mut medians,
-                    bin(own_band.p50, MEDIAN_BIN_MILLIS, MEDIAN_BINS),
-                );
+                bump(&mut medians, median_bin);
             }
+            leaders.push(LeaderFigures {
+                leader: key,
+                country: *place,
+                n: count(own.len()),
+                p25: own_band.p25,
+                p50: own_band.p50,
+                p75: own_band.p75,
+                late: is_late,
+            });
         }
         late.sort_by(|a, b| b.p50.cmp(&a.p50).then_with(|| a.leader.cmp(&b.leader)));
         let late_count = count(late.len());
         late.truncate(LATE_LISTED);
+        leaders.sort_by(|a, b| a.p50.cmp(&b.p50).then_with(|| b.n.cmp(&a.n)));
+        let settled = count(settled_leaders.len());
 
+        let our_country = country(ours);
+        let our_local = our_country.and_then(|place| country_p75.get(place).copied());
         let ours = self
             .index
             .get(ours)
             .and_then(|index| by_leader.get(index))
             .map_or(
                 OurHandoffs {
-                    country: country(ours),
+                    country: our_country,
                     n: 0,
                     p50: None,
                     over: 0,
+                    judged: our_local.is_some(),
                 },
                 |own| OurHandoffs {
-                    country: country(ours),
+                    country: our_country,
                     n: count(own.len()),
                     p50: (own.len() >= SETTLED)
                         .then(|| band(own).map(|own| own.p50))
                         .flatten(),
-                    over: over(own, cluster.p75),
+                    over: our_local.map_or(0, |local| over(own, local)),
+                    judged: our_local.is_some(),
                 },
             );
 
-        Some(HandoffSummary {
+        let summary = HandoffSummary {
             since_millis,
             full: self.rolled,
             handoffs: count(all.len()),
@@ -294,8 +384,14 @@ impl Handoffs {
             settled,
             late,
             late_count,
+            unjudged,
             ours,
             trend: self.trend(now_millis),
+        };
+        Some(Computed {
+            summary,
+            country_p75,
+            leaders,
         })
     }
 
@@ -353,7 +449,7 @@ impl Handoffs {
         trend
     }
 
-    /// The leader of the turn arriving now, measured against the last computed cluster band.
+    /// The leader of the turn arriving now, judged against its country's p75 from the last summary.
     pub(super) fn now(
         &self,
         leader: &Pubkey,
@@ -361,7 +457,7 @@ impl Handoffs {
         slot: Slot,
         now_millis: u64,
     ) -> HandoffNow {
-        let cluster = self.stats.as_ref().map(|stats| stats.cluster);
+        let local = country.and_then(|place| self.country_p75.get(place).copied());
         let mut own: Vec<i32> = self
             .index
             .get(leader)
@@ -376,8 +472,7 @@ impl Handoffs {
         own.sort_unstable();
         let settled = own.len() >= SETTLED;
         let own_band = settled.then(|| band(&own)).flatten();
-        let late =
-            matches!((own_band, cluster), (Some(own), Some(cluster)) if own.p25 > cluster.p75);
+        let late = matches!((own_band, local), (Some(own), Some(local)) if own.p25 > local.saturating_add(LATE_MARGIN_MILLIS));
         let recent: Vec<i64> = self
             .held
             .values()
@@ -396,8 +491,9 @@ impl Handoffs {
             gap: self.held.get(&slot).map(|handoff| handoff.gap),
             n: count(own.len()),
             band: own_band,
-            over: cluster.map_or(0, |cluster| over(&own, cluster.p75)),
+            over: local.map_or(0, |local| over(&own, local)),
             late,
+            judged: local.is_some(),
             gaps: if settled { Vec::new() } else { own },
             minute_mean,
         }
@@ -450,24 +546,32 @@ mod tests {
         None
     }
 
-    /// Ten leaders with ten handoffs each at 60 ms, and one at 220 ms.
-    fn cluster() -> Handoffs {
+    fn germany(_: &Pubkey) -> Option<&'static str> {
+        Some("DE")
+    }
+
+    /// Ten leaders with ten handoffs each at 60 ms, and one at `slow` ms.
+    fn cluster_with(slow: i64) -> Handoffs {
         let mut handoffs = Handoffs::default();
         let mut slot: Slot = 1_000;
         for round in 0..10u64 {
             for leader in (1..=10u8).chain([99]) {
                 slot = slot.saturating_add(4);
-                let gap = if leader == 99 { 220 } else { 60 };
+                let gap = if leader == 99 { slow } else { 60 };
                 handoffs.note(slot, key(leader), gap, round.saturating_add(1_000));
             }
         }
         handoffs
     }
 
+    fn cluster() -> Handoffs {
+        cluster_with(220)
+    }
+
     #[test]
     fn test_a_leader_late_on_most_turns_is_listed_and_kept_out_of_the_medians() {
         let mut handoffs = cluster();
-        let summary = handoffs.summary(0, &key(1), no_country).unwrap();
+        let summary = handoffs.summary(0, &key(1), germany).unwrap();
         assert_eq!(summary.handoffs, 110);
         assert_eq!(summary.settled, 11);
         assert_eq!(summary.late_count, 1);
@@ -480,15 +584,58 @@ mod tests {
         assert_eq!(summary.gaps.iter().sum::<u32>(), 110);
         assert_eq!(summary.ours.n, 10);
         assert_eq!(summary.ours.p50, Some(60));
+        assert!(summary.ours.judged);
+        assert_eq!(summary.unjudged, 0);
         assert!(!summary.full);
+    }
+
+    #[test]
+    fn test_a_leader_alone_in_its_country_is_not_judged() {
+        let mut handoffs = cluster();
+        let country = |leader: &Pubkey| (leader == &key(99)).then_some("JP").or(Some("DE"));
+        let summary = handoffs.summary(0, &key(1), country).unwrap();
+        assert_eq!(summary.late_count, 0);
+        assert_eq!(summary.unjudged, 1);
+        assert_eq!(summary.late_medians.iter().sum::<u32>(), 0);
+        let now = handoffs.now(&key(99), Some("JP"), 1_000, 1_009);
+        assert!(!now.judged);
+        assert!(!now.late);
+        assert_eq!(now.over, 0);
+    }
+
+    #[test]
+    fn test_late_needs_the_p25_ten_ms_over_its_country() {
+        // The country's p75 is 60 ms, so 70 is the line.
+        let mut near = cluster_with(70);
+        assert_eq!(near.summary(0, &key(1), germany).unwrap().late_count, 0);
+        let mut over = cluster_with(71);
+        assert_eq!(over.summary(0, &key(1), germany).unwrap().late_count, 1);
+    }
+
+    #[test]
+    fn test_each_settled_leaders_figures_are_taken_once_per_summary() {
+        let mut handoffs = cluster();
+        handoffs.summary(0, &key(1), germany);
+        let leaders = handoffs.take_leaders().unwrap();
+        assert_eq!(leaders.len(), 11);
+        assert_eq!(
+            leaders.last().map(|leader| (leader.p50, leader.late)),
+            Some((220, true))
+        );
+        assert!(
+            leaders
+                .iter()
+                .take(10)
+                .all(|leader| leader.p50 == 60 && !leader.late)
+        );
+        assert_eq!(handoffs.take_leaders(), None);
     }
 
     #[test]
     fn test_the_late_list_and_our_row_carry_each_country() {
         let mut handoffs = cluster();
-        let country = |leader: &Pubkey| (leader == &key(99)).then_some("JP").or(Some("DE"));
-        let summary = handoffs.summary(0, &key(1), country).unwrap();
-        assert_eq!(summary.late[0].country, Some("JP"));
+        let summary = handoffs.summary(0, &key(1), germany).unwrap();
+        assert_eq!(summary.late[0].country, Some("DE"));
         assert_eq!(summary.ours.country, Some("DE"));
     }
 
@@ -560,10 +707,11 @@ mod tests {
     #[test]
     fn test_a_late_leader_reads_late_now() {
         let mut handoffs = cluster();
-        handoffs.summary(0, &key(1), no_country);
-        let now = handoffs.now(&key(99), Some("JP"), 1_000, 1_009);
+        handoffs.summary(0, &key(1), germany);
+        let now = handoffs.now(&key(99), Some("DE"), 1_000, 1_009);
         assert!(now.late);
-        assert_eq!(now.country, Some("JP"));
+        assert!(now.judged);
+        assert_eq!(now.country, Some("DE"));
         assert_eq!(now.over, 10);
         assert!(now.gaps.is_empty());
         assert_eq!(now.band.map(|band| band.p50), Some(220));

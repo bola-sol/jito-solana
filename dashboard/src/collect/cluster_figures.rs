@@ -1,10 +1,9 @@
 //! The cluster's spread over the current epoch: each block's compute share and slot time, each
-//! turn's first block's finality, each leader's skip rate, and transactions per second over runs
-//! of slots.
+//! leader's skip rate, and transactions per second over runs of slots.
 
 use {
     super::EpochInfo,
-    crate::history::{HAS_BLOCK, HAS_CLOCK, HAS_FINALITY, HAS_SHREDS, PackedSlot, SlotHistory},
+    crate::history::{HAS_BLOCK, HAS_CLOCK, HAS_SHREDS, PackedSlot, SlotHistory},
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
@@ -51,9 +50,6 @@ pub struct ClusterFigures {
     pub skip_rate: Option<Spread>,
     pub tps: Option<Spread>,
     pub failed_tps: Option<Spread>,
-    /// From the last shred to finalization, for each turn's first block, the only one votor
-    /// times from its first shred; absent under TowerBFT.
-    pub finality_millis: Option<Spread>,
 }
 
 /// Collected under the history lock; the percentiles are taken after it is released.
@@ -65,7 +61,6 @@ pub(super) struct Samples {
     /// Hundredths of a percent.
     cu: Vec<u32>,
     slot_millis: Vec<u32>,
-    finality_micros: Vec<u32>,
     /// Transactions and failed transactions per full run.
     runs: Vec<(u64, u64)>,
     /// Hundredths of a percent.
@@ -132,9 +127,6 @@ fn note_block(
             .checked_div(epoch.block_cost_limit)
             .unwrap_or(0);
         samples.cu.push(u32::try_from(share).unwrap_or(u32::MAX));
-    }
-    if row.flags & HAS_FINALITY != 0 {
-        samples.finality_micros.push(row.finality_micros);
     }
     if row.flags & HAS_CLOCK != 0 && row.flags & HAS_SHREDS != 0 {
         let full = row.time_millis.saturating_add(u64::from(row.full_millis));
@@ -236,9 +228,6 @@ impl Samples {
             skip_rate: spread(&mut self.skip, MIN_LEADERS, hundredths),
             tps: rate(&mut transactions),
             failed_tps: rate(&mut failed),
-            finality_millis: spread(&mut self.finality_micros, MIN_BLOCKS, |micros| {
-                f64::from(micros) / 1_000.0
-            }),
         }
     }
 }
@@ -286,7 +275,7 @@ mod tests {
     }
 
     /// A block every slot, filling 400 ms after the last, with `transactions` of which a tenth failed.
-    fn filled(epoch: &EpochInfo, transactions: u64, finality_micros: Option<u64>) -> SlotHistory {
+    fn filled(epoch: &EpochInfo, transactions: u64) -> SlotHistory {
         let mut history = SlotHistory::new(8_192);
         for slot in epoch.start_slot..=epoch.end_slot {
             history.record_test_row(slot, |row| {
@@ -297,9 +286,6 @@ mod tests {
                 row.time_millis = slot.saturating_sub(epoch.start_slot).saturating_mul(400);
                 row.full_millis = 100;
             });
-            if let Some(micros) = finality_micros {
-                history.record_finality(slot, micros);
-            }
         }
         history
     }
@@ -307,7 +293,7 @@ mod tests {
     #[test]
     fn test_figures_read_each_block_and_run() {
         let epoch = epoch(16);
-        let history = filled(&epoch, 800, Some(45_000));
+        let history = filled(&epoch, 800);
         let figures = samples(&history, &epoch, epoch.end_slot, epoch.end_slot, |_| {
             Check::Found
         })
@@ -318,14 +304,13 @@ mod tests {
         // 800 a slot at 400 ms, and a tenth of them failed.
         assert_eq!(figures.tps.unwrap().p50, 2_000.0);
         assert_eq!(figures.failed_tps.unwrap().p95, 200.0);
-        assert_eq!(figures.finality_millis.unwrap().p05, 45.0);
         assert_eq!(figures.skip_rate.unwrap().p95, 0.0);
     }
 
     #[test]
     fn test_skips_are_per_leader() {
         let epoch = epoch(16);
-        let history = filled(&epoch, 1, None);
+        let history = filled(&epoch, 1);
         // Leader 3 misses every slot, so one leader in sixteen sits at 100%.
         let skipped = |slot: Slot| slot.saturating_sub(epoch.start_slot) / 4 % 16 == 3;
         let figures = samples(&history, &epoch, epoch.end_slot, epoch.end_slot, |slot| {
@@ -338,7 +323,6 @@ mod tests {
         .figures();
         let skip = figures.skip_rate.unwrap();
         assert_eq!((skip.p05, skip.p50, skip.p95), (0.0, 0.0, 100.0));
-        assert_eq!(figures.finality_millis, None);
     }
 
     #[test]

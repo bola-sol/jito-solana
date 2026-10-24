@@ -1,13 +1,11 @@
 import type { ReactElement } from "react";
 import { figureColumns, figuresWindow, WINDOW_ROOM } from "../clusterFigures";
-import { useAlpenglow } from "../consensus";
 import { useStore } from "../useStore";
 import { Explain } from "./primitives";
 
 /** Beside the verdict on wide screens: each figure's median over its 5th and 95th percentiles. */
 export function ClusterRow(): ReactElement | null {
   const store = useStore();
-  const alpenglow = useAlpenglow();
   const figures = store.get("summary", "cluster_figures");
   const serverTimeNanos = store.get("summary", "server_time_nanos");
   if (!figures) return null;
@@ -27,7 +25,7 @@ export function ClusterRow(): ReactElement | null {
           <span>p95</span>
         </span>
       </div>
-      {figureColumns(figures, alpenglow).map((column) => (
+      {figureColumns(figures).map((column) => (
         <div key={column.key} className="cluster-col">
           <span className="cluster-head">
             <Explain text={column.explain}>{column.label}</Explain>

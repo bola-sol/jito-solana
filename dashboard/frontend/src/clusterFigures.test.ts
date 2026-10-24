@@ -10,22 +10,20 @@ const figures: ClusterFigures = {
   skip_rate: { p05: 0, p50: 0, p95: 0.81 },
   tps: { p05: 1_813.4, p50: 2_372.4, p95: 4_287.5 },
   failed_tps: { p05: 502.6, p50: 896.2, p95: 1_400 },
-  finality_millis: { p05: 41.2, p50: 45.6, p95: 118.4 },
 };
 
 describe("figureColumns", () => {
   it("puts the unit on the median alone", () => {
-    const [cu, slot, skip, tps, failed, finality] = figureColumns(figures, true);
+    const [cu, slot, skip, tps, failed] = figureColumns(figures);
     expect([cu.median, cu.p05, cu.p95]).toEqual(["44%", "20", "93"]);
     expect([slot.median, slot.p05, slot.p95]).toEqual(["202 ms", "188", "284"]);
     expect([skip.median, skip.p05, skip.p95]).toEqual(["0%", "0", "0.81"]);
     expect([tps.median, tps.p05, tps.p95]).toEqual(["2,372", "1,813", "4,288"]);
     expect([failed.median, failed.p95]).toEqual(["896", "1,400"]);
-    expect([finality.median, finality.p05, finality.p95]).toEqual(["46 ms", "41", "118"]);
   });
 
-  it("leaves finality out under TowerBFT and dashes a figure still short of samples", () => {
-    const columns = figureColumns({ ...figures, tps: null }, false);
+  it("dashes a figure still short of samples", () => {
+    const columns = figureColumns({ ...figures, tps: null });
     expect(columns.map((column) => column.key)).toEqual(["cu", "slot", "skip", "tps", "failed"]);
     expect(columns[3]).toMatchObject({ median: "—", p05: "—", p95: "—" });
   });

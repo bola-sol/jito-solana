@@ -423,7 +423,6 @@ struct Debounces {
     block_height: Debounced<u64>,
     slot_duration_nanos: Debounced<u64>,
     observed_slot_duration_nanos: Debounced<Option<u64>>,
-    finality_micros: Debounced<Option<u64>>,
     finality_from_leader_micros: Debounced<Option<u64>>,
     finalization_share: Debounced<Option<FinalizationShare>>,
     next_leader_slot: Debounced<Option<Slot>>,
@@ -929,13 +928,6 @@ impl Collector {
             self.clock.observed_nanos(),
         );
 
-        self.debounces.finality_micros.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "finality_micros",
-            self.metrics_tap
-                .finality_micros(timestamp(), FINALITY_WINDOW_MILLIS),
-        );
         self.debounces.finality_from_leader_micros.publish(
             &self.publisher,
             TOPIC_SUMMARY,
@@ -2947,13 +2939,13 @@ mod tests {
     }
 
     #[test]
-    fn test_the_time_from_the_leader_is_published_beside_finality() {
+    fn test_the_time_from_the_leader_is_published() {
         let harness = fixture();
         harness.collector().tick();
-        for key in ["finality_micros", "finality_from_leader_micros"] {
-            let published = harness.published_key("summary", key).unwrap();
-            assert!(published.contains(r#""value":null"#), "{published}");
-        }
+        let published = harness
+            .published_key("summary", "finality_from_leader_micros")
+            .unwrap();
+        assert!(published.contains(r#""value":null"#), "{published}");
     }
 
     #[test]

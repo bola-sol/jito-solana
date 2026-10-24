@@ -612,8 +612,6 @@ export interface ClusterFigures {
   /** Over runs of 300 slots. */
   tps: Spread | null;
   failed_tps: Spread | null;
-  /** From the last shred to finalization, for each turn's first block; null under TowerBFT. */
-  finality_millis: Spread | null;
 }
 
 /** Quartiles of handoff gaps in milliseconds. */
@@ -1185,8 +1183,7 @@ export interface Published {
     versions: VersionShare[];
     estimated_slot_duration_nanos: number;
     observed_slot_duration_nanos: number | null;
-    /** Alpenglow only: median microseconds from a block's last shred to its finalization. */
-    finality_micros: number | null;
+    /** Alpenglow only: median microseconds from the leader closing a block, by its clock, to its finalization here. */
     finality_from_leader_micros: number | null;
     /** Alpenglow only; null before a block has been seen. */
     finalization_share: FinalizationShare | null;

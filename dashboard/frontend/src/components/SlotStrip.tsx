@@ -64,7 +64,6 @@ export function SlotStrip(): ReactElement {
     "summary",
     "observed_slot_duration_nanos",
   );
-  const finalityMicros = store.get("summary", "finality_micros");
   const fromLeaderMicros = store.get("summary", "finality_from_leader_micros");
 
   // The strip advances a bar every slot, so entering it pins what is on screen and leaving jumps
@@ -222,22 +221,14 @@ export function SlotStrip(): ReactElement {
           {alpenglow && (
             <>
               ,{" "}
-              <Explain text="Median time from receiving a block's last shred to finalizing it, over the last minute.">
-                finality
+              <Explain text="Median time from the leader closing a block, by its clock, to finalizing it here, by ours, over the last minute.">
+                leader to finalized here
               </Explain>{" "}
               <b>
-                {finalityMicros === null || finalityMicros === undefined
+                {fromLeaderMicros === null || fromLeaderMicros === undefined
                   ? "—"
-                  : `${Math.round(finalityMicros / 1e3)} ms`}
+                  : `${Math.round(fromLeaderMicros / 1e3)} ms`}
               </b>
-              {fromLeaderMicros !== null && fromLeaderMicros !== undefined && (
-                <>
-                  , <b>{`${Math.round(fromLeaderMicros / 1e3)} ms`}</b>{" "}
-                  <Explain text="Median time from the leader closing a block, by its own clock, to finalizing it here, over the last minute.">
-                    from the leader
-                  </Explain>
-                </>
-              )}
             </>
           )}{" "}
           over the last minute

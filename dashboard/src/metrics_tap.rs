@@ -257,10 +257,7 @@ pub struct MetricsTap {
     /// Each finalized slot votor tracked, and whether its fast certificate finalized it.
     finalized_paths: Mutex<VecDeque<(Slot, bool)>>,
 
-    /// Microseconds from a slot's last shred to its finalization, stamped when votor reported it.
-    finality: TimedSamples,
-
-    /// Microseconds from a slot's last shred to our notarize vote, stamped the same way.
+    /// Microseconds from a slot's last shred to our notarize vote, stamped when votor reported it.
     vote_lag: TimedSamples,
 
     /// Microseconds from the leader closing a block, by its clock, to its finalization here.
@@ -1296,7 +1293,6 @@ impl MetricsTap {
         let finalized = finalized_us.and_then(|at| at.checked_sub(last_shred_us));
         let vote = notarize_us.and_then(|at| at.checked_sub(last_shred_us));
         if let Some(micros) = finalized {
-            self.finality.push(now_millis, micros);
             self.time_from_leader(slot, micros, now_millis);
         }
         if let Some(micros) = vote {
@@ -1322,11 +1318,6 @@ impl MetricsTap {
             Ok(mut votes) => std::mem::take(&mut *votes).into_iter().collect(),
             Err(_) => Vec::new(),
         }
-    }
-
-    /// The median time from last shred to finalization over the samples reported in the window.
-    pub fn finality_micros(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
-        self.finality.median(now_millis, window_millis)
     }
 
     /// The median time from the leader closing a block to its finalization here, over the window.
@@ -3119,11 +3110,16 @@ mod tests {
         tap.note_block_closed(100, FULL_AT_NANOS.saturating_add(1));
         finalized_89_ms_after_the_last_shred(&tap);
         assert_eq!(tap.finality_from_leader_micros(timestamp(), 60_000), None);
-        assert_eq!(tap.finality_micros(timestamp(), 60_000), Some(89_000));
+        assert_eq!(
+            tap.take_block_votes()
+                .first()
+                .and_then(|votes| votes.finalized_us),
+            Some(89_000)
+        );
     }
 
     #[test]
-    fn test_finality_is_timed_from_the_last_shred() {
+    fn test_finality_and_our_vote_are_timed_from_the_last_shred() {
         let tap = MetricsTap::default();
         full_block(&tap, "100i", "180i");
         tap.observe(&named(
@@ -3136,9 +3132,17 @@ mod tests {
             ],
         ));
 
-        assert_eq!(tap.finality_micros(timestamp(), 60_000), Some(89_000));
         assert_eq!(
-            tap.finality_micros(timestamp().saturating_add(120_000), 60_000),
+            tap.take_block_votes(),
+            vec![BlockVotes {
+                slot: 100,
+                vote_us: Some(49_000),
+                finalized_us: Some(89_000),
+            }]
+        );
+        assert_eq!(tap.vote_lag_micros(timestamp(), 60_000), Some(49_000));
+        assert_eq!(
+            tap.vote_lag_micros(timestamp().saturating_add(120_000), 60_000),
             None,
             "outside the window"
         );
@@ -3158,11 +3162,6 @@ mod tests {
         ));
 
         assert_eq!(tap.vote_lag_micros(timestamp(), 60_000), Some(12_000));
-        assert_eq!(
-            tap.finality_micros(timestamp(), 60_000),
-            None,
-            "not finalized yet"
-        );
         assert_eq!(
             tap.take_block_votes(),
             vec![BlockVotes {
@@ -3224,25 +3223,25 @@ mod tests {
             ],
         ));
 
-        assert_eq!(tap.finality_micros(timestamp(), 60_000), None);
+        assert!(tap.take_block_votes().is_empty());
     }
 
     #[test]
-    fn test_finality_is_the_median_sample() {
+    fn test_time_to_our_vote_is_the_median_sample() {
         let tap = MetricsTap::default();
-        for (slot, finalized) in [("104i", "30000i"), ("108i", "10000i"), ("112i", "20000i")] {
+        for (slot, voted) in [("104i", "30000i"), ("108i", "10000i"), ("112i", "20000i")] {
             full_block(&tap, slot, "0i");
             tap.observe(&named(
                 VOTE_TRACKING,
                 &[
                     ("slot", slot),
                     ("first_shred", "0i"),
-                    ("finalized", finalized),
+                    ("vote_notarize", voted),
                 ],
             ));
         }
 
-        assert_eq!(tap.finality_micros(timestamp(), 60_000), Some(20_000));
+        assert_eq!(tap.vote_lag_micros(timestamp(), 60_000), Some(20_000));
     }
 
     #[test]

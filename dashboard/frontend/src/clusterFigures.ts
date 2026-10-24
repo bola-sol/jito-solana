@@ -30,8 +30,7 @@ export function millis(value: number): string {
   return count(Math.round(value));
 }
 
-/** Under TowerBFT nothing is finalized here, so that column is left out. */
-export function figureColumns(figures: ClusterFigures, alpenglow: boolean): FigureColumn[] {
+export function figureColumns(figures: ClusterFigures): FigureColumn[] {
   const column = (
     key: string,
     label: string,
@@ -47,7 +46,7 @@ export function figureColumns(figures: ClusterFigures, alpenglow: boolean): Figu
     p05: spread ? format(spread.p05) : "—",
     p95: spread ? format(spread.p95) : "—",
   });
-  const columns = [
+  return [
     column("cu", "CU used", "Each block's compute against the block limit.", figures.cu_used, share, "%"),
     column(
       "slot",
@@ -68,19 +67,6 @@ export function figureColumns(figures: ClusterFigures, alpenglow: boolean): Figu
       "",
     ),
   ];
-  if (alpenglow) {
-    columns.push(
-      column(
-        "finality",
-        "finality",
-        "Each turn's first block, from its last shred to finalization here.",
-        figures.finality_millis,
-        millis,
-        " ms",
-      ),
-    );
-  }
-  return columns;
 }
 
 /** The epoch, or where the held slots start when that was after it began. */

@@ -190,8 +190,8 @@ validator, answered off the async threads and one at a time, and
 `peers.gossip` for every node in gossip, which the server gathers only while it
 is being asked for, `handoff.bin` for the settled leaders whose median handoff
 gap falls in a range, from the figures each ten-second handoff summary keeps,
-and `cluster.charts` for the Cluster page, gathered every fifteen seconds only
-while it is being asked for.
+and `cluster.charts` for the Cluster page, gathered on the first ask and then
+every fifteen seconds only while it is being asked for.
 
 A client that offers the `deflate` websocket subprotocol is sent every message
 of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the

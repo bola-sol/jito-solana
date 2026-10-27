@@ -125,7 +125,10 @@ function useGossipPeers(): GossipPeers | null {
   const store = useStore();
   const [list, setList] = useState<GossipPeers | null>(null);
 
+  // Asked once the socket is open, and again on each new one.
+  const open = store.getConnection() === "open";
   useEffect(() => {
+    if (!open) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
@@ -136,7 +139,7 @@ function useGossipPeers(): GossipPeers | null {
           timer = setTimeout(load, got ? POLL_MS : FIRST_POLL_MS);
         },
         () => {
-          if (live) timer = setTimeout(load, POLL_MS);
+          if (live) timer = setTimeout(load, FIRST_POLL_MS);
         },
       );
     };
@@ -145,7 +148,7 @@ function useGossipPeers(): GossipPeers | null {
       live = false;
       clearTimeout(timer);
     };
-  }, [store]);
+  }, [store, open]);
 
   return list;
 }

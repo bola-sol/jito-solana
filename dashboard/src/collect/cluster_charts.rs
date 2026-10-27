@@ -3,7 +3,7 @@
 
 use {
     super::{
-        Collector, EpochInfo,
+        Collector, EpochInfo, Replies,
         cluster_figures::{MAX_INTERVAL_MILLIS, MAX_SLOT_GAP, Spread},
         country_of, strip_prerelease,
     },
@@ -30,6 +30,7 @@ use {
 
 /// How long after the last request the charts are still gathered.
 const WANTED_FOR_MILLIS: u64 = 30_000;
+const GATHER_EVERY_MILLIS: u64 = 15_000;
 
 /// Named clients and countries shown before the rest are folded.
 const CLIENTS_SHOWN: usize = 8;
@@ -618,7 +619,29 @@ pub(super) fn skip_chart(
     ))
 }
 
+impl Replies {
+    /// Notes the ask and returns the held charts. After a lapse they are stale, so null is held
+    /// until the collector's next tick gathers them afresh. `None` on a poisoned lock.
+    pub fn ask_cluster_charts(&self, now_millis: u64) -> Option<Arc<str>> {
+        let before = self
+            .cluster_charts_wanted
+            .swap(now_millis, Ordering::Relaxed);
+        let mut held = self.cluster_charts.write().ok()?;
+        if now_millis.saturating_sub(before) > WANTED_FOR_MILLIS {
+            *held = Arc::from("null");
+        }
+        Some(held.clone())
+    }
+}
+
 impl Collector {
+    /// While a page asks: at once after a lapse, then every fifteen seconds.
+    pub(super) fn cluster_charts_due(&self, now_millis: u64) -> bool {
+        let wanted = self.replies.cluster_charts_wanted.load(Ordering::Relaxed);
+        now_millis.saturating_sub(wanted) <= WANTED_FOR_MILLIS
+            && now_millis.saturating_sub(self.cluster_charts_made) >= GATHER_EVERY_MILLIS
+    }
+
     pub(super) fn collect_cluster_charts(
         &mut self,
         root_bank: &Bank,
@@ -626,10 +649,6 @@ impl Collector {
         peers: &[(ContactInfo, u64)],
         now_millis: u64,
     ) {
-        let wanted = self.replies.cluster_charts_wanted.load(Ordering::Relaxed);
-        if now_millis.saturating_sub(wanted) > WANTED_FOR_MILLIS {
-            return;
-        }
         let epoch = root_bank.epoch();
         let epochs = self.epochs.read().unwrap();
         let Some(info) = epochs

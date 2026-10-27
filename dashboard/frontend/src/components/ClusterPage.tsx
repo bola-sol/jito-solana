@@ -813,7 +813,7 @@ export function ClusterPage(): ReactElement {
       </h1>
       <p className="verdict-sub cl-verdict-sub">{verdict.evidence || (figures.length > 0 ? `${figures.join(", ")}.` : "")}</p>
       <EpochLine charts={charts} />
-      <Key bin={binLabel(from, to, charts.tps?.p50.length ?? 120)} since={from} />
+      <Key bin={binLabel(from, to, (charts.tps ?? charts.cu ?? charts.slot_time)?.p50.length ?? 120)} since={from} />
       <div className="cl-charts cl-grid-row">
         <TransactionsCard charts={charts} />
         {views.map((view) => (

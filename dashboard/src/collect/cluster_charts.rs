@@ -39,9 +39,13 @@ pub(super) const BINS: usize = 120;
 const HIST_BINS: usize = 30;
 const RECENT_MILLIS: u64 = 600_000;
 
-/// A rate is taken over this many slots, short enough for several in the narrowest bin.
+/// A rate is taken over this many slots.
 const RUN_SLOTS: u64 = 20;
 const RUN_HELD: u64 = 18;
+
+/// A short window gets fewer bins, each at least this many runs wide, so every bin holds a rate
+/// and, at the median slot time, its bands.
+const RUNS_PER_BIN: f64 = 3.0;
 
 /// A from-zero axis ends at most this many times the window's 95th.
 const OUTLIER_CAP: f64 = 2.0;
@@ -275,7 +279,7 @@ impl Readings {
         to_millis: u64,
         slot_millis: Option<f64>,
     ) -> ClusterCharts {
-        let bins = Bins::new(from_millis, to_millis);
+        let bins = Bins::new(from_millis, to_millis, slot_millis);
         let run_seconds = slot_millis
             .filter(|millis| *millis > 0.0)
             .map(|millis| millis * RUN_SLOTS as f64 / 1_000.0);
@@ -316,14 +320,23 @@ impl Readings {
 struct Bins {
     from: u64,
     span: u64,
+    count: usize,
     recent_from: u64,
 }
 
 impl Bins {
-    fn new(from: u64, to: u64) -> Self {
+    fn new(from: u64, to: u64, slot_millis: Option<f64>) -> Self {
+        let span = to.saturating_sub(from).max(1);
+        let count = slot_millis
+            .filter(|millis| *millis > 0.0)
+            .map_or(BINS, |millis| {
+                let widest = span as f64 / (millis * RUN_SLOTS as f64 * RUNS_PER_BIN);
+                (widest as usize).clamp(1, BINS)
+            });
         Self {
             from,
-            span: to.saturating_sub(from).max(1),
+            span,
+            count,
             recent_from: to.saturating_sub(RECENT_MILLIS),
         }
     }
@@ -331,12 +344,12 @@ impl Bins {
     fn of(&self, at: u64) -> usize {
         let offset = u128::from(at.saturating_sub(self.from));
         let bin = offset
-            .saturating_mul(BINS as u128)
+            .saturating_mul(self.count as u128)
             .checked_div(u128::from(self.span))
             .unwrap_or(0);
         usize::try_from(bin)
             .unwrap_or(usize::MAX)
-            .min(BINS.saturating_sub(1))
+            .min(self.count.saturating_sub(1))
     }
 }
 
@@ -344,7 +357,7 @@ fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis, with_min: bool) ->
     if readings.len() < MIN_READINGS {
         return None;
     }
-    let mut binned: Vec<Vec<f32>> = vec![Vec::new(); BINS];
+    let mut binned: Vec<Vec<f32>> = vec![Vec::new(); bins.count];
     let mut recent = Vec::new();
     let mut all = Vec::with_capacity(readings.len());
     for (at, value) in readings {
@@ -357,7 +370,7 @@ fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis, with_min: bool) ->
         all.push(value);
     }
     let mut columns: [Vec<Option<f32>>; 5] = Default::default();
-    let mut min = with_min.then(|| Vec::with_capacity(BINS));
+    let mut min = with_min.then(|| Vec::with_capacity(bins.count));
     for bin in &mut binned {
         bin.sort_unstable_by(f32::total_cmp);
         let enough = bin.len() >= MIN_PER_BIN;
@@ -408,7 +421,7 @@ fn shares(bins: &Bins, paths: &[(u64, bool)]) -> Option<Shares> {
     if paths.len() < MIN_READINGS {
         return None;
     }
-    let mut binned = vec![(0u64, 0u64); BINS];
+    let mut binned = vec![(0u64, 0u64); bins.count];
     let (mut count, mut recent, mut recent_total) = (0u64, 0u64, 0u64);
     for (at, fast) in paths {
         if let Some((fast_in, total)) = binned.get_mut(bins.of(*at)) {
@@ -949,15 +962,31 @@ mod tests {
         let history = filled(&epoch);
         let from = epoch.start_slot.saturating_mul(400);
         let to = epoch.end_slot.saturating_mul(400);
-        // Two hundred runs over 120 bins: some bins hold a single run.
+        // The last of 66 bins holds two closed runs, the third still open.
         let tps = readings(&history, &epoch, epoch.end_slot, from)
             .charts(7, from, to, Some(400.0))
             .tps
             .unwrap();
-        // Every bin but the last, whose run is still open.
-        let medians = tps.p50.iter().filter(|bin| bin.is_some()).count();
-        assert_eq!(medians, BINS.saturating_sub(1));
-        assert!(tps.p05.iter().any(|bin| bin.is_none()));
+        assert_eq!(tps.p50.len(), 66);
+        assert!(tps.p50.iter().all(Option::is_some));
+        let (last, rest) = tps.p05.split_last().unwrap();
+        assert!(rest.iter().all(Option::is_some));
+        assert_eq!(*last, None);
+    }
+
+    #[test]
+    fn test_a_short_window_gets_bins_three_runs_wide() {
+        let epoch = epoch();
+        let history = filled(&epoch);
+        let from = epoch.start_slot.saturating_mul(400);
+        // Fifty runs of 8 s over 400 s, so sixteen bins of 25 s.
+        let to = from.saturating_add(400_000);
+        let newest = epoch.start_slot.saturating_add(999);
+        let charts = readings(&history, &epoch, newest, from).charts(7, from, to, Some(400.0));
+        let tps = charts.tps.unwrap();
+        assert_eq!(tps.p50.len(), 16);
+        assert!(tps.p50.iter().all(Option::is_some));
+        assert_eq!(charts.cu.unwrap().p50.len(), 16);
     }
 
     #[test]
@@ -966,7 +995,7 @@ mod tests {
         let readings: Vec<(u64, f32)> = (0..12_000u64)
             .map(|at| (at.saturating_mul(100), if at < 120 { 900.0 } else { 200.0 }))
             .collect();
-        let bins = Bins::new(0, 1_200_000);
+        let bins = Bins::new(0, 1_200_000, None);
         let series = series(&bins, readings, Axis::FromZero, false).unwrap();
         assert_eq!(series.spread.p95, 200.0);
         assert_eq!(series.p95.first().copied().flatten(), Some(900.0));

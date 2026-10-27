@@ -8199,6 +8199,17 @@ body {
   color: var(--text);
 }
 
+.cl-spread b,
+.cl-note b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cl-label {
+  color: var(--text-faint);
+}
+
 .cl-recent {
   margin-left: auto;
   color: var(--text-faint);
@@ -8643,6 +8654,13 @@ body {
 @container (min-width: 280px) {
   .cl-skip-card .cl-recent {
     display: inline;
+  }
+}
+
+/* On the narrowest cards the headline figure goes unnamed; it is the one in large type. */
+@container (max-width: 249px) {
+  .cl-median-label {
+    display: none;
   }
 }
 

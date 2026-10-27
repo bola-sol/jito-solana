@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode
 import {
   bandPaths,
   binLabel,
+  chartWindowStart,
   clusterVerdict,
+  epochThrough,
   gridlines,
   linePath,
   niceTop,
@@ -12,7 +14,7 @@ import {
   txNote,
   type TxView,
 } from "../cluster";
-import { count, percent, release, solCompact } from "../format";
+import { count, duration, percent, release, solCompact } from "../format";
 import type { ChartSeries, ChartShares, ClientShare, ClusterCharts, SkipChart, StakeByCountry } from "../types";
 import { useNow } from "../useNow";
 import { useStore } from "../useStore";
@@ -532,6 +534,44 @@ function SkipCard({ skips, through }: { skips: SkipChart; through: number | null
   );
 }
 
+/** Where the epoch is, and the stretch of it the charts cover. */
+function EpochLine({ charts }: { charts: ClusterCharts }) {
+  const store = useStore();
+  const epoch = store.get("epoch", "new");
+  const slot = store.get("summary", "completed_slot");
+  const remainingNanos = store.get("summary", "epoch_remaining_nanos");
+  if (!epoch) return null;
+  const through = epochThrough(slot ?? epoch.start_slot, epoch.start_slot, epoch.slots_in_epoch);
+  const { skips } = charts;
+  const windowStart = skips ? chartWindowStart(charts.from_millis, skips.from_millis, skips.to_millis, through) : null;
+  return (
+    <div className="cl-epoch">
+      <span className="cl-epoch-name">
+        Epoch <b>{count(epoch.epoch)}</b>
+      </span>
+      <div className="cl-epoch-bar" role="progressbar" aria-valuenow={Math.round(through * 100)}>
+        <i className="cl-epoch-fill" style={{ width: `${through * 100}%` }} />
+        {windowStart !== null && (
+          <i
+            className="cl-epoch-window"
+            style={{ left: `${windowStart * 100}%`, width: `${Math.max(0, through - windowStart) * 100}%` }}
+          />
+        )}
+      </div>
+      <span className="cl-epoch-figures">
+        <b>{Math.round(through * 100)}%</b> · <span className="cl-label">ends in</span>{" "}
+        <b>{duration(remainingNanos === undefined ? undefined : remainingNanos / 1e6, 2)}</b>
+      </span>
+      {windowStart !== null && (
+        <span className="cl-epoch-key">
+          <i aria-hidden="true" />
+          charts since {clock(charts.from_millis)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function Key({ bin, since }: { bin: string; since: number }) {
   return (
     <div className="cl-key">
@@ -772,6 +812,7 @@ export function ClusterPage(): ReactElement {
         {verdict.headline}
       </h1>
       <p className="verdict-sub cl-verdict-sub">{verdict.evidence || (figures.length > 0 ? `${figures.join(", ")}.` : "")}</p>
+      <EpochLine charts={charts} />
       <Key bin={binLabel(from, to, charts.tps?.p50.length ?? 120)} since={from} />
       <div className="cl-charts cl-grid-row">
         <TransactionsCard charts={charts} />

@@ -8128,6 +8128,79 @@ body {
 
 /* ---- cluster page ---- */
 
+.cl-epoch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 8px 0 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-epoch b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cl-epoch-name,
+.cl-epoch-figures,
+.cl-epoch-key {
+  white-space: nowrap;
+}
+
+.cl-epoch-bar {
+  position: relative;
+  flex: 1 1 240px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+
+.cl-epoch-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  opacity: 0.45;
+}
+
+.cl-epoch-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+}
+
+.cl-epoch-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.cl-epoch-key i {
+  width: 14px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* On a phone the bar takes a row of its own under the name and figures. */
+@media (max-width: 560px) {
+  .cl-epoch-bar {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .cl-epoch-key {
+    order: 4;
+  }
+}
+
 .cl-key {
   display: flex;
   flex-wrap: wrap;

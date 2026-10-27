@@ -25,8 +25,8 @@ const MIN_LEADERS: usize = 10;
 const LEADER_SLOTS: u32 = 20;
 
 /// Consecutive blocks further apart than this, as after a restart, give no slot time.
-const MAX_SLOT_GAP: u64 = 8;
-const MAX_INTERVAL_MILLIS: u64 = 10_000;
+pub(super) const MAX_SLOT_GAP: u64 = 8;
+pub(super) const MAX_INTERVAL_MILLIS: u64 = 10_000;
 
 /// Held rows starting this far into the epoch mean the figures begin after it did.
 const LATE_START_SLOTS: u64 = 64;

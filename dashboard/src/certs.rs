@@ -556,6 +556,17 @@ pub struct Walked {
     pub marks: Vec<Mark>,
     /// The footer's producer clock, unix nanoseconds, for every block read.
     pub closed_at: Vec<(Slot, u64)>,
+    pub readings: Vec<FooterReading>,
+}
+
+/// What one block's footer says of the cluster rather than of this node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FooterReading {
+    pub slot: Slot,
+    /// The slot its notarize reward certificate pays, and the stake in it in basis points.
+    pub notarized: Option<(Slot, u16)>,
+    /// Whether the finalization certificate it carries is the one-round fast certificate.
+    pub fast: Option<bool>,
 }
 
 /// Stops at the first slot past the root. Footers are read whether or not we hold a rank.
@@ -578,6 +589,9 @@ pub fn walk(
             .and_then(|reward_slot| {
                 rank_of(bank, vote_account, reward_slot).map(|rank| (reward_slot, rank))
             });
+        if let Block::Footer(footer) = &block {
+            walked.readings.push(footer_reading(bank, slot, footer));
+        }
         let (closed_at, mark) = read_slot(block, ranked);
         if let Some(nanos) = closed_at {
             walked.closed_at.push((slot, nanos));
@@ -615,6 +629,49 @@ fn read_slot(block: Block, ranked: Option<(Slot, (usize, usize))>) -> (Option<u6
         ),
         Block::Pending | Block::Opaque => (None, None),
     }
+}
+
+/// A leader writes the highest finalization certificate it holds and prefers the fast one for
+/// the same slot, so fast means 80% of stake notarized in time for it.
+fn footer_reading(bank: &Bank, slot: Slot, footer: &BlockFooterV1) -> FooterReading {
+    let notarized = footer.notar_reward_cert.as_ref().and_then(|cert| {
+        let rewarded = slot.checked_sub(NUM_SLOTS_FOR_REWARD)?;
+        Some((rewarded, notarized_share(bank, rewarded, cert.bitmap())?))
+    });
+    FooterReading {
+        slot,
+        notarized,
+        fast: carried_fast(footer),
+    }
+}
+
+/// A fast certificate is one notarize aggregate; a slow one adds the notarize aggregate to its
+/// finalize votes.
+fn carried_fast(footer: &BlockFooterV1) -> Option<bool> {
+    footer
+        .block_final_cert
+        .as_ref()
+        .map(|cert| cert.notar_aggregate.is_none())
+}
+
+/// The share of the slot's rank map stake set in `bitmap`, in basis points.
+fn notarized_share(bank: &Bank, slot: Slot, bitmap: &[u8]) -> Option<u16> {
+    let map = bank.get_rank_map(slot)?;
+    let paid = decode_paid(bitmap, map.len())?;
+    let (mut total, mut notarized) = (0u64, 0u64);
+    for (rank, set) in paid.iter().enumerate() {
+        let stake = map
+            .get_pubkey_stake_entry(rank)
+            .map_or(0, |entry| entry.stake.get());
+        total = total.saturating_add(stake);
+        if *set {
+            notarized = notarized.saturating_add(stake);
+        }
+    }
+    let share = u128::from(notarized)
+        .saturating_mul(10_000)
+        .checked_div(u128::from(total))?;
+    u16::try_from(share).ok()
 }
 
 /// `None` where it holds no stake there.
@@ -732,6 +789,7 @@ pub fn median_of(mut counts: Vec<u64>) -> Option<u64> {
 mod tests {
     use {
         super::*,
+        solana_entry::block_component::BlockFinalizationCert,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::make_slot_entries,
@@ -780,6 +838,26 @@ mod tests {
     fn test_a_short_bitmap_leaves_the_ranks_past_it_unpaid() {
         let paid = decode_paid(&bitmap(4, &[3]), 10).unwrap();
         assert_eq!(paid, flags(10, &[3]));
+    }
+
+    #[test]
+    fn test_the_carried_certificate_is_read_as_fast_or_slow() {
+        let (_, entries) = make_slot_entries(9, 8, 1);
+        let mut footer = BlockFooterV1 {
+            bank_hash: entries[0].hash,
+            block_producer_time_nanos: 0,
+            block_user_agent: Vec::new(),
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        };
+        assert_eq!(carried_fast(&footer), None);
+        let mut cert = BlockFinalizationCert::new_for_tests();
+        footer.block_final_cert = Some(cert.clone());
+        assert_eq!(carried_fast(&footer), Some(true));
+        cert.notar_aggregate = Some(cert.final_aggregate.clone());
+        footer.block_final_cert = Some(cert);
+        assert_eq!(carried_fast(&footer), Some(false));
     }
 
     #[test]

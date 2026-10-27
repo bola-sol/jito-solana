@@ -51,6 +51,44 @@ pub fn country(ip: IpAddr) -> Option<&'static str> {
         .country(u32::from(ip))
 }
 
+/// Each ISO country code's continent, as two letters: AF, AN, AS, EU, NA, OC or SA.
+const CONTINENTS: [(&str, &str); 7] = [
+    (
+        "AF",
+        "AO BF BI BJ BW CD CF CG CI CM CV DJ DZ EG EH ER ET GA GH GM GN GQ GW KE KM LR LS LY MA \
+         MG ML MR MU MW MZ NA NE NG RE RW SC SD SH SL SN SO SS ST SZ TD TG TN TZ UG YT ZA ZM ZW",
+    ),
+    ("AN", "AQ BV GS HM TF"),
+    (
+        "AS",
+        "AE AF AM AZ BD BH BN BT CC CN CX GE HK ID IL IN IO IQ IR JO JP KG KH KP KR KW KZ LA LB \
+         LK MM MN MO MV MY NP OM PH PK PS QA SA SG SY TH TJ TL TM TR TW UZ VN YE",
+    ),
+    (
+        "EU",
+        "AD AL AT AX BA BE BG BY CH CY CZ DE DK EE ES FI FO FR GB GG GI GR HR HU IE IM IS IT JE \
+         LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS RU SE SI SJ SK SM UA VA XK",
+    ),
+    (
+        "NA",
+        "AG AI AW BB BL BM BQ BS BZ CA CR CU CW DM DO GD GL GP GT HN HT JM KN KY LC MF MQ MS MX \
+         NI PA PM PR SV SX TC TT UM US VC VG VI",
+    ),
+    (
+        "OC",
+        "AS AU CK FJ FM GU KI MH MP NC NF NR NU NZ PF PG PN PW SB TK TO TV VU WF WS",
+    ),
+    ("SA", "AR BO BR CL CO EC FK GF GY PE PY SR UY VE"),
+];
+
+/// The continent of a two-letter country code; none for a code outside the table.
+pub fn continent(country: &str) -> Option<&'static str> {
+    CONTINENTS
+        .iter()
+        .find(|(_, codes)| codes.split_ascii_whitespace().any(|code| code == country))
+        .map(|(continent, _)| *continent)
+}
+
 fn decode(packed: &[u8]) -> Result<Table, &'static str> {
     let mut bytes = Vec::new();
     GzDecoder::new(packed)
@@ -125,6 +163,34 @@ mod tests {
         flate2::{Compression, write::GzEncoder},
         std::{io::Write, net::Ipv4Addr},
     };
+
+    #[test]
+    fn test_continents_cover_the_staked_countries() {
+        for (country, expected) in [
+            ("DE", "EU"),
+            ("NL", "EU"),
+            ("US", "NA"),
+            ("KY", "NA"),
+            ("SG", "AS"),
+            ("JP", "AS"),
+            ("BR", "SA"),
+            ("AU", "OC"),
+            ("ZA", "AF"),
+        ] {
+            assert_eq!(continent(country), Some(expected), "{country}");
+        }
+        assert_eq!(continent("ZZ"), None);
+        // Every code is listed once.
+        let mut codes: Vec<&str> = CONTINENTS
+            .iter()
+            .flat_map(|(_, codes)| codes.split_ascii_whitespace())
+            .collect();
+        let listed = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), listed);
+        assert!(codes.iter().all(|code| code.len() == 2));
+    }
 
     fn pack(codes: &[&str], rows: &[(u32, u8)]) -> Vec<u8> {
         let mut raw = MAGIC.to_vec();

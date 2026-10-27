@@ -7,6 +7,7 @@ describe("readRoute", () => {
     expect(readRoute("#schedule").page).toBe("schedule");
     expect(readRoute("#/slots").page).toBe("slots");
     expect(readRoute("#/gossip").page).toBe("gossip");
+    expect(readRoute("#/cluster").page).toBe("cluster");
   });
 
   it("falls back to the overview rather than showing nothing", () => {
@@ -33,6 +34,7 @@ describe("readRoute", () => {
     expect(readRoute("#/slots/5539826?q=826").slot).toBe(5_539_826);
     expect(readRoute("#/?q=x").query).toBe("");
     expect(readRoute("#/gossip?q=Jito&ours")).toEqual({ ...HOME, page: "gossip", query: "Jito" });
+    expect(readRoute("#/cluster?q=x")).toEqual({ ...HOME, page: "cluster" });
   });
 });
 
@@ -49,6 +51,7 @@ describe("routeHash", () => {
       { ...HOME, page: "schedule", ours: true },
       { ...HOME, page: "gossip" },
       { ...HOME, page: "gossip", query: "64.130" },
+      { ...HOME, page: "cluster" },
     ];
     for (const route of routes) expect(readRoute(routeHash(route))).toEqual(route);
   });

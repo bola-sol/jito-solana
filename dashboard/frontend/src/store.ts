@@ -4,6 +4,7 @@
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
 import type { SlotRange } from "./slotHistory";
 import type {
+  ClusterCharts,
   Displays,
   EpochInfo,
   Envelope,
@@ -37,6 +38,7 @@ export interface Requests {
   "summary.written": { params: Record<string, never>; reply: WrittenList };
   "peers.gossip": { params: Record<string, never>; reply: GossipPeers | null };
   "handoff.bin": { params: { from: number | null; to: number | null }; reply: LeaderFigures[] | null };
+  "cluster.charts": { params: Record<string, never>; reply: ClusterCharts | null };
   "produced.figures": { params: { before?: number }; reply: FiguresPage | null };
   "produced.detail": { params: { first: number; last: number }; reply: ProducedDetail | null };
 }

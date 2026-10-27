@@ -842,6 +842,16 @@ fn respond(
             };
             Some(encode_json_with_id("peers", "gossip", id, &json))
         }
+        ("cluster", "charts") => {
+            replies
+                .cluster_charts_wanted
+                .store(timestamp(), Ordering::Relaxed);
+            let json = match replies.cluster_charts.read() {
+                Ok(charts) => charts.clone(),
+                Err(_) => return Some(encode_with_id("cluster", "charts", id, &())),
+            };
+            Some(encode_json_with_id("cluster", "charts", id, &json))
+        }
         ("epoch", "query") => {
             let Ok(params) = serde_json::from_value::<EpochParams>(request.params) else {
                 return Some(encode_with_id(
@@ -1725,6 +1735,29 @@ mod tests {
             "not gathered yet: {reply}"
         );
         let asked = replies.gossip_peers_wanted.load(Ordering::Relaxed);
+        assert!(
+            timestamp().saturating_sub(asked) < 5_000,
+            "asked at {asked}"
+        );
+    }
+
+    #[test]
+    fn test_the_cluster_charts_are_answered_and_the_ask_remembered() {
+        let replies = no_replies();
+        let reply = respond(
+            br#"{"topic":"cluster","key":"charts","id":12}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":12"#), "{reply}");
+        assert!(
+            reply.contains(r#""value":null"#),
+            "not gathered yet: {reply}"
+        );
+        let asked = replies.cluster_charts_wanted.load(Ordering::Relaxed);
         assert!(
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"

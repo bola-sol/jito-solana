@@ -23,7 +23,7 @@ import { HandoffCard } from "./HandoffCard";
 import { Card, Explain } from "./primitives";
 
 const POLL_MS = 15_000;
-const FIRST_POLL_MS = 3_000;
+const FIRST_POLL_MS = 1_000;
 
 const HEIGHT = 120;
 const HIST = 44;
@@ -130,7 +130,10 @@ function sharesView(shares: ChartShares): ChartView {
 function useClusterCharts(): ClusterCharts | null {
   const store = useStore();
   const [charts, setCharts] = useState<ClusterCharts | null>(null);
+  // Asked once the socket is open, and again on each new one.
+  const open = store.getConnection() === "open";
   useEffect(() => {
+    if (!open) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
@@ -141,7 +144,7 @@ function useClusterCharts(): ClusterCharts | null {
           timer = setTimeout(load, got ? POLL_MS : FIRST_POLL_MS);
         },
         () => {
-          if (live) timer = setTimeout(load, POLL_MS);
+          if (live) timer = setTimeout(load, FIRST_POLL_MS);
         },
       );
     };
@@ -150,7 +153,7 @@ function useClusterCharts(): ClusterCharts | null {
       live = false;
       clearTimeout(timer);
     };
-  }, [store]);
+  }, [store, open]);
   return charts;
 }
 

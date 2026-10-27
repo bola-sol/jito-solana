@@ -843,12 +843,8 @@ fn respond(
             Some(encode_json_with_id("peers", "gossip", id, &json))
         }
         ("cluster", "charts") => {
-            replies
-                .cluster_charts_wanted
-                .store(timestamp(), Ordering::Relaxed);
-            let json = match replies.cluster_charts.read() {
-                Ok(charts) => charts.clone(),
-                Err(_) => return Some(encode_with_id("cluster", "charts", id, &())),
+            let Some(json) = replies.ask_cluster_charts(timestamp()) else {
+                return Some(encode_with_id("cluster", "charts", id, &()));
             };
             Some(encode_json_with_id("cluster", "charts", id, &json))
         }
@@ -1762,6 +1758,25 @@ mod tests {
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"
         );
+    }
+
+    #[test]
+    fn test_cluster_charts_held_from_an_earlier_viewing_are_not_served() {
+        let replies = no_replies();
+        *replies.cluster_charts.write().unwrap() = Arc::from(r#"{"epoch":7}"#);
+        let ask = || {
+            respond(
+                br#"{"topic":"cluster","key":"charts","id":3}"#,
+                &empty(),
+                &no_info(),
+                &no_epochs(),
+                &replies,
+            )
+            .unwrap()
+        };
+        assert!(ask().contains(r#""value":null"#));
+        *replies.cluster_charts.write().unwrap() = Arc::from(r#"{"epoch":8}"#);
+        assert!(ask().contains(r#""value":{"epoch":8}"#));
     }
 
     #[test]

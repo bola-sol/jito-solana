@@ -112,8 +112,11 @@ function usePolled<R extends "summary.written" | "summary.misses">(
   const [value, setValue] = useState<Requests[R]["reply"] | null>(null);
   const [failed, setFailed] = useState(false);
   const live = useRef(true);
+  // Asked once the socket is open, and again on each new one.
+  const open = store.getConnection() === "open";
 
   useEffect(() => {
+    if (!open) return;
     live.current = true;
     const load = () => {
       store.request(route, {}).then(
@@ -133,7 +136,7 @@ function usePolled<R extends "summary.written" | "summary.misses">(
       live.current = false;
       clearInterval(timer);
     };
-  }, [store, route]);
+  }, [store, route, open]);
 
   return { value, failed };
 }

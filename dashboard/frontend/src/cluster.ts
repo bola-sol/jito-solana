@@ -103,6 +103,13 @@ export function txNote(view: TxView, failedShare: number): string {
   return `${whole(view === "failed" ? failedShare : 100 - failedShare)} of all`;
 }
 
+/** The first round step at or above `value`, so an axis ends a little over its tallest mark. */
+export function niceTop(value: number): number {
+  if (!(value > 0) || !Number.isFinite(value)) return 1;
+  const power = 10 ** Math.floor(Math.log10(value));
+  return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map((step) => step * power).find((top) => top >= value - 1e-9) ?? value;
+}
+
 /** Up to three round gridlines at or under `top`, above nought. */
 export function ticks(top: number): number[] {
   if (!(top > 0)) return [];

@@ -5,6 +5,7 @@ import {
   clusterVerdict,
   gridlines,
   linePath,
+  niceTop,
   skipBaseline,
   ticks,
   txNote,
@@ -101,6 +102,15 @@ describe("axes", () => {
     expect(ticks(100)).toEqual([50, 100]);
     expect(ticks(300)).toEqual([100, 200, 300]);
     expect(ticks(0)).toEqual([]);
+  });
+
+  it("rounds an axis up to the next round step", () => {
+    expect(niceTop(31.4)).toBe(40);
+    expect(niceTop(12)).toBe(15);
+    expect(niceTop(4)).toBe(4);
+    expect(niceTop(0.7)).toBe(0.8);
+    expect(niceTop(0)).toBe(1);
+    expect(ticks(niceTop(31.4))).toEqual([20, 40]);
   });
 
   it("names references, splits a raised floor, else steps", () => {

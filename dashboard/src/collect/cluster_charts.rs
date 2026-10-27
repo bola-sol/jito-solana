@@ -43,6 +43,9 @@ const RECENT_MILLIS: u64 = 600_000;
 const RUN_SLOTS: u64 = 20;
 const RUN_HELD: u64 = 18;
 
+/// A from-zero axis ends at most this many times the window's 95th.
+const OUTLIER_CAP: f64 = 2.0;
+
 /// A bin with fewer readings than this draws its median but no bands.
 const MIN_PER_BIN: usize = 3;
 const MIN_READINGS: usize = 20;
@@ -249,7 +252,8 @@ pub(super) fn readings(
 }
 
 /// The axis a series is drawn on: fixed where the figure has natural bounds, else rounded up from
-/// the busiest bin.
+/// the busiest bin, but no further than twice the window's 95th, so a few outlying bins do not
+/// flatten the rest.
 #[derive(Debug, Clone, Copy)]
 enum Axis {
     Fixed(f64, f64),
@@ -381,7 +385,8 @@ fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis, with_min: bool) ->
                 .flatten()
                 .copied()
                 .fold(spread.p95 as f32, f32::max);
-            (0.0, nice_top(f64::from(busiest)))
+            let capped = f64::from(busiest).min(spread.p95 * OUTLIER_CAP);
+            (0.0, nice_top(capped))
         }
     };
     Some(Series {
@@ -953,6 +958,19 @@ mod tests {
         let medians = tps.p50.iter().filter(|bin| bin.is_some()).count();
         assert_eq!(medians, BINS.saturating_sub(1));
         assert!(tps.p05.iter().any(|bin| bin.is_none()));
+    }
+
+    #[test]
+    fn test_outlying_bins_do_not_set_the_axis() {
+        // Slot times of 200 ms, with one minute in a hundred running at 900.
+        let readings: Vec<(u64, f32)> = (0..12_000u64)
+            .map(|at| (at.saturating_mul(100), if at < 120 { 900.0 } else { 200.0 }))
+            .collect();
+        let bins = Bins::new(0, 1_200_000);
+        let series = series(&bins, readings, Axis::FromZero, false).unwrap();
+        assert_eq!(series.spread.p95, 200.0);
+        assert_eq!(series.p95.first().copied().flatten(), Some(900.0));
+        assert_eq!(series.top, 400.0);
     }
 
     #[test]

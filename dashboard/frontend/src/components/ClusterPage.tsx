@@ -5,6 +5,7 @@ import {
   clusterVerdict,
   gridlines,
   linePath,
+  niceTop,
   percentText,
   skipBaseline,
   ticks,
@@ -392,7 +393,8 @@ function SkipCard({ skips, through }: { skips: SkipChart; through: number | null
   const [hover, setHover] = useState<number | null>(null);
   const bins = skips.shares.length;
   const step = plot / Math.max(1, bins);
-  const top = Math.max(1, Math.ceil(Math.max(0, ...skips.shares.map((share) => share ?? 0))));
+  const top = niceTop(Math.max(0, ...skips.shares.map((share) => share ?? 0)));
+  const share = skips.slots > 0 ? (skips.skipped / skips.slots) * 100 : null;
   const y = (value: number) => HEIGHT - (Math.min(value, top) / top) * HEIGHT;
   const at =
     hover === null ? null : skips.from_millis + ((hover + 0.5) / bins) * (skips.to_millis - skips.from_millis);
@@ -402,7 +404,7 @@ function SkipCard({ skips, through }: { skips: SkipChart; through: number | null
     <section className="card cl-card cl-skip-card">
       <div className="card-head">
         <h2 className="card-title">
-          <Explain text="Each leader's share of its slots skipped, over the epoch.">skip rate</Explain>
+          <Explain text="The cluster's share of this epoch's settled slots skipped.">skip rate</Explain>
         </h2>
         <span className="card-aside">
           this epoch{through !== null ? `, ${Math.round(through * 100)}% through` : ""}
@@ -416,11 +418,14 @@ function SkipCard({ skips, through }: { skips: SkipChart; through: number | null
           </>
         ) : (
           <>
-            <b>{spread ? percentText(spread.p50) : "—"}</b>
+            <b>{share === null ? "—" : percentText(share)}</b>
             <span className="cl-spread">
-              {spread
-                ? `per leader · p5 ${spread.p05 === 0 ? "0" : spread.p05.toFixed(1)} · p95 ${spread.p95.toFixed(1)}`
-                : "per leader"}
+              of slots
+              {spread && (
+                <span className="cl-per-leader">
+                  {` · per leader median ${spread.p50 === 0 ? "0" : spread.p50.toFixed(1)}, p95 ${spread.p95.toFixed(1)}`}
+                </span>
+              )}
             </span>
             <span className="cl-recent">
               <b>{count(skips.skipped)}</b> of {count(skips.slots)} slots
@@ -462,7 +467,7 @@ function SkipCard({ skips, through }: { skips: SkipChart; through: number | null
               </svg>
               {ticks(top).map((tick) => (
                 <span key={tick} className="cl-tick" style={{ top: y(tick) + TOP }}>
-                  {tick < 1 ? tick.toFixed(1) : tick.toFixed(0)}%
+                  {Number.isInteger(tick) ? tick.toFixed(0) : tick.toFixed(1)}%
                 </span>
               ))}
             </div>

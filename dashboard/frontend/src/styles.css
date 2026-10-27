@@ -8632,6 +8632,20 @@ body {
   color: var(--text);
 }
 
+/* The leaders' spread is the skip card's second figure, and goes before the slot count does. */
+@container (max-width: 459px) {
+  .cl-per-leader {
+    display: none;
+  }
+}
+
+/* The slot count stays on the skip card wherever it fits beside the share. */
+@container (min-width: 280px) {
+  .cl-skip-card .cl-recent {
+    display: inline;
+  }
+}
+
 /* Where even the share would not fit beside the spread, the share stays. */
 @container (max-width: 279px) {
   .cl-span-2 .cl-spread {

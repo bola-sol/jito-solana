@@ -94,6 +94,24 @@ export function skipBaseline(
   return { share: slots > 0 ? (skipped / slots) * 100 : null, label: "this epoch" };
 }
 
+/** How far through its epoch a slot is, from nought to one. */
+export function epochThrough(slot: number, startSlot: number, slotsInEpoch: number): number {
+  return Math.max(0, Math.min(1, (slot - startSlot) / Math.max(1, slotsInEpoch)));
+}
+
+/** Where on the epoch's bar the charts start: their first reading placed within the skip chart's
+ *  span, which runs from the epoch's first slot to now. Null without that span. */
+export function chartWindowStart(
+  fromMillis: number,
+  spanFromMillis: number,
+  spanToMillis: number,
+  through: number,
+): number | null {
+  const span = spanToMillis - spanFromMillis;
+  if (!(span > 0)) return null;
+  return Math.max(0, Math.min(1, (fromMillis - spanFromMillis) / span)) * through;
+}
+
 export type TxView = "all" | "succeeded" | "failed";
 
 /** The total's makeup on All; each part's share of the total on its own tab. */

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   bandPaths,
   binLabel,
+  chartWindowStart,
   clusterVerdict,
+  epochThrough,
   gridlines,
   linePath,
   niceTop,
@@ -138,5 +140,25 @@ describe("binLabel", () => {
   it("names a bin in seconds, then minutes", () => {
     expect(binLabel(0, 3_480_000, 120)).toBe("29 s");
     expect(binLabel(0, 86_400_000, 120)).toBe("12 min");
+  });
+});
+
+describe("the epoch line", () => {
+  it("places a slot within its epoch, held to the bar", () => {
+    expect(epochThrough(2_710_800, 2_700_000, 18_000)).toBeCloseTo(0.6);
+    expect(epochThrough(2_699_000, 2_700_000, 18_000)).toBe(0);
+    expect(epochThrough(2_720_000, 2_700_000, 18_000)).toBe(1);
+  });
+
+  it("starts the charts at the epoch's start when the node held it all", () => {
+    expect(chartWindowStart(1_000, 1_000, 2_000, 0.6)).toBe(0);
+  });
+
+  it("starts the charts part way in after a restart", () => {
+    expect(chartWindowStart(1_500, 1_000, 2_000, 0.6)).toBeCloseTo(0.3);
+  });
+
+  it("leaves the window out without a span to place it in", () => {
+    expect(chartWindowStart(1_500, 2_000, 2_000, 0.6)).toBeNull();
   });
 });

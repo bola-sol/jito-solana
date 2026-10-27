@@ -59,7 +59,7 @@ interface ChartView {
   /** Gridlines named on the right, in place of the usual ones. */
   refs?: { at: number; label: string }[];
   /** In place of p5 and p95, where those say nothing. */
-  caption?: string;
+  caption?: ReactNode;
   /** Too few readings yet; the card holds its place. */
   waiting?: boolean;
 }
@@ -116,7 +116,11 @@ function sharesView(shares: ChartShares): ChartView {
     floor: shares.floor,
     top: 100,
     hist: [],
-    caption: `${count(shares.count)} of ${count(shares.total)} blocks`,
+    caption: (
+      <>
+        <b>{count(shares.count)}</b> of <b>{count(shares.total)}</b> blocks
+      </>
+    ),
   };
 }
 
@@ -244,13 +248,22 @@ function ChartCard({
               {fmt(view.p50[hover], digits)}
               {unit}
             </b>
-            <span>
+            <span className="cl-spread">
               {clock(at)}
-              {view.min
-                ? ` · lowest ${fmt(view.min[hover], digits)}`
-                : view.p05[hover] !== null && view.p05[hover] !== undefined
-                  ? ` · p5 ${fmt(view.p05[hover], digits)} · p95 ${fmt(view.p95[hover], digits)}`
-                  : ""}
+              {view.min ? (
+                <>
+                  {" · "}
+                  <span className="cl-label">lowest</span> <b>{fmt(view.min[hover], digits)}</b>
+                </>
+              ) : view.p05[hover] !== null && view.p05[hover] !== undefined ? (
+                <>
+                  {" · "}
+                  <b>
+                    {fmt(view.p05[hover], digits)}–{fmt(view.p95[hover], digits)}
+                  </b>{" "}
+                  <span className="cl-label">p5–p95</span>
+                </>
+              ) : null}
             </span>
           </>
         ) : (
@@ -261,9 +274,21 @@ function ChartCard({
             </b>
             <span className="cl-spread">
               {view.caption ??
-                (lowest !== null && Number.isFinite(lowest)
-                  ? `p5 ${fmt(view.spread.p05, digits)} · lowest ${fmt(lowest, digits)}`
-                  : `p5 ${fmt(view.spread.p05, digits)} · p95 ${fmt(view.spread.p95, digits)}`)}
+                (lowest !== null && Number.isFinite(lowest) ? (
+                  <>
+                    <span className="cl-label cl-median-label">median ·</span> <b>{fmt(view.spread.p05, digits)}</b>{" "}
+                    <span className="cl-label">p5</span> · <span className="cl-label">lowest</span>{" "}
+                    <b>{fmt(lowest, digits)}</b>
+                  </>
+                ) : (
+                  <>
+                    <span className="cl-label cl-median-label">median ·</span>{" "}
+                    <b>
+                      {fmt(view.spread.p05, digits)}–{fmt(view.spread.p95, digits)}
+                    </b>{" "}
+                    <span className="cl-label">p5–p95</span>
+                  </>
+                ))}
             </span>
             {note && <span className="cl-note">{note}</span>}
             <span className="cl-recent">
@@ -384,6 +409,9 @@ function TransactionsCard({ charts }: { charts: ClusterCharts }) {
   );
 }
 
+/** A leader's skip rate: nought plainly, else one decimal. */
+const leaderShare = (value: number) => (value === 0 ? "0" : value.toFixed(1));
+
 function SkipCard({ skips, through }: { skips: SkipChart; through: number | null }) {
   const store = useStore();
   const figures = store.get("summary", "cluster_figures");
@@ -414,16 +442,23 @@ function SkipCard({ skips, through }: { skips: SkipChart; through: number | null
         {at !== null ? (
           <>
             <b>{hovered === null ? "—" : percentText(hovered)}</b>
-            <span>{clock(at)} · of the cluster's slots</span>
+            <span className="cl-spread">
+              {clock(at)} · <span className="cl-label">of the cluster's slots</span>
+            </span>
           </>
         ) : (
           <>
             <b>{share === null ? "—" : percentText(share)}</b>
             <span className="cl-spread">
-              of slots
+              <span className="cl-label">of slots</span>
               {spread && (
                 <span className="cl-per-leader">
-                  {` · per leader median ${spread.p50 === 0 ? "0" : spread.p50.toFixed(1)}, p95 ${spread.p95.toFixed(1)}`}
+                  {" · per leader "}
+                  <b>
+                    {leaderShare(spread.p05)}–{leaderShare(spread.p95)}%
+                  </b>{" "}
+                  <span className="cl-label">p5–p95</span>, <span className="cl-label">median</span>{" "}
+                  <b>{leaderShare(spread.p50)}</b>
                 </span>
               )}
             </span>

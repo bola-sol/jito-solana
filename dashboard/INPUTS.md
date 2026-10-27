@@ -157,7 +157,7 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | `peers.gossip` | The Gossip page's peers table |
 | `produced.figures` | This epoch's blocks, and the previous epoch's until a fifth of this one has passed, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
 | `produced.detail` | Our blocks in a range of up to 64 slots, with their turns, waterfalls and costs |
-| `cluster.charts` | The Cluster page: transactions, CU, slot time, notarized stake and fast finalized in 120 bins from catching up to now, the epoch's skips, and stake by client and by country. Gathered every fifteen seconds while a page asks. |
+| `cluster.charts` | The Cluster page: transactions, CU, slot time, notarized stake and fast finalized in up to 120 bins from catching up to now, each at least three 20-slot runs wide, the epoch's skips, and stake by client and by country. Gathered every fifteen seconds while a page asks. |
 
 ## The host
 

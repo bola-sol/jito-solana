@@ -49,6 +49,7 @@ use {
 mod block_life;
 mod cert_formation;
 mod certificates;
+mod cluster_charts;
 mod cluster_figures;
 mod finalization;
 mod gossip_peers;
@@ -78,6 +79,7 @@ pub use self::{
 const SLOW_TICK: Duration = Duration::from_secs(5);
 /// An epoch's spread moves slowly, and each pass reads the whole ring.
 const CLUSTER_FIGURES_EVERY: Duration = Duration::from_secs(30);
+const CLUSTER_CHARTS_EVERY: Duration = Duration::from_secs(15);
 
 /// The tip counts the slot still arriving, so a node in step reads a slot or two behind it.
 const IN_STEP_SLOTS: u64 = 4;
@@ -99,6 +101,9 @@ pub struct Replies {
     pub misses_wanted: AtomicU64,
     /// Every settled leader's handoff figures, by median, for the leaders in a bin asked about.
     pub handoff_leaders: RwLock<Vec<LeaderFigures>>,
+    /// The Cluster page's charts, gathered only while someone is asking.
+    pub cluster_charts: RwLock<Arc<str>>,
+    pub cluster_charts_wanted: AtomicU64,
 }
 
 impl Replies {
@@ -168,6 +173,8 @@ impl Default for Replies {
             gossip_peers_wanted: AtomicU64::new(0),
             misses_wanted: AtomicU64::new(0),
             handoff_leaders: RwLock::default(),
+            cluster_charts: RwLock::new(Arc::from("null")),
+            cluster_charts_wanted: AtomicU64::new(0),
         }
     }
 }
@@ -499,6 +506,11 @@ pub struct Collector {
     voting: bool,
     last_slow_tick: Instant,
     cluster_figures_at: Instant,
+    cluster_charts_at: Instant,
+    /// Unix milliseconds this node caught up with the cluster, where it had to.
+    caught_up_millis: Option<u64>,
+    /// The previous epoch's skipped percent, by the epoch it was read in.
+    previous_skips: Option<(Epoch, Option<f64>)>,
     subscribers: usize,
 
     tips: Option<TipMeter>,
@@ -601,6 +613,9 @@ impl Collector {
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             cluster_figures_at: now.checked_sub(CLUSTER_FIGURES_EVERY).unwrap_or(now),
+            cluster_charts_at: now.checked_sub(CLUSTER_CHARTS_EVERY).unwrap_or(now),
+            caught_up_millis: None,
+            previous_skips: None,
             subscribers: 0,
             tips,
             commission_bps,
@@ -768,6 +783,10 @@ impl Collector {
             if now.duration_since(self.cluster_figures_at) >= CLUSTER_FIGURES_EVERY {
                 self.cluster_figures_at = now;
                 self.collect_cluster_figures(&root_bank);
+            }
+            if now.duration_since(self.cluster_charts_at) >= CLUSTER_CHARTS_EVERY {
+                self.cluster_charts_at = now;
+                self.collect_cluster_charts(&root_bank, &working_bank, &peers, timestamp());
             }
             self.collect_finalization_share(&working_bank, &peers);
             self.collect_cert_formation(&root_bank);
@@ -2201,6 +2220,7 @@ impl Collector {
             return;
         }
         self.caught_cluster = true;
+        self.caught_up_millis = Some(timestamp());
         self.publisher.publish(
             TOPIC_SUMMARY,
             "caught_up_time_nanos",

@@ -601,6 +601,103 @@ export interface Spread {
   p95: number;
 }
 
+/** One figure per bin of the Cluster page's window, each null where the bin holds too few
+ *  readings. */
+export interface ChartSeries {
+  p05: (number | null)[];
+  p25: (number | null)[];
+  p50: (number | null)[];
+  p75: (number | null)[];
+  p95: (number | null)[];
+  /** Each bin's lowest reading, where the dips are the point. */
+  min: (number | null)[] | null;
+  spread: Spread;
+  /** The median over the last ten minutes. */
+  recent: number | null;
+  floor: number;
+  top: number;
+  /** Every reading counted in equal steps from `floor` to `top`. */
+  hist: number[];
+}
+
+/** A share of blocks per bin, in percent. */
+export interface ChartShares {
+  shares: (number | null)[];
+  count: number;
+  total: number;
+  share: number;
+  recent: number | null;
+  floor: number;
+}
+
+export interface SkipLeader {
+  identity: string;
+  name: string | null;
+  country: string | null;
+  slots: number;
+  skipped: number;
+}
+
+export interface SkipChart {
+  from_slot: number;
+  to_slot: number;
+  from_millis: number;
+  to_millis: number;
+  /** Percent of each bin's settled slots skipped. */
+  shares: (number | null)[];
+  skipped: number;
+  slots: number;
+  recent: number | null;
+  /** The previous epoch's percent. */
+  previous: number | null;
+  leaders: SkipLeader[];
+}
+
+export interface ClientShare {
+  client: string;
+  validators: number;
+  stake: number;
+  releases: string[];
+  other: boolean;
+}
+
+export interface CountryStake {
+  code: string | null;
+  stake: number;
+  validators: number;
+  /** On the folded row, how many countries it holds. */
+  others: number | null;
+}
+
+export interface StakeByCountry {
+  stake: number;
+  validators: number;
+  countries: number;
+  ours: string | null;
+  ours_continent: string | null;
+  rows: CountryStake[];
+  /** Two-letter continent codes, null for stake whose country is not known. */
+  continents: { code: string | null; stake: number }[];
+}
+
+/** The Cluster page's charts, from where this node caught up to now. */
+export interface ClusterCharts {
+  epoch: number;
+  from_millis: number;
+  to_millis: number;
+  cu: ChartSeries | null;
+  tps: ChartSeries | null;
+  succeeded: ChartSeries | null;
+  failed: ChartSeries | null;
+  slot_time: ChartSeries | null;
+  notarized: ChartSeries | null;
+  fast: ChartShares | null;
+  failed_share: number | null;
+  skips: SkipChart | null;
+  clients: ClientShare[];
+  countries: StakeByCountry | null;
+}
+
 /** The cluster over the root's epoch; each figure null until it has enough samples. */
 export interface ClusterFigures {
   epoch: number;

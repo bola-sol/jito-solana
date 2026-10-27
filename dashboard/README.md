@@ -76,6 +76,9 @@ the domain in the site block is the name to allow, and nothing else is needed.
   stake, client, gossip address, RPC port, start time and advertised snapshot
   and lowest slots. Every node holds the same table, so none of it is private,
   but the page gathers it in one place.
+- The Cluster page totals the cluster's stake by client and by country, and
+  names the leaders that skipped most this epoch. All of it is public on chain
+  or in gossip.
 - The machine card shows what is not on chain: the host's memory and the
   validator's share of it, each disk's device name and fill, the absolute paths
   of the ledger, accounts and snapshot directories (cut short on the card, in
@@ -185,8 +188,10 @@ out of the packed history, which holds an epoch, `slot.search` for a page of
 the turns in it that match a leader's name or key, a slot number or this
 validator, answered off the async threads and one at a time, and
 `peers.gossip` for every node in gossip, which the server gathers only while it
-is being asked for, and `handoff.bin` for the settled leaders whose median handoff
-gap falls in a range, from the figures each ten-second handoff summary keeps.
+is being asked for, `handoff.bin` for the settled leaders whose median handoff
+gap falls in a range, from the figures each ten-second handoff summary keeps,
+and `cluster.charts` for the Cluster page, gathered every fifteen seconds only
+while it is being asked for.
 
 A client that offers the `deflate` websocket subprotocol is sent every message
 of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the
@@ -268,7 +273,8 @@ generation already does per account is not measurable.
 ## IP geolocation
 
 The Schedule and Gossip pages show a country code beside each gossip address,
-and Leader handoff beside each leader's name, and the finalization share is
+and Leader handoff beside each leader's name, the Cluster page totals stake by
+country and continent, and the finalization share is
 compared with validators in our own country,
 looked up in `geoip/country-ipv4.bin.gz`. That table is DB-IP's
 [IP to Country Lite](https://db-ip.com/db/download/ip-to-country-lite),

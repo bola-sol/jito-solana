@@ -197,6 +197,27 @@ export function Meter({ fraction, children }: { fraction: number; children?: Rea
   );
 }
 
+/** A fold's head and body, always open: for a section that is the reason to visit its page. */
+export function Section({
+  title,
+  summary,
+  children,
+}: {
+  title: string;
+  summary: ReactNode;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <section className="fold is-open is-fixed">
+      <div className="fold-head">
+        <h2 className="fold-title">{title}</h2>
+        <span className="fold-sum">{summary}</span>
+      </div>
+      <div className="fold-body">{children}</div>
+    </section>
+  );
+}
+
 export function Fold({
   id,
   title,

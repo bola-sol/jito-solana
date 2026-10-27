@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export type Page = "overview" | "slots" | "schedule" | "gossip";
+export type Page = "overview" | "slots" | "schedule" | "gossip" | "cluster";
 
-const PAGES: Page[] = ["overview", "slots", "schedule", "gossip"];
+const PAGES: Page[] = ["overview", "slots", "schedule", "gossip", "cluster"];
 
 export interface Route {
   page: Page;
@@ -23,7 +23,8 @@ export function readRoute(hash: string): Route {
   return {
     page,
     slot: page === "slots" && rest !== undefined && /^\d+$/.test(rest) ? Number(rest) : null,
-    query: page === "overview" ? "" : (params.get("q") ?? ""),
+    // Only the pages with a search box keep one.
+    query: page === "overview" || page === "cluster" ? "" : (params.get("q") ?? ""),
     ours: page === "schedule" && params.has("ours"),
   };
 }
@@ -38,6 +39,8 @@ export function routeHash(route: Route): string {
       return withSearch("#/schedule", route.query, route.ours);
     case "gossip":
       return withSearch("#/gossip", route.query, false);
+    case "cluster":
+      return "#/cluster";
   }
 }
 

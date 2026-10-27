@@ -6,14 +6,13 @@ import { HostCard } from "./components/HostCard";
 import { IngestCard } from "./components/IngestCard";
 import { NetworkCard } from "./components/NetworkCard";
 import { BlockLifeCard } from "./components/BlockLifeCard";
-import { HandoffCard } from "./components/HandoffCard";
 import { ReplayCard } from "./components/ReplayCard";
 import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
 import { Verdict } from "./components/Verdict";
-import { VersionsCard } from "./components/VersionsCard";
 import { TpuPathCard } from "./components/TpuPathCard";
 import { GossipPage } from "./components/GossipPage";
+import { ClusterPage } from "./components/ClusterPage";
 import { GossipStakeCard } from "./components/GossipStakeCard";
 import { MissesPanel } from "./components/MissesPanel";
 import { SlotStrip } from "./components/SlotStrip";
@@ -66,6 +65,7 @@ export function App(): ReactElement {
             onFilter={(query, ours) => go({ ...route, query, ours }, true)}
           />
         )}
+        {page === "cluster" && <ClusterPage />}
         {page === "gossip" && <GossipPage query={route.query} onQuery={(query) => go({ ...route, query }, true)} />}
         <footer className="footer">
           <a href="https://db-ip.com" target="_blank" rel="noreferrer">
@@ -88,7 +88,6 @@ function Overview() {
       <div className="grid is-three">
         <EpochCard missesOpen={missesOpen} onToggleMisses={() => setMissesOpen((was) => !was)} />
         <ClusterCard />
-        <VersionsCard />
       </div>
       {missesOpen && <MissesPanel onClose={() => setMissesOpen(false)} />}
       <GossipStakeCard />
@@ -99,7 +98,6 @@ function Overview() {
       </div>
       <HostCard />
       <BlockLifeCard />
-      <HandoffCard />
       <ReplayCard />
       <CachesCard />
       <TpuPathCard />
@@ -107,11 +105,13 @@ function Overview() {
   );
 }
 
-const PAGES: { page: Page; label: string }[] = [
+/** `short` is the label on a phone, where five tabs do not fit at full length. */
+const PAGES: { page: Page; label: string; short?: string }[] = [
   { page: "overview", label: "Overview" },
-  { page: "slots", label: "Slot details" },
+  { page: "slots", label: "Slot details", short: "Slots" },
   { page: "schedule", label: "Schedule" },
   { page: "gossip", label: "Gossip" },
+  { page: "cluster", label: "Cluster" },
 ];
 
 /** Anchors rather than buttons, so a page can open in a new tab; the click is
@@ -130,7 +130,14 @@ function Nav({ page, onSelect }: { page: Page; onSelect: (page: Page) => void })
             onSelect(entry.page);
           }}
         >
-          {entry.label}
+          {entry.short ? (
+            <>
+              <span className="nav-long">{entry.label}</span>
+              <span className="nav-short">{entry.short}</span>
+            </>
+          ) : (
+            entry.label
+          )}
         </a>
       ))}
     </nav>

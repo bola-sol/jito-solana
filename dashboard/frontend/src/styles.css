@@ -6025,6 +6025,10 @@ body {
   color: var(--text);
 }
 
+.fold.is-fixed .fold-head {
+  cursor: default;
+}
+
 .fold-toggle {
   margin-left: auto;
   padding: 0;
@@ -8120,4 +8124,533 @@ body {
   margin: 0 0 12px;
   font-size: 13px;
   color: var(--text-dim);
+}
+
+/* ---- cluster page ---- */
+
+.cl-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 10px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-faint);
+}
+
+.cl-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cl-key i {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+}
+
+.cl-key-line {
+  height: 0 !important;
+  border-top: 1.5px solid var(--text);
+}
+
+.cl-key-inner {
+  background: color-mix(in srgb, var(--sky) 38%, var(--panel));
+}
+
+.cl-key-outer {
+  background: color-mix(in srgb, var(--sky) 16%, var(--panel));
+}
+
+.cl-key-median {
+  height: 0 !important;
+  border-top: 1px dashed var(--text-faint);
+}
+
+.cl-key-hist {
+  background: var(--path-3);
+}
+
+.cl-grid-row + .cl-grid-row {
+  margin-top: var(--gap);
+}
+
+.cl-card {
+  gap: 8px;
+}
+
+.cl-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 24px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cl-figure > b {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cl-recent {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.cl-recent b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.cl-chart {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cl-plot {
+  position: relative;
+  flex: none;
+  box-sizing: content-box;
+  padding: 6px 0 0 38px;
+}
+
+.cl-plot svg,
+.cl-hist {
+  display: block;
+  overflow: visible;
+}
+
+.cl-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.cl-base {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+}
+
+.cl-band-outer {
+  fill: color-mix(in srgb, var(--sky) 16%, var(--panel));
+}
+
+.cl-band-inner {
+  fill: color-mix(in srgb, var(--sky) 38%, var(--panel));
+}
+
+.cl-line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.cl-median {
+  stroke: var(--text-faint);
+  stroke-dasharray: 4 3;
+}
+
+.cl-cross {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+}
+
+.cl-tick {
+  position: absolute;
+  left: 0;
+  width: 32px;
+  text-align: right;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.cl-hist rect {
+  fill: var(--path-3);
+}
+
+.cl-skip {
+  fill: var(--bad);
+  opacity: 0.75;
+}
+
+.cl-skip.is-hover {
+  opacity: 1;
+}
+
+.cl-x {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 52px 0 38px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-faint);
+}
+
+.cl-leaders {
+  font-size: 12px;
+}
+
+.cl-skip-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 12px 32px;
+}
+
+.cl-skip-card .cl-x {
+  margin-top: 8px;
+  padding-right: 0;
+}
+
+@media (max-width: 700px) {
+  .cl-skip-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cl-leaders-head,
+.cl-leader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cl-leaders-head {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cl-leader {
+  padding: 3px 0;
+  color: var(--text-dim);
+}
+
+.cl-leader .handoff-who {
+  min-width: 0;
+}
+
+.cl-leader-n {
+  font-family: var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Three across, or one column where three do not fit: never two with one left alone. */
+.grid.cl-three {
+  --three-across: calc(3 * 300px + 2 * var(--gap));
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, max(300px, (var(--three-across) - 100%) * 999)), 1fr)
+  );
+}
+
+.cl-card {
+  container-type: inline-size;
+}
+
+/* The right-hand figure goes first when the card's own width runs out. */
+@container (max-width: 359px) {
+  .cl-recent {
+    display: none;
+  }
+}
+
+/* Five tabs on a phone: the short label, then a narrower gap. */
+.nav-short {
+  display: none;
+}
+
+@media (max-width: 440px) {
+  .nav {
+    gap: 16px;
+  }
+  .nav-long {
+    display: none;
+  }
+  .nav-short {
+    display: inline;
+  }
+}
+
+@media (max-width: 360px) {
+  .nav {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 350px) {
+  .nav {
+    gap: 10px;
+  }
+  .nav-tab {
+    font-size: 12px;
+  }
+}
+
+.cl-versions {
+  margin-top: var(--gap);
+}
+
+/* Room for every version, each on one line where the page is wide enough. */
+.cl-versions .versions {
+  max-height: none;
+}
+
+@media (min-width: 701px) {
+  .cl-versions .version-row {
+    grid-template-columns: minmax(0, 6em) minmax(0, 1fr) 3.4em 15em;
+    gap: 8px 16px;
+  }
+
+  .cl-versions .version-count {
+    grid-column: auto;
+    white-space: nowrap;
+  }
+}
+
+.cl-shares {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 40px;
+}
+
+.cl-share-head {
+  margin-bottom: 8px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 1200px) {
+  .cl-shares {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cl-share .version-row {
+  grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr) 3.4em;
+}
+
+@media (min-width: 701px) {
+  .cl-versions .cl-share.is-client .version-row {
+    grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr) 3.4em 15em;
+  }
+
+  .cl-versions .version-row {
+    grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr) 3.4em 15em;
+  }
+}
+
+.cl-ref {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  padding: 0 4px;
+  background: var(--panel);
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+
+
+
+.cl-min {
+  fill: none;
+  stroke: var(--apricot);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+.cl-key-min {
+  height: 0 !important;
+  border-top: 1px solid var(--apricot);
+}
+
+.cl-continents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.cl-continent-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+}
+
+.cl-continent-bar i {
+  min-width: 2px;
+  border-radius: 2px;
+}
+
+.cl-continent-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.cl-continent-key span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cl-continent-key i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  align-self: center;
+}
+
+.cl-continent-key b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cl-ct-eu {
+  background: var(--sky);
+}
+
+.cl-ct-na {
+  background: var(--apricot);
+}
+
+.cl-ct-as {
+  background: var(--lavender);
+}
+
+.cl-ct-sa {
+  background: var(--good);
+}
+
+.cl-ct-oc {
+  background: var(--part-4);
+}
+
+.cl-ct-af {
+  background: var(--path-2);
+}
+
+.cl-ct-unknown {
+  background: var(--text-faint);
+}
+
+/* Ranked down the first column, then the second. */
+.cl-country-list .versions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(6, auto);
+  gap: 7px 40px;
+}
+
+@media (max-width: 1200px) {
+  .cl-country-list .versions {
+    grid-auto-flow: row;
+    grid-template-rows: none;
+  }
+}
+
+/* Places read as names, as in the leader lists; the version ids stay mono. */
+.cl-country-list .version-name {
+  font-family: var(--sans);
+}
+
+/* One column on phones; two where two 300px cards fit, with Transactions across both and the
+   other four as a 2x2; three where three fit, Transactions over two beside CU. */
+.cl-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--gap);
+}
+
+@media (min-width: 662px) {
+  .cl-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cl-span-2 {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 976px) {
+  .cl-charts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.cl-card .card-head {
+  align-items: center;
+}
+
+.cl-tx-toggle {
+  margin-right: auto;
+}
+
+@container (max-width: 419px) {
+  .cl-span-2 .card-aside {
+    display: none;
+  }
+}
+
+/* Every chart head is as tall as the toggles, so a merged card lines up with its neighbours. */
+.cl-card .card-head {
+  min-height: 22px;
+}
+
+.cl-tx-toggle button {
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.cl-note {
+  color: var(--text);
+}
+
+/* Where even the share would not fit beside the spread, the share stays. */
+@container (max-width: 279px) {
+  .cl-span-2 .cl-spread {
+    display: none;
+  }
+}
+
+.cl-ct-an {
+  background: var(--path-3);
+}
+
+/* Every verdict holds two lines of headline and two of reason on a phone, so a change of state
+   does not move the charts. */
+@media (max-width: 480px) {
+  .cl-verdict {
+    min-height: calc(2 * 1.15em);
+  }
+
+  .cl-verdict-sub {
+    min-height: 3em;
+  }
 }

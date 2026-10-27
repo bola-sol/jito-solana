@@ -33,6 +33,8 @@ pub struct PackedSlot {
     /// Saturating into `u16`, which keeps the row at its size.
     pub recovered: u16,
     pub failed: u32,
+    /// Basis points of stake in the notarize reward certificate a later footer carried.
+    pub notarized: u16,
 }
 
 /// A full span of mainnet-sized rows is under half the frame ceiling; a test holds it there.
@@ -82,6 +84,10 @@ pub const REWARD_MASK: u16 = 0b11 << REWARD_SHIFT;
 pub const REWARD_PAID: u16 = 1 << REWARD_SHIFT;
 pub const REWARD_UNPAID: u16 = 2 << REWARD_SHIFT;
 pub const REWARD_NONE: u16 = 3 << REWARD_SHIFT;
+pub const HAS_NOTARIZED: u16 = 1 << 8;
+/// The block's footer carried a finalization certificate, the fast one where `FAST_FINAL` is set.
+pub const HAS_FINAL_CERT: u16 = 1 << 9;
+pub const FAST_FINAL: u16 = 1 << 10;
 
 fn reward_bits(reward: Option<Reward>) -> u16 {
     match reward {
@@ -188,6 +194,17 @@ impl SlotHistory {
         fill(self.row(slot));
     }
 
+    pub fn record_notarized(&mut self, slot: Slot, basis_points: u16) {
+        let row = self.row(slot);
+        row.flags |= HAS_NOTARIZED;
+        row.notarized = basis_points;
+    }
+
+    pub fn record_final_path(&mut self, slot: Slot, fast: bool) {
+        let row = self.row(slot);
+        row.flags = (row.flags & !FAST_FINAL) | HAS_FINAL_CERT | if fast { FAST_FINAL } else { 0 };
+    }
+
     pub fn record_time(&mut self, slot: Slot, millis: u64) {
         let row = self.row(slot);
         row.flags |= HAS_CLOCK;
@@ -215,6 +232,7 @@ impl SlotHistory {
             left_out: 9_999,
             recovered: 9_999,
             failed: 99_999,
+            notarized: 10_000,
         };
     }
 
@@ -426,6 +444,33 @@ mod tests {
             (0, 0, 0, 0, 0)
         );
         assert_eq!(flags & (HAS_SHREDS | HAS_REPLAYED), 0);
+    }
+
+    #[test]
+    fn test_footer_readings_set_their_flags_and_keep_the_rest() {
+        let mut history = SlotHistory::new(16);
+        history.record(&entry(5));
+        history.record_notarized(5, 9_950);
+        history.record_final_path(5, true);
+        let row = *history.get(5).unwrap();
+        assert_eq!(row.notarized, 9_950);
+        assert_eq!(
+            row.flags & (HAS_NOTARIZED | HAS_FINAL_CERT | FAST_FINAL),
+            HAS_NOTARIZED | HAS_FINAL_CERT | FAST_FINAL
+        );
+        history.record_final_path(5, false);
+        history.record(&entry(5));
+        let row = *history.get(5).unwrap();
+        assert_eq!(
+            row.flags & (HAS_FINAL_CERT | FAST_FINAL),
+            HAS_FINAL_CERT,
+            "a later read replaces the path"
+        );
+        assert_eq!(
+            row.flags & HAS_NOTARIZED,
+            HAS_NOTARIZED,
+            "a refreshed entry keeps the reading"
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ import {
 } from "../handoff";
 import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend, LeaderFigures } from "../types";
 import { useStore } from "../useStore";
-import { Explain, Fold } from "./primitives";
+import { Explain, Section } from "./primitives";
 
 type Tone = "plain" | "late" | "ours";
 
@@ -512,7 +512,7 @@ export function HandoffCard(): ReactElement {
   const settled = summary ? count(summary.settled) : "—";
 
   return (
-    <Fold id="handoff" title="Leader handoff" summary={fold}>
+    <Section title="Leader handoff" summary={fold}>
       <div className="handoff-wrap">
         <div className="handoff-body">
           <section className="card handoff-chart">
@@ -599,6 +599,6 @@ export function HandoffCard(): ReactElement {
           </div>
         </div>
       </div>
-    </Fold>
+    </Section>
   );
 }

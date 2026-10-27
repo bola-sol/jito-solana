@@ -215,6 +215,7 @@ impl Collector {
             read_to,
             marks,
             closed_at,
+            readings,
         } = certs::walk(
             &self.ctx.blockstore,
             root_bank,
@@ -225,6 +226,17 @@ impl Collector {
         for (slot, nanos) in closed_at {
             self.metrics_tap.note_block_closed(slot, nanos);
             self.block_lives.note_closed(slot, nanos);
+        }
+        if !readings.is_empty() {
+            let mut history = self.history.write().unwrap();
+            for reading in readings {
+                if let Some((rewarded, basis_points)) = reading.notarized {
+                    history.record_notarized(rewarded, basis_points);
+                }
+                if let Some(fast) = reading.fast {
+                    history.record_final_path(reading.slot, fast);
+                }
+            }
         }
         for votes in self.metrics_tap.take_block_votes() {
             self.block_lives

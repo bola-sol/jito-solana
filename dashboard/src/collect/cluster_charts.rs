@@ -261,6 +261,8 @@ pub(super) fn readings(
 enum Axis {
     Fixed(f64, f64),
     FromZero,
+    /// Up to 100, from a step of ten under the lowest bin's p5 (its median where it has no bands).
+    BelowLowest,
 }
 
 impl Readings {
@@ -306,7 +308,7 @@ impl Readings {
             succeeded: series(&bins, succeeded, Axis::FromZero),
             failed: series(&bins, failed, Axis::FromZero),
             slot_time: series(&bins, self.slot_millis, Axis::FromZero),
-            notarized: series(&bins, self.notarized, Axis::Fixed(50.0, 100.0)),
+            notarized: series(&bins, self.notarized, Axis::BelowLowest),
             fast: shares(&bins, &self.paths),
             failed_share: (all > 0).then(|| failed_all as f64 * 100.0 / all as f64),
             skips: None,
@@ -396,6 +398,14 @@ fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis) -> Option<Series> 
             let capped = f64::from(busiest).min(spread.p95 * OUTLIER_CAP);
             (0.0, nice_top(capped))
         }
+        Axis::BelowLowest => {
+            let lowest = p05
+                .iter()
+                .zip(&p50)
+                .filter_map(|(low, median)| low.or(*median))
+                .fold(100.0f32, f32::min);
+            (floor_below(lowest), 100.0)
+        }
     };
     Some(Series {
         p05,
@@ -447,9 +457,13 @@ fn shares(bins: &Bins, paths: &[(u64, bool)]) -> Option<Shares> {
         total,
         share: percent(count, total),
         recent: (recent_total > 0).then(|| percent(recent, recent_total)),
-        // Steps of ten below the lowest bin, and never above 90 so a calm hour still has room.
-        floor: ((f64::from(lowest) / 10.0).floor() * 10.0).clamp(0.0, 90.0),
+        floor: floor_below(lowest),
     })
+}
+
+/// A step of ten under the lowest bin, and never above 90 so a calm hour still has room.
+fn floor_below(lowest: f32) -> f64 {
+    ((f64::from(lowest) / 10.0).floor() * 10.0).clamp(0.0, 90.0)
 }
 
 /// Nearest rank over sorted values.
@@ -951,10 +965,36 @@ mod tests {
         let notarized = charts.notarized.unwrap();
         assert_eq!(notarized.spread.p50, 99.0);
         assert!(notarized.p50.iter().all(|bin| *bin == Some(99.0)));
+        assert_eq!((notarized.floor, notarized.top), (90.0, 100.0));
+        assert_eq!(notarized.hist.iter().sum::<u32>(), 4_000);
         let fast = charts.fast.unwrap();
         assert_eq!((fast.count, fast.total), (3_000, 4_000));
         assert_eq!(fast.share, 75.0);
         assert_eq!(fast.floor, 70.0);
+    }
+
+    #[test]
+    fn test_notarized_axis_drops_below_the_lowest_bin() {
+        let epoch = epoch();
+        let mut history = filled(&epoch);
+        for slot in 2_000..2_040 {
+            history.record_notarized(slot, 4_250);
+        }
+        let from = epoch.start_slot.saturating_mul(400);
+        let to = epoch.end_slot.saturating_mul(400);
+        let charts =
+            readings(&history, &epoch, epoch.end_slot, from).charts(7, from, to, Some(400.0));
+        let notarized = charts.notarized.unwrap();
+        assert_eq!(
+            notarized
+                .p05
+                .iter()
+                .flatten()
+                .copied()
+                .fold(100.0, f32::min),
+            42.5
+        );
+        assert_eq!((notarized.floor, notarized.top), (40.0, 100.0));
     }
 
     #[test]

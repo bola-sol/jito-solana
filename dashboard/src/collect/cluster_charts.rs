@@ -87,8 +87,6 @@ pub struct Series {
     pub p50: Vec<Option<f32>>,
     pub p75: Vec<Option<f32>>,
     pub p95: Vec<Option<f32>>,
-    /// Each bin's lowest reading, where the dips are the point.
-    pub min: Option<Vec<Option<f32>>>,
     pub spread: Spread,
     /// The median over the last ten minutes.
     pub recent: Option<f64>,
@@ -303,12 +301,12 @@ impl Readings {
             epoch,
             from_millis,
             to_millis,
-            cu: series(&bins, self.cu, Axis::Fixed(0.0, 100.0), false),
-            tps: series(&bins, tps, Axis::FromZero, false),
-            succeeded: series(&bins, succeeded, Axis::FromZero, false),
-            failed: series(&bins, failed, Axis::FromZero, false),
-            slot_time: series(&bins, self.slot_millis, Axis::FromZero, false),
-            notarized: series(&bins, self.notarized, Axis::Fixed(50.0, 100.0), true),
+            cu: series(&bins, self.cu, Axis::Fixed(0.0, 100.0)),
+            tps: series(&bins, tps, Axis::FromZero),
+            succeeded: series(&bins, succeeded, Axis::FromZero),
+            failed: series(&bins, failed, Axis::FromZero),
+            slot_time: series(&bins, self.slot_millis, Axis::FromZero),
+            notarized: series(&bins, self.notarized, Axis::Fixed(50.0, 100.0)),
             fast: shares(&bins, &self.paths),
             failed_share: (all > 0).then(|| failed_all as f64 * 100.0 / all as f64),
             skips: None,
@@ -354,7 +352,7 @@ impl Bins {
     }
 }
 
-fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis, with_min: bool) -> Option<Series> {
+fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis) -> Option<Series> {
     if readings.len() < MIN_READINGS {
         return None;
     }
@@ -371,16 +369,12 @@ fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis, with_min: bool) ->
         all.push(value);
     }
     let mut columns: [Vec<Option<f32>>; 5] = Default::default();
-    let mut min = with_min.then(|| Vec::with_capacity(bins.count));
     for bin in &mut binned {
         bin.sort_unstable_by(f32::total_cmp);
         let enough = bin.len() >= MIN_PER_BIN;
         for (column, percent) in columns.iter_mut().zip([5, 25, 50, 75, 95]) {
             let shown = enough || percent == 50;
             column.push(shown.then(|| at_percent(bin, percent)).flatten());
-        }
-        if let Some(min) = min.as_mut() {
-            min.push(bin.first().copied());
         }
     }
     all.sort_unstable_by(f32::total_cmp);
@@ -409,7 +403,6 @@ fn series(bins: &Bins, readings: Vec<(u64, f32)>, axis: Axis, with_min: bool) ->
         p50,
         p75,
         p95,
-        min,
         spread,
         recent: at_percent(&recent, 50).map(f64::from),
         floor,
@@ -957,7 +950,7 @@ mod tests {
         assert_eq!(charts.slot_time.unwrap().spread.p50, 400.0);
         let notarized = charts.notarized.unwrap();
         assert_eq!(notarized.spread.p50, 99.0);
-        assert!(notarized.min.unwrap().iter().all(|bin| *bin == Some(99.0)));
+        assert!(notarized.p50.iter().all(|bin| *bin == Some(99.0)));
         let fast = charts.fast.unwrap();
         assert_eq!((fast.count, fast.total), (3_000, 4_000));
         assert_eq!(fast.share, 75.0);
@@ -1015,7 +1008,7 @@ mod tests {
             .map(|at| (at.saturating_mul(100), if at < 120 { 900.0 } else { 200.0 }))
             .collect();
         let bins = Bins::new(0, 1_200_000, None);
-        let series = series(&bins, readings, Axis::FromZero, false).unwrap();
+        let series = series(&bins, readings, Axis::FromZero).unwrap();
         assert_eq!(series.spread.p95, 200.0);
         assert_eq!(series.p95.first().copied().flatten(), Some(900.0));
         assert_eq!(series.top, 400.0);

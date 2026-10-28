@@ -116,7 +116,7 @@ describe("axes", () => {
   });
 
   it("names references, splits a raised floor, else steps", () => {
-    expect(gridlines(50, 100, [60, 80])).toEqual([60, 80, 100]);
+    expect(gridlines(50, 100)).toEqual([50, 75, 100]);
     expect(gridlines(90, 100)).toEqual([90, 95, 100]);
     expect(gridlines(0, 300)).toEqual([100, 200, 300]);
   });

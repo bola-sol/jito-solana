@@ -812,6 +812,8 @@ counter_totals! {
 counter_totals! {
     /// Messages are counted in packets and the rest in entries; the times are in microseconds.
     pub struct GossipTotals {
+        /// Every packet read off gossip's sockets, before any check.
+        pub received: u64,
         pub received_push: u64,
         pub received_pull_requests: u64,
         pub received_pull_responses: u64,
@@ -2204,6 +2206,7 @@ impl GossipSet {
                 continue;
             }
             let counter = match *name {
+                "packets_received_count" => &mut totals.received,
                 "packets_received_push_messages_count" => &mut totals.received_push,
                 "packets_received_pull_requests_count" => &mut totals.received_pull_requests,
                 "packets_received_pull_responses_count" => &mut totals.received_pull_responses,
@@ -4150,6 +4153,7 @@ mod tests {
             tap.observe(&named(
                 "cluster_info_stats5",
                 &[
+                    ("packets_received_count", "23100i"),
                     ("packets_received_push_messages_count", "23000i"),
                     ("packets_sent_pong_messages_count", "24i"),
                     ("num_unverifed_gossip_addrs", "3i"),
@@ -4176,11 +4180,12 @@ mod tests {
         );
         assert_eq!(
             (
+                gossip.received,
                 gossip.received_push,
                 gossip.sent_pong,
                 gossip.unverified_addresses
             ),
-            (46_000, 48, 6)
+            (46_200, 46_000, 48, 6)
         );
     }
 

@@ -7493,6 +7493,15 @@ body {
   color: var(--text);
 }
 
+.gossip-row-value.tone-warn {
+  color: var(--warn);
+}
+
+.gossip-row-share {
+  margin-left: 0.5em;
+  color: var(--text-dim);
+}
+
 .gossip-peers {
   display: flex;
   flex-direction: column;

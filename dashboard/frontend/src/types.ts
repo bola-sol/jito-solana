@@ -151,6 +151,9 @@ export interface Gossip {
     other: number;
   };
   dropped_last_minute: number;
+  /** Received and sent, against which drops are judged. */
+  packets_last_minute: number;
+  packets_per_second: number;
 }
 
 /** Every node in gossip, one array per column, most stake first. */

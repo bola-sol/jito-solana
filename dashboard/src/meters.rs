@@ -585,6 +585,10 @@ pub struct Gossip {
     pub time: GossipTime,
     /// Packets dropped either way over the last minute.
     pub dropped_last_minute: u64,
+    /// Packets received and sent over the last minute, against which drops are judged.
+    pub packets_last_minute: u64,
+    /// Packets received and sent per second.
+    pub packets_per_second: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -649,6 +653,18 @@ pub struct GossipTime {
     pub ping_pong_prune: f64,
     pub verify: f64,
     pub other: f64,
+}
+
+/// Packets received and sent; drops are counted at both ends.
+fn gossip_packets(totals: &GossipTotals) -> u64 {
+    totals
+        .received
+        .saturating_add(totals.sent_push)
+        .saturating_add(totals.sent_pull_requests)
+        .saturating_add(totals.sent_pull_responses)
+        .saturating_add(totals.sent_ping)
+        .saturating_add(totals.sent_pong)
+        .saturating_add(totals.sent_prune)
 }
 
 struct GossipMeter {
@@ -794,6 +810,8 @@ impl GossipMeter {
                     other: millis(rates.process_us.saturating_sub(handled)),
                 },
                 dropped_last_minute: minute.dropped_in.saturating_add(minute.dropped_out),
+                packets_last_minute: gossip_packets(&minute),
+                packets_per_second: per_second(gossip_packets(&rates)),
             }
         });
         self.published
@@ -3400,6 +3418,40 @@ mod tests {
         assert!(sent.contains(r#""push":0.3"#), "{sent}");
         assert!(sent.contains(r#""other":0.15"#), "{sent}");
         assert!(sent.contains(r#""evicted_last_minute":6"#), "{sent}");
+    }
+
+    #[test]
+    fn test_gossip_drops_are_judged_against_packets_both_ways() {
+        let publisher = Publisher::new();
+        let mut meter = GossipMeter::new();
+        // A report every second: 900 packets in, 100 out, 3 dropped.
+        let tap = |reports: u64| TapCounters {
+            gossip: GossipTotals {
+                reports,
+                received: reports * 900,
+                sent_push: reports * 60,
+                sent_prune: reports * 40,
+                dropped_in: reports * 3,
+                ..GossipTotals::default()
+            },
+            ..TapCounters::default()
+        };
+        let mut previous = TapCounters::default();
+        for second in 1..=GOSSIP_MINUTE as u64 {
+            let current = tap(second);
+            meter.tick(&previous, &current, &publisher);
+            previous = current;
+        }
+        let sent = publisher.snapshot().pop().unwrap();
+        let minute = GOSSIP_MINUTE as u64;
+        assert!(
+            sent.contains(&format!(
+                r#""dropped_last_minute":{},"packets_last_minute":{},"packets_per_second":1000.0"#,
+                minute * 3,
+                minute * 1_000
+            )),
+            "{sent}"
+        );
     }
 
     #[test]

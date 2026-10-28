@@ -137,10 +137,9 @@ export function ticks(top: number): number[] {
   return [step, step * 2, step * 3].filter((tick) => tick <= top + 1e-9);
 }
 
-/** Gridlines for an axis: the named references and the top, the floor and its midpoint where it
- *  does not start at nought, else round steps. */
-export function gridlines(floor: number, top: number, refs: number[] = []): number[] {
-  if (refs.length > 0) return [...refs, top];
+/** Gridlines for an axis: the floor, its midpoint and the top where it does not start at nought,
+ *  else round steps. */
+export function gridlines(floor: number, top: number): number[] {
   if (floor > 0) return [floor, (floor + top) / 2, top];
   return ticks(top);
 }

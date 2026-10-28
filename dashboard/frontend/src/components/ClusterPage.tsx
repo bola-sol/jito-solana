@@ -52,14 +52,11 @@ interface ChartView {
   p50: (number | null)[];
   p75: (number | null)[];
   p95: (number | null)[];
-  min: (number | null)[] | null;
   spread: { p05: number; p50: number; p95: number };
   recent: number | null;
   floor: number;
   top: number;
   hist: number[];
-  /** Gridlines named on the right, in place of the usual ones. */
-  refs?: { at: number; label: string }[];
   /** In place of p5 and p95, where those say nothing. */
   caption?: ReactNode;
   /** Too few readings yet; the card holds its place. */
@@ -79,7 +76,6 @@ function waitingView(label: string, explain: string): ChartView {
     p50: none,
     p75: none,
     p95: none,
-    min: null,
     spread: { p05: 0, p50: 0, p95: 0 },
     recent: null,
     floor: 0,
@@ -95,9 +91,8 @@ function seriesView(
   explain: string,
   unit: string,
   digits: number,
-  refs?: { at: number; label: string }[],
 ): ChartView {
-  return { ...series, label, explain, unit, digits, refs };
+  return { ...series, label, explain, unit, digits };
 }
 
 function sharesView(shares: ChartShares): ChartView {
@@ -112,7 +107,6 @@ function sharesView(shares: ChartShares): ChartView {
     p50: shares.shares,
     p75: none,
     p95: none,
-    min: null,
     spread: { p05: shares.share, p50: shares.share, p95: shares.share },
     recent: shares.recent,
     floor: shares.floor,
@@ -212,19 +206,12 @@ function ChartCard({
   const x = (index: number) => ((index + 0.5) / bins) * plot;
   const y = (value: number) =>
     HEIGHT - ((Math.min(Math.max(value, floor), top) - floor) / (top - floor || 1)) * HEIGHT;
-  const grid = view.waiting
-    ? []
-    : gridlines(
-    floor,
-    top,
-    view.refs?.map((ref) => ref.at),
-  );
+  const grid = view.waiting ? [] : gridlines(floor, top);
   const shape = useMemo(
     () => ({
       outer: bandPaths(view.p05, view.p95, x, y),
       inner: bandPaths(view.p25, view.p75, x, y),
       line: linePath(view.p50, x, y),
-      min: view.min ? linePath(view.min, x, y) : null,
     }),
     // The scales follow from the view and the plot's width.
     [view, plot],
@@ -232,7 +219,6 @@ function ChartCard({
   const histMax = Math.max(1, ...view.hist);
   const histStep = view.hist.length > 0 ? HEIGHT / view.hist.length : 0;
   const at = hover === null ? null : from + ((hover + 0.5) / bins) * (to - from);
-  const lowest = view.min ? Math.min(...view.min.filter((value): value is number => value !== null)) : null;
 
   return (
     <section className={`card cl-card${className ? ` ${className}` : ""}`}>
@@ -255,12 +241,7 @@ function ChartCard({
             </b>
             <span className="cl-spread">
               {clock(at)}
-              {view.min ? (
-                <>
-                  {" · "}
-                  <span className="cl-label">lowest</span> <b>{fmt(view.min[hover], digits)}</b>
-                </>
-              ) : view.p05[hover] !== null && view.p05[hover] !== undefined ? (
+              {view.p05[hover] !== null && view.p05[hover] !== undefined ? (
                 <>
                   {" · "}
                   <b>
@@ -278,22 +259,15 @@ function ChartCard({
               {unit}
             </b>
             <span className="cl-spread">
-              {view.caption ??
-                (lowest !== null && Number.isFinite(lowest) ? (
-                  <>
-                    <span className="cl-label cl-median-label">median ·</span> <b>{fmt(view.spread.p05, digits)}</b>{" "}
-                    <span className="cl-label">p5</span> · <span className="cl-label">lowest</span>{" "}
-                    <b>{fmt(lowest, digits)}</b>
-                  </>
-                ) : (
-                  <>
-                    <span className="cl-label cl-median-label">median ·</span>{" "}
-                    <b>
-                      {fmt(view.spread.p05, digits)}–{fmt(view.spread.p95, digits)}
-                    </b>{" "}
-                    <span className="cl-label">p5–p95</span>
-                  </>
-                ))}
+              {view.caption ?? (
+                <>
+                  <span className="cl-label cl-median-label">median ·</span>{" "}
+                  <b>
+                    {fmt(view.spread.p05, digits)}–{fmt(view.spread.p95, digits)}
+                  </b>{" "}
+                  <span className="cl-label">p5–p95</span>
+                </>
+              )}
             </span>
             {note && <span className="cl-note">{note}</span>}
             <span className="cl-recent">
@@ -338,18 +312,12 @@ function ChartCard({
                 y2={y(view.spread.p50)}
               />
             )}
-            {shape.min && <path className="cl-min" d={shape.min} />}
             <path className="cl-line" d={shape.line} />
             {hover !== null && <line className="cl-cross" x1={x(hover)} x2={x(hover)} y1={0} y2={HEIGHT} />}
           </svg>
           {grid.map((tick) => (
             <span key={tick} className="cl-tick" style={{ top: y(tick) + TOP }}>
               {fmt(tick, Number.isInteger(tick) ? 0 : 1)}
-            </span>
-          ))}
-          {view.refs?.map((ref) => (
-            <span key={ref.at} className="cl-ref" style={{ top: y(ref.at) + TOP }}>
-              {ref.label}
             </span>
           ))}
         </div>
@@ -598,10 +566,6 @@ function Key({ bin, since }: { bin: string; since: number }) {
         <i className="cl-key-hist" aria-hidden="true" />
         distribution, at the right
       </span>
-      <span>
-        <i className="cl-key-min" aria-hidden="true" />
-        lowest block
-      </span>
     </div>
   );
 }
@@ -753,10 +717,7 @@ function chartViews(charts: ClusterCharts): ChartView[] {
     charts.cu ? seriesView(charts.cu, "CU used", cu, "%", 0) : waitingView("CU used", cu),
     charts.slot_time ? seriesView(charts.slot_time, "slot time", slot, " ms", 0) : waitingView("slot time", slot),
     charts.notarized
-      ? seriesView(charts.notarized, "notarized stake", notarized, "%", 1, [
-          { at: 60, label: "60% notarized" },
-          { at: 80, label: "80% fast" },
-        ])
+      ? seriesView(charts.notarized, "notarized stake", notarized, "%", 1)
       : waitingView("notarized stake", notarized),
     charts.fast ? sharesView(charts.fast) : waitingView("fast finalized", fast),
   ];

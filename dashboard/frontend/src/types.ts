@@ -612,8 +612,6 @@ export interface ChartSeries {
   p50: (number | null)[];
   p75: (number | null)[];
   p95: (number | null)[];
-  /** Each bin's lowest reading, where the dips are the point. */
-  min: (number | null)[] | null;
   spread: Spread;
   /** The median over the last ten minutes. */
   recent: number | null;

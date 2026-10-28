@@ -8551,33 +8551,6 @@ body {
   }
 }
 
-.cl-ref {
-  position: absolute;
-  right: 4px;
-  transform: translateY(-50%);
-  padding: 0 4px;
-  background: var(--panel);
-  font-size: 10px;
-  line-height: 12px;
-  color: var(--text-faint);
-  pointer-events: none;
-}
-
-
-
-
-.cl-min {
-  fill: none;
-  stroke: var(--apricot);
-  stroke-width: 1;
-  stroke-linejoin: round;
-}
-
-.cl-key-min {
-  height: 0 !important;
-  border-top: 1px solid var(--apricot);
-}
-
 .cl-continents {
   display: flex;
   flex-direction: column;

@@ -6,6 +6,9 @@ import {
   arrivalMicros,
   arrivalText,
   arrivalTitle,
+  DROP_WARN_SHARE,
+  dropPercent,
+  dropShare,
   entryRows,
   filterCounts,
   FIRST_SORT,
@@ -93,7 +96,7 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
           <div className="grid">
             <MessagesCard messages={gossip.messages} egress={egress} />
             <EntriesCard entries={gossip.entries} />
-            <PressureCard pressure={gossip.pressure} />
+            <PressureCard pressure={gossip.pressure} packets={gossip.packets_per_second} />
             <TimeCard time={gossip.time} />
           </div>
         </>
@@ -291,9 +294,10 @@ function EntryLine({ row, dim }: { row: EntryRow; dim?: boolean }) {
   );
 }
 
-const PRESSURE_ROWS: { key: keyof Gossip["pressure"]; label: string; warn: boolean }[] = [
-  { key: "dropped_in", label: "Packets dropped coming in", warn: true },
-  { key: "dropped_out", label: "Packets dropped going out", warn: true },
+/** A row with a share warns from `DROP_WARN_SHARE` of gossip's packets; the rest warn on any. */
+const PRESSURE_ROWS: { key: keyof Gossip["pressure"]; label: string; warn: boolean; share?: true }[] = [
+  { key: "dropped_in", label: "Packets dropped coming in", warn: true, share: true },
+  { key: "dropped_out", label: "Packets dropped going out", warn: true, share: true },
   { key: "pull_no_budget", label: "Pull requests refused, no budget", warn: true },
   { key: "pull_scan_exhausted", label: "Pull scans cut short", warn: true },
   { key: "other_shred_version", label: "From another shred version", warn: false },
@@ -302,17 +306,23 @@ const PRESSURE_ROWS: { key: keyof Gossip["pressure"]; label: string; warn: boole
   { key: "bad_prune_destination", label: "Prunes to a bad destination", warn: false },
 ];
 
-function PressureCard({ pressure }: { pressure: Gossip["pressure"] }) {
+function PressureCard({ pressure, packets }: { pressure: Gossip["pressure"]; packets: number }) {
   return (
     <Card title="Pressure and rejects" aside="per second" className="gossip-rows">
-      {PRESSURE_ROWS.map((row) => (
-        <div key={row.key} className="gossip-row">
-          <span>{row.label}</span>
-          <span className={`gossip-row-value${row.warn && pressure[row.key] > 0 ? " tone-warn" : ""}`}>
-            {rate(pressure[row.key])}
-          </span>
-        </div>
-      ))}
+      {PRESSURE_ROWS.map((row) => {
+        const value = pressure[row.key];
+        const share = row.share && value > 0 ? dropShare(value, packets) : null;
+        const warn = row.warn && (share === null ? value > 0 : share >= DROP_WARN_SHARE);
+        return (
+          <div key={row.key} className="gossip-row">
+            <span>{row.label}</span>
+            <span className={`gossip-row-value${warn ? " tone-warn" : ""}`}>
+              {rate(value)}
+              {share !== null && <span className="gossip-row-share">{dropPercent(share)}</span>}
+            </span>
+          </div>
+        );
+      })}
     </Card>
   );
 }

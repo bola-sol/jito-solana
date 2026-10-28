@@ -381,12 +381,29 @@ export function gossipVerdict(
     heard += `, ${percent(Math.min(1, held / peers.total_stake), 1)} of stake among them`;
   }
   const dropped = gossip.dropped_last_minute;
-  if (dropped > 0) {
-    return {
-      tone: "warn",
-      headline: "Gossip is dropping packets.",
-      detail: `${heard}. ${count(dropped)} dropped in the last minute.`,
-    };
+  if (dropped === 0) {
+    return { tone: "good", headline: "Gossip is keeping up.", detail: `${heard}. Nothing dropped in the last minute.` };
   }
-  return { tone: "good", headline: "Gossip is keeping up.", detail: `${heard}. Nothing dropped in the last minute.` };
+  const share = dropShare(dropped, gossip.packets_last_minute);
+  const lost = `${count(dropped)} of ${count(gossip.packets_last_minute)} dropped in the last minute (${dropPercent(share)})`;
+  if (share >= DROP_WARN_SHARE) {
+    return { tone: "warn", headline: "Gossip is dropping packets.", detail: `${heard}. ${lost}.` };
+  }
+  return { tone: "good", headline: "Gossip is keeping up.", detail: `${heard}. ${lost}.` };
+}
+
+/** Gossip's queues shed a few batches a minute under normal load, so only a share warns. */
+export const DROP_WARN_SHARE = 0.01;
+
+/** Drops against packets received and sent; all of them when nothing was counted. */
+export function dropShare(dropped: number, packets: number): number {
+  if (dropped <= 0) return 0;
+  return packets > 0 ? Math.min(1, dropped / packets) : 1;
+}
+
+/** Enough digits that a share under a tenth of a percent does not read as nothing. */
+export function dropPercent(share: number): string {
+  if (share > 0 && share < 0.0001) return "<0.01%";
+  if (share > 0 && share < 0.001) return percent(share, 2);
+  return percent(share, share < 0.1 ? 1 : 0);
 }

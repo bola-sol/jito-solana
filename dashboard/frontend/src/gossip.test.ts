@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ariaSort,
+  dropPercent,
+  dropShare,
   arrivalMedian,
   arrivalText,
   arrivalTitle,
@@ -257,6 +259,8 @@ const GOSSIP: Gossip = {
   },
   time: { push: 150, pull_requests: 90, pull_responses: 50, ping_pong_prune: 10, verify: 75, other: -5 },
   dropped_last_minute: 0,
+  packets_last_minute: 600_000,
+  packets_per_second: 10_000,
 };
 
 describe("cards", () => {
@@ -291,9 +295,38 @@ describe("gossipVerdict", () => {
     });
   });
 
-  it("warns on drops", () => {
-    const verdict = gossipVerdict({ ...GOSSIP, dropped_last_minute: 1_204 }, LIST);
+  it("keeps a few drops in a busy minute good", () => {
+    const verdict = gossipVerdict({ ...GOSSIP, dropped_last_minute: 384 }, LIST);
+    expect(verdict.tone).toBe("good");
+    expect(verdict.detail).toMatch(/384 of 600,000 dropped in the last minute \(0\.06%\)\.$/);
+  });
+
+  it("warns from one percent of packets", () => {
+    const verdict = gossipVerdict({ ...GOSSIP, dropped_last_minute: 6_000 }, LIST);
     expect(verdict.tone).toBe("warn");
-    expect(verdict.detail).toMatch(/1,204 dropped in the last minute\.$/);
+    expect(verdict.headline).toBe("Gossip is dropping packets.");
+    expect(verdict.detail).toMatch(/6,000 of 600,000 dropped in the last minute \(1\.0%\)\.$/);
+    expect(gossipVerdict({ ...GOSSIP, dropped_last_minute: 5_999 }, LIST).tone).toBe("good");
+  });
+
+  it("warns on drops with no packets counted", () => {
+    expect(gossipVerdict({ ...GOSSIP, dropped_last_minute: 3, packets_last_minute: 0 }, LIST).tone).toBe("warn");
+  });
+});
+
+describe("drop share", () => {
+  it("is nothing without drops and all of it without packets", () => {
+    expect(dropShare(0, 0)).toBe(0);
+    expect(dropShare(5, 0)).toBe(1);
+    expect(dropShare(50, 10)).toBe(1);
+    expect(dropShare(6.4, 8_000)).toBeCloseTo(0.0008);
+  });
+
+  it("keeps a trickle from reading as nothing", () => {
+    expect(dropPercent(0.000007)).toBe("<0.01%");
+    expect(dropPercent(0.0008)).toBe("0.08%");
+    expect(dropPercent(0.017)).toBe("1.7%");
+    expect(dropPercent(0.25)).toBe("25%");
+    expect(dropPercent(0)).toBe("0.0%");
   });
 });

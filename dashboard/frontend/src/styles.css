@@ -8774,10 +8774,9 @@ body {
   margin: 0;
 }
 
-/* Three rows of at least 180px; a shorter screen scrolls rather than squashing the charts. */
+/* Sized to the screen below it by the page. */
 .cl-board {
-  flex: 1 1 0;
-  min-height: 568px;
+  flex: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
   gap: var(--gap);

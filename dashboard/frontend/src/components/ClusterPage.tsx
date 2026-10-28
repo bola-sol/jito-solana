@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactElement,
   type ReactNode,
   type RefObject,
@@ -772,10 +771,14 @@ function chartViews(charts: ClusterCharts): ChartView[] {
 const BOARD_QUERY = "(min-width: 1280px)";
 /** Kept clear under the board, as the page's own top padding. */
 const BOARD_FOOT = 18;
+/** Three rows of 180px cards and their gaps: a shorter screen scrolls rather than squashing the charts. */
+const BOARD_MIN = 568;
+/** Three rows of the stacked layout's 242px cards: a taller screen leaves the room below. */
+const BOARD_MAX = 754;
 
-/** The screen below the element, kept as the window resizes. */
-function useBoardBox(ref: RefObject<HTMLElement | null>, on: boolean): CSSProperties | undefined {
-  const [box, setBox] = useState<CSSProperties | undefined>(undefined);
+/** The screen left below the board, within its bounds, kept as the window resizes. */
+function useBoardHeight(ref: RefObject<HTMLElement | null>, on: boolean): number | undefined {
+  const [height, setHeight] = useState<number | undefined>(undefined);
   useLayoutEffect(() => {
     if (!on) return;
     const measure = () => {
@@ -783,21 +786,21 @@ function useBoardBox(ref: RefObject<HTMLElement | null>, on: boolean): CSSProper
       const main = element?.closest(".main");
       if (!element || !main) return;
       const top = element.getBoundingClientRect().top + main.scrollTop - main.getBoundingClientRect().top;
-      setBox({ minHeight: Math.floor(main.clientHeight - top - BOARD_FOOT) });
+      setHeight(Math.min(BOARD_MAX, Math.max(BOARD_MIN, Math.floor(main.clientHeight - top - BOARD_FOOT))));
     };
     measure();
     addEventListener("resize", measure);
     return () => removeEventListener("resize", measure);
   }, [ref, on]);
-  return on ? box : undefined;
+  return on ? height : undefined;
 }
 
 export function ClusterPage(): ReactElement {
   const store = useStore();
   const board = useMedia(BOARD_QUERY);
-  const screen = useRef<HTMLDivElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
   const charts = useClusterCharts();
-  const boardBox = useBoardBox(screen, board && charts !== null);
+  const boardHeight = useBoardHeight(boardRef, board && charts !== null);
   const stalledSeconds = useFinalizedStall();
   const epoch = store.get("epoch", "new");
   // Rebuilt with each reply rather than each store tick.
@@ -858,7 +861,7 @@ export function ClusterPage(): ReactElement {
   if (board) {
     return (
       <>
-        <div className="cl-screen" ref={screen} style={boardBox}>
+        <div className="cl-screen">
           <div className="cl-top">
             <div className="cl-top-verdict">{headline}</div>
             <div className="cl-top-meta">
@@ -866,7 +869,7 @@ export function ClusterPage(): ReactElement {
               {chartKey}
             </div>
           </div>
-          <div className="cl-board">
+          <div className="cl-board" ref={boardRef} style={{ height: boardHeight }}>
             <div className="cl-col">
               {[slot, notarized, fast].map((view) => (
                 <ChartCard key={view.label} view={view} from={from} to={to} fill />

@@ -347,7 +347,7 @@ function LateCard({
       <div className="card-head">
         <h3 className="card-title">
           <Explain text="Leaders whose p25 gap is 10 ms over the p75 of their country's leaders.">
-            Late for their country
+            Late for Their Country
           </Explain>
         </h3>
         <span className="card-aside">
@@ -512,13 +512,13 @@ export function HandoffCard(): ReactElement {
   const settled = summary ? count(summary.settled) : "—";
 
   return (
-    <Section title="Leader handoff" summary={fold}>
+    <Section title="Leader Handoff" summary={fold}>
       <div className="handoff-wrap">
         <div className="handoff-body">
           <section className="card handoff-chart">
             <div className="card-head">
               <h3 className="card-title">
-                Gap before each turn{summary ? `, ${windowLabel(summary.full, summary.since_millis, Date.now())}` : ""}
+                Gap Before Each Turn{summary ? `, ${windowLabel(summary.full, summary.since_millis, Date.now())}` : ""}
               </h3>
               <span className="card-aside">{settled} leaders with 10+ handoffs</span>
             </div>

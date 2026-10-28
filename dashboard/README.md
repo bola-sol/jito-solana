@@ -273,7 +273,7 @@ generation already does per account is not measurable.
 ## IP geolocation
 
 The Schedule and Gossip pages show a country code beside each gossip address,
-and Leader handoff beside each leader's name, the Cluster page totals stake by
+and Leader Handoff beside each leader's name, the Cluster page totals stake by
 country and continent, and the finalization share is
 compared with validators in our own country,
 looked up in `geoip/country-ipv4.bin.gz`. That table is DB-IP's

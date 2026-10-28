@@ -8741,3 +8741,145 @@ body {
     min-height: 3em;
   }
 }
+
+/* ---- cluster board: every chart and both summaries on one screen ---- */
+
+.cl-screen {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cl-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  align-items: end;
+  gap: 8px 40px;
+}
+
+.cl-top .cl-verdict {
+  font-size: 26px;
+}
+
+.cl-top .verdict-sub {
+  margin-top: 2px;
+}
+
+.cl-top-meta .cl-epoch {
+  margin: 0 0 6px;
+}
+
+.cl-top-meta .cl-key {
+  margin: 0;
+}
+
+/* Three rows of at least 180px; a shorter screen scrolls rather than squashing the charts. */
+.cl-board {
+  flex: 1 1 0;
+  min-height: 568px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: var(--gap);
+}
+
+/* The cards in a column share its height equally. */
+.cl-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+}
+
+.cl-board .card {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 12px 14px 12px;
+  gap: 6px;
+}
+
+.cl-board .card-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cl-board .cl-chart {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.cl-board .cl-skip-body {
+  flex: 1 1 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 0.6fr);
+  gap: 12px 24px;
+}
+
+.cl-board .cl-skip-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cl-board .cl-leaders {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cl-board .cl-leaders-head {
+  height: 20px;
+  box-sizing: border-box;
+}
+
+.cl-board .cl-leader {
+  height: 21px;
+  box-sizing: border-box;
+}
+
+.cl-board .cl-shares {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cl-board .cl-share {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cl-board .cl-share-head {
+  margin-bottom: 6px;
+}
+
+/* Each list scrolls in its share of the card, with room for the scrollbar. */
+.cl-board .versions {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.cl-board .version-row {
+  flex: none;
+  height: 18px;
+  gap: 10px;
+}
+
+/* The counts are in each row's tooltip. */
+.cl-board .version-count {
+  display: none;
+}
+
+.cl-board .cl-continents {
+  margin-bottom: 8px;
+}

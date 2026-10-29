@@ -8685,6 +8685,11 @@ body {
   fill: var(--path-3);
 }
 
+/* The Overview's red for failed transactions. */
+.cl-hist .cl-hist-failed {
+  fill: var(--bad);
+}
+
 .cl-skip {
   fill: var(--bad);
   opacity: 0.75;

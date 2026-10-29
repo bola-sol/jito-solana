@@ -722,6 +722,8 @@ export interface ClusterCharts {
   to_millis: number;
   cu: ChartSeries | null;
   tps: ChartSeries | null;
+  /** Percent of the transactions failed in each of `tps`'s histogram steps. */
+  tps_failed: (number | null)[];
   succeeded: ChartSeries | null;
   failed: ChartSeries | null;
   slot_time: ChartSeries | null;

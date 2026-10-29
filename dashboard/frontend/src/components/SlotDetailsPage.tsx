@@ -411,7 +411,7 @@ function SummaryRows({
           )}
         </span>
         <SortButton column="transactions" sort={sort} onSort={onSort} className="produced-txns">
-          {txns(mean.transactions)}
+          {txnsFigure(mean.transactions)}
         </SortButton>
         <SortButton column="filled" sort={sort} onSort={onSort} className="produced-fill">
           {full(mean.filled)}
@@ -449,7 +449,7 @@ function FiguresRow({
           {label}
         </Explain>
       </span>
-      <span className="produced-txns">{txns(figures.transactions)}</span>
+      <span className="produced-txns">{txnsFigure(figures.transactions)}</span>
       <span className="produced-fill">{full(figures.filled)}</span>
       <span className="produced-fees">{solFigure(figures.earned)}</span>
       <span className="produced-ms">{millis(figures.durationMillis)}</span>
@@ -506,6 +506,16 @@ function EpochRow({
 }
 
 const txns = (value: number | null) => (value === null ? "—" : `${count(Math.round(value))} txns`);
+/** The unit in a span of its own, which the narrowest rows drop. */
+const txnsFigure = (value: number | null) =>
+  value === null ? (
+    "—"
+  ) : (
+    <>
+      {count(Math.round(value))}
+      <span className="produced-txns-unit"> txns</span>
+    </>
+  );
 const full = (value: number | null) => (value === null ? "—" : `${percent(value, 1)} full`);
 const millis = (value: number | null) => (value === null ? "—" : `${Math.round(value)} ms`);
 const solFigure = (value: number | null) =>
@@ -548,7 +558,7 @@ function BlockRow({
           <span className="produced-slot">{count(head.slot)}</span>
           <span className="produced-when">{blockStamp(head.slot_time_millis)}</span>
         </span>
-        <span className="produced-txns">{count(head.transactions)} txns</span>
+        <span className="produced-txns">{txnsFigure(head.transactions)}</span>
         <span className="produced-fill">{percent(filled, 1)} full</span>
         <span className="produced-fees" title={earnedTitle(earned)}>
           {sol(earned.total, 5)}

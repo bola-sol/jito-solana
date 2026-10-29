@@ -877,8 +877,8 @@ export function ClusterPage(): ReactElement {
             </div>
             <div className="cl-col">
               <TransactionsCard charts={charts} fill />
-              {skips && <SkipCard skips={skips} through={through} fill />}
               <ChartCard view={cu} from={from} to={to} fill />
+              {skips && <SkipCard skips={skips} through={through} fill />}
             </div>
             <div className="cl-col">
               <VersionsCard clients={charts.clients} fill />

@@ -79,7 +79,7 @@ pub use self::{
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
-/// An epoch's spread moves slowly, and each pass reads the whole ring.
+/// An epoch's skip spread moves slowly, and each pass walks the epoch's slot history.
 const CLUSTER_FIGURES_EVERY: Duration = Duration::from_secs(30);
 
 /// The tip counts the slot still arriving, so a node in step reads a slot or two behind it.
@@ -2092,19 +2092,14 @@ impl Collector {
         else {
             return;
         };
-        let samples = cluster_figures::samples(
-            &self.history.read().unwrap(),
-            info,
-            self.newest_arrival,
-            root_bank.slot(),
-            |slot| slot_history.check(slot),
-        );
+        let figures =
+            cluster_figures::figures(info, root_bank.slot(), |slot| slot_history.check(slot));
         drop(epochs);
         self.debounces.cluster_figures.publish(
             &self.publisher,
             TOPIC_SUMMARY,
             "cluster_figures",
-            Some(samples.figures()),
+            Some(figures),
         );
     }
 

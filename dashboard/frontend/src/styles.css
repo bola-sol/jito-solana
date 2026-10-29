@@ -440,7 +440,7 @@ body {
 
 /* ---- verdict ---- */
 
-/* The headline and the line under it, with the cluster figures beside them on wide screens. */
+/* The headline and the line under it. */
 .verdict-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -523,113 +523,6 @@ body {
 
   .verdict-sub-room {
     display: block;
-  }
-}
-
-/* Each figure's column is as wide as the widest, its 5th and 95th percentiles in equal halves. */
-.cluster-row {
-  display: none;
-  grid-template-columns: auto;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(76px, 1fr);
-  column-gap: 18px;
-  padding-left: 18px;
-  border-left: 1px solid var(--border);
-}
-
-.cluster-keys,
-.cluster-col {
-  display: grid;
-  grid-template-rows: 16px 24px 16px;
-  row-gap: 2px;
-  white-space: nowrap;
-}
-
-.cluster-col {
-  grid-template-columns: 1fr 1fr;
-  column-gap: 10px;
-}
-
-.cluster-keys {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-faint);
-}
-
-.cluster-head,
-.cluster-median {
-  grid-column: 1 / -1;
-}
-
-.cluster-head {
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.cluster-head .explain-trigger {
-  color: var(--text-dim);
-}
-
-.cluster-median {
-  font-family: var(--mono);
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 24px;
-  color: var(--text);
-}
-
-.cluster-key-median {
-  line-height: 24px;
-}
-
-.cluster-tail {
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--text-dim);
-}
-
-.cluster-key-split {
-  display: flex;
-  gap: 14px;
-  font-size: 11px;
-}
-
-/* The window and its widest form share one cell, so the row keeps its width. */
-.cluster-window {
-  display: grid;
-}
-
-.cluster-window > * {
-  grid-area: 1 / 1;
-}
-
-.cluster-window-room {
-  visibility: hidden;
-}
-
-/* Below this the longest headline no longer fits on one line beside the figures. */
-@media (min-width: 1280px) {
-  .verdict-hero {
-    grid-template-columns: minmax(0, 1fr) auto;
-    column-gap: 32px;
-  }
-
-  .verdict,
-  .verdict-sub {
-    grid-column: 1;
-  }
-
-  .cluster-row {
-    display: grid;
-    grid-column: 2;
-    grid-row: 1 / 3;
-    align-self: center;
-  }
-
-  /* One line's height, so a wrap spills into the gap above the slot strip instead of moving it. */
-  .verdict-sub {
-    height: 21px;
   }
 }
 

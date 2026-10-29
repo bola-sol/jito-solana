@@ -3164,6 +3164,23 @@ body {
   font-family: var(--mono);
 }
 
+.turn-range-short {
+  display: none;
+}
+
+/* One line on a phone: the drain time is in the drawer's notes, and the range ends in the digits
+   that change. */
+@media (max-width: 700px) {
+  .turn-range-full,
+  .turn-drained {
+    display: none;
+  }
+
+  .turn-range-short {
+    display: inline;
+  }
+}
+
 .turn-more {
   margin-left: auto;
   font-size: 12px;

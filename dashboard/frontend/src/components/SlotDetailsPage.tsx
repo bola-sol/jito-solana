@@ -51,7 +51,7 @@ import { Copyable } from "./Copyable";
 import { FeePayersFold } from "./FeePayersFold";
 import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
-import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
+import { turnOf, turnRangeLabel, turnRangeShortLabel, turnSections, turnSpanLabel } from "../turns";
 import { ProducedIndex, type TurnHead } from "../producedIndex";
 import { ScrollTop } from "./ScrollTop";
 import { VirtualList } from "./VirtualList";
@@ -309,10 +309,12 @@ function TurnDivider({
       <button type="button" className="turn-head" onClick={onToggle} aria-expanded={open}>
         <span className="turn-name">Turn</span>
         <span className="turn-span">
-          <span className="turn-range">{turnRangeLabel(turn)}</span>
+          <span className="turn-range">
+            <span className="turn-range-full">{turnRangeLabel(turn)}</span>
+            <span className="turn-range-short">{turnRangeShortLabel(turn)}</span>
+          </span>
           {turn.produced < slots && `, ${count(turn.produced)} of ${count(slots)} produced`}
-          {", "}
-          {turnSpanLabel(turn)}
+          <span className="turn-drained">, {turnSpanLabel(turn)}</span>
           {turn.bundles !== null && (
             <span title="Bundles executed and recorded over the turn, as the bundle stage counts them.">
               , {bundlesLabel(turn.bundles)}

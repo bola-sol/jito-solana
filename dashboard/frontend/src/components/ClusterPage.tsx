@@ -68,6 +68,8 @@ interface ChartView {
   floor: number;
   top: number;
   hist: number[];
+  /** Percent of each step's transactions that failed, drawn against the axis. */
+  histFailed?: (number | null)[];
   /** In place of p5 and p95, where those say nothing. */
   caption?: ReactNode;
   /** Too few readings yet; the card holds its place. */
@@ -338,17 +340,19 @@ function ChartCard({
           ))}
         </div>
         <svg className="cl-hist" width={HIST} height={height} style={{ marginTop: TOP }} aria-hidden="true">
-          {view.hist.map((n, index) =>
-            (n / histMax) * HIST >= 1 ? (
-              <rect
-                key={index}
-                x={0}
-                y={height - (index + 1) * histStep + 0.5}
-                width={(n / histMax) * HIST}
-                height={Math.max(1, histStep - 1)}
-              />
-            ) : null,
-          )}
+          {view.hist.map((n, index) => {
+            const length = (n / histMax) * HIST;
+            if (length < 1) return null;
+            const row = height - (index + 1) * histStep + 0.5;
+            const thick = Math.max(1, histStep - 1);
+            const failed = ((view.histFailed?.[index] ?? 0) / 100) * length;
+            return (
+              <g key={index}>
+                {failed > 0 && <rect className="cl-hist-failed" x={0} y={row} width={failed} height={thick} />}
+                <rect x={failed} y={row} width={length - failed} height={thick} />
+              </g>
+            );
+          })}
         </svg>
       </div>
       <XAxis from={from} to={to} />
@@ -356,7 +360,7 @@ function ChartCard({
   );
 }
 
-const TX_EXPLAIN = "Transactions per second over each run of twenty slots.";
+const TX_EXPLAIN = "Transactions per second over each run of twenty slots, with the failed share in red at the right under All.";
 
 const TX_VIEWS: { view: TxView; label: string }[] = [
   { view: "all", label: "All" },
@@ -369,8 +373,14 @@ function TransactionsCard({ charts, fill }: { charts: ClusterCharts; fill?: bool
   const [view, setView] = useState<TxView>("all");
   const series = view === "all" ? charts.tps : view === "succeeded" ? charts.succeeded : charts.failed;
   const shown = useMemo(
-    () => (series ? seriesView(series, "Transactions", TX_EXPLAIN, "", 0) : waitingView("Transactions", TX_EXPLAIN)),
-    [series],
+    () =>
+      series
+        ? {
+            ...seriesView(series, "Transactions", TX_EXPLAIN, "", 0),
+            histFailed: view === "all" ? charts.tps_failed : undefined,
+          }
+        : waitingView("Transactions", TX_EXPLAIN),
+    [series, view, charts.tps_failed],
   );
   return (
     <ChartCard

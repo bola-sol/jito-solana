@@ -67,6 +67,8 @@ pub struct ClusterCharts {
     pub to_millis: u64,
     pub cu: Option<Series>,
     pub tps: Option<Series>,
+    /// Percent of the transactions failed in each of `tps`'s histogram steps, `None` where a step is empty.
+    pub tps_failed: Vec<Option<f32>>,
     pub succeeded: Option<Series>,
     pub failed: Option<Series>,
     pub slot_time: Option<Series>,
@@ -293,7 +295,11 @@ impl Readings {
                 .map(|run| (run.0, (pick(run) as f64 / seconds) as f32))
                 .collect()
         };
-        let tps = rates(|run| run.1);
+        let tps_rates = rates(|run| run.1);
+        let tps = series(&bins, tps_rates.clone(), Axis::FromZero);
+        let tps_failed = tps.as_ref().map_or_else(Vec::new, |tps| {
+            failed_by_step(&tps_rates, &self.runs, tps.floor, tps.top)
+        });
         let failed = rates(|run| run.2);
         let succeeded = rates(|run| run.1.saturating_sub(run.2));
         let (all, failed_all) = self.runs.iter().fold((0u64, 0u64), |(all, failed), run| {
@@ -304,7 +310,8 @@ impl Readings {
             from_millis,
             to_millis,
             cu: series(&bins, self.cu, Axis::Fixed(0.0, 100.0)),
-            tps: series(&bins, tps, Axis::FromZero),
+            tps,
+            tps_failed,
             succeeded: series(&bins, succeeded, Axis::FromZero),
             failed: series(&bins, failed, Axis::FromZero),
             slot_time: series(&bins, self.slot_millis, Axis::FromZero),
@@ -489,20 +496,44 @@ fn nice_top(value: f64) -> f64 {
         .unwrap_or(value)
 }
 
-fn histogram(sorted: &[f32], floor: f64, top: f64) -> Vec<u32> {
-    let mut hist = vec![0u32; HIST_BINS];
+/// The histogram step a value falls in, readings past either end counted in the end steps.
+fn step_of(value: f32, floor: f64, top: f64) -> Option<usize> {
     let range = top - floor;
     if range <= 0.0 {
-        return hist;
+        return None;
     }
+    let step = ((f64::from(value) - floor) / range * HIST_BINS as f64).floor();
+    Some((step.max(0.0) as usize).min(HIST_BINS.saturating_sub(1)))
+}
+
+fn histogram(sorted: &[f32], floor: f64, top: f64) -> Vec<u32> {
+    let mut hist = vec![0u32; HIST_BINS];
     for value in sorted {
-        let step = ((f64::from(*value) - floor) / range * HIST_BINS as f64).floor();
-        let index = (step.max(0.0) as usize).min(HIST_BINS.saturating_sub(1));
-        if let Some(count) = hist.get_mut(index) {
+        if let Some(count) = step_of(*value, floor, top).and_then(|step| hist.get_mut(step)) {
             *count = count.saturating_add(1);
         }
     }
     hist
+}
+
+/// Percent of the transactions failed in each histogram step, from the runs behind `rates`.
+fn failed_by_step(
+    rates: &[(u64, f32)],
+    runs: &[(u64, u64, u64)],
+    floor: f64,
+    top: f64,
+) -> Vec<Option<f32>> {
+    let mut steps = vec![(0u64, 0u64); HIST_BINS];
+    for ((_, rate), (_, transactions, failed)) in rates.iter().zip(runs) {
+        if let Some((all, bad)) = step_of(*rate, floor, top).and_then(|step| steps.get_mut(step)) {
+            *all = all.saturating_add(*transactions);
+            *bad = bad.saturating_add(*failed);
+        }
+    }
+    steps
+        .into_iter()
+        .map(|(all, bad)| (all > 0).then(|| (bad as f64 * 100.0 / all as f64) as f32))
+        .collect()
 }
 
 /// Percent of the settled slots in `first..=last` skipped.
@@ -944,6 +975,24 @@ mod tests {
     }
 
     #[test]
+    fn test_failed_by_step_weighs_each_step_by_its_transactions() {
+        let rates = [(0, 100.0), (1, 100.0), (2, 250.0), (3, 900.0)];
+        let runs = [
+            (0, 1_000, 100),
+            (1, 3_000, 100),
+            (2, 1_000, 500),
+            (3, 10, 10),
+        ];
+        let steps = failed_by_step(&rates, &runs, 0.0, 300.0);
+        assert_eq!(steps.len(), HIST_BINS);
+        assert_eq!(steps[10], Some(5.0));
+        assert_eq!(steps[25], Some(50.0));
+        // Past the top, counted in the last step as the histogram counts it.
+        assert_eq!(steps[HIST_BINS - 1], Some(100.0));
+        assert_eq!(steps.iter().flatten().count(), 3);
+    }
+
+    #[test]
     fn test_charts_bin_every_reading() {
         let epoch = epoch();
         let history = filled(&epoch);
@@ -957,10 +1006,21 @@ mod tests {
         assert!(cu.p50.iter().all(|bin| *bin == Some(50.0)));
         assert_eq!(cu.hist.iter().sum::<u32>(), 4_000);
         // A hundred transactions in each 400 ms slot.
-        assert_eq!(charts.tps.unwrap().spread.p50, 250.0);
+        assert_eq!(charts.tps.as_ref().unwrap().spread.p50, 250.0);
         assert_eq!(charts.failed.unwrap().spread.p50, 50.0);
         assert_eq!(charts.succeeded.unwrap().spread.p50, 200.0);
         assert_eq!(charts.failed_share, Some(20.0));
+        let tps = charts.tps.as_ref().unwrap();
+        let filled_steps: Vec<_> = tps.hist.iter().map(|count| *count > 0).collect();
+        let failed_steps: Vec<_> = charts.tps_failed.iter().map(Option::is_some).collect();
+        assert_eq!(failed_steps, filled_steps);
+        assert!(
+            charts
+                .tps_failed
+                .iter()
+                .flatten()
+                .all(|share| *share == 20.0)
+        );
         assert_eq!(charts.slot_time.unwrap().spread.p50, 400.0);
         let notarized = charts.notarized.unwrap();
         assert_eq!(notarized.spread.p50, 99.0);

@@ -51,6 +51,7 @@ mod cert_formation;
 mod certificates;
 mod cluster_charts;
 mod cluster_figures;
+mod fee_payers;
 mod finalization;
 mod gossip_peers;
 mod handoff;
@@ -63,6 +64,7 @@ use self::{
     cert_formation::{CertFormation, FinalizedPaths, FormationKey},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     cluster_figures::ClusterFigures,
+    fee_payers::{FeePayerSummary, FeePayers},
     finalization::{FinalizationShare, FinalizationTally},
     handoff::{HandoffNow, HandoffSummary, Handoffs},
     skip_rate::{LeaderSlotCounts, SkipRateWalk},
@@ -451,6 +453,7 @@ struct Debounces {
     handoff: Debounced<Option<HandoffSummary>>,
     handoff_now: Debounced<Option<HandoffNow>>,
     cluster_figures: Debounced<Option<ClusterFigures>>,
+    fee_payers: Debounced<Option<FeePayerSummary>>,
 }
 
 pub struct Collector {
@@ -483,6 +486,7 @@ pub struct Collector {
     finalization: FinalizationTally,
     block_lives: BlockLives,
     handoffs: Handoffs,
+    fee_payers: FeePayers,
     /// The newest slot whose first shred has arrived.
     newest_arrival: Slot,
     /// The turn, whether its gap was known, and the summary it was measured against.
@@ -593,6 +597,7 @@ impl Collector {
             finalization: FinalizationTally::default(),
             block_lives: BlockLives::default(),
             handoffs: Handoffs::default(),
+            fee_payers: FeePayers::default(),
             newest_arrival: 0,
             handoff_now_for: None,
             cert_formation_for: None,
@@ -794,6 +799,12 @@ impl Collector {
             }
             self.collect_finalization_share(&working_bank, &peers);
             self.collect_cert_formation(&root_bank);
+            self.debounces.fee_payers.publish(
+                &self.publisher,
+                TOPIC_SUMMARY,
+                "fee_payers",
+                self.fee_payers.summary(),
+            );
             self.debounces.block_life.publish(
                 &self.publisher,
                 TOPIC_SUMMARY,
@@ -1492,6 +1503,7 @@ impl Collector {
             // Replay reports nought for a bank this validator built, finding it already executed;
             // left absent rather than shown as replayed in no time.
             let mine = self.slots.get(slot).is_some_and(|entry| entry.mine);
+            self.fee_payers.note_frozen(bank, mine);
             let replayed = (fresh && !mine)
                 .then(|| self.metrics_tap.replayed(slot))
                 .flatten();
@@ -1557,6 +1569,10 @@ impl Collector {
                 changed.push(entry);
             }
         }
+        let blockstore = &self.ctx.blockstore;
+        self.fee_payers.read(blockstore);
+        self.fee_payers
+            .settle(root, root_bank.epoch(), |slot| blockstore.is_root(slot));
         let retimed = self.retime(&became_full, &mut changed);
         // The next slot's first shred usually arrives before this block fills.
         for slot in &became_full {
@@ -3779,6 +3795,29 @@ mod tests {
         collector.tick();
         collector.tick();
         assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_fee_payers_count_our_rooted_block_once() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+        harness.advance_with_failed_entries(1, 3);
+        collector.tick();
+        assert_eq!(
+            collector.fee_payers.summary(),
+            None,
+            "counted before its root"
+        );
+
+        harness.bank_forks.write().unwrap().set_root(1, None, None);
+        harness.ctx.blockstore.set_roots([1].iter()).unwrap();
+        collector.tick();
+        collector.tick();
+        let summary = collector.fee_payers.summary().unwrap();
+        let epoch = &summary.epochs[0];
+        assert_eq!((epoch.blocks, epoch.transactions, epoch.failed), (1, 3, 3));
+        assert_eq!(summary.payers.len(), 1);
     }
 
     #[test]

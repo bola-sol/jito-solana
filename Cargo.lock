@@ -142,6 +142,7 @@ name = "agave-dashboard"
 version = "4.4.0"
 dependencies = [
  "agave-dashboard",
+ "agave-feature-set",
  "agave-snapshots",
  "agave-votor-messages",
  "bincode",
@@ -157,6 +158,8 @@ dependencies = [
  "solana-accounts-db",
  "solana-clock 4.0.0",
  "solana-cluster-type",
+ "solana-compute-budget-instruction",
+ "solana-compute-budget-interface",
  "solana-config-interface",
  "solana-core",
  "solana-entry",
@@ -177,6 +180,8 @@ dependencies = [
  "solana-signer",
  "solana-signer-store",
  "solana-slot-history",
+ "solana-svm-transaction",
+ "solana-system-interface 3.3.0",
  "solana-system-transaction",
  "solana-time-utils",
  "solana-transaction",

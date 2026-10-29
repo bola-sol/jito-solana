@@ -21,11 +21,13 @@ use {
     },
     solana_clock::Slot,
     solana_core::validator::ValidatorStartProgress,
+    solana_entry::entry::Entry,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
     solana_leader_schedule::SlotLeader,
     solana_ledger::{
-        blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
+        blockstore::{Blockstore, entries_to_test_shreds},
+        get_tmp_ledger_path_auto_delete,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_net_utils::SocketAddrSpace,
@@ -39,6 +41,7 @@ use {
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
+    solana_transaction::versioned::VersionedTransaction,
     std::{
         collections::HashSet,
         sync::{Arc, RwLock, atomic::AtomicU64},
@@ -132,6 +135,46 @@ impl Fixture {
             );
             assert!(bank.process_transaction(&transfer).is_err());
         }
+        bank.freeze();
+        self.bank_forks.write().unwrap().insert(bank);
+        self.bank_forks.read().unwrap().get(slot).unwrap()
+    }
+
+    /// As [`Self::fork_with_failures`] on the working bank, with the block's entries in the
+    /// blockstore.
+    pub fn advance_with_failed_entries(&self, slot: Slot, failures: usize) -> Arc<Bank> {
+        let parent = self.working_bank();
+        if !parent.is_frozen() {
+            parent.freeze();
+        }
+        let parent_slot = parent.slot();
+        let bank = Bank::new_from_parent(
+            parent,
+            SlotLeader {
+                id: self.identity,
+                vote_address: self.vote_account,
+            },
+            slot,
+        );
+        let transactions = (0..failures)
+            .map(|_| {
+                let transfer = system_transaction::transfer(
+                    &self.mint,
+                    &Pubkey::new_unique(),
+                    MINT.saturating_mul(2),
+                    bank.last_blockhash(),
+                );
+                assert!(bank.process_transaction(&transfer).is_err());
+                VersionedTransaction::from(transfer)
+            })
+            .collect();
+        let entries = [Entry {
+            num_hashes: 1,
+            hash: bank.last_blockhash(),
+            transactions,
+        }];
+        let shreds = entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
+        self.ctx.blockstore.insert_shreds(shreds, true).unwrap();
         bank.freeze();
         self.bank_forks.write().unwrap().insert(bank);
         self.bank_forks.read().unwrap().get(slot).unwrap()

@@ -48,6 +48,7 @@ import {
 } from "../slotDetail";
 import type { WaterfallRow } from "../waterfall";
 import { Copyable } from "./Copyable";
+import { FeePayersFold } from "./FeePayersFold";
 import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
 import { turnOf, turnRangeLabel, turnSections, turnSpanLabel } from "../turns";
@@ -76,6 +77,7 @@ export function SlotDetailsPage({
   const rates = store.get("summary", "tip_rates");
   const epoch = store.get("epoch", "new");
   const slotCounts = store.get("summary", "leader_slot_counts");
+  const feePayers = store.get("summary", "fee_payers") ?? null;
   const connection = store.getConnection();
   const [openTurn, setOpenTurn] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
@@ -245,6 +247,7 @@ export function SlotDetailsPage({
           onSort={toggle}
           onClear={() => setSort(null)}
         />
+        <FeePayersFold summary={feePayers} />
       </div>
       <div className="produced-list" ref={list}>
         <ScrollTop scroller={list} hold={false} />

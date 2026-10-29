@@ -218,27 +218,33 @@ export function Section({
   );
 }
 
+/** Remembered open or folded, unless it starts folded on each visit. */
 export function Fold({
   id,
   title,
   summary,
   children,
+  startFolded = false,
+  className,
 }: {
   id: string;
   title: string;
   summary: ReactNode;
   children: ReactNode;
+  startFolded?: boolean;
+  className?: string;
 }): ReactElement {
-  const [open, setOpen] = useState(() => !readFolded().includes(id));
+  const [open, setOpen] = useState(() => !startFolded && !readFolded().includes(id));
   const toggle = () => {
     const next = !open;
     setOpen(next);
+    if (startFolded) return;
     const rest = readFolded().filter((held) => held !== id);
     writeFolded(next ? rest : [...rest, id]);
   };
 
   return (
-    <section className={`fold${open ? " is-open" : ""}`}>
+    <section className={`fold${open ? " is-open" : ""}${className ? ` ${className}` : ""}`}>
       <div className="fold-head" onClick={toggle}>
         <h2 className="fold-title">{title}</h2>
         <span className="fold-sum">{summary}</span>

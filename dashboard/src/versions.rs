@@ -32,7 +32,7 @@ pub fn tally<'a>(transactions: impl IntoIterator<Item = &'a VersionedTransaction
 }
 
 /// The runtime's rule, as the completed data sets service applies it.
-fn is_simple_vote(transaction: &VersionedTransaction) -> bool {
+pub(crate) fn is_simple_vote(transaction: &VersionedTransaction) -> bool {
     let message = &transaction.message;
     let is_legacy = matches!(transaction.version(), TransactionVersion::Legacy(_));
     let programs = message.instructions().iter().filter_map(|instruction| {

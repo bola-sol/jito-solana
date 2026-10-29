@@ -767,8 +767,8 @@ function chartViews(charts: ClusterCharts): ChartView[] {
   ];
 }
 
-/** Wide enough for every chart and both summaries side by side. */
-const BOARD_QUERY = "(min-width: 1280px)";
+/** Wide enough for every chart, both summaries side by side and the key on one line. */
+const BOARD_QUERY = "(min-width: 1200px)";
 /** Kept clear under the board, as the page's own top padding. */
 const BOARD_FOOT = 18;
 /** Three rows of 180px cards and their gaps: a shorter screen scrolls rather than squashing the charts. */

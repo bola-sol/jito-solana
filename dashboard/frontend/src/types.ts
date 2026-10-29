@@ -733,19 +733,11 @@ export interface ClusterCharts {
   countries: StakeByCountry | null;
 }
 
-/** The cluster over the root's epoch; each figure null until it has enough samples. */
+/** The root's epoch; null until enough leaders have settled slots. */
 export interface ClusterFigures {
   epoch: number;
-  /** Set where the held slots start after the epoch did, as after a restart. */
-  since_millis: number | null;
-  /** Percent of the block limit, per block. */
-  cu_used: Spread | null;
-  slot_time_millis: Spread | null;
   /** Percent of each leader's slots. */
   skip_rate: Spread | null;
-  /** Over runs of 300 slots. */
-  tps: Spread | null;
-  failed_tps: Spread | null;
 }
 
 /** Quartiles of handoff gaps in milliseconds. */

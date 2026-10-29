@@ -2,11 +2,7 @@
 //! skips from the root bank's slot history, and the cluster's stake by client and by country.
 
 use {
-    super::{
-        Collector, EpochInfo, Replies,
-        cluster_figures::{MAX_INTERVAL_MILLIS, MAX_SLOT_GAP, Spread},
-        country_of, strip_prerelease,
-    },
+    super::{Collector, EpochInfo, Replies, cluster_figures::Spread, country_of, strip_prerelease},
     crate::{
         geoip,
         history::{
@@ -39,6 +35,10 @@ const COUNTRIES_SHOWN: usize = 10;
 pub(super) const BINS: usize = 120;
 const HIST_BINS: usize = 30;
 const RECENT_MILLIS: u64 = 600_000;
+
+/// Consecutive blocks further apart than this, as after a restart, give no slot time.
+const MAX_SLOT_GAP: u64 = 8;
+const MAX_INTERVAL_MILLIS: u64 = 10_000;
 
 /// A rate is taken over this many slots.
 const RUN_SLOTS: u64 = 20;

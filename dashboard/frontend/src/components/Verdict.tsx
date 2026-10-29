@@ -4,7 +4,6 @@ import { followingRun } from "../schedule";
 import { agoLabel, snapshotLine } from "../snapshot";
 import { catchUpClause, verdictOf } from "../verdict";
 import { useStore } from "../useStore";
-import { ClusterRow } from "./ClusterRow";
 import { Card, Explain } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 
@@ -53,7 +52,6 @@ export function Verdict(): ReactElement {
           <Clauses room />
         </span>
       </p>
-      <ClusterRow />
     </div>
   );
 }

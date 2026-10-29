@@ -107,13 +107,13 @@ function FeePayersBody({ summary, epoch }: { summary: FeePayerSummary; epoch: Fe
       <div className="fee-epochs">
         <div className="fee-epoch fee-head">
           <span>Epoch</span>
-          <span className="fee-wide">blocks</span>
-          <span className="fee-wide">non-vote</span>
-          <span>failed here</span>
-          <span>elsewhere</span>
+          <span className="fee-wide">Blocks</span>
+          <span className="fee-wide">Non-vote</span>
+          <span>Failed here</span>
+          <span>Elsewhere</span>
           <span>
-            <span className="fee-long">priority on failed</span>
-            <span className="fee-short">priority</span>
+            <span className="fee-long">Priority on failed</span>
+            <span className="fee-short">Priority</span>
           </span>
         </div>
         {summary.epochs.map((held) => (
@@ -135,12 +135,12 @@ function FeePayersBody({ summary, epoch }: { summary: FeePayerSummary; epoch: Fe
         <div className="fee-table">
           <div className="fee-row fee-head">
             <span>Fee payer</span>
-            <span>txns</span>
-            <span>failed</span>
-            <span>here</span>
-            <span>elsewhere</span>
-            <span>ratio</span>
-            <span>priority on failed</span>
+            <span>Txns</span>
+            <span>Failed</span>
+            <span>Here</span>
+            <span>Elsewhere</span>
+            <span>Ratio</span>
+            <span>Priority on failed</span>
             <span />
           </div>
           {summary.payers.map((row) => (

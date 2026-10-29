@@ -128,7 +128,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gap);
-  padding: 18px max(24px, calc((100% - 1440px) / 2)) 60px;
+  padding: 18px max(24px, calc((100% - 1600px) / 2)) 60px;
   overflow-y: auto;
   min-width: 0;
 }

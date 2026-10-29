@@ -165,8 +165,7 @@ function FeePayersBody({ summary, epoch }: { summary: FeePayerSummary; epoch: Fe
       )}
 
       <p className="card-footnote">
-        Flagged at 100 txns, 10% failed and 0.05 SOL priority on failed in an epoch; escalated above 3× its rate in other
-        leaders' blocks, once it has 100 txns there. Rooted blocks since the dashboard started.
+        Flagged at 100 txns, 10% failed and 0.05 SOL priority on failed; escalated above 3× elsewhere.
       </p>
     </div>
   );

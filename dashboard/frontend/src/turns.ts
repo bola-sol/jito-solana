@@ -22,6 +22,19 @@ export function turnRangeLabel(turn: Pick<LeaderTurn, "first" | "last">): string
   return `${count(turn.first)}–${count(turn.last)}`;
 }
 
+/** The last slot from the first digit group that differs, as a phone has room for. */
+export function turnRangeShortLabel(turn: Pick<LeaderTurn, "first" | "last">): string {
+  if (turn.first === turn.last) return count(turn.first);
+  const first = count(turn.first);
+  const last = count(turn.last);
+  let same = 0;
+  while (same < first.length && first[same] === last[same]) same += 1;
+  // Back to the separator before the first digit that differs.
+  let cut = same;
+  while (cut > 0 && /\d/.test(last[cut - 1])) cut -= 1;
+  return `${first}–${last.slice(cut)}`;
+}
+
 export function turnSpanLabel(turn: Pick<LeaderTurn, "drained_millis" | "since_millis">): string {
   if (turn.since_millis === null) return "since the dashboard started";
   return `${duration(turn.drained_millis - turn.since_millis)} since the previous turn drained`;

@@ -5,6 +5,7 @@ import {
   sumWaterfalls,
   turnOf,
   turnRangeLabel,
+  turnRangeShortLabel,
   turnSections,
   turnSpanLabel,
 } from "./turns";
@@ -129,6 +130,10 @@ describe("labels", () => {
   it("ranges the slots and names the span", () => {
     expect(turnRangeLabel(turn)).toBe("88–91");
     expect(turnRangeLabel({ ...turn, last: 88 })).toBe("88");
+    expect(turnRangeShortLabel({ first: 462_797_736, last: 462_797_739 })).toBe("462,797,736–739");
+    expect(turnRangeShortLabel({ first: 462_797_999, last: 462_798_002 })).toBe("462,797,999–798,002");
+    expect(turnRangeShortLabel({ first: 996, last: 1_000 })).toBe("996–1,000");
+    expect(turnRangeShortLabel({ first: 88, last: 88 })).toBe("88");
     expect(turnSpanLabel(turn)).toBe("4m 12s since the previous turn drained");
     expect(turnSpanLabel({ ...turn, since_millis: null })).toBe("since the dashboard started");
   });

@@ -3270,6 +3270,282 @@ body {
   }
 }
 
+/* ---- fee payers ---- */
+
+/* Folded, a row like the averages above it: no rule of its own on top, theirs below. */
+.produced > .fee-fold {
+  margin: 0;
+  padding: 5px 6px;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.fee-fold .fold-head {
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+
+.fee-fold .fold-title {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.fee-fold .fold-sum {
+  overflow: hidden;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fee-fold .fold-toggle {
+  flex: none;
+  line-height: 20px;
+}
+
+.produced > .fee-fold.is-open {
+  padding-bottom: 14px;
+}
+
+.fee-fold .fold-body {
+  margin-top: 10px;
+}
+
+/* Open, it would squeeze the list to nothing, so the list keeps most of a screen and the page
+   scrolls, as on a phone. */
+.main > .slot-details:has(.fee-fold.is-open) {
+  flex: none;
+}
+
+.slot-details:has(.fee-fold.is-open) .produced-list {
+  flex: none;
+  height: 80dvh;
+}
+
+.fee-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fee-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px 20px;
+  max-width: 1000px;
+}
+
+.fee-sub {
+  margin: 4px 0 -4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.fee-epochs,
+.fee-table {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.fee-epoch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6em 7em 7em 7em 9em;
+  gap: 8px;
+  padding: 5px 6px;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.fee-epoch > :not(:first-child),
+.fee-row.fee-head > :not(:first-child) {
+  text-align: right;
+}
+
+.fee-head {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.fee-epoch.fee-head {
+  border-top: 0;
+}
+
+.fee-short {
+  display: none;
+}
+
+.fee-row {
+  display: grid;
+  grid-template-columns: minmax(8em, 1fr) 5.5em 5.5em 5.5em 6.5em 4.5em 9.5em 6.5em;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.fee-row.fee-head {
+  padding-bottom: 4px;
+  border-top: 0;
+}
+
+.fee-row.is-escalated {
+  background: color-mix(in srgb, var(--bad) 9%, transparent);
+}
+
+.fee-row.is-flagged {
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+.fee-key {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.fee-num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text);
+}
+
+.fee-dim {
+  color: var(--text-dim);
+}
+
+.fee-status {
+  text-align: right;
+}
+
+.fee-phone {
+  display: none;
+}
+
+.fee-chip {
+  display: inline-block;
+  justify-self: start;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.fee-chip.is-escalated {
+  color: var(--bad);
+}
+
+.fee-chip.is-flagged {
+  color: var(--warn);
+}
+
+.fee-alerts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.fee-alerts li {
+  display: grid;
+  grid-template-columns: 6.5em 8em minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 6px;
+  border-top: 1px solid var(--border);
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.fee-alerts li:first-child {
+  border-top: 0;
+}
+
+.fee-alerts li.is-past {
+  opacity: 0.7;
+}
+
+/* Each payer on two lines: the key, priority and alert, then its figures in words. */
+@media (max-width: 900px) {
+  .fee-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fee-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    row-gap: 3px;
+  }
+
+  .fee-row.fee-head,
+  .fee-row > .fee-num:not(.fee-priority) {
+    display: none;
+  }
+
+  .fee-phone {
+    display: block;
+    grid-column: 1 / -1;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+}
+
+/* The fold keeps to one line: its alerts without the rates. */
+@media (max-width: 700px) {
+  .fee-fold-rates {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .fee-epoch {
+    grid-template-columns: minmax(0, 1fr) 5em 5.5em 7.5em;
+    font-size: 12px;
+  }
+
+  .fee-wide {
+    display: none;
+  }
+
+  .fee-alerts li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .fee-alerts .fee-what {
+    grid-column: 1 / -1;
+  }
+
+  .fee-stats > .stat {
+    container-type: inline-size;
+  }
+
+  .fee-stats .stat-value {
+    font-size: min(20px, 14cqi);
+  }
+}
+
+@media (max-width: 400px) {
+  .fee-epoch {
+    grid-template-columns: 3.4em repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 5px 2px;
+    font-size: 11.5px;
+  }
+
+  .fee-long {
+    display: none;
+  }
+
+  .fee-short {
+    display: inline;
+  }
+}
+
 /* ---- transaction waterfall ---- */
 
 .path-body {

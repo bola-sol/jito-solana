@@ -253,6 +253,40 @@ export interface VersionShare {
   other: boolean;
 }
 
+export type FeePayerAlert = "flagged" | "escalated";
+
+/** Our rooted blocks' non-vote transactions; "away" is the same payers in other leaders' blocks. */
+export interface FeePayerEpoch {
+  epoch: number;
+  blocks: number;
+  transactions: number;
+  failed: number;
+  /** Lamports. */
+  priority_failed: number;
+  away_transactions: number;
+  away_failed: number;
+}
+
+export interface FeePayerRow {
+  epoch: number;
+  payer: string;
+  transactions: number;
+  failed: number;
+  priority_failed: number;
+  away_transactions: number;
+  away_failed: number;
+  alert: FeePayerAlert | null;
+  /** Our slot in which it first met the flag. */
+  flagged_slot: number | null;
+}
+
+/** Newest epoch first; the payers are the newest epoch's, by priority fees on failed transactions. */
+export interface FeePayerSummary {
+  epochs: FeePayerEpoch[];
+  payers: FeePayerRow[];
+  alerts: FeePayerRow[];
+}
+
 export interface EpochInfo {
   epoch: number;
   start_slot: number;
@@ -1328,6 +1362,8 @@ export interface Published {
     handoff: HandoffSummary | null;
     handoff_now: HandoffNow | null;
     cluster_figures: ClusterFigures | null;
+    /** Null until a block of ours is rooted. */
+    fee_payers: FeePayerSummary | null;
   };
   epoch: { new: EpochInfo };
   peers: { all: Peer[] };

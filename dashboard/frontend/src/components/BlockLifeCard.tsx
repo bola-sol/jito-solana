@@ -3,6 +3,7 @@ import {
   clockNote,
   lifeAt,
   lifeMarks,
+  lifeParts,
   lifeSegments,
   lifeTicks,
   lifeWindow,
@@ -14,7 +15,7 @@ import { useAlpenglow } from "../consensus";
 import { count, shortKey } from "../format";
 import type { BlockLifeStages } from "../types";
 import { useStore } from "../useStore";
-import { Explain, Fold } from "./primitives";
+import { Explain, Fold, type FoldRule } from "./primitives";
 
 const PARTS: { part: LifePart; label: string }[] = [
   { part: "building", label: "arriving while the leader builds" },
@@ -23,6 +24,15 @@ const PARTS: { part: LifePart; label: string }[] = [
   { part: "vote", label: "our vote" },
   { part: "finalize", label: "to finalized" },
 ];
+
+/** Shared by the track, the legend and the closed fold's strip. */
+const COLOR: Record<LifePart, string> = {
+  building: "color-mix(in srgb, var(--apricot) 35%, transparent)",
+  reaching: "var(--apricot)",
+  replay: "var(--lavender)",
+  vote: "var(--part-4)",
+  finalize: "var(--good)",
+};
 
 const TICKS = lifeTicks();
 
@@ -50,8 +60,8 @@ function Track({
       {lifeSegments(stages).map((segment) => (
         <i
           key={segment.part}
-          className={`life-seg is-${segment.part}`}
-          style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+          className="life-seg"
+          style={{ left: `${segment.left}%`, width: `${segment.width}%`, background: COLOR[segment.part] }}
         />
       ))}
       {!median && marks.map((left, index) => <b key={index} className="life-mark" style={{ left: `${left}%` }} />)}
@@ -99,6 +109,10 @@ export function BlockLifeCard(): ReactElement | null {
   const marks = lifeMarks(median);
   const span = lifeWindow(life.minutes);
   const replayed = replayedAt(median);
+  const rule: FoldRule = {
+    kind: "parts",
+    segs: lifeParts(median).map(({ part, ms }) => ({ value: ms, color: COLOR[part] })),
+  };
   const summary =
     life.total !== null ? (
       <>
@@ -113,12 +127,12 @@ export function BlockLifeCard(): ReactElement | null {
     );
 
   return (
-    <Fold id="block-life" title="Block life" summary={summary}>
+    <Fold id="block-life" title="Block life" summary={summary} rule={rule}>
       <div className="life-body">
         <div className="life-legend">
           {PARTS.filter(({ part }) => median[part] !== null).map(({ part, label }) => (
             <span key={part} className="life-key">
-              <i className={`life-swatch is-${part}`} aria-hidden="true" />
+              <i className="life-swatch" style={{ background: COLOR[part] }} aria-hidden="true" />
               {label}
               <b>{ms(median[part])}</b>
             </span>

@@ -10,7 +10,7 @@ import {
 import { bytes, count, percent } from "../format";
 import type { AccountsCache, ProgramCache } from "../types";
 import { useStore } from "../useStore";
-import { Explain, Fold, Meter, Stat } from "./primitives";
+import { Explain, Fold, Meter, Stat, type FoldRule } from "./primitives";
 
 export function CachesCard(): ReactElement | null {
   const store = useStore();
@@ -24,6 +24,12 @@ export function CachesCard(): ReactElement | null {
 
   const fold = (key: string) =>
     setOpen((was) => (was.includes(key) ? was.filter((k) => k !== key) : [...was, key]));
+
+  const rates = [programs?.hit_rate ?? null, accounts ? servedFromMemory(accounts).rate : null];
+  const rule: FoldRule = {
+    kind: "meters",
+    segs: rates.flatMap((value) => (value === null ? [] : [{ pct: value * 100 }])),
+  };
 
   const rate = (value: number | null) => (value === null ? "—" : percent(value, 2));
   const summary = (
@@ -44,7 +50,7 @@ export function CachesCard(): ReactElement | null {
   );
 
   return (
-    <Fold id="caches" title="Caches and storage" summary={summary}>
+    <Fold id="caches" title="Caches and storage" summary={summary} rule={rule}>
       <div className="caches">
         {programs && (
           <Group

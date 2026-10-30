@@ -31,24 +31,37 @@ export function lifeAt(ms: number): number {
   return Math.min(100, Math.max(0, at));
 }
 
-/** The building runs up to the close; each later stage starts where the one before ended. The
- *  chain stops at the first stage not timed, except our vote, which a node not voting lacks. */
-export function lifeSegments(stages: BlockLifeStages): LifeSegment[] {
-  const segments: LifeSegment[] = [];
-  const span = (part: LifePart, from: number, to: number) => {
-    const left = lifeAt(from);
-    segments.push({ part, left, width: lifeAt(to) - left });
-  };
-  if (stages.building !== null) span("building", -stages.building, 0);
-  let at = 0;
+/** Each stage timed, with its duration, in track order. The chain stops at the first stage not
+ *  timed, except our vote, which a node not voting lacks. */
+export function lifeParts(stages: BlockLifeStages): { part: LifePart; ms: number }[] {
+  const parts: { part: LifePart; ms: number }[] =
+    stages.building === null ? [] : [{ part: "building", ms: stages.building }];
   for (const part of ["reaching", "replay", "vote", "finalize"] as const) {
     const ms = stages[part];
     if (ms === null) {
       if (part === "vote") continue;
       break;
     }
-    span(part, at, at + ms);
-    at += ms;
+    parts.push({ part, ms });
+  }
+  return parts;
+}
+
+/** The building runs up to the close; each later stage starts where the one before ended. */
+export function lifeSegments(stages: BlockLifeStages): LifeSegment[] {
+  const segments: LifeSegment[] = [];
+  const span = (part: LifePart, from: number, to: number) => {
+    const left = lifeAt(from);
+    segments.push({ part, left, width: lifeAt(to) - left });
+  };
+  let at = 0;
+  for (const { part, ms } of lifeParts(stages)) {
+    if (part === "building") {
+      span(part, -ms, 0);
+    } else {
+      span(part, at, at + ms);
+      at += ms;
+    }
   }
   return segments;
 }

@@ -88,10 +88,10 @@ function Overview() {
       <div className="grid is-three">
         <EpochCard missesOpen={missesOpen} onToggleMisses={() => setMissesOpen((was) => !was)} />
         <ClusterCard />
+        <TransactionsCard />
       </div>
       {missesOpen && <MissesPanel onClose={() => setMissesOpen(false)} />}
       <GossipStakeCard />
-      <TransactionsCard />
       <div className="grid">
         <NetworkCard />
         <IngestCard />

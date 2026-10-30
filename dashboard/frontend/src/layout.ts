@@ -33,6 +33,17 @@ export function writeCertificatesOpen(open: boolean): void {
   writeStored(CERTIFICATES_STORAGE_KEY, open ? "open" : "closed");
 }
 
+/** The Overview's slot strip, open until the viewer folds it. */
+export const SLOT_STRIP_STORAGE_KEY = "agave-dashboard-slot-strip";
+
+export function readSlotStripFolded(): boolean {
+  return readStored(SLOT_STRIP_STORAGE_KEY) === "folded";
+}
+
+export function writeSlotStripFolded(folded: boolean): void {
+  writeStored(SLOT_STRIP_STORAGE_KEY, folded ? "folded" : "open");
+}
+
 /** The folds the viewer opened; every fold starts folded. */
 export const OPENED_STORAGE_KEY = "agave-dashboard-opened";
 

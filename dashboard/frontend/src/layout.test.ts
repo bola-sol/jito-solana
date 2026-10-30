@@ -8,12 +8,15 @@ import {
   readFoldOpen,
   readInterfacesOpen,
   readScheduleColumns,
+  readSlotStripFolded,
   SCHEDULE_COLUMNS_STORAGE_KEY,
+  SLOT_STRIP_STORAGE_KEY,
   writeBalancesHidden,
   writeCertificatesOpen,
   writeFoldOpen,
   writeInterfacesOpen,
   writeScheduleColumns,
+  writeSlotStripFolded,
 } from "./layout";
 
 function storage(): Storage {
@@ -167,5 +170,23 @@ describe("folds", () => {
     });
     expect(() => writeFoldOpen("tpu", true)).not.toThrow();
     expect(readFoldOpen("tpu")).toBe(false);
+  });
+});
+
+describe("slot strip fold", () => {
+  it("starts open when nothing has been chosen", () => {
+    expect(readSlotStripFolded()).toBe(false);
+  });
+
+  it("remembers the choice both ways", () => {
+    writeSlotStripFolded(true);
+    expect(readSlotStripFolded()).toBe(true);
+    writeSlotStripFolded(false);
+    expect(readSlotStripFolded()).toBe(false);
+  });
+
+  it("treats an unrecognised value as open", () => {
+    window.localStorage.setItem(SLOT_STRIP_STORAGE_KEY, "yes");
+    expect(readSlotStripFolded()).toBe(false);
   });
 });

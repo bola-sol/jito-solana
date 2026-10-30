@@ -61,8 +61,8 @@ describe("certificateVerdict", () => {
 
   it("counts the ones left out, in warn", () => {
     const left = [
-      { identity: "a", name: null, ip: null },
-      { identity: "b", name: "B", ip: "1.2.3.4" },
+      { identity: "a", name: null, ip: null, country: null },
+      { identity: "b", name: "B", ip: "1.2.3.4", country: "DE" },
     ];
     expect(certificateVerdict(certificate({ left_out: left }))).toEqual({
       text: "left out 2 certificates usually pay",

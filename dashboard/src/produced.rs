@@ -88,6 +88,7 @@ pub struct CertificateValidator {
     pub identity: Pubkey,
     pub name: Option<String>,
     pub ip: Option<IpAddr>,
+    pub country: Option<&'static str>,
 }
 
 /// Base58 text, as `to_string` gives, written straight into the encoder.
@@ -587,16 +588,19 @@ mod tests {
                     identity: missing,
                     name: Some("Lantern".to_string()),
                     ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
+                    country: Some("NL"),
                 },
                 CertificateValidator {
                     identity: missing,
                     name: None,
                     ip: Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))),
+                    country: None,
                 },
                 CertificateValidator {
                     identity: missing,
                     name: None,
                     ip: None,
+                    country: None,
                 },
             ],
             ..certificate(9)
@@ -604,7 +608,7 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&led).unwrap(),
             format!(
-                r#"{{"rewards":9,"leader":"{leader}","leader_name":null,"notarized":true,"paid":103,"ranks":112,"stake_paid":0.986,"notar":101,"skip":2,"ours_in":true,"usual":103,"left_out":[{{"identity":"{missing}","name":"Lantern","ip":"192.0.2.10"}},{{"identity":"{missing}","name":null,"ip":"2001:db8::1"}},{{"identity":"{missing}","name":null,"ip":null}}]}}"#
+                r#"{{"rewards":9,"leader":"{leader}","leader_name":null,"notarized":true,"paid":103,"ranks":112,"stake_paid":0.986,"notar":101,"skip":2,"ours_in":true,"usual":103,"left_out":[{{"identity":"{missing}","name":"Lantern","ip":"192.0.2.10","country":"NL"}},{{"identity":"{missing}","name":null,"ip":"2001:db8::1","country":null}},{{"identity":"{missing}","name":null,"ip":null,"country":null}}]}}"#
             )
         );
         let unled = serde_json::to_string(&certificate(9)).unwrap();
@@ -671,6 +675,7 @@ mod tests {
                     identity: Pubkey::new_unique(),
                     name: Some("Lantern".to_string()),
                     ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
+                    country: Some("NL"),
                 }],
                 ..certificate(3)
             },

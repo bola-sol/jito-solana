@@ -433,8 +433,8 @@ body {
   color: var(--text-faint);
 }
 
-.gossip-ip {
-  display: flex;
+.ip-address {
+  display: inline-flex;
   align-items: baseline;
 }
 

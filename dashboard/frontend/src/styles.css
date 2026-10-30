@@ -353,7 +353,8 @@ body {
 }
 
 .theme-toggle,
-.balances-toggle {
+.balances-toggle,
+.folds-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -368,7 +369,8 @@ body {
 }
 
 .theme-toggle:hover,
-.balances-toggle:hover {
+.balances-toggle:hover,
+.folds-toggle:hover {
   color: var(--text);
   border-color: var(--text-faint);
 }
@@ -379,7 +381,8 @@ body {
 }
 
 .theme-toggle:focus-visible,
-.balances-toggle:focus-visible {
+.balances-toggle:focus-visible,
+.folds-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

@@ -79,6 +79,39 @@ export function availableTone(available: number, total: number): HostTone {
   return "good";
 }
 
+export interface DiskAlarm {
+  filesystem: FilesystemUsage;
+  share: number;
+  tone: "warn" | "bad";
+}
+
+/** The fullest filesystem once it is amber or red, for the verdict's line. */
+export function diskAlarm(host: Host | null | undefined): DiskAlarm | null {
+  if (!host) return null;
+  let worst: DiskAlarm | null = null;
+  for (const filesystem of host.filesystems) {
+    const share = fullness(filesystem);
+    const tone = fullnessTone(share);
+    if (tone === "good" || tone === "muted") continue;
+    if (!worst || share > worst.share) worst = { filesystem, share, tone };
+  }
+  return worst;
+}
+
+export interface MemoryAlarm {
+  available: number;
+  total: number;
+  tone: "warn" | "bad";
+}
+
+/** Available memory once it is amber or red, for the verdict's line. */
+export function memoryAlarm(host: Host | null | undefined): MemoryAlarm | null {
+  if (!host || host.memory_total <= 0) return null;
+  const tone = availableTone(host.memory_available, host.memory_total);
+  if (tone === "good" || tone === "muted") return null;
+  return { available: host.memory_available, total: host.memory_total, tone };
+}
+
 /** Swap in use is amber whatever the amount: there is no healthy quantity. */
 export function swapTone(used: number): HostTone {
   return used > 0 ? "warn" : "good";

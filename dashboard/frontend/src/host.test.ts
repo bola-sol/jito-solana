@@ -4,9 +4,11 @@ import {
   busyTone,
   cpuTone,
   deviceLabel,
+  diskAlarm,
   fullness,
   fullnessTone,
   loadTrend,
+  memoryAlarm,
   memoryUse,
   residentTrend,
   slowGovernor,
@@ -184,5 +186,42 @@ describe("slowGovernor", () => {
     expect(slowGovernor(host({ cpu_governor: "schedutil" }).cpu_governor)).toBe(true);
     expect(slowGovernor(host({ cpu_governor: "powersave" }).cpu_governor)).toBe(true);
     expect(slowGovernor(host({ cpu_governor: null }).cpu_governor)).toBe(false);
+  });
+});
+
+describe("diskAlarm", () => {
+  const fs = (name: string, used: number) => ({ name, path: `/${name}`, total: 1000, available: 1000 - used });
+
+  it("is nothing while every filesystem is under four fifths", () => {
+    expect(diskAlarm(host({ filesystems: [fs("ledger", 790), fs("accounts", 500)] }))).toBeNull();
+  });
+
+  it("names the fullest filesystem once one is amber", () => {
+    const alarm = diskAlarm(host({ filesystems: [fs("ledger", 820), fs("accounts", 860)] }));
+    expect(alarm?.filesystem.name).toBe("accounts");
+    expect(alarm?.tone).toBe("warn");
+  });
+
+  it("is red from nine tenths", () => {
+    expect(diskAlarm(host({ filesystems: [fs("ledger", 930)] }))?.tone).toBe("bad");
+  });
+
+  it("is nothing without a host", () => {
+    expect(diskAlarm(undefined)).toBeNull();
+  });
+});
+
+describe("memoryAlarm", () => {
+  it("is nothing above a tenth available", () => {
+    expect(memoryAlarm(host())).toBeNull();
+  });
+
+  it("is amber at a tenth and red at a twentieth", () => {
+    expect(memoryAlarm(host({ memory_available: 38 * GB }))?.tone).toBe("warn");
+    expect(memoryAlarm(host({ memory_available: 15 * GB }))).toEqual({ available: 15 * GB, total: 384 * GB, tone: "bad" });
+  });
+
+  it("is nothing on a host that reported no memory", () => {
+    expect(memoryAlarm(host({ memory_total: 0, memory_available: 0 }))).toBeNull();
   });
 });

@@ -34,7 +34,7 @@ describe("snapshotWriting", () => {
 describe("snapshotWritten", () => {
   it("says what the last write took and what replay lost to it", () => {
     expect(snapshotWritten({ slot: 441_600_000, took_millis: 188_000, fell_behind_slots: 210 })).toBe(
-      "last snapshot 441,600,000 took 3m 8s, replay fell 210 slots behind the cluster",
+      "last snapshot 441,600,000 took 3m 8s, replay fell 210 behind the cluster",
     );
   });
 

@@ -2,13 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BALANCES_STORAGE_KEY,
   CERTIFICATES_STORAGE_KEY,
+  OPENED_STORAGE_KEY,
   readBalancesHidden,
   readCertificatesOpen,
+  readFoldOpen,
   readInterfacesOpen,
   readScheduleColumns,
   SCHEDULE_COLUMNS_STORAGE_KEY,
   writeBalancesHidden,
   writeCertificatesOpen,
+  writeFoldOpen,
   writeInterfacesOpen,
   writeScheduleColumns,
 } from "./layout";
@@ -133,5 +136,36 @@ describe("the network card's interface list", () => {
     });
     expect(() => writeInterfacesOpen(true)).not.toThrow();
     expect(readInterfacesOpen()).toBe(false);
+  });
+});
+
+describe("folds", () => {
+  it("start folded when nothing has been chosen", () => {
+    expect(readFoldOpen("machine")).toBe(false);
+  });
+
+  it("remember an opened fold, and forget it once folded again", () => {
+    writeFoldOpen("replay", true);
+    writeFoldOpen("machine", true);
+    expect(readFoldOpen("replay")).toBe(true);
+    expect(window.localStorage.getItem(OPENED_STORAGE_KEY)).toBe("replay,machine");
+    writeFoldOpen("replay", false);
+    expect(readFoldOpen("replay")).toBe(false);
+    expect(readFoldOpen("machine")).toBe(true);
+  });
+
+  it("ignore the old folded list", () => {
+    window.localStorage.setItem("agave-dashboard-folded", "machine");
+    expect(readFoldOpen("machine")).toBe(false);
+  });
+
+  it("survive storage being refused", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("denied");
+      },
+    });
+    expect(() => writeFoldOpen("tpu", true)).not.toThrow();
+    expect(readFoldOpen("tpu")).toBe(false);
   });
 });

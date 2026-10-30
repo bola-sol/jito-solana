@@ -20,7 +20,7 @@ export function FeePayersFold({ summary }: { summary: FeePayerSummary | null }):
       id="fee-payers"
       title="Fee payers"
       summary={<FoldSummary summary={summary} />}
-      startFolded
+      remember={false}
       className="fee-fold"
     >
       {summary && epoch ? (

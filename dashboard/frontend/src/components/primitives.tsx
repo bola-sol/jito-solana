@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
+import { memo, useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
 import { readFoldOpen, writeFoldOpen } from "../layout";
 
 const EDGE_MARGIN = 12;
@@ -218,7 +218,52 @@ export function Section({
   );
 }
 
-/** Folded until opened, and kept open across visits unless `remember` is off. */
+/** A closed fold's top rule drawn as the bar inside it: parts sized by value, or equal meters. */
+export type FoldRule =
+  | { kind: "parts"; segs: { value: number; /** A CSS colour from the tokens. */ color: string }[] }
+  | { kind: "meters"; segs: { pct: number }[] };
+
+function sameRule(a: FoldRule | null, b: FoldRule | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind || a.segs.length !== b.segs.length) return false;
+  if (a.kind === "parts" && b.kind === "parts") {
+    return a.segs.every((seg, index) => seg.value === b.segs[index].value && seg.color === b.segs[index].color);
+  }
+  if (a.kind === "meters" && b.kind === "meters") {
+    return a.segs.every((seg, index) => seg.pct === b.segs[index].pct);
+  }
+  return false;
+}
+
+const RuleStrip = memo(
+  function RuleStrip({ rule }: { rule: FoldRule | null }) {
+    // A part of nothing would still leave its gap.
+    const parts = rule?.kind === "parts" ? rule.segs.filter((seg) => seg.value > 0) : [];
+    const meters = rule?.kind === "meters" ? rule.segs : [];
+    if (parts.length === 0 && meters.length === 0) {
+      return <span className="fold-rule is-empty" aria-hidden="true" />;
+    }
+    return (
+      <span className="fold-rule" aria-hidden="true">
+        {parts.map((seg, index) => (
+          <i key={index} className="fold-rule-seg" style={{ flexGrow: seg.value, background: seg.color }} />
+        ))}
+        {meters.map((seg, index) => (
+          <i key={index} className="fold-rule-seg is-meter">
+            <i
+              className="fold-rule-fill"
+              style={{ width: `${Math.max(0, Math.min(100, Number.isFinite(seg.pct) ? seg.pct : 0))}%` }}
+            />
+          </i>
+        ))}
+      </span>
+    );
+  },
+  (was, now) => sameRule(was.rule, now.rule),
+);
+
+/** Folded until opened, and kept open across visits unless `remember` is off. Given `rule`, the
+ *  closed fold's top rule shows it, and a plain rule while it is null. */
 export function Fold({
   id,
   title,
@@ -226,6 +271,7 @@ export function Fold({
   children,
   remember = true,
   className,
+  rule,
 }: {
   id: string;
   title: string;
@@ -233,6 +279,7 @@ export function Fold({
   children: ReactNode;
   remember?: boolean;
   className?: string;
+  rule?: FoldRule | null;
 }): ReactElement {
   const [open, setOpen] = useState(() => remember && readFoldOpen(id));
   const toggle = () => {
@@ -241,8 +288,11 @@ export function Fold({
     if (remember) writeFoldOpen(id, next);
   };
 
+  const ruled = !open && rule !== undefined;
+
   return (
-    <section className={`fold${open ? " is-open" : ""}${className ? ` ${className}` : ""}`}>
+    <section className={`fold${open ? " is-open" : ""}${ruled ? " has-rule" : ""}${className ? ` ${className}` : ""}`}>
+      {ruled && <RuleStrip rule={rule} />}
       <div className="fold-head" onClick={toggle}>
         <h2 className="fold-title">{title}</h2>
         <span className="fold-sum">{summary}</span>

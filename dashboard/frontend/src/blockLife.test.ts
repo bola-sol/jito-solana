@@ -5,6 +5,7 @@ import {
   LIFE_SPAN_MS,
   lifeAt,
   lifeMarks,
+  lifeParts,
   lifeSegments,
   lifeTicks,
   lifeWindow,
@@ -35,6 +36,18 @@ describe("lifeAt", () => {
     expect(lifeAt(0)).toBeCloseTo((-LIFE_FROM_MS / LIFE_SPAN_MS) * 100);
     expect(lifeAt(LIFE_FROM_MS - 50)).toBe(0);
     expect(lifeAt(10_000)).toBe(100);
+  });
+});
+
+describe("lifeParts", () => {
+  it("gives each stage's duration in track order, skipping a missing vote and stopping at the first gap", () => {
+    expect(lifeParts({ ...full, vote: null })).toEqual([
+      { part: "building", ms: 148 },
+      { part: "reaching", ms: 103 },
+      { part: "replay", ms: 9 },
+      { part: "finalize", ms: 58 },
+    ]);
+    expect(lifeParts({ ...full, building: null, replay: null }).map((p) => p.part)).toEqual(["reaching"]);
   });
 });
 

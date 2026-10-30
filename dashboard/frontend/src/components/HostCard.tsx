@@ -29,7 +29,7 @@ import {
 import { snapshotWriting, snapshotWritten } from "../snapshot";
 import type { DeviceLoad, FilesystemUsage, ThreadsSample } from "../types";
 import { useStore } from "../useStore";
-import { Explain, Fold } from "./primitives";
+import { Explain, Fold, type FoldRule } from "./primitives";
 
 /** A bar means a container that can fill; load and device saturation get none. */
 export function HostCard(): ReactElement | null {
@@ -48,6 +48,15 @@ export function HostCard(): ReactElement | null {
   const ledger =
     host.filesystems.find((filesystem) => filesystem.name === "ledger") ??
     [...host.filesystems].sort((a, b) => fullness(b) - fullness(a))[0];
+
+  const rule: FoldRule = {
+    kind: "meters",
+    segs: [
+      ...(host.cores > 0 ? [{ pct: (host.load_one / host.cores) * 100 }] : []),
+      ...(host.cpu ? [{ pct: host.cpu.busy * 100 }] : []),
+      ...(ledger ? [{ pct: fullness(ledger) * 100 }] : []),
+    ],
+  };
 
   const summary = (
     <>
@@ -73,7 +82,7 @@ export function HostCard(): ReactElement | null {
   );
 
   return (
-    <Fold id="machine" title="Machine" summary={summary}>
+    <Fold id="machine" title="Machine" summary={summary} rule={rule}>
       {slowGovernor(host.cpu_governor) && (
         <p className="host-governor">
           <span className="tone-warn">CPU governor {host.cpu_governor}.</span> Voting nodes run{" "}

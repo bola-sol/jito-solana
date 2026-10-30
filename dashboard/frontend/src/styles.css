@@ -3863,32 +3863,6 @@ body {
   vertical-align: -1px;
 }
 
-.life-seg.is-building,
-.life-swatch.is-building {
-  background: var(--apricot);
-  opacity: 0.35;
-}
-
-.life-seg.is-reaching,
-.life-swatch.is-reaching {
-  background: var(--apricot);
-}
-
-.life-seg.is-replay,
-.life-swatch.is-replay {
-  background: var(--lavender);
-}
-
-.life-seg.is-vote,
-.life-swatch.is-vote {
-  background: var(--part-4);
-}
-
-.life-seg.is-finalize,
-.life-swatch.is-finalize {
-  background: var(--good);
-}
-
 .life-grid {
   display: grid;
   grid-template-columns: 104px 96px minmax(0, 1fr) 64px 64px 200px;
@@ -6267,6 +6241,49 @@ body {
 
 .fold-body {
   margin-top: 14px;
+}
+
+/* Closed, the top rule becomes a 2px strip of the bar inside; the padding takes the border's pixel,
+   so the fold keeps its height. */
+.fold.has-rule {
+  position: relative;
+  padding-top: 13px;
+  border-top: 0;
+}
+
+.fold-rule {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: 1px;
+  height: 2px;
+}
+
+.fold-rule-seg {
+  flex: 0 1 0;
+  min-width: 0;
+}
+
+.fold-rule-seg.is-meter {
+  position: relative;
+  flex: 1 1 0;
+  background: var(--panel-raised);
+}
+
+.fold-rule-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--accent);
+}
+
+/* No data yet: the plain 1px rule, at the top of the strip's box. */
+.fold-rule.is-empty {
+  box-sizing: border-box;
+  border-top: 1px solid var(--border);
 }
 
 /* ---- schedule ---- */

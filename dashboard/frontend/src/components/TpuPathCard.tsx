@@ -28,7 +28,7 @@ import {
 } from "../tpuPath";
 import type { EpochSpan, ExecutedStage, QuicPaths, QuicPort, VerifyStage } from "../types";
 import { useStore } from "../useStore";
-import { Explain, Fold } from "./primitives";
+import { Explain, Fold, type FoldRule } from "./primitives";
 
 export function TpuPathCard(): ReactElement | null {
   const store = useStore();
@@ -42,13 +42,12 @@ export function TpuPathCard(): ReactElement | null {
 
   if (!paths) return null;
 
+  const done = executed ? executedSection(executed, bundles) : null;
+  const rule = ruleOf(done);
   const stages = (
     <EpochStages
       span={span ?? null}
-      sections={[
-        ...(verify ? [verifySection(verify)] : []),
-        ...(executed ? [executedSection(executed, bundles)] : []),
-      ]}
+      sections={[...(verify ? [verifySection(verify)] : []), ...(done ? [done] : [])]}
     />
   );
 
@@ -61,7 +60,9 @@ export function TpuPathCard(): ReactElement | null {
   );
 
   if (paths.tpu_offhost) {
-    return <Elsewhere paths={paths} stages={stages} ports={ports} verify={verify} executed={executed} />;
+    return (
+      <Elsewhere paths={paths} stages={stages} ports={ports} verify={verify} executed={executed} rule={rule} />
+    );
   }
 
   const tpu = portNamed(paths.ports, "tpu");
@@ -91,7 +92,7 @@ export function TpuPathCard(): ReactElement | null {
   );
 
   return (
-    <Fold id="tpu" title="TPU path" summary={summary}>
+    <Fold id="tpu" title="TPU path" summary={summary} rule={rule}>
       <div className="path-body">
       <div className="path-headline">
         <div className="path-figure">
@@ -138,6 +139,22 @@ export function TpuPathCard(): ReactElement | null {
       </div>
     </Fold>
   );
+}
+
+/** A section's bar as strip parts, coloured as its segments. */
+function ruleOf(section: PathSection | null): FoldRule | null {
+  if (!section || section.total <= 0) return null;
+  const segs = [
+    { value: section.through.count, color: "var(--good)" },
+    ...section.losses.map((loss, index) => ({
+      value: loss.count,
+      color: `var(--path-${Math.min(index + 1, LOSSES_SHOWN)})`,
+    })),
+  ];
+  // Where the parts fall short of the total, the open bar's track shows.
+  const drawn = segs.reduce((sum, seg) => sum + seg.value, 0);
+  if (section.total > drawn) segs.push({ value: section.total - drawn, color: "var(--panel-raised)" });
+  return { kind: "parts", segs };
 }
 
 function Stages({
@@ -207,12 +224,14 @@ function Elsewhere({
   ports,
   verify,
   executed,
+  rule,
 }: {
   paths: QuicPaths;
   stages: ReactNode;
   ports: ReactNode;
   verify: VerifyStage | null | undefined;
   executed: ExecutedStage | null | undefined;
+  rule: FoldRule | null;
 }) {
   // Summed across the ports: what is live on this host is mostly vote connections.
   const live = paths.ports.reduce(
@@ -231,7 +250,7 @@ function Elsewhere({
   );
 
   return (
-    <Fold id="tpu" title="TPU path" summary={summary}>
+    <Fold id="tpu" title="TPU path" summary={summary} rule={rule}>
       <div className="path-body">
       <div className="path-notice">
         This validator's advertised TPU address is <b>on another host</b>. The stages below count

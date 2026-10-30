@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { count, decimal, micros, percent } from "../format";
 import { cpuRows, parts, serialRows, verifyRows, type ReplayPart, type ReplayRow } from "../replay";
 import { useStore } from "../useStore";
-import { Explain, Fold } from "./primitives";
+import { Explain, Fold, type FoldRule } from "./primitives";
 
 export function ReplayCard(): ReactElement | null {
   const store = useStore();
@@ -20,6 +20,12 @@ export function ReplayCard(): ReactElement | null {
   const cores = slotMicros ? cpu / slotMicros : null;
 
   const inside = parts(replay);
+  const spans = serialRows(replay);
+  // Coloured as the open bar's `is-N` segments.
+  const rule: FoldRule = {
+    kind: "parts",
+    segs: spans.map((row, index) => ({ value: row.share, color: `var(--part-${index + 1})` })),
+  };
 
   const summary = (
     <>
@@ -35,7 +41,7 @@ export function ReplayCard(): ReactElement | null {
   );
 
   return (
-    <Fold id="replay" title="Replay" summary={summary}>
+    <Fold id="replay" title="Replay" summary={summary} rule={rule}>
       <div className="replay-body">
       <div className="replay-figures">
         <Figure
@@ -65,7 +71,7 @@ export function ReplayCard(): ReactElement | null {
       <Section
         title="Time spent on this slot"
         total={`${micros(serial)} wall clock, three spans one after another`}
-        rows={serialRows(replay)}
+        rows={spans}
         explain="Replay's own thread, split into three spans that run one after another."
       />
 

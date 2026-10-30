@@ -42,7 +42,7 @@ export function App(): ReactElement {
   return (
     <div className={classes.join(" ")}>
       <main className="main">
-        <Header />
+        <Header folds={page === "overview"} />
         {connection === "closed" && (
           <div className="banner">
             Disconnected from the validator. Retrying…

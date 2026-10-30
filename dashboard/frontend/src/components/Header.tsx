@@ -8,11 +8,13 @@ import { useAlpenglow } from "../consensus";
 import { useStore } from "../useStore";
 import { BalancesToggle } from "./BalancesToggle";
 import { Copyable } from "./Copyable";
+import { FoldsToggle } from "./FoldsToggle";
 import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 
-export function Header(): ReactElement {
+/** `folds` puts the open-all toggle beside the others, on the page whose panels it opens. */
+export function Header({ folds }: { folds: boolean }): ReactElement {
   const store = useStore();
   const identity = store.get("summary", "identity_key");
   const voteKey = store.get("summary", "vote_key");
@@ -73,6 +75,7 @@ export function Header(): ReactElement {
         )}
         <span className="who-right">
           <Connection state={connection} lagMs={feedLag} />
+          {folds && <FoldsToggle />}
           <BalancesToggle hidden={balancesHidden} onToggle={toggleBalancesHidden} />
           <ThemeToggle />
         </span>

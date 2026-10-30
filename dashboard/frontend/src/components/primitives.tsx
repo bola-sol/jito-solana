@@ -1,5 +1,5 @@
 import { memo, useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
-import { readFoldOpen, writeFoldOpen } from "../layout";
+import { setFoldsOpen, useFoldOpen } from "../folds";
 
 const EDGE_MARGIN = 12;
 
@@ -281,11 +281,12 @@ export function Fold({
   className?: string;
   rule?: FoldRule | null;
 }): ReactElement {
-  const [open, setOpen] = useState(() => remember && readFoldOpen(id));
+  const shared = useFoldOpen(id);
+  const [own, setOwn] = useState(false);
+  const open = remember ? shared : own;
   const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (remember) writeFoldOpen(id, next);
+    if (remember) setFoldsOpen([id], !open);
+    else setOwn(!open);
   };
 
   const ruled = !open && rule !== undefined;

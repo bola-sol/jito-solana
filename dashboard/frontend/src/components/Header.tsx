@@ -24,13 +24,7 @@ export function Header(): ReactElement {
   const health = store.get("summary", "health");
   const voting = health === undefined ? undefined : health.vote !== "not_voting";
   const voteBalance = store.get("summary", "vote_balance");
-  const runway = voteRunway(
-    voteBalance,
-    voteCost,
-    store.get("epoch", "new"),
-    store.get("summary", "epoch_remaining_nanos"),
-    store.get("summary", "estimated_slot_duration_nanos"),
-  );
+  const runway = voteRunway(voteBalance, voteCost, store.get("epoch", "new")?.epoch);
   const uptimeNanos = store.get("summary", "uptime_nanos");
   const boot = bootTimes(
     store.get("summary", "startup_progress"),
@@ -147,12 +141,13 @@ function Balance({
   );
 }
 
-/** What the seat costs and how long the vote account's balance keeps it, with no income. */
+/** The admission ticket burned each epoch and the epochs the vote account's balance keeps a seat, with no
+ *  income. */
 function Runway({ runway }: { runway: VoteRunway }) {
   return (
     <>
       <span className="boot-row">
-        <b>Seat</b>
+        <b>VAT</b>
         <span>{sol(runway.ticket, 4)} SOL an epoch</span>
       </span>
       {runway.pending > 0 && (
@@ -164,15 +159,13 @@ function Runway({ runway }: { runway: VoteRunway }) {
       <span className="boot-rule" />
       <span className="boot-row">
         <b>Runway</b>
-        <span>{runway.millis === null ? "—" : duration(runway.millis, 2)}</span>
+        <span>
+          {count(runway.epochs)} {runway.epochs === 1 ? "epoch" : "epochs"}
+        </span>
       </span>
       <span className="boot-row boot-sub">
         <span>seated through epoch</span>
         <span>{count(runway.lastEpoch)}</span>
-      </span>
-      <span className="boot-row boot-sub">
-        <span>tickets in hand</span>
-        <span>{count(runway.tickets)}</span>
       </span>
     </>
   );

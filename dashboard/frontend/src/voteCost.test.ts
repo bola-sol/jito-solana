@@ -55,32 +55,26 @@ describe("voteWarning", () => {
 });
 
 describe("voteRunway", () => {
-  const epoch = { epoch: 1072, slots_in_epoch: 432_000 };
-  const slotNanos = 200e6;
-  const epochMillis = 432_000 * 200;
-
-  it("counts the tickets above rent and runs to the end of the last epoch they pay for", () => {
-    const runway = voteRunway(41.04 * SOL, ticket, epoch, 3_600e9, slotNanos);
-    expect(runway?.tickets).toBe(25);
+  it("counts whole epochs: the next, already paid, and one per ticket above rent", () => {
+    const runway = voteRunway(41.04 * SOL, ticket, 1072);
+    expect(runway?.epochs).toBe(26);
     expect(runway?.lastEpoch).toBe(1072 + 26);
-    expect(runway?.millis).toBe(3_600_000 + 26 * epochMillis);
   });
 
-  it("leaves only the next epoch, already paid, when no ticket is in hand", () => {
-    const runway = voteRunway(1.5 * SOL, ticket, epoch, 0, slotNanos);
-    expect(runway?.tickets).toBe(0);
+  it("leaves only the next epoch when no whole ticket is in hand", () => {
+    const runway = voteRunway(1.5 * SOL, ticket, 1072);
+    expect(runway?.epochs).toBe(1);
     expect(runway?.lastEpoch).toBe(1073);
   });
 
   it("takes the delegators' pending rewards off the balance", () => {
-    expect(voteRunway(4 * SOL, { ...ticket, pending: 1 * SOL }, epoch, 0, slotNanos)?.tickets).toBe(1);
-    expect(voteRunway(4 * SOL, ticket, epoch, 0, slotNanos)?.tickets).toBe(2);
+    expect(voteRunway(4 * SOL, { ...ticket, pending: 1 * SOL }, 1072)?.epochs).toBe(2);
+    expect(voteRunway(4 * SOL, ticket, 1072)?.epochs).toBe(3);
   });
 
-  it("gives no time without a slot time, and nothing under TowerBFT or before the figures arrive", () => {
-    expect(voteRunway(41 * SOL, ticket, epoch, undefined, slotNanos)?.millis).toBeNull();
-    expect(voteRunway(41 * SOL, fees, epoch, 0, slotNanos)).toBeNull();
-    expect(voteRunway(undefined, ticket, epoch, 0, slotNanos)).toBeNull();
-    expect(voteRunway(41 * SOL, ticket, undefined, 0, slotNanos)).toBeNull();
+  it("is nothing under TowerBFT or before the figures arrive", () => {
+    expect(voteRunway(41 * SOL, fees, 1072)).toBeNull();
+    expect(voteRunway(undefined, ticket, 1072)).toBeNull();
+    expect(voteRunway(41 * SOL, ticket, undefined)).toBeNull();
   });
 });

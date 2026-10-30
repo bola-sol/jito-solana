@@ -38,12 +38,9 @@ export function voteWarning(balance: number | undefined, cost: VoteCost | undefi
 export interface VoteRunway {
   ticket: number;
   pending: number;
-  /** Tickets the balance pays at the turns still to come. */
-  tickets: number;
-  /** The last epoch with a seat paid for. */
+  /** Whole epochs after this one with a seat: the next, already paid, and one per ticket the balance holds. */
+  epochs: number;
   lastEpoch: number;
-  /** To the end of that epoch at the current slot time. */
-  millis: number | null;
 }
 
 /** Each turn the account must hold rent, the ticket and its delegators' pending rewards, then burns the
@@ -51,19 +48,12 @@ export interface VoteRunway {
 export function voteRunway(
   balance: number | undefined,
   cost: VoteCost | undefined,
-  epoch: { epoch: number; slots_in_epoch: number } | undefined,
-  remainingNanos: number | undefined,
-  slotNanos: number | undefined,
+  epoch: number | undefined,
 ): VoteRunway | null {
-  if (balance === undefined || cost === undefined || cost.kind !== "ticket" || cost.lamports <= 0 || !epoch) {
-    return null;
-  }
+  if (balance === undefined || cost === undefined || cost.kind !== "ticket" || cost.lamports <= 0) return null;
+  if (epoch === undefined) return null;
   const rent = cost.minimum - cost.lamports;
   const tickets = Math.max(0, Math.floor((balance - rent - cost.pending) / cost.lamports));
   const epochs = tickets + 1;
-  const millis =
-    remainingNanos === undefined || !slotNanos
-      ? null
-      : (remainingNanos + epochs * epoch.slots_in_epoch * slotNanos) / 1e6;
-  return { ticket: cost.lamports, pending: cost.pending, tickets, lastEpoch: epoch.epoch + epochs, millis };
+  return { ticket: cost.lamports, pending: cost.pending, epochs, lastEpoch: epoch + epochs };
 }

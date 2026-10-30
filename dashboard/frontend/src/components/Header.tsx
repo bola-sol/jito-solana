@@ -1,4 +1,4 @@
-import type { ReactNode, ReactElement } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
 import { blockStamp, buildLabel, count, duration, percent, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type VoteRunway } from "../voteCost";
@@ -256,11 +256,41 @@ function Boot({ boot }: { boot: BootTimes }) {
 const LAG_SHOWN_MS = 3_000;
 
 function Connection({ state, lagMs }: { state: string; lagMs: number | null }) {
+  const pillRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLSpanElement>(null);
+  const pageWidth = useRef(0);
+  const [roomy, setRoomy] = useState(true);
   const behind = state === "open" && lagMs !== null && lagMs >= LAG_SHOWN_MS;
   const seconds = Math.round((lagMs ?? 0) / 1000);
-  const word = behind ? `${seconds} s behind` : state === "open" ? "live" : state;
+
+  // "page" is dropped only when it alone would push the pill onto a line of its own.
+  useLayoutEffect(() => {
+    const right = pillRef.current?.parentElement;
+    const before = right?.previousElementSibling;
+    const row = right?.parentElement;
+    if (!behind || !right || !before || !row) return;
+    if (pageRef.current) pageWidth.current = pageRef.current.getBoundingClientRect().width;
+    const shown = pageRef.current ? 0 : pageWidth.current;
+    const start = before.getBoundingClientRect().right + parseFloat(getComputedStyle(row).columnGap);
+    const end = start + right.getBoundingClientRect().width + shown;
+    const rowEnd = row.getBoundingClientRect().right;
+    const next = end <= rowEnd || end - pageWidth.current > rowEnd;
+    if (next !== roomy) setRoomy(next);
+  });
+
+  const word = behind ? (
+    <span>
+      {roomy && <span ref={pageRef}>page </span>}
+      {seconds} s behind
+    </span>
+  ) : state === "open" ? (
+    "live"
+  ) : (
+    state
+  );
   return (
     <div
+      ref={pillRef}
       className={`connection connection-${state}${behind ? " is-behind" : ""}`}
       title={behind ? "Updates are reaching this page late." : `websocket ${state}`}
     >

@@ -72,7 +72,7 @@ function FeePayersBody({ summary, epoch }: { summary: FeePayerSummary; epoch: Fe
           <span className="stat-label">failed in our slots</span>
           <span className="stat-value">{shareLabel(epoch.failed, epoch.transactions)}</span>
           <span className="stat-sub">
-            {count(epoch.failed)} of {count(epoch.transactions)} non-vote
+            {count(epoch.failed)} of {count(epoch.transactions)} transactions
           </span>
         </div>
         <div className="stat">
@@ -108,7 +108,7 @@ function FeePayersBody({ summary, epoch }: { summary: FeePayerSummary; epoch: Fe
         <div className="fee-epoch fee-head">
           <span>Epoch</span>
           <span className="fee-wide">Blocks</span>
-          <span className="fee-wide">Non-vote</span>
+          <span className="fee-wide">Transactions</span>
           <span>Failed here</span>
           <span>Elsewhere</span>
           <span>

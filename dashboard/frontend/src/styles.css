@@ -1302,6 +1302,11 @@ body {
   margin-bottom: -0.25em;
 }
 
+/* After the leader, which takes the head's spare room. */
+.slot-strip-leader + .fold-toggle {
+  margin-left: 0;
+}
+
 .slot-strip-mine {
   flex: none;
   align-self: center;
@@ -1323,9 +1328,9 @@ body {
     flex-basis: 100%;
   }
 
-  /* Whatever the head leaves beside "Slots" and "Leader", where that is less than 30ch. */
+  /* Whatever the head leaves beside "Slots", "Leader" and the toggle, where that is less than 30ch. */
   .slot-strip-leader-name {
-    max-width: calc(100cqw - 100px);
+    max-width: calc(100cqw - 146px);
   }
 }
 
@@ -1632,6 +1637,24 @@ body {
   border-radius: 1px 1px 0 0;
   background: var(--level, var(--level-incomplete));
   transition: height 0.2s ease;
+}
+
+/* Folded, the same slots as a ribbon in the bars' level colours, capped where ours. */
+.slot-ribbon {
+  display: flex;
+  gap: 1px;
+  height: 6px;
+  margin-top: 10px;
+}
+
+.slot-ribbon-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--level, var(--level-incomplete));
+}
+
+.slot-ribbon-cell.mine {
+  box-shadow: inset 0 2px 0 var(--ours);
 }
 
 /* ---- cluster versions ---- */

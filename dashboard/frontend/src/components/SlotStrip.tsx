@@ -8,6 +8,7 @@ import {
   type ReactElement,
 } from "react";
 import { count, shortKey, slotDelta } from "../format";
+import { readSlotStripFolded, writeSlotStripFolded } from "../layout";
 import { preloadLogo, upcomingIcons } from "../logo";
 import { turnSpan, type LeaderRef } from "../schedule";
 import { barHeight } from "../slotScale";
@@ -18,6 +19,8 @@ import { Logo } from "./Logo";
 import { Explain, PeakLine } from "./primitives";
 
 const STRIP_LENGTH = 64;
+
+const RIBBON_LABEL = `Last ${STRIP_LENGTH} slots by commitment level`;
 
 /** Four turns ahead, so a leader's logo is cached before its name appears. */
 const PRELOAD_SLOTS = 16;
@@ -66,6 +69,7 @@ export function SlotStrip(): ReactElement {
   );
   const fromLeaderMicros = store.get("summary", "finality_from_leader_micros");
 
+  const [folded, setFolded] = useState(readSlotStripFolded);
   // The strip advances a bar every slot, so entering it pins what is on screen and leaving jumps
   // back to live.
   const [pinned, setPinned] = useState<SlotEntry[] | null>(null);
@@ -164,6 +168,13 @@ export function SlotStrip(): ReactElement {
     setCursor(null);
   };
 
+  const toggleFolded = () => {
+    const next = !folded;
+    setFolded(next);
+    writeSlotStripFolded(next);
+    release();
+  };
+
   // The pointer leaving does not release a strip the keyboard holds, as when a click focuses it and
   // moves off.
   const onMouseLeave = (event: MouseEvent<HTMLDivElement>) => {
@@ -204,7 +215,7 @@ export function SlotStrip(): ReactElement {
   };
 
   return (
-    <section className="slot-strip">
+    <section className={`slot-strip${folded ? " is-folded" : ""}`}>
       <div className="slot-strip-head">
         <span className="slot-strip-title">Slots</span>
         {/* In the head, not on the strip: a minute covers more slots than
@@ -234,42 +245,53 @@ export function SlotStrip(): ReactElement {
           over the last minute
         </span>
         {newest && <StripLeader mine={newest.mine} leader={store.leaderOf(newest.slot, newest.mine)} />}
+        <button type="button" className="fold-toggle" aria-expanded={!folded} onClick={toggleFolded}>
+          {folded ? "open" : "fold"}
+        </button>
       </div>
 
-      <div
-        className="slot-bars"
-        tabIndex={0}
-        role="group"
-        aria-label="Recent slots. Use the arrow keys to inspect them."
-        onMouseEnter={() => setPinned(live)}
-        onMouseLeave={onMouseLeave}
-        onFocus={() => {
-          setPinned((current) => current ?? live);
-          // Only when nothing is chosen yet. A click focuses the strip as well
-          // as hovering a bar, and the hovered bar is the one that was meant.
-          setCursor((current) => current ?? (slots[slots.length - 1]?.slot ?? null));
-        }}
-        onBlur={release}
-        onKeyDown={onKeyDown}
-      >
-        {peakMs !== null && (
-          <PeakLine
-            fraction={barHeight(peakMs, nominalMs) / 100}
-            label={`${Math.round(peakMs)} ms peak`}
-          />
-        )}
-        {slots.map((entry) => (
-          <SlotBar
-            key={entry.slot}
-            entry={entry}
-            leader={store.leaderOf(entry.slot, entry.mine)}
-            active={entry.slot === cursor}
-            nominalMs={nominalMs}
-            onPoint={setCursor}
-          />
-        ))}
-        {turn && <TurnBracket first={turn.first} count={turn.count} bars={slots.length} />}
-      </div>
+      {folded ? (
+        <div className="slot-ribbon" role="img" aria-label={RIBBON_LABEL}>
+          {slots.map((entry) => (
+            <SlotCell key={entry.slot} entry={entry} />
+          ))}
+        </div>
+      ) : (
+        <div
+          className="slot-bars"
+          tabIndex={0}
+          role="group"
+          aria-label="Recent slots. Use the arrow keys to inspect them."
+          onMouseEnter={() => setPinned(live)}
+          onMouseLeave={onMouseLeave}
+          onFocus={() => {
+            setPinned((current) => current ?? live);
+            // Only when nothing is chosen yet. A click focuses the strip as well
+            // as hovering a bar, and the hovered bar is the one that was meant.
+            setCursor((current) => current ?? (slots[slots.length - 1]?.slot ?? null));
+          }}
+          onBlur={release}
+          onKeyDown={onKeyDown}
+        >
+          {peakMs !== null && (
+            <PeakLine
+              fraction={barHeight(peakMs, nominalMs) / 100}
+              label={`${Math.round(peakMs)} ms peak`}
+            />
+          )}
+          {slots.map((entry) => (
+            <SlotBar
+              key={entry.slot}
+              entry={entry}
+              leader={store.leaderOf(entry.slot, entry.mine)}
+              active={entry.slot === cursor}
+              nominalMs={nominalMs}
+              onPoint={setCursor}
+            />
+          ))}
+          {turn && <TurnBracket first={turn.first} count={turn.count} bars={slots.length} />}
+        </div>
+      )}
 
       <div className="slot-axis">
         {positions.map(({ marker, label, slot, explanation }) => (
@@ -408,6 +430,16 @@ function SlotDetail({ entry, leader }: { entry: SlotEntry | null | undefined; le
   );
 }
 
+/** A slot's level colour and our marking, the same classes on a bar and a ribbon cell. */
+export function slotClasses(entry: Pick<SlotEntry, "level" | "mine">): string {
+  return `level-${entry.level}${entry.mine ? " mine" : ""}`;
+}
+
+/** The folded strip's cell: colour only, nothing from its place in the row. */
+const SlotCell = memo(function SlotCell({ entry }: { entry: SlotEntry }) {
+  return <i className={`slot-ribbon-cell ${slotClasses(entry)}`} />;
+});
+
 /** Memoised on the entry, which the store keeps stable for slots that did
  *  not change. `onPoint` is the raw setState. */
 const SlotBar = memo(function SlotBar({
@@ -441,9 +473,7 @@ const SlotBar = memo(function SlotBar({
     // Labelled rather than titled: the detail row carries this visually, and a
     // native tooltip on top of it would only repeat itself over the bars.
     <div
-      className={`slot-bar level-${entry.level}${entry.mine ? " mine" : ""}${
-        active ? " is-active" : ""
-      }`}
+      className={`slot-bar ${slotClasses(entry)}${active ? " is-active" : ""}`}
       aria-label={title}
       onMouseEnter={() => onPoint(entry.slot)}
     >

@@ -1,7 +1,7 @@
 import type { ReactNode, ReactElement } from "react";
-import { blockStamp, buildLabel, duration, percent, sol, solCompact } from "../format";
+import { blockStamp, buildLabel, count, duration, percent, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
-import { identityWarning, voteWarning, type BalanceWarning } from "../voteCost";
+import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type VoteRunway } from "../voteCost";
 import { noSeatLabel } from "../admission";
 import { bootTimes, type BootTimes } from "../startup";
 import { useAlpenglow } from "../consensus";
@@ -24,6 +24,13 @@ export function Header(): ReactElement {
   const health = store.get("summary", "health");
   const voting = health === undefined ? undefined : health.vote !== "not_voting";
   const voteBalance = store.get("summary", "vote_balance");
+  const runway = voteRunway(
+    voteBalance,
+    voteCost,
+    store.get("epoch", "new"),
+    store.get("summary", "epoch_remaining_nanos"),
+    store.get("summary", "estimated_slot_duration_nanos"),
+  );
   const uptimeNanos = store.get("summary", "uptime_nanos");
   const boot = bootTimes(
     store.get("summary", "startup_progress"),
@@ -101,7 +108,12 @@ export function Header(): ReactElement {
               name="identity"
               warning={identityWarning(identityBalance, voteCost, voting)}
             />
-            <Balance value={voteBalance} name="vote" warning={voteWarning(voteBalance, voteCost)} />
+            <Balance
+              value={voteBalance}
+              name="vote"
+              warning={voteWarning(voteBalance, voteCost)}
+              detail={runway && <Runway runway={runway} />}
+            />
           </>
         )}
         <Bls />
@@ -117,10 +129,12 @@ function Balance({
   value,
   name,
   warning,
+  detail,
 }: {
   value: number | undefined;
   name: string;
   warning: BalanceWarning | null;
+  detail?: ReactNode;
 }) {
   return (
     <Figure
@@ -128,7 +142,39 @@ function Balance({
       label={warning?.label ?? name}
       tone={warning?.tone}
       title={warning?.title}
+      detail={detail}
     />
+  );
+}
+
+/** What the seat costs and how long the vote account's balance keeps it, with no income. */
+function Runway({ runway }: { runway: VoteRunway }) {
+  return (
+    <>
+      <span className="boot-row">
+        <b>Seat</b>
+        <span>{sol(runway.ticket, 4)} SOL an epoch</span>
+      </span>
+      {runway.pending > 0 && (
+        <span className="boot-row boot-sub">
+          <span>held for delegators</span>
+          <span>{sol(runway.pending, 4)} SOL</span>
+        </span>
+      )}
+      <span className="boot-rule" />
+      <span className="boot-row">
+        <b>Runway</b>
+        <span>{runway.millis === null ? "—" : duration(runway.millis, 2)}</span>
+      </span>
+      <span className="boot-row boot-sub">
+        <span>seated through epoch</span>
+        <span>{count(runway.lastEpoch)}</span>
+      </span>
+      <span className="boot-row boot-sub">
+        <span>tickets in hand</span>
+        <span>{count(runway.tickets)}</span>
+      </span>
+    </>
   );
 }
 

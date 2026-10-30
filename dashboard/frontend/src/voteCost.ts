@@ -5,7 +5,7 @@ import type { VoteCost } from "./types";
 export interface BalanceWarning {
   tone: "warn" | "bad";
   label: string;
-  title: string;
+  title?: string;
 }
 
 /** Under three days of votes warns, under a day is a fault; nothing on a node that is not the
@@ -25,11 +25,45 @@ export function identityWarning(
   return { tone: "warn", label: "identity, under three days of votes", title };
 }
 
-/** Below the minimum the next epoch fails; one ticket above it, the one after. */
+/** Below the minimum the next epoch fails; one ticket above it, the one after. Delegators' pending
+ *  rewards are held on top of the minimum. */
 export function voteWarning(balance: number | undefined, cost: VoteCost | undefined): BalanceWarning | null {
   if (balance === undefined || cost === undefined || cost.kind !== "ticket") return null;
-  if (balance >= cost.minimum + cost.lamports) return null;
-  const title = `The epoch's turn burns ${sol(cost.lamports)} SOL from the vote account, which must hold ${sol(cost.minimum)} SOL to stay in.`;
-  if (balance < cost.minimum) return { tone: "bad", label: "vote, below the admission ticket", title };
-  return { tone: "warn", label: "vote, one admission ticket left", title };
+  const minimum = cost.minimum + cost.pending;
+  if (balance >= minimum + cost.lamports) return null;
+  if (balance < minimum) return { tone: "bad", label: "vote, below the admission ticket" };
+  return { tone: "warn", label: "vote, one admission ticket left" };
+}
+
+export interface VoteRunway {
+  ticket: number;
+  pending: number;
+  /** Tickets the balance pays at the turns still to come. */
+  tickets: number;
+  /** The last epoch with a seat paid for. */
+  lastEpoch: number;
+  /** To the end of that epoch at the current slot time. */
+  millis: number | null;
+}
+
+/** Each turn the account must hold rent, the ticket and its delegators' pending rewards, then burns the
+ *  ticket; the turn into this epoch already paid for the next. */
+export function voteRunway(
+  balance: number | undefined,
+  cost: VoteCost | undefined,
+  epoch: { epoch: number; slots_in_epoch: number } | undefined,
+  remainingNanos: number | undefined,
+  slotNanos: number | undefined,
+): VoteRunway | null {
+  if (balance === undefined || cost === undefined || cost.kind !== "ticket" || cost.lamports <= 0 || !epoch) {
+    return null;
+  }
+  const rent = cost.minimum - cost.lamports;
+  const tickets = Math.max(0, Math.floor((balance - rent - cost.pending) / cost.lamports));
+  const epochs = tickets + 1;
+  const millis =
+    remainingNanos === undefined || !slotNanos
+      ? null
+      : (remainingNanos + epochs * epoch.slots_in_epoch * slotNanos) / 1e6;
+  return { ticket: cost.lamports, pending: cost.pending, tickets, lastEpoch: epoch.epoch + epochs, millis };
 }

@@ -1141,7 +1141,7 @@ export interface Turbine {
 
 export type VoteCost =
   | { kind: "fees"; per_day: number }
-  | { kind: "ticket"; lamports: number; minimum: number };
+  | { kind: "ticket"; lamports: number; minimum: number; pending: number };
 
 /** Under alpenglow the field holds lamports of reward. */
 export interface VoteCredits {

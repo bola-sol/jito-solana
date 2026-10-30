@@ -44,6 +44,7 @@ import { CertificatesSection } from "./CertificatesSection";
 import { CertFormationCard, type Pick } from "./CertFormationCard";
 import { FinalizationCard } from "./FinalizationCard";
 import { Copyable } from "./Copyable";
+import { IpAddress } from "./IpAddress";
 import { Card, Meter, Stat } from "./primitives";
 
 /** The server gathers the list on its five-second tick, and only while it is being asked for. */
@@ -660,10 +661,7 @@ const PeerLine = memo(function PeerLine({
       <td>{peer.client || "—"}</td>
       <td className="is-mono">
         {peer.ip ? (
-          <span className="gossip-ip">
-            <Copyable text={peer.ip} />
-            {peer.country && <span className="country-code">{peer.country}</span>}
-          </span>
+          <IpAddress ip={peer.ip} country={peer.country} />
         ) : (
           "—"
         )}

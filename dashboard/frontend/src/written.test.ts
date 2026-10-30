@@ -19,6 +19,7 @@ function row(identity: string, ours: number, everywhere: number, delinquent = fa
     client: null,
     version: null,
     ip: null,
+    country: null,
     left_out_of_ours: ours,
     left_out_everywhere: everywhere,
     last_vote: null,
@@ -103,7 +104,7 @@ describe("the written figures", () => {
 });
 
 function writer(identity: string, certificates: number, misses: number): MissWriter {
-  return { identity, name: null, client: null, version: null, ip: null, certificates, misses };
+  return { identity, name: null, client: null, version: null, ip: null, country: null, certificates, misses };
 }
 
 function misses(writers: MissWriter[], places: [number, MissPlace][], rewarded: number): MissList {

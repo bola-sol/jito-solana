@@ -23,6 +23,7 @@ import {
   type WrittenKind,
 } from "../written";
 import { Copyable } from "./Copyable";
+import { IpAddress } from "./IpAddress";
 import { Hinted } from "./MissesPanel";
 import { WriterName } from "./WriterName";
 
@@ -265,7 +266,7 @@ function WrittenRowView({
           <FindInPeers identity={row.identity} onFind={onFind} />
         </span>
       </span>
-      <span className="written-ip">{row.ip ? <Copyable text={row.ip} /> : "—"}</span>
+      <span className="written-ip">{row.ip ? <IpAddress ip={row.ip} country={row.country} /> : "—"}</span>
       <span className="written-ours">
         {count(row.left_out_of_ours)} of {count(written)}
       </span>
@@ -392,7 +393,7 @@ function WriterRowView({
           <FindInPeers identity={writer.identity} onFind={onFind} />
         </span>
       </span>
-      <span className="written-ip">{writer.ip ? <Copyable text={writer.ip} /> : "—"}</span>
+      <span className="written-ip">{writer.ip ? <IpAddress ip={writer.ip} country={writer.country} /> : "—"}</span>
       <span className="written-ours">
         {count(writer.misses)} of {count(writer.certificates)}
       </span>

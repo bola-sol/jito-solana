@@ -412,6 +412,7 @@ export interface CertificateValidator {
   identity: string;
   name: string | null;
   ip: string | null;
+  country: string | null;
 }
 
 export interface TxVersions {
@@ -1197,6 +1198,7 @@ export interface MissWriter {
   client: string | null;
   version: string | null;
   ip: string | null;
+  country: string | null;
   certificates: number;
   misses: number;
 }
@@ -1205,6 +1207,7 @@ export interface MissValidator {
   identity: string;
   name: string | null;
   ip: string | null;
+  country: string | null;
   last_vote: number | null;
   delinquent: boolean;
   /** When this node last heard it over gossip, in unix milliseconds. */
@@ -1246,6 +1249,7 @@ export interface WrittenRow {
   client: string | null;
   version: string | null;
   ip: string | null;
+  country: string | null;
   left_out_of_ours: number;
   left_out_everywhere: number;
   /** The oldest last vote among its staked vote accounts; null where one never voted or it has none. */

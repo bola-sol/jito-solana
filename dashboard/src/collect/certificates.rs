@@ -4,7 +4,7 @@
 use {
     super::{Collector, is_delinquent},
     crate::{
-        certs,
+        certs, geoip,
         history::HAS_CLOCK,
         produced::{BlockCertificate, CertificateValidator},
         proto::TOPIC_SUMMARY,
@@ -77,19 +77,20 @@ struct Described {
     client: Option<String>,
     version: Option<String>,
     ip: Option<String>,
+    country: Option<&'static str>,
     heard_millis: Option<u64>,
 }
 
 fn describe(key: &Pubkey, info: &ValidatorInfoCache, heard: &Contacts) -> Described {
     let entry = heard.get(key);
     let contact = entry.map(|entry| entry.contact);
+    let gossip = contact.and_then(|contact| contact.gossip());
     Described {
         name: info.get(key).and_then(|info| info.name.clone()),
         client: contact.map(|contact| contact.version().client().to_string()),
         version: contact.map(|contact| contact.version().to_string()),
-        ip: contact
-            .and_then(|contact| contact.gossip())
-            .map(|addr| addr.ip().to_string()),
+        ip: gossip.map(|addr| addr.ip().to_string()),
+        country: gossip.and_then(|addr| geoip::country(addr.ip())),
         heard_millis: entry.map(|entry| entry.at_millis),
     }
 }
@@ -142,6 +143,7 @@ pub struct WrittenRow {
     pub client: Option<String>,
     pub version: Option<String>,
     pub ip: Option<String>,
+    pub country: Option<&'static str>,
     pub left_out_of_ours: u64,
     pub left_out_everywhere: u64,
     pub last_vote: Option<Slot>,
@@ -156,6 +158,7 @@ pub struct MissValidator {
     pub identity: String,
     pub name: Option<String>,
     pub ip: Option<String>,
+    pub country: Option<&'static str>,
     pub last_vote: Option<Slot>,
     pub delinquent: bool,
     pub heard_millis: Option<u64>,
@@ -169,6 +172,7 @@ pub struct MissWriter {
     pub client: Option<String>,
     pub version: Option<String>,
     pub ip: Option<String>,
+    pub country: Option<&'static str>,
     pub certificates: u64,
     pub misses: u64,
 }
@@ -342,6 +346,7 @@ impl Collector {
                             identity: key.to_string(),
                             name: described.name,
                             ip: described.ip,
+                            country: described.country,
                             last_vote,
                             delinquent,
                             heard_millis: described.heard_millis,
@@ -361,6 +366,7 @@ impl Collector {
                             client: described.client,
                             version: described.version,
                             ip: described.ip,
+                            country: described.country,
                             certificates: tally.writer_certificates(&key),
                             misses: 0,
                         });
@@ -402,6 +408,7 @@ impl Collector {
                     client: described.client,
                     version: described.version,
                     ip: described.ip,
+                    country: described.country,
                     left_out_of_ours: summary.unpaid_by_rank.get(rank).copied().unwrap_or(0),
                     left_out_everywhere: summary.unpaid_everywhere.get(rank).copied().unwrap_or(0),
                     last_vote,
@@ -477,13 +484,15 @@ impl Collector {
                     let key = map
                         .and_then(|map| map.get_pubkey_stake_entry(at))
                         .map(|entry| entry.node_pubkey)?;
+                    let ip = heard
+                        .get(&key)
+                        .and_then(|entry| entry.contact.gossip())
+                        .map(|addr| addr.ip());
                     Some(CertificateValidator {
                         identity: key,
                         name: info.get(&key).and_then(|info| info.name.clone()),
-                        ip: heard
-                            .get(&key)
-                            .and_then(|entry| entry.contact.gossip())
-                            .map(|addr| addr.ip()),
+                        ip,
+                        country: ip.and_then(geoip::country),
                     })
                 })
                 .collect();

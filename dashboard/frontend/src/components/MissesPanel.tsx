@@ -23,6 +23,7 @@ import {
 import type { MissList, MissPlace, MissRow, MissValidator, MissWriter } from "../types";
 import { useStore } from "../useStore";
 import { Copyable } from "./Copyable";
+import { IpAddress } from "./IpAddress";
 import { WriterName } from "./WriterName";
 
 /** Explanations sit under the legend because a scrolling table clips bubbles. */
@@ -307,7 +308,7 @@ const Row = memo(function Row({
             "—"
           )}
         </span>
-        <span className="misses-ip">{writer?.ip ? <Copyable text={writer.ip} /> : "—"}</span>
+        <span className="misses-ip">{writer?.ip ? <IpAddress ip={writer.ip} country={writer.country} /> : "—"}</span>
         <span className="misses-paid">
           {count(row.paid_ranks)} of {count(ranks)}
         </span>
@@ -333,7 +334,7 @@ const Row = memo(function Row({
                 {validator.no_gossip && <span className="misses-out-no-gossip">no gossip</span>}
                 {validator.delinquent && <span className="misses-out-delinquent">delinquent</span>}
                 <Copyable text={validator.identity} label={shortKey(validator.identity, 6, 5)} />
-                {validator.ip && <Copyable text={validator.ip} />}
+                {validator.ip && <IpAddress ip={validator.ip} country={validator.country} />}
               </span>
             );
           })}

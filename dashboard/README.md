@@ -275,7 +275,8 @@ generation already does per account is not measurable.
 
 ## IP geolocation
 
-The Schedule and Gossip pages show a country code beside each gossip address,
+The Schedule and Gossip pages, the votes not rewarded list and a block's
+left-out list show a country code beside each gossip address,
 and Leader Handoff beside each leader's name, the Cluster page totals stake by
 country and continent, and the finalization share is
 compared with validators in our own country,

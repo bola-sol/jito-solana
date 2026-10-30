@@ -47,6 +47,7 @@ import {
 } from "../slotDetail";
 import type { WaterfallRow } from "../waterfall";
 import { Copyable } from "./Copyable";
+import { IpAddress } from "./IpAddress";
 import { FeePayersFold } from "./FeePayersFold";
 import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
@@ -695,7 +696,7 @@ function BlockCertificateStrip({ certificate }: { certificate: BlockCertificate 
             <span className="misses-out" key={validator.identity}>
               <b>{validator.name ?? shortKey(validator.identity, 6, 5)}</b>
               <Copyable text={validator.identity} label={shortKey(validator.identity, 8, 8)} />
-              {validator.ip && <Copyable text={validator.ip} />}
+              {validator.ip && <IpAddress ip={validator.ip} country={validator.country} />}
             </span>
           ))}
         </div>

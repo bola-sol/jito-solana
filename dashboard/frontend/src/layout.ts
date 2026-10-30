@@ -33,15 +33,21 @@ export function writeCertificatesOpen(open: boolean): void {
   writeStored(CERTIFICATES_STORAGE_KEY, open ? "open" : "closed");
 }
 
-export const FOLDED_STORAGE_KEY = "agave-dashboard-folded";
+/** The folds the viewer opened; every fold starts folded. */
+export const OPENED_STORAGE_KEY = "agave-dashboard-opened";
 
-export function readFolded(): string[] {
-  const held = readStored(FOLDED_STORAGE_KEY);
+function readOpened(): string[] {
+  const held = readStored(OPENED_STORAGE_KEY);
   return held ? held.split(",").filter(Boolean) : [];
 }
 
-export function writeFolded(folded: string[]): void {
-  writeStored(FOLDED_STORAGE_KEY, folded.join(","));
+export function readFoldOpen(id: string): boolean {
+  return readOpened().includes(id);
+}
+
+export function writeFoldOpen(id: string, open: boolean): void {
+  const rest = readOpened().filter((held) => held !== id);
+  writeStored(OPENED_STORAGE_KEY, (open ? [...rest, id] : rest).join(","));
 }
 
 export type ScheduleColumns = "status" | "fees" | "timing" | "load";

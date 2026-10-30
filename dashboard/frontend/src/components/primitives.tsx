@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
-import { readFolded, writeFolded } from "../layout";
+import { readFoldOpen, writeFoldOpen } from "../layout";
 
 const EDGE_MARGIN = 12;
 
@@ -218,29 +218,27 @@ export function Section({
   );
 }
 
-/** Remembered open or folded, unless it starts folded on each visit. */
+/** Folded until opened, and kept open across visits unless `remember` is off. */
 export function Fold({
   id,
   title,
   summary,
   children,
-  startFolded = false,
+  remember = true,
   className,
 }: {
   id: string;
   title: string;
   summary: ReactNode;
   children: ReactNode;
-  startFolded?: boolean;
+  remember?: boolean;
   className?: string;
 }): ReactElement {
-  const [open, setOpen] = useState(() => !startFolded && !readFolded().includes(id));
+  const [open, setOpen] = useState(() => remember && readFoldOpen(id));
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    if (startFolded) return;
-    const rest = readFolded().filter((held) => held !== id);
-    writeFolded(next ? rest : [...rest, id]);
+    if (remember) writeFoldOpen(id, next);
   };
 
   return (

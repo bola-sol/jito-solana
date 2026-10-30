@@ -70,7 +70,7 @@ export function snapshotWriting(
 export function snapshotWritten(written: SnapshotWritten): string {
   const behind =
     written.fell_behind_slots > 0
-      ? `, replay fell ${count(written.fell_behind_slots)} slots behind the cluster`
+      ? `, replay fell ${count(written.fell_behind_slots)} behind the cluster`
       : "";
   return `last snapshot ${count(written.slot)} took ${duration(written.took_millis, 2)}${behind}`;
 }

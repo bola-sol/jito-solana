@@ -28,6 +28,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
+    solana_ledger::blockstore::Blockstore,
     solana_pubkey::Pubkey,
     solana_rpc::optimistically_confirmed_bank_tracker::{
         BankNotification, BankNotificationReceiver,
@@ -84,6 +85,8 @@ const CLUSTER_FIGURES_EVERY: Duration = Duration::from_secs(30);
 
 /// The tip counts the slot still arriving, so a node in step reads a slot or two behind it.
 const IN_STEP_SLOTS: u64 = 4;
+/// Parents walked down from the tip before the rest of the distance is counted in slots.
+const BEHIND_WALK_BLOCKS: u64 = 32;
 const SNAPSHOT_READ: Duration = Duration::from_secs(1);
 
 /// Replies to requests, encoded by the collector and handed out by the server as they stand.
@@ -710,7 +713,11 @@ impl Collector {
         // readers want it every tick.
         let cluster_tip = self.ctx.cluster_tip();
         self.cluster_tip = cluster_tip;
-        self.mark_caught_cluster(cluster_tip);
+        // Measured against the cluster's tip, not this node's own view, which
+        // lags when replay lags.
+        let behind_cluster = cluster_tip
+            .map(|tip| blocks_behind(&self.ctx.blockstore, tip, self.last_completed_slot));
+        self.mark_caught_cluster(behind_cluster);
         self.collect_leaders(&root_bank, highest_slot);
         self.collect_slot_levels(&root_bank, &frozen);
         self.store_failed(&working_bank);
@@ -719,7 +726,7 @@ impl Collector {
         self.collect_turns(completed);
         // From the working bank: the root trails the tip by the thirty-two slots it
         // takes to root.
-        self.collect_identity_and_vote(&working_bank, cluster_tip);
+        self.collect_identity_and_vote(&working_bank, behind_cluster);
         self.collect_epoch(&working_bank, completed_height);
         self.debounces.consensus.publish(
             &self.publisher,
@@ -1769,7 +1776,7 @@ impl Collector {
         }
     }
 
-    fn collect_identity_and_vote(&mut self, bank: &Bank, cluster_tip: Option<Slot>) {
+    fn collect_identity_and_vote(&mut self, bank: &Bank, behind_cluster: Option<u64>) {
         let identity = self.ctx.identity();
         self.debounces.identity_key.publish(
             &self.publisher,
@@ -1898,9 +1905,6 @@ impl Collector {
             .vote_slot
             .publish(&self.publisher, TOPIC_SUMMARY, "vote_slot", last_vote);
 
-        // Measured against the cluster's tip, not this node's own view, which
-        // lags when replay lags.
-        let behind_cluster = cluster_tip.map(|tip| tip.saturating_sub(self.last_completed_slot));
         if let Some(behind) = behind_cluster {
             self.snapshots.note_behind(behind);
         }
@@ -2219,14 +2223,14 @@ impl Collector {
     }
 
     /// On the fast path, since the health figures only run with a viewer.
-    fn mark_caught_cluster(&mut self, cluster_tip: Option<Slot>) {
+    fn mark_caught_cluster(&mut self, behind_cluster: Option<u64>) {
         if self.caught_cluster {
             return;
         }
-        let Some(tip) = cluster_tip else {
+        let Some(behind) = behind_cluster else {
             return;
         };
-        if tip > self.last_completed_slot.saturating_add(IN_STEP_SLOTS) {
+        if behind > IN_STEP_SLOTS {
             self.trailed_cluster = true;
             return;
         }
@@ -2335,6 +2339,26 @@ impl Collector {
             self.metrics_tap.stake_in_gossip(),
         );
     }
+}
+
+/// Blocks on the tip's chain that replay has yet to complete, so slots the cluster skipped are not
+/// distance. Past the walk, or below a slot whose parent is unknown, the rest is counted in slots.
+fn blocks_behind(blockstore: &Blockstore, tip: Slot, completed: Slot) -> u64 {
+    let mut slot = tip;
+    let mut blocks = 0u64;
+    while slot > completed && blocks < BEHIND_WALK_BLOCKS {
+        let Some(parent) = blockstore
+            .meta(slot)
+            .ok()
+            .flatten()
+            .and_then(|meta| meta.parent_slot)
+        else {
+            break;
+        };
+        blocks = blocks.saturating_add(1);
+        slot = parent;
+    }
+    blocks.saturating_add(slot.saturating_sub(completed))
 }
 
 fn measure_replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
@@ -2630,6 +2654,7 @@ mod tests {
         solana_core::validator::ValidatorStartProgress,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path_auto_delete},
         solana_net_utils::SocketAddrSpace,
         solana_signer::Signer,
         std::net::SocketAddr,
@@ -3427,6 +3452,39 @@ mod tests {
         harness.collector().tick();
 
         assert_eq!(published_number(&harness, "behind_cluster"), Some(0));
+    }
+
+    #[test]
+    fn test_a_skipped_turn_is_not_distance() {
+        // The next leader's first shred lands while its parent four slots back is still the last
+        // completed.
+        let harness = fixture();
+        harness.advance_to(64);
+        let (shreds, _) = make_slot_entries(69, 64, 1);
+        harness.ctx.blockstore.insert_shreds(shreds, true).unwrap();
+        harness.collector().tick();
+
+        assert_eq!(published_number(&harness, "behind_cluster"), Some(1));
+    }
+
+    #[test]
+    fn test_blocks_behind_walks_the_tip_chain() {
+        let ledger = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger.path()).unwrap();
+        // 11 to 14 skipped, 15 and 16 built on 10, 20 a fork off 8.
+        for (slot, parent) in [(10, 9), (15, 10), (16, 15), (20, 8)] {
+            let (shreds, _) = make_slot_entries(slot, parent, 1);
+            blockstore.insert_shreds(shreds, true).unwrap();
+        }
+        assert_eq!(blocks_behind(&blockstore, 15, 10), 1);
+        assert_eq!(blocks_behind(&blockstore, 16, 10), 2);
+        assert_eq!(blocks_behind(&blockstore, 20, 10), 1);
+        assert_eq!(blocks_behind(&blockstore, 10, 10), 0);
+        assert_eq!(blocks_behind(&blockstore, 9, 10), 0);
+        // No shreds at the tip: counted in slots.
+        assert_eq!(blocks_behind(&blockstore, 30, 10), 20);
+        // 9 has no known parent, so the rest down to 4 is counted in slots.
+        assert_eq!(blocks_behind(&blockstore, 16, 4), 8);
     }
 
     #[test]

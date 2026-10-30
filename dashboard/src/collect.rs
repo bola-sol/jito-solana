@@ -352,6 +352,8 @@ pub enum VoteCost {
         /// What the vote account must hold at the turn: rent exemption plus
         /// the ticket.
         minimum: u64,
+        /// Rewards our vote account holds for its delegators, which it must keep on top of the minimum.
+        pending: u64,
     },
 }
 
@@ -1812,16 +1814,19 @@ impl Collector {
             "vote_balance",
             bank.get_balance(&self.ctx.vote_account),
         );
-        self.debounces.vote_cost.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "vote_cost",
-            compute_vote_cost(bank),
-        );
 
         let epoch = bank.epoch();
         let vote_accounts = bank.vote_accounts();
         let mine = vote_accounts.get(&self.ctx.vote_account);
+        let pending = mine.map_or(0, |(_, account)| {
+            account.vote_state_view().pending_delegator_rewards()
+        });
+        self.debounces.vote_cost.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "vote_cost",
+            compute_vote_cost(bank, pending),
+        );
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
         // From the same bank as our own credits, so the share never compares two moments.
         let staked_credits: Vec<u64> = vote_accounts
@@ -2348,13 +2353,14 @@ fn measure_replay_rate(window: &VecDeque<(Instant, Slot)>) -> Option<f64> {
     Some(newest.saturating_sub(*oldest) as f64 / span.as_secs_f64())
 }
 
-fn compute_vote_cost(bank: &Bank) -> VoteCost {
+fn compute_vote_cost(bank: &Bank, pending: u64) -> VoteCost {
     if bank.is_alpenglow() {
         let minimum = bank.minimum_vote_account_balance_for_vat();
         let rent = bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of());
         return VoteCost::Ticket {
             lamports: minimum.saturating_sub(rent),
             minimum,
+            pending,
         };
     }
     let ns_per_slot = bank.ns_per_slot_at_slot(bank.slot()).max(1);

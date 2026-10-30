@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
-import { count, duration, percent } from "../format";
+import { bytes, count, duration, percent } from "../format";
+import { diskAlarm, memoryAlarm } from "../host";
 import { followingRun } from "../schedule";
 import { agoLabel, snapshotLine } from "../snapshot";
 import { catchUpClause, verdictOf } from "../verdict";
@@ -16,6 +17,9 @@ const CATCH_UP_ROOM = `Catching up, ${duration(3_599_000, 2)} to go.`;
 const ROOM_COUNTDOWN = duration(86_399_000, 2);
 const ROOM_AGE = agoLabel(3_540_000);
 const ROOM_PERCENT = percent(0.1);
+const ROOM_FULL = percent(1, 0);
+const ROOM_MEMORY = percent(0.1, 0);
+const ROOM_BYTES = bytes(1023.99 * 1024 ** 3);
 
 export function Verdict(): ReactElement {
   const store = useStore();
@@ -70,6 +74,7 @@ function Clause({ children }: { children: ReactNode }) {
 function Clauses({ room = false }: { room?: boolean }) {
   return (
     <>
+      <HostAlarms room={room} />
       <Leader room={room} />
       <Skips room={room} />
       <Repair room={room} />
@@ -87,6 +92,37 @@ function CatchUp() {
   );
   if (clause === null) return null;
   return <Clause>{clause}</Clause>;
+}
+
+/** Only once the Host card would show amber or red: a full ledger stops the validator. */
+function HostAlarms({ room }: { room: boolean }) {
+  const host = useStore().get("summary", "host");
+  const disk = diskAlarm(host);
+  const memory = memoryAlarm(host);
+  return (
+    <>
+      {disk && (
+        <Clause>
+          <Explain text={`${disk.filesystem.path}, ${bytes(disk.filesystem.total)} in all.`}>
+            {capitalise(disk.filesystem.name)} disk
+          </Explain>{" "}
+          <b className={`tone-${disk.tone}`}>{room ? ROOM_FULL : percent(disk.share, 0)}</b> full,{" "}
+          <b>{room ? ROOM_BYTES : bytes(disk.filesystem.available)}</b> left.
+        </Clause>
+      )}
+      {memory && (
+        <Clause>
+          <b className={`tone-${memory.tone}`}>{room ? ROOM_MEMORY : percent(memory.available / memory.total, 0)}</b> of{" "}
+          <Explain text={`${bytes(memory.available)} of ${bytes(memory.total)} available.`}>memory</Explain>{" "}
+          left.
+        </Clause>
+      )}
+    </>
+  );
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function Leader({ room }: { room: boolean }) {

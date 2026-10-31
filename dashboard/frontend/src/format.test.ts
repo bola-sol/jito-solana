@@ -88,6 +88,15 @@ describe("duration", () => {
     expect(duration(604_740_000, 2)).toBe("6d 23h");
   });
 
+  it("gives each shorter form as the start of the longer, which the header splits on", () => {
+    for (const millis of [undefined, 0, 45_000, 171_000, 3_723_000, 86_400_000, 604_740_000]) {
+      const one = duration(millis, 1);
+      const two = duration(millis, 2);
+      expect(two.startsWith(one)).toBe(true);
+      expect(duration(millis).startsWith(two)).toBe(true);
+    }
+  });
+
   it("refuses a negative rather than rendering a wrapped figure", () => {
     expect(duration(-1)).toBe("—");
   });

@@ -136,6 +136,7 @@ body {
 /* ---- header ---- */
 
 .header {
+  container: header / inline-size;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -304,6 +305,121 @@ body {
   margin-bottom: 3px;
   font-size: 11px;
   color: var(--text-faint);
+}
+
+/* A figure's text and tile parts; the queries below choose. */
+.figure-tile,
+.figure-short,
+.figure-note,
+.figure-pad {
+  display: none;
+}
+
+/* Below the width the text needs on one line with the widest likely figures, each figure is a tile
+   as wide as its widest likely value makes it, so a changing figure never moves the tiles. */
+@container header (width < 830px) {
+  .figures {
+    gap: 4px;
+    font-size: 11px;
+  }
+
+  .figure {
+    gap: 4px;
+    padding: 3px 6px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+  }
+
+  /* The characters the value is short of its widest, after the label; the margin takes back the gap. */
+  .figure-pad {
+    display: block;
+    width: calc(var(--pad) * 1ch);
+    margin-left: -4px;
+    font: 500 13px var(--mono);
+  }
+
+  .figure-text,
+  .figure-sol,
+  .figure-unit-3 {
+    display: none;
+  }
+
+  .figure-tile {
+    display: inline;
+  }
+
+  .figure-panel-label.figure-tile {
+    display: block;
+  }
+
+  /* Warnings take a line of their own under the tiles. */
+  .figure-alert,
+  .figure-note {
+    flex-basis: 100%;
+    order: 1;
+    padding: 0;
+    background: none;
+    white-space: normal;
+  }
+
+  .figure-note {
+    display: block;
+  }
+}
+
+/* SOL only where the stake and both balances all have room for it. */
+@container header (601px <= width < 830px) or (365px <= width < 509px) {
+  .figure-sol {
+    display: inline;
+  }
+}
+
+/* Two rows where five tiles do not fit in one: stake, commission and uptime over the balances. */
+@container header (width < 509px) {
+  .figures {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+  }
+
+  .figure-stake {
+    grid-area: 1 / 1;
+  }
+
+  .figure-commission {
+    grid-area: 1 / 2;
+  }
+
+  .figure-uptime {
+    grid-area: 1 / 3;
+  }
+
+  .figure-identity {
+    grid-area: 2 / 1;
+  }
+
+  .figure-vote {
+    grid-area: 2 / 2;
+  }
+
+  .figure-alert,
+  .figure-note {
+    grid-column: 1 / -1;
+  }
+}
+
+@container header (width < 325px) {
+  .figure-long,
+  .figure-unit-2 {
+    display: none;
+  }
+
+  .figure-short {
+    display: inline;
+  }
+
+  .figure-pad {
+    width: calc(var(--pad-short) * 1ch);
+  }
 }
 
 .boot-row {

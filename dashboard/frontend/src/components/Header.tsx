@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from "react";
-import { blockStamp, buildLabel, count, duration, percent, sol, solCompact } from "../format";
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type ReactElement } from "react";
+import { blockStamp, buildLabel, count, duration, LAMPORTS_PER_SOL, percent, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type VoteRunway } from "../voteCost";
 import { noSeatLabel } from "../admission";
@@ -48,7 +48,11 @@ export function Header({ folds }: { folds: boolean }): ReactElement {
   // The balances can be taken off a screen others see; remembered per host.
   const balancesHidden = useBalancesHidden();
 
-  const up = duration(uptimeNanos === undefined ? undefined : uptimeNanos / 1e6);
+  const upMillis = uptimeNanos === undefined ? undefined : uptimeNanos / 1e6;
+  const staked = solCompact(stake?.activated_stake);
+  const commissionText = commission === null || commission === undefined ? "—" : `${commission}%`;
+  const identityAlarm = identityWarning(identityBalance, voteCost, voting);
+  const voteAlarm = voteWarning(voteBalance, voteCost);
 
   return (
     <header className="header">
@@ -83,11 +87,24 @@ export function Header({ folds }: { folds: boolean }): ReactElement {
 
       <div className="figures">
         <Figure
-          value={`${solCompact(stake?.activated_stake)} SOL`}
-          label={`staked, ${percent(stake?.share, 4)} of the cluster`}
+          kind="stake"
+          value={
+            <>
+              {staked}
+              <Sol />
+            </>
+          }
+          pad={shortOf(staked, 6)}
+          label={
+            <span>
+              staked<span className="figure-text">, {percent(stake?.share, 4)} of the cluster</span>
+            </span>
+          }
           detail={
             voteKey ? (
               <>
+                <span className="figure-panel-label figure-tile">Share of the cluster</span>
+                <span className="figure-tile">{percent(stake?.share, 4)}</span>
                 <span className="figure-panel-label">Vote account</span>
                 <Copyable text={voteKey} />
               </>
@@ -95,52 +112,119 @@ export function Header({ folds }: { folds: boolean }): ReactElement {
           }
         />
         <Figure
-          value={commission === null || commission === undefined ? "—" : `${commission}%`}
-          label="commission"
+          kind="commission"
+          value={commissionText}
+          pad={shortOf(commissionText, 4)}
+          label={
+            <>
+              <span className="figure-long">commission</span>
+              <span className="figure-short" aria-hidden="true">
+                comm.
+              </span>
+            </>
+          }
         />
         {!balancesHidden && (
           <>
+            <Balance kind="identity" value={identityBalance} name="identity" warning={identityAlarm} />
             <Balance
-              value={identityBalance}
-              name="identity"
-              warning={identityWarning(identityBalance, voteCost, voting)}
-            />
-            <Balance
+              kind="vote"
               value={voteBalance}
               name="vote"
-              warning={voteWarning(voteBalance, voteCost)}
+              warning={voteAlarm}
               detail={runway && <Runway runway={runway} />}
             />
           </>
         )}
         <Bls />
         <Seat />
-        <Figure value={up} label="uptime" detail={boot && <Boot boot={boot} />} />
+        <Figure
+          kind="uptime"
+          value={<Uptime millis={upMillis} />}
+          pad={shortOf(duration(upMillis, 2), 8)}
+          padShort={shortOf(duration(upMillis, 1), 4)}
+          label="uptime"
+          detail={boot && <Boot boot={boot} />}
+        />
+        {!balancesHidden &&
+          [identityAlarm, voteAlarm].map(
+            (alarm) =>
+              alarm && (
+                <span key={alarm.label} className={`figure-note tone-${alarm.tone}`} title={alarm.title}>
+                  {alarm.label}
+                </span>
+              ),
+          )}
       </div>
     </header>
   );
 }
 
-/** Hidden with the balances toggle, warning and all. */
+/** Hidden with the balances toggle, warning and all. As a tile, 1,000 SOL and more is compacted like the
+ *  stake and the warning goes to a line of its own. */
 function Balance({
+  kind,
   value,
   name,
   warning,
   detail,
 }: {
+  kind: FigureKind;
   value: number | undefined;
   name: string;
   warning: BalanceWarning | null;
   detail?: ReactNode;
 }) {
+  const compact = value !== undefined && value >= 1_000 * LAMPORTS_PER_SOL;
   return (
     <Figure
-      value={`${sol(value)} SOL`}
-      label={warning?.label ?? name}
+      kind={kind}
+      pad={shortOf(compact ? solCompact(value) : sol(value), 6)}
+      value={
+        <>
+          {compact ? (
+            <>
+              <span className="figure-text">{sol(value)}</span>
+              <span className="figure-tile">{solCompact(value)}</span>
+            </>
+          ) : (
+            sol(value)
+          )}
+          <Sol />
+        </>
+      }
+      label={
+        warning ? (
+          <>
+            <span className="figure-text">{warning.label}</span>
+            <span className="figure-tile">{name}</span>
+          </>
+        ) : (
+          name
+        )
+      }
       tone={warning?.tone}
       title={warning?.title}
       detail={detail}
     />
+  );
+}
+
+/** As a tile, shown only where the stake and both balances all have room for it. */
+function Sol() {
+  return <span className="figure-sol"> SOL</span>;
+}
+
+/** Three units as text, two as a tile and one on the narrowest. */
+function Uptime({ millis }: { millis: number | undefined }) {
+  const one = duration(millis, 1);
+  const two = duration(millis, 2);
+  return (
+    <>
+      {one}
+      <span className="figure-unit-2">{two.slice(one.length)}</span>
+      <span className="figure-unit-3">{duration(millis).slice(two.length)}</span>
+    </>
   );
 }
 
@@ -181,6 +265,7 @@ function Bls() {
   if (set !== false) return null;
   return (
     <Figure
+      kind="alert"
       value="none"
       label={alpenglow ? "BLS key, votes are not counted without it" : "BLS key, needed before alpenglow"}
       tone={alpenglow ? "bad" : "warn"}
@@ -191,24 +276,40 @@ function Bls() {
 function Seat() {
   const admission = useStore().get("summary", "admission");
   if (!admission || admission.seat) return null;
-  return <Figure value="no seat" label={noSeatLabel(admission)} tone="warn" />;
+  return <Figure kind="alert" value="no seat" label={noSeatLabel(admission)} tone="warn" />;
 }
 
+type FigureKind = "stake" | "commission" | "identity" | "vote" | "uptime" | "alert";
+
+/** The characters a tile's value is short of the widest it can be, made up after its label so the tile
+ *  keeps one width. */
+function shortOf(value: string, widest: number): number {
+  return Math.max(0, widest - value.length);
+}
+
+/** `kind` places the figure when the header lays them out as tiles; `padShort` is `pad` on the
+ *  narrowest. */
 function Figure({
+  kind,
   value,
   label,
   detail,
   tone,
   title,
+  pad = 0,
+  padShort = pad,
 }: {
-  value: string;
-  label: string;
+  kind: FigureKind;
+  value: ReactNode;
+  label: ReactNode;
   detail?: ReactNode;
   tone?: "warn" | "bad";
   title?: string;
+  pad?: number;
+  padShort?: number;
 }) {
   return (
-    <span className={`figure${tone ? ` tone-${tone}` : ""}`} title={title}>
+    <span className={`figure figure-${kind}${tone ? ` tone-${tone}` : ""}`} title={title}>
       <b>{value}</b>
       {detail ? (
         <Explain interactive className="figure-detail" text={detail}>
@@ -216,6 +317,12 @@ function Figure({
         </Explain>
       ) : (
         label
+      )}
+      {(pad > 0 || padShort > 0) && (
+        <span
+          className="figure-pad"
+          style={{ "--pad": String(pad), "--pad-short": String(padShort) } as CSSProperties}
+        />
       )}
     </span>
   );

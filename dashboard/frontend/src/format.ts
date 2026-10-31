@@ -1,4 +1,4 @@
-const LAMPORTS_PER_SOL = 1_000_000_000;
+export const LAMPORTS_PER_SOL = 1_000_000_000;
 
 /** Number formatters built once, since `toLocaleString` builds an `Intl.NumberFormat` per call. */
 const PLAIN = new Intl.NumberFormat();

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type ReactElement } from "react";
-import { blockStamp, buildLabel, count, duration, LAMPORTS_PER_SOL, percent, sol, solCompact } from "../format";
+import { blockStamp, buildLabel, count, duration, LAMPORTS_PER_SOL, percent, shortKey, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type VoteRunway } from "../voteCost";
 import { noSeatLabel } from "../admission";
@@ -12,9 +12,11 @@ import { FoldsToggle } from "./FoldsToggle";
 import { Logo } from "./Logo";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
+import { NodeVerdict } from "./Verdict";
 
-/** `folds` puts the open-all toggle beside the others, on the page whose panels it opens. */
-export function Header({ folds }: { folds: boolean }): ReactElement {
+/** `folds` puts the open-all toggle beside the others, on the page whose panels it opens; `nav` ends
+ *  the figures row. */
+export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): ReactElement {
   const store = useStore();
   const identity = store.get("summary", "identity_key");
   const voteKey = store.get("summary", "vote_key");
@@ -59,24 +61,22 @@ export function Header({ folds }: { folds: boolean }): ReactElement {
       <div className="who">
         <span className="who-name">
           <Logo url={icon} size={22} name={identityName} />
-          {name}
+          <span className="who-name-text">{name}</span>
         </span>
-        {identity ? (
-          <Copyable text={identity} className="who-key" />
-        ) : (
-          <span className="who-key">—</span>
-        )}
-        <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
-        {build && (
-          <Explain text="Client and version. A fork carries the version of the release it follows.">
-            {build}
-          </Explain>
-        )}
-        {shredVersion !== undefined && (
-          <Explain text="Shred version. Nodes only gossip with matching versions.">
-            shred {shredVersion}
-          </Explain>
-        )}
+        <NodeVerdict />
+        <span className="who-meta">
+          <span className={`cluster cluster-${cluster ?? "unknown"}`}>{cluster ?? "…"}</span>
+          {build && (
+            <Explain text="Client and version. A fork carries the version of the release it follows.">
+              {build}
+            </Explain>
+          )}
+          {shredVersion !== undefined && (
+            <Explain text="Shred version. Nodes only gossip with matching versions.">
+              shred {shredVersion}
+            </Explain>
+          )}
+        </span>
         <span className="who-right">
           <Connection state={connection} lagMs={feedLag} />
           {folds && <FoldsToggle />}
@@ -85,76 +85,86 @@ export function Header({ folds }: { folds: boolean }): ReactElement {
         </span>
       </div>
 
-      <div className="figures">
-        <Figure
-          kind="stake"
-          value={
-            <>
-              {staked}
-              <Sol />
-            </>
-          }
-          pad={shortOf(staked, 6)}
-          label={
-            <span>
-              staked<span className="figure-text">, {percent(stake?.share, 4)} of the cluster</span>
-            </span>
-          }
-          detail={
-            voteKey ? (
-              <>
-                <span className="figure-panel-label figure-tile">Share of the cluster</span>
-                <span className="figure-tile">{percent(stake?.share, 4)}</span>
-                <span className="figure-panel-label">Vote account</span>
-                <Copyable text={voteKey} />
-              </>
-            ) : undefined
-          }
-        />
-        <Figure
-          kind="commission"
-          value={commissionText}
-          pad={shortOf(commissionText, 4)}
-          label={
-            <>
-              <span className="figure-long">commission</span>
-              <span className="figure-short" aria-hidden="true">
-                comm.
-              </span>
-            </>
-          }
-        />
-        {!balancesHidden && (
-          <>
-            <Balance kind="identity" value={identityBalance} name="identity" warning={identityAlarm} />
-            <Balance
-              kind="vote"
-              value={voteBalance}
-              name="vote"
-              warning={voteAlarm}
-              detail={runway && <Runway runway={runway} />}
-            />
-          </>
+      <div className="figures-row">
+        {identity ? (
+          <Copyable text={identity} label={shortKey(identity)} className="who-key" />
+        ) : (
+          <span className="who-key">—</span>
         )}
-        <Bls />
-        <Seat />
-        <Figure
-          kind="uptime"
-          value={<Uptime millis={upMillis} />}
-          pad={shortOf(duration(upMillis, 2), 8)}
-          padShort={shortOf(duration(upMillis, 1), 4)}
-          label="uptime"
-          detail={boot && <Boot boot={boot} />}
-        />
-        {!balancesHidden &&
-          [identityAlarm, voteAlarm].map(
-            (alarm) =>
-              alarm && (
-                <span key={alarm.label} className={`figure-note tone-${alarm.tone}`} title={alarm.title}>
-                  {alarm.label}
-                </span>
-              ),
-          )}
+        <div className="figures-cell">
+          <div className="figures">
+            <Figure
+              kind="stake"
+              value={
+                <>
+                  {staked}
+                  <Sol />
+                </>
+              }
+              pad={shortOf(staked, 6)}
+              label="staked"
+              detail={
+                voteKey ? (
+                  <>
+                    <span className="figure-panel-label">Share of the cluster</span>
+                    <span>{percent(stake?.share, 4)}</span>
+                    <span className="figure-panel-label">Vote account</span>
+                    <Copyable text={voteKey} />
+                  </>
+                ) : undefined
+              }
+            />
+            <Figure
+              kind="commission"
+              value={commissionText}
+              pad={shortOf(commissionText, 4)}
+              label="commission"
+            />
+            {!balancesHidden && (
+              <>
+                <Balance kind="identity" value={identityBalance} name="identity" warning={identityAlarm} />
+                <Balance
+                  kind="vote"
+                  value={voteBalance}
+                  name="vote"
+                  warning={voteAlarm}
+                  detail={runway && <Runway runway={runway} />}
+                />
+              </>
+            )}
+            <Bls />
+            <Seat />
+            <Figure
+              kind="uptime"
+              value={<Uptime millis={upMillis} />}
+              pad={shortOf(duration(upMillis, 2), 8)}
+              label="uptime"
+              detail={boot && <Boot boot={boot} />}
+            />
+            <MoreFigures
+              rows={[
+                { label: "commission", value: commissionText },
+                { label: "uptime", value: duration(upMillis) },
+                ...(balancesHidden
+                  ? []
+                  : [
+                      { label: "identity", value: `${sol(identityBalance)} SOL`, tone: identityAlarm?.tone },
+                      { label: "vote", value: `${sol(voteBalance)} SOL`, tone: voteAlarm?.tone },
+                    ]),
+              ]}
+            />
+            {!balancesHidden &&
+              [identityAlarm, voteAlarm].map(
+                (alarm) =>
+                  alarm && (
+                    <span key={alarm.label} className={`figure-note tone-${alarm.tone}`} title={alarm.title}>
+                      {alarm.label}
+                    </span>
+                  ),
+              )}
+          </div>
+        </div>
+        {nav}
       </div>
     </header>
   );
@@ -215,16 +225,35 @@ function Sol() {
   return <span className="figure-sol"> SOL</span>;
 }
 
-/** Three units as text, two as a tile and one on the narrowest. */
+/** Three units as text, two as a tile. */
 function Uptime({ millis }: { millis: number | undefined }) {
-  const one = duration(millis, 1);
   const two = duration(millis, 2);
   return (
     <>
-      {one}
-      <span className="figure-unit-2">{two.slice(one.length)}</span>
+      {two}
       <span className="figure-unit-3">{duration(millis).slice(two.length)}</span>
     </>
+  );
+}
+
+type MoreRow = { label: string; value: string; tone?: "warn" | "bad" };
+
+/** On a phone, the figures the row leaves out, behind one tile toned like the worst of them. */
+function MoreFigures({ rows }: { rows: MoreRow[] }) {
+  const tone = rows.some((row) => row.tone === "bad") ? "bad" : rows.some((row) => row.tone) ? "warn" : null;
+  return (
+    <Explain
+      className={`figure figure-more${tone ? ` tone-${tone}` : ""}`}
+      text={rows.map((row) => (
+        <span key={row.label} className="boot-row">
+          <span>{row.label}</span>
+          <span className={row.tone ? `tone-${row.tone}` : undefined}>{row.value}</span>
+        </span>
+      ))}
+    >
+      <b>+{rows.length}</b>
+      <span className="figure-more-word">more</span>
+    </Explain>
   );
 }
 
@@ -287,8 +316,7 @@ function shortOf(value: string, widest: number): number {
   return Math.max(0, widest - value.length);
 }
 
-/** `kind` places the figure when the header lays them out as tiles; `padShort` is `pad` on the
- *  narrowest. */
+/** `kind` places the figure when the header lays them out as tiles. */
 function Figure({
   kind,
   value,
@@ -297,7 +325,6 @@ function Figure({
   tone,
   title,
   pad = 0,
-  padShort = pad,
 }: {
   kind: FigureKind;
   value: ReactNode;
@@ -306,7 +333,6 @@ function Figure({
   tone?: "warn" | "bad";
   title?: string;
   pad?: number;
-  padShort?: number;
 }) {
   return (
     <span className={`figure figure-${kind}${tone ? ` tone-${tone}` : ""}`} title={title}>
@@ -318,12 +344,7 @@ function Figure({
       ) : (
         label
       )}
-      {(pad > 0 || padShort > 0) && (
-        <span
-          className="figure-pad"
-          style={{ "--pad": String(pad), "--pad-short": String(padShort) } as CSSProperties}
-        />
-      )}
+      {pad > 0 && <span className="figure-pad" style={{ "--pad": String(pad) } as CSSProperties} />}
     </span>
   );
 }
@@ -362,6 +383,16 @@ function Boot({ boot }: { boot: BootTimes }) {
   );
 }
 
+/** The nearest earlier sibling on the same line; in a stacked header it is not the previous one. */
+function lineBefore(element: Element): Element | null {
+  const box = element.getBoundingClientRect();
+  for (let sibling = element.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+    const other = sibling.getBoundingClientRect();
+    if (other.top < box.bottom && other.bottom > box.top) return sibling;
+  }
+  return null;
+}
+
 /** Lag under this is delivery jitter, not worth a word. */
 const LAG_SHOWN_MS = 3_000;
 
@@ -373,18 +404,22 @@ function Connection({ state, lagMs }: { state: string; lagMs: number | null }) {
   const behind = state === "open" && lagMs !== null && lagMs >= LAG_SHOWN_MS;
   const seconds = Math.round((lagMs ?? 0) / 1000);
 
-  // "page" is dropped only when it alone would push the pill onto a line of its own.
+  // "page" is shown only where it fits on the pill's line.
   useLayoutEffect(() => {
     const right = pillRef.current?.parentElement;
-    const before = right?.previousElementSibling;
     const row = right?.parentElement;
-    if (!behind || !right || !before || !row) return;
+    if (!behind || !right || !row) return;
+    const before = lineBefore(right);
+    if (!before) return;
     if (pageRef.current) pageWidth.current = pageRef.current.getBoundingClientRect().width;
     const shown = pageRef.current ? 0 : pageWidth.current;
-    const start = before.getBoundingClientRect().right + parseFloat(getComputedStyle(row).columnGap);
+    // A cut name counts at its full width, so "page" never cuts it.
+    const cut = row.querySelector(".who-name-text");
+    const hidden = cut ? cut.scrollWidth - cut.clientWidth : 0;
+    const start = before.getBoundingClientRect().right + hidden + parseFloat(getComputedStyle(row).columnGap);
     const end = start + right.getBoundingClientRect().width + shown;
     const rowEnd = row.getBoundingClientRect().right;
-    const next = end <= rowEnd || end - pageWidth.current > rowEnd;
+    const next = end <= rowEnd;
     if (next !== roomy) setRoomy(next);
   });
 

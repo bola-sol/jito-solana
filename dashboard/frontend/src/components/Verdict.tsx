@@ -8,77 +8,50 @@ import { useStore } from "../useStore";
 import { Card, Explain } from "./primitives";
 import { StartupPhases } from "./StartupPhases";
 
-/** A catch-up clause short of an hour, held in reserve on phones so a moment behind does not push
- *  the page down. */
-const CATCH_UP_ROOM = `Catching up, ${duration(3_599_000, 2)} to go.`;
-
-/** The reserve draws each changing figure at its widest, so a countdown or an age growing does not
- *  push the page down either. The figures are monospaced, so any value up to these fits. */
-const ROOM_COUNTDOWN = duration(86_399_000, 2);
-const ROOM_AGE = agoLabel(3_540_000);
-const ROOM_PERCENT = percent(0.1);
-const ROOM_FULL = percent(1, 0);
-const ROOM_MEMORY = percent(0.1, 0);
-const ROOM_BYTES = bytes(1023.99 * 1024 ** 3);
-
-export function Verdict(): ReactElement {
+/** The boot sequence, in place of the Overview's panels until the validator is running. */
+export function StartupCard(): ReactElement | null {
   const store = useStore();
   const startup = store.get("summary", "startup_progress");
   const gossipStake = store.get("summary", "gossip_stake");
+  // The wait's own card carries the stake figure where the validator hands over its handles.
+  if (!startup || startup.running) return null;
+  return (
+    <Card title="Starting up" lit>
+      <StartupPhases startup={startup} withStake={!gossipStake} />
+    </Card>
+  );
+}
 
-  // Nothing to say until the validator is running. The wait's own card
-  // carries the stake figure where the validator hands over its handles.
-  if (startup && !startup.running) {
-    return (
-      <Card title="Starting up" lit>
-        <StartupPhases startup={startup} withStake={!gossipStake} />
-      </Card>
-    );
-  }
-
+/** The node's verdict, in the header on every page. */
+export function NodeVerdict(): ReactElement {
+  const store = useStore();
   const health = store.get("summary", "health");
   const behindCluster = store.get("summary", "behind_cluster");
   const verdict = verdictOf(health, behindCluster, store.get("summary", "completed_slot"));
 
   return (
     <div className="verdict-hero">
-      <h1 className="verdict">
+      <p className="verdict">
         <span className={`verdict-dot tone-${verdict.tone}`} aria-hidden="true" />
         {verdict.headline}
-      </h1>
+      </p>
       <p className="verdict-sub">
-        <span>
-          <CatchUp />
-          <Clauses />
-        </span>
-        <span className="verdict-sub-room" aria-hidden="true">
-          <Clause>{CATCH_UP_ROOM}</Clause>
-          <Clauses room />
-        </span>
+        <CatchUp />
+        <HostAlarms />
+        <Leader />
+        <Skips />
+        <Repair />
+        <Snapshot />
       </p>
     </div>
   );
 }
 
-/** Kept whole, so the line breaks only between clauses and grows only when one gets wider, which
- *  is what lets the reserve bound it. */
+/** Kept whole, so the line breaks only between clauses. */
 function Clause({ children }: { children: ReactNode }) {
   return (
     <>
       <span className="verdict-clause">{children}</span>{" "}
-    </>
-  );
-}
-
-/** Everything on the line after the catch-up clause; `room` draws the reserve. */
-function Clauses({ room = false }: { room?: boolean }) {
-  return (
-    <>
-      <HostAlarms room={room} />
-      <Leader room={room} />
-      <Skips room={room} />
-      <Repair room={room} />
-      <Snapshot room={room} />
     </>
   );
 }
@@ -95,7 +68,7 @@ function CatchUp() {
 }
 
 /** Only once the Host card would show amber or red: a full ledger stops the validator. */
-function HostAlarms({ room }: { room: boolean }) {
+function HostAlarms() {
   const host = useStore().get("summary", "host");
   const disk = diskAlarm(host);
   const memory = memoryAlarm(host);
@@ -106,13 +79,13 @@ function HostAlarms({ room }: { room: boolean }) {
           <Explain text={`${disk.filesystem.path}, ${bytes(disk.filesystem.total)} in all.`}>
             {capitalise(disk.filesystem.name)} disk
           </Explain>{" "}
-          <b className={`tone-${disk.tone}`}>{room ? ROOM_FULL : percent(disk.share, 0)}</b> full,{" "}
-          <b>{room ? ROOM_BYTES : bytes(disk.filesystem.available)}</b> left.
+          <b className={`tone-${disk.tone}`}>{percent(disk.share, 0)}</b> full,{" "}
+          <b>{bytes(disk.filesystem.available)}</b> left.
         </Clause>
       )}
       {memory && (
         <Clause>
-          <b className={`tone-${memory.tone}`}>{room ? ROOM_MEMORY : percent(memory.available / memory.total, 0)}</b> of{" "}
+          <b className={`tone-${memory.tone}`}>{percent(memory.available / memory.total, 0)}</b> of{" "}
           <Explain text={`${bytes(memory.available)} of ${bytes(memory.total)} available.`}>memory</Explain>{" "}
           left.
         </Clause>
@@ -125,7 +98,7 @@ function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function Leader({ room }: { room: boolean }) {
+function Leader() {
   const store = useStore();
   const slot = store.get("summary", "completed_slot");
   const nextLeader = store.get("summary", "next_leader_slot");
@@ -135,7 +108,7 @@ function Leader({ room }: { room: boolean }) {
   if (nextLeader === null) return <Clause>No leader slots left this epoch.</Clause>;
   if (nextLeader === undefined || slot === undefined || !slotDurationNanos) return null;
   const untilMs = Math.max(0, (nextLeader - slot) * (slotDurationNanos / 1e6));
-  if (untilMs === 0 && !room) return <Clause>Leader now.</Clause>;
+  if (untilMs === 0) return <Clause>Leader now.</Clause>;
   const following = epoch ? followingRun(epoch.my_leader_slots, nextLeader) : null;
   const then =
     following === null
@@ -146,23 +119,23 @@ function Leader({ room }: { room: boolean }) {
   return (
     <Clause>
       <Explain text={`Slot ${count(nextLeader)}.${then}`}>Leading</Explain> in{" "}
-      <b>{room ? ROOM_COUNTDOWN : duration(untilMs, 2)}</b>.
+      <b>{duration(untilMs, 2)}</b>.
     </Clause>
   );
 }
 
-function Skips({ room }: { room: boolean }) {
+function Skips() {
   const skip = useStore().get("summary", "skip_rate");
   if (!skip || skip.rate === null) return null;
   if (skip.rate === 0) return <Clause>No skips.</Clause>;
   return (
     <Clause>
-      Skip rate <b className="tone-warn">{room ? ROOM_PERCENT : percent(skip.rate)}</b> this epoch.
+      Skip rate <b className="tone-warn">{percent(skip.rate)}</b> this epoch.
     </Clause>
   );
 }
 
-function Repair({ room }: { room: boolean }) {
+function Repair() {
   const shreds = useStore().get("summary", "shreds");
   if (!shreds) return null;
   return (
@@ -171,14 +144,14 @@ function Repair({ room }: { room: boolean }) {
         Repaired
       </Explain>{" "}
       <b className={shreds.repair_rate > 0.05 ? "tone-bad" : undefined}>
-        {room ? ROOM_PERCENT : percent(shreds.repair_rate, 2)}
+        {percent(shreds.repair_rate, 2)}
       </b>
       .
     </Clause>
   );
 }
 
-function Snapshot({ room }: { room: boolean }) {
+function Snapshot() {
   const store = useStore();
   const snapshots = store.get("summary", "snapshots");
   const serverTimeNanos = store.get("summary", "server_time_nanos");
@@ -202,7 +175,7 @@ function Snapshot({ room }: { room: boolean }) {
     <Clause>
       {/* A bubble rather than a title, which is redrawn on every change. */}
       <Explain text={text}>Snapshot</Explain>{" "}
-      {age ? <b>{room ? ROOM_AGE : age}</b> : <>at slot <b>{count(newest?.slot)}</b></>}.
+      {age ? <b>{age}</b> : <>at slot <b>{count(newest?.slot)}</b></>}.
     </Clause>
   );
 }

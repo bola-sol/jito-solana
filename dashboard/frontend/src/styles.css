@@ -139,14 +139,15 @@ body {
   container: header / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 10px;
 }
 
+/* The name, the node's verdict, the meta and the controls; stacked below 963px. */
 .who {
   display: flex;
   align-items: center;
   gap: 14px;
-  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
   font-size: 13px;
   color: var(--text-dim);
 }
@@ -155,9 +156,18 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 15px;
   font-weight: 500;
   color: var(--text);
+}
+
+/* A long name is cut before the controls beside it. */
+.who-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .who-key {
@@ -166,11 +176,132 @@ body {
   min-width: 0;
 }
 
-.who-right {
+.who-meta {
+  flex: none;
   margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.who-right {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+@container header (width < 963px) {
+  .who {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) auto 1fr;
+    grid-template-areas:
+      "name meta right"
+      "hero hero hero";
+    gap: 10px 14px;
+  }
+
+  .who-name {
+    grid-area: name;
+    justify-self: start;
+  }
+
+  .who-meta {
+    grid-area: meta;
+    flex-wrap: nowrap;
+    margin-left: 0;
+  }
+
+  .who-right {
+    grid-area: right;
+    justify-self: end;
+  }
+
+  .who .verdict-hero {
+    grid-area: hero;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .who .verdict-hero .verdict {
+    white-space: normal;
+  }
+}
+
+@container header (width < 534px) {
+  .who {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name right"
+      "meta meta"
+      "hero hero";
+    row-gap: 6px;
+  }
+
+  .who-meta {
+    flex-wrap: wrap;
+    column-gap: 10px;
+  }
+
+  .who .verdict-hero {
+    margin-top: 4px;
+  }
+}
+
+/* The key, the figures and the tabs; the tabs take a line of their own below 963px. */
+.figures-row {
+  container: figures-row / inline-size;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 26px;
+  border-bottom: 1px solid var(--border);
+}
+
+.figures-row > .who-key {
+  align-self: center;
+  padding: 8px 0;
+  color: var(--text-dim);
+}
+
+/* One row of tiles needs 509px. */
+.figures-cell {
+  container: figures / inline-size;
+  flex: 1 1 0;
+  min-width: min(509px, 100%);
+  align-self: center;
+  padding: 8px 0;
+}
+
+.figures-row > .nav {
+  margin-left: auto;
+  border-bottom: 0;
+  align-items: flex-end;
+}
+
+.figures-row .nav-tab {
+  padding: 10px 0 9px;
+}
+
+@container figures-row (width < 1143px) {
+  .figures-row .nav-long {
+    display: none;
+  }
+
+  .figures-row .nav-short {
+    display: inline;
+  }
+}
+
+@container figures-row (width < 963px) {
+  .figures-row > .nav {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .figures-row > .who-key {
+    padding-bottom: 0;
+  }
 }
 
 .cluster {
@@ -309,15 +440,20 @@ body {
 
 /* A figure's text and tile parts; the queries below choose. */
 .figure-tile,
-.figure-short,
 .figure-note,
 .figure-pad {
   display: none;
 }
 
-/* Below the width the text needs on one line with the widest likely figures, each figure is a tile
-   as wide as its widest likely value makes it, so a changing figure never moves the tiles. */
-@container header (width < 830px) {
+/* Above `.explain`'s own display. */
+.figures .figure-more {
+  display: none;
+}
+
+/* Below the width the text needs beside the key and the tabs with the widest likely figures, each
+   figure is a tile as wide as its widest likely value makes it, so a changing figure never moves the
+   tiles. */
+@container header (width < 1107px) {
   .figures {
     gap: 4px;
     font-size: 11px;
@@ -348,10 +484,6 @@ body {
     display: inline;
   }
 
-  .figure-panel-label.figure-tile {
-    display: block;
-  }
-
   /* Warnings take a line of their own under the tiles. */
   .figure-alert,
   .figure-note {
@@ -368,57 +500,61 @@ body {
 }
 
 /* SOL only where the stake and both balances all have room for it. */
-@container header (601px <= width < 830px) or (365px <= width < 509px) {
+@container figures (width >= 601px) {
   .figure-sol {
     display: inline;
   }
 }
 
-/* Two rows where five tiles do not fit in one: stake, commission and uptime over the balances. */
+/* On a phone the key, the stake and a tile holding the rest share one line. */
 @container header (width < 509px) {
+  .figures-row {
+    column-gap: 4px;
+  }
+
+  .figures-cell,
   .figures {
-    display: grid;
-    grid-template-columns: repeat(3, max-content);
+    display: contents;
   }
 
-  .figure-stake {
-    grid-area: 1 / 1;
+  .figures-row > .who-key {
+    margin-right: 10px;
+    padding-bottom: 8px;
   }
 
-  .figure-commission {
-    grid-area: 1 / 2;
+  .figures-row .figure {
+    align-self: center;
   }
 
-  .figure-uptime {
-    grid-area: 1 / 3;
-  }
-
-  .figure-identity {
-    grid-area: 2 / 1;
-  }
-
+  .figure-commission,
+  .figure-uptime,
+  .figure-identity,
   .figure-vote {
-    grid-area: 2 / 2;
+    display: none;
+  }
+
+  .figure-sol {
+    display: inline;
+  }
+
+  .figures .figure-more {
+    display: inline-flex;
   }
 
   .figure-alert,
   .figure-note {
-    grid-column: 1 / -1;
+    padding-bottom: 8px;
+  }
+
+  .figures-row > .nav {
+    order: 2;
   }
 }
 
 @container header (width < 325px) {
-  .figure-long,
-  .figure-unit-2 {
+  .figure-sol,
+  .figure-more-word {
     display: none;
-  }
-
-  .figure-short {
-    display: inline;
-  }
-
-  .figure-pad {
-    width: calc(var(--pad-short) * 1ch);
   }
 }
 
@@ -457,6 +593,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
   font-size: 12px;
   color: var(--text-dim);
 }
@@ -559,22 +696,29 @@ body {
 
 /* ---- verdict ---- */
 
-/* The headline and the line under it. */
+/* The node's verdict, between the name and the meta. */
 .verdict-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: var(--gap);
-  margin-top: 12px;
+  flex: 1 1 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
 }
 
-/* The only serif on the page, across the whole row; a wrap tries to avoid a short last line. */
+.verdict-hero .verdict {
+  white-space: nowrap;
+}
+
+/* The only serif on the page; a wrap tries to avoid a short last line. */
 .verdict {
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 9px;
   margin: 0;
   font-family: var(--serif);
-  font-size: 30px;
+  font-size: 19px;
   font-weight: 400;
   line-height: 1.15;
   text-wrap: pretty;
@@ -582,11 +726,11 @@ body {
 
 .verdict-dot {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   position: relative;
-  top: -2px;
+  top: -1px;
   background: var(--text-faint);
 }
 
@@ -603,21 +747,14 @@ body {
 }
 
 .verdict-sub {
-  display: grid;
   margin: -4px 0 0;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--text-dim);
 }
 
-/* The line and its reserve share one cell, so the taller sets the height. */
-.verdict-sub > * {
-  grid-area: 1 / 1;
-}
-
-.verdict-sub-room {
-  display: none;
-  visibility: hidden;
+.verdict-hero .verdict-sub {
+  margin: 0;
 }
 
 .verdict-clause {
@@ -644,16 +781,6 @@ body {
   color: var(--text-dim);
 }
 
-@media (max-width: 700px) {
-  .verdict {
-    font-size: 24px;
-  }
-
-  .verdict-sub-room {
-    display: block;
-  }
-}
-
 /* ---- cards ---- */
 
 /* A tone, not a box: the panel colour against the page is the whole edge. */
@@ -672,6 +799,7 @@ body {
 .app.is-booting .fold,
 .app.is-booting .slot-strip,
 .app.is-booting .who > :not(.who-right),
+.app.is-booting .figures-row > .who-key,
 .app.is-booting .figures,
 .app.is-booting .nav {
   filter: blur(3px);
@@ -693,6 +821,7 @@ body {
   .app.is-booting .fold,
   .app.is-booting .slot-strip,
   .app.is-booting .who > :not(.who-right),
+  .app.is-booting .figures-row > .who-key,
   .app.is-booting .figures,
   .app.is-booting .nav {
     transition: none;
@@ -1359,9 +1488,6 @@ body {
 
 .slot-strip {
   container: slot-strip / inline-size;
-  margin-top: 8px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
 }
@@ -9154,18 +9280,6 @@ body {
   background: var(--path-3);
 }
 
-/* Every verdict holds two lines of headline and two of reason on a phone, so a change of state
-   does not move the charts. */
-@media (max-width: 480px) {
-  .cl-verdict {
-    min-height: calc(2 * 1.15em);
-  }
-
-  .cl-verdict-sub {
-    min-height: 3em;
-  }
-}
-
 /* ---- cluster board: every chart and both summaries on one screen ---- */
 
 .cl-screen {
@@ -9180,10 +9294,6 @@ body {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
   align-items: end;
   gap: 8px 40px;
-}
-
-.cl-top .cl-verdict {
-  font-size: 26px;
 }
 
 .cl-top .verdict-sub {

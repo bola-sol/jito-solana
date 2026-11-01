@@ -9,7 +9,7 @@ import { BlockLifeCard } from "./components/BlockLifeCard";
 import { ReplayCard } from "./components/ReplayCard";
 import { SchedulePage } from "./components/SchedulePage";
 import { SlotDetailsPage } from "./components/SlotDetailsPage";
-import { Verdict } from "./components/Verdict";
+import { StartupCard } from "./components/Verdict";
 import { TpuPathCard } from "./components/TpuPathCard";
 import { GossipPage } from "./components/GossipPage";
 import { ClusterPage } from "./components/ClusterPage";
@@ -42,13 +42,15 @@ export function App(): ReactElement {
   return (
     <div className={classes.join(" ")}>
       <main className="main">
-        <Header folds={page === "overview"} />
+        <Header
+          folds={page === "overview"}
+          nav={<Nav page={page} onSelect={(next) => go({ ...HOME, page: next })} />}
+        />
         {connection === "closed" && (
           <div className="banner">
             Disconnected from the validator. Retrying…
           </div>
         )}
-        <Nav page={page} onSelect={(next) => go({ ...HOME, page: next })} />
         {page === "overview" && <Overview />}
         {page === "slots" && (
           <SlotDetailsPage
@@ -83,7 +85,7 @@ function Overview() {
   const [missesOpen, setMissesOpen] = useState(false);
   return (
     <>
-      <Verdict />
+      <StartupCard />
       <SlotStrip />
       <div className="grid is-three">
         <EpochCard missesOpen={missesOpen} onToggleMisses={() => setMissesOpen((was) => !was)} />

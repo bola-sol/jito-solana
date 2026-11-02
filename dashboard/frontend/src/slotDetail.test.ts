@@ -379,7 +379,7 @@ describe("versionsValue", () => {
 
   it("puts the counts on the hover", () => {
     expect(versionsTitle({ legacy: 1312, v0: 41, v1: 0 })).toBe(
-      "1,312 legacy, 41 v0, 0 v1 of 1,353 non-vote transactions.",
+      "1,312 legacy, 41 v0, 0 v1 of 1,353 transactions.",
     );
   });
 });

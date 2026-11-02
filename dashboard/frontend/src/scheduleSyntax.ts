@@ -22,7 +22,7 @@ export interface Key {
 
 export const KEYS: readonly Key[] = [
   { name: "duration", kind: "number", field: "duration", group: "slot", op: ">", example: "240", what: "slot duration, ms" },
-  { name: "txs", kind: "number", field: "transactions", group: "slot", op: "<", example: "100", what: "non-vote transactions" },
+  { name: "txs", kind: "number", field: "transactions", group: "slot", op: "<", example: "100", what: "transactions" },
   { name: "basefee", kind: "number", field: "base_fee", group: "slot", op: ">", example: "0.0025", what: "base fee, SOL" },
   { name: "priority", kind: "number", field: "priority", group: "slot", op: ">", example: "0.01", what: "priority fee, SOL" },
   { name: "tips", kind: "number", field: "tips", group: "slot", op: ">", example: "0.001", what: "tips, SOL" },

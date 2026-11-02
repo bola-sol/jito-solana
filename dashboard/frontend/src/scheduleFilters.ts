@@ -24,7 +24,7 @@ export const ONLY_TITLES: Record<Only, string> = {
   skipped: "Slots the leader did not produce.",
   slow: "Slots in the slowest 5% for their place in the turn.",
   left_out: "Slots whose reward certificate left our vote out.",
-  few_transactions: `Blocks with fewer than ${FEW_TRANSACTIONS} non-vote transactions.`,
+  few_transactions: `Blocks with fewer than ${FEW_TRANSACTIONS} transactions.`,
   no_tips: "Blocks whose tips were read as nought.",
 };
 

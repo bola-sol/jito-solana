@@ -294,7 +294,7 @@ export function versionsTitle(versions: TxVersions): string {
   const total = versions.legacy + versions.v0 + versions.v1;
   const { legacy, v0, v1 } = versions;
   const counts = `${count(legacy)} legacy, ${count(v0)} v0, ${count(v1)} v1`;
-  return `${counts} of ${count(total)} non-vote transactions.`;
+  return `${counts} of ${count(total)} transactions.`;
 }
 
 /** A turn's bundle count; the stage no longer reports one per block. */

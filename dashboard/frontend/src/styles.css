@@ -7501,6 +7501,20 @@ body {
   color: var(--ours);
 }
 
+/* A leader or node not voting now. */
+.tag-delinquent {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--bad);
+  white-space: nowrap;
+}
+
 /* Three lines, each held open whether or not the peer table has reached
    this leader yet, so a turn's height does not move after it is drawn. */
 .schedule-leader-meta {
@@ -9029,6 +9043,37 @@ body {
 .gossip-table tr.is-ours td:first-child {
   box-shadow: inset 2px 0 var(--ours);
   padding-left: 8px;
+}
+
+/* A staked node not voting now: a faint red row and a bar where ours has its own. */
+.gossip-table tr.is-delinquent td {
+  background: color-mix(in srgb, var(--bad) 8%, var(--bg));
+}
+
+.gossip-table tr.is-delinquent td:first-child {
+  box-shadow: inset 2px 0 var(--bad);
+}
+
+.gossip-key-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Beside the name where there is room; beside the key on a phone. */
+.gossip-key-line > .tag-delinquent {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .gossip-name > .tag-delinquent {
+    display: none;
+  }
+
+  .gossip-key-line > .tag-delinquent {
+    display: inline-flex;
+  }
 }
 
 .gossip-none,

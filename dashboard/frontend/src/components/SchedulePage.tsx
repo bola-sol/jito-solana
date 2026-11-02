@@ -59,6 +59,7 @@ import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import { useMedia } from "../useMedia";
+import { delinquentTitle } from "../misses";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
@@ -108,8 +109,8 @@ function asksAnything(ask: SearchAsk): boolean {
   return ask.query !== "" || ask.ours || ask.only.length > 0 || ask.where.length > 0 || hasRange(ask.range);
 }
 
-function leaderFacts(peer: Peer | undefined): LeaderFacts | null {
-  return peer ? { client: peer.client ?? null, country: peer.country ?? null, stake: peer.stake } : null;
+function leaderFacts(peer: Peer | undefined, delinquent: boolean): LeaderFacts | null {
+  return peer ? { client: peer.client ?? null, country: peer.country ?? null, stake: peer.stake, delinquent } : null;
 }
 
 const NO_KEYS: readonly string[] = [];
@@ -432,6 +433,13 @@ export function SchedulePage({
   const heldSince =
     !summaryFiltered && held?.millis != null && epoch !== undefined && held.slot > epoch.start_slot ? held.millis : null;
   const [jumpMoved, setJumpMoved] = useState<"older" | "newer" | null>(null);
+  // Leaders not voting now, by their last vote; tagged wherever their turns show.
+  const delinquentVotes = useMemo(
+    () => new Map((summary?.delinquent ?? []).map((leader) => [leader.identity, leader.last_vote])),
+    [summary],
+  );
+  const slotNanos =
+    store.get("summary", "observed_slot_duration_nanos") ?? store.get("summary", "estimated_slot_duration_nanos");
 
   // A jumped list meets the live one once the turns read upward reach it: the validator has nothing
   // newer, or, unfiltered, the index already holds the turn above.
@@ -477,7 +485,13 @@ export function SchedulePage({
           (!oursOnly || turn.mine) &&
           (!filterActive ||
             turn.slots.some((slot) =>
-              slotMatches(slot, leaderFacts(turn.leader ? byIdentity.get(turn.leader) : undefined)),
+              slotMatches(
+                slot,
+                leaderFacts(
+                  turn.leader ? byIdentity.get(turn.leader) : undefined,
+                  turn.leader ? delinquentVotes.has(turn.leader) : false,
+                ),
+              ),
             ))
         );
       });
@@ -488,7 +502,7 @@ export function SchedulePage({
     if (top === undefined || !reachedLive) return around;
     return [...(filtered ? liveMatches() : newest).filter((number) => number > top), ...around];
     // `foundPages` stands for the results, which change in place.
-  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, filterActive, slotMatches, byIdentity]);
+  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, filterActive, slotMatches, byIdentity, delinquentVotes]);
   const nowShown = nowTurn !== null && shown[0] === nowTurn;
 
   const [stripes] = useState(() => new Stripes());
@@ -573,7 +587,13 @@ export function SchedulePage({
     if (!turn) return null;
     const first = turn.slots.at(-1)?.slot ?? number * SLOTS_PER_TURN;
     const peer = turn.leader ? byIdentity.get(turn.leader) : undefined;
-    const leader = sourceOf(number) === "index" ? leaderFacts(peer) : "matched";
+    const lastVote = turn.leader ? delinquentVotes.get(turn.leader) : undefined;
+    const leader = sourceOf(number) === "index" ? leaderFacts(peer, lastVote !== undefined) : "matched";
+    const tip = live.at(-1)?.slot;
+    const delinquent =
+      lastVote === undefined
+        ? null
+        : delinquentTitle(lastVote === null || tip === undefined ? null : Math.max(0, tip - lastVote), slotNanos);
     return (
       <TurnCard
         turn={turn}
@@ -586,6 +606,7 @@ export function SchedulePage({
         producing={number === nowTurn ? producing : null}
         landed={landedSlot !== null && turnNumberOf(landedSlot) === turnNumberOf(first) ? landedSlot : null}
         marks={filterActive ? turn.slots.map((slot) => slotMatches(slot, leader)) : null}
+        delinquent={delinquent}
         whyKeys={whyKeys}
       />
     );
@@ -901,6 +922,7 @@ const TurnCard = memo(
     landed,
     marks,
     whyKeys,
+    delinquent,
   }: {
     turn: Turn;
     peer: Peer | undefined;
@@ -919,11 +941,13 @@ const TurnCard = memo(
     marks: readonly boolean[] | null;
     /** The figures a matching row is toned for. */
     whyKeys: readonly string[];
+    /** The delinquent tag's title, where the leader is not voting now. */
+    delinquent: string | null;
   }) {
     const alpenglow = useAlpenglow();
     return (
       <div className={`schedule-group${turn.mine ? " is-ours" : ""}${tinted ? " is-tinted" : ""}${now ? " is-now" : ""}`}>
-        <TurnLeader turn={turn} peer={peer} totalStake={totalStake} now={now} />
+        <TurnLeader turn={turn} peer={peer} totalStake={totalStake} now={now} delinquent={delinquent} />
         <div className={`schedule-slots${alpenglow ? " has-certificate" : ""}`}>
           <SlotHeadings alpenglow={alpenglow} />
           {turn.slots.map((slot, row) => (
@@ -956,6 +980,7 @@ const TurnCard = memo(
     before.producing === after.producing &&
     before.landed === after.landed &&
     before.whyKeys === after.whyKeys &&
+    before.delinquent === after.delinquent &&
     (before.marks === after.marks ||
       (before.marks !== null &&
         after.marks !== null &&
@@ -1013,11 +1038,13 @@ function TurnLeader({
   peer,
   totalStake,
   now,
+  delinquent,
 }: {
   turn: Turn;
   peer: Peer | undefined;
   totalStake: number | undefined;
   now: boolean;
+  delinquent: string | null;
 }) {
   // Missing rather than zero when the table has not caught up with a leader
   // that has only just come into view.
@@ -1035,6 +1062,11 @@ function TurnLeader({
         </span>
         {turn.mine && <span className="schedule-mine">ours</span>}
         {now && <span className="schedule-now">leading now</span>}
+        {delinquent && (
+          <span className="tag-delinquent" title={delinquent}>
+            delinquent
+          </span>
+        )}
       </div>
       {turn.leader && (
         <Copyable

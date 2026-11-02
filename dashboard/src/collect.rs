@@ -1360,12 +1360,25 @@ impl Collector {
     /// its by-client summary read.
     fn collect_leader_traits(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let mut map = LeaderMap::new();
+        // The oldest last vote among a validator's staked accounts, `None` where one never voted.
+        let mut stalest: LastVotes = HashMap::new();
         for (stake, account) in bank.vote_accounts().values() {
             if *stake == 0 {
                 continue;
             }
-            let traits: &mut LeaderTraits = map.entry(*account.node_pubkey()).or_default();
+            let identity = *account.node_pubkey();
+            let traits: &mut LeaderTraits = map.entry(identity).or_default();
             traits.stake = traits.stake.saturating_add(*stake);
+            let last_vote = account.vote_state_view().last_voted_slot();
+            let held = stalest.entry(identity).or_insert(last_vote);
+            *held = (*held).min(last_vote);
+        }
+        let tip = bank.slot();
+        for (identity, last_vote) in stalest {
+            if let Some(traits) = map.get_mut(&identity) {
+                traits.last_vote = last_vote;
+                traits.delinquent = is_delinquent(last_vote, tip);
+            }
         }
         for (contact_info, _) in peers {
             if let Some(traits) = map.get_mut(contact_info.pubkey()) {
@@ -2466,7 +2479,7 @@ struct StakeTally {
 }
 
 /// The cluster's rule: no vote yet, or the last one too far behind the tip.
-fn is_delinquent(last_vote: Option<Slot>, tip: Slot) -> bool {
+pub(crate) fn is_delinquent(last_vote: Option<Slot>, tip: Slot) -> bool {
     last_vote
         .map(|vote| tip.saturating_sub(vote) > DELINQUENT_VALIDATOR_SLOT_DISTANCE)
         .unwrap_or(true)
@@ -3152,6 +3165,8 @@ mod tests {
             "lowest",
             "finalization",
             "vote_arrival",
+            "delinquent",
+            "last_vote",
         ] {
             assert_eq!(list[column].as_array().unwrap().len(), rows, "{column}");
         }

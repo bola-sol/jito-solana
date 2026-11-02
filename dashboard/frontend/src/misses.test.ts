@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   delinquentText,
+  delinquentTitle,
   leaderLabel,
   leaderTurns,
   lostNote,
@@ -301,5 +302,13 @@ describe("readTwice", () => {
     cancel();
     vi.advanceTimersByTime(10 * REREAD_MS);
     expect(read).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("delinquentTitle", () => {
+  it("says how long since the last vote, as of now", () => {
+    expect(delinquentTitle(9_000, 400_000_000)).toBe("Delinquent now: last vote 1h ago (9,000 slots).");
+    expect(delinquentTitle(null, 400_000_000)).toBe("Delinquent now: never voted.");
+    expect(delinquentTitle(12, undefined)).toBe("Delinquent now: last vote 12 slots ago.");
   });
 });

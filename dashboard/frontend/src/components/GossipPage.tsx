@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { count, percent, shortKey } from "../format";
+import { delinquentTitle } from "../misses";
 import {
   ariaSort,
   arrivalMedian,
@@ -624,7 +625,7 @@ const PeerLine = memo(function PeerLine({
   const arrival = peer.voteArrival;
   const arrivalAt = arrivalMicros(arrival, arrivalKind);
   return (
-    <tr className={ours ? "is-ours" : undefined}>
+    <tr className={[ours ? "is-ours" : "", peer.delinquent ? "is-delinquent" : ""].join(" ").trim() || undefined}>
       <td className="is-num">{stakeText(peer.stake)}</td>
       <td className="is-name">
         <div className="gossip-who">
@@ -633,8 +634,13 @@ const PeerLine = memo(function PeerLine({
               {peer.name ?? "unnamed"}
             </span>
             {ours && <span className="gossip-ours">ours</span>}
+            {peer.delinquent && <DelinquentTag behind={peer.voteBehind} slotMillis={slotMillis} />}
           </span>
-          <Copyable text={peer.identity} label={shortKey(peer.identity, 4, 4)} className="gossip-key" />
+          <span className="gossip-key-line">
+            <Copyable text={peer.identity} label={shortKey(peer.identity, 4, 4)} className="gossip-key" />
+            {/* On a phone the tag moves here, where it does not cut the name. */}
+            {peer.delinquent && <DelinquentTag behind={peer.voteBehind} slotMillis={slotMillis} />}
+          </span>
         </div>
       </td>
       {finalization && (
@@ -682,6 +688,14 @@ const PeerLine = memo(function PeerLine({
     </tr>
   );
 });
+
+function DelinquentTag({ behind, slotMillis }: { behind: number | null; slotMillis: number | null }) {
+  return (
+    <span className="tag-delinquent" title={delinquentTitle(behind, slotMillis === null ? undefined : slotMillis * 1e6)}>
+      delinquent
+    </span>
+  );
+}
 
 function Parts({ parts }: { parts: Part[] | null }) {
   if (parts === null) return <>—</>;

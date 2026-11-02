@@ -3,6 +3,7 @@ import { count, countryName } from "../format";
 import {
   FIELDS,
   fresh,
+  LEADER_STATES,
   LIST_OPS,
   NUMBER_OPS,
   OP_LABELS,
@@ -306,6 +307,7 @@ export function AdvancedFold({
 }): ReactElement {
   const choicesOf = (field: Field): readonly (readonly [string, string])[] => {
     if (field === "voted") return VOTED;
+    if (field === "leader") return LEADER_STATES;
     if (field === "client") return (choices?.clients ?? []).map((client) => [client, client]);
     return (choices?.countries ?? []).map((code) => [code, `${code}, ${countryName(code)}`]);
   };

@@ -107,6 +107,33 @@ export function turnsOf(
     });
 }
 
+/** The slot being produced: the newest held while its block is still arriving, else the one after it,
+ *  a complete block meaning its leader has moved on. */
+export function producingSlot(live: readonly SlotEntry[]): number | null {
+  const newest = live.at(-1);
+  if (!newest) return null;
+  return newest.level === "incomplete" ? newest.slot : newest.slot + 1;
+}
+
+/** A turn none of whose slots has arrived, for a leader producing before its first shred is seen. */
+export function emptyTurn(
+  number: number,
+  leaderOf: (slot: number, mine: boolean) => LeaderRef,
+  identity: string | undefined,
+): Turn {
+  const first = number * SLOTS_PER_TURN;
+  const named = leaderOf(first, false);
+  const mine = identity !== undefined && named.key === identity;
+  const leader = mine ? leaderOf(first, true) : named;
+  return {
+    leader: leader.key,
+    leader_icon: leader.icon,
+    leader_name: leader.name,
+    mine,
+    slots: Array.from({ length: SLOTS_PER_TURN }, (_, below) => ({ slot: first + SLOTS_PER_TURN - 1 - below, entry: null })),
+  };
+}
+
 /** The turn's slots below its oldest held one: none, unless what is held starts partway through it. */
 export function unheldSlots(turn: Turn): number[] {
   const lowest = turn.slots[turn.slots.length - 1]?.slot;

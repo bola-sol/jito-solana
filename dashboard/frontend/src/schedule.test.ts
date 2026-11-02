@@ -4,9 +4,11 @@ import {
   certificateAt,
   certificateText,
   certificateTitle,
+  emptyTurn,
   epochOf,
   leaderSlotsLeft,
   matchesQuery,
+  producingSlot,
   turnKey,
   turnSpan,
   turnsOf,
@@ -260,5 +262,29 @@ describe("turnSpan", () => {
   it("is null when none of the turn is held, as on a strip paused before it began", () => {
     expect(turnSpan([90, 91, 92, 93], 100)).toBeNull();
     expect(turnSpan([], 100)).toBeNull();
+  });
+});
+
+describe("producingSlot", () => {
+  it("is the newest slot while its block is arriving, else the one after", () => {
+    expect(producingSlot([held(9), { ...held(10), level: "incomplete" }])).toBe(10);
+    expect(producingSlot([{ ...held(9), level: "incomplete" }, held(10)])).toBe(11);
+    expect(producingSlot([held(9), { ...held(11), level: "finalized" }])).toBe(12);
+    expect(producingSlot([])).toBeNull();
+  });
+});
+
+describe("emptyTurn", () => {
+  it("lists every slot to come, newest first, under the turn's leader", () => {
+    const turn = emptyTurn(3, resolver({ 12: { key: "bob", name: "Bob", icon: null } }), "alice");
+    expect(turn.slots.map((slot) => slot.slot)).toEqual([15, 14, 13, 12]);
+    expect(turn.slots.every((slot) => slot.entry === null)).toBe(true);
+    expect([turn.leader, turn.leader_name, turn.mine]).toEqual(["bob", "Bob", false]);
+  });
+
+  it("names ours as ours", () => {
+    const ours: LeaderRef = { key: "alice", name: "Ours", icon: null };
+    const turn = emptyTurn(3, (_slot, mine) => (mine ? ours : { key: "alice", name: null, icon: null }), "alice");
+    expect([turn.mine, turn.leader_name]).toEqual([true, "Ours"]);
   });
 });

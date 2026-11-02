@@ -6891,6 +6891,18 @@ body {
   color: var(--text);
 }
 
+/* One line, the name cut short, so a tag arriving after it never adds a second. */
+.schedule-leader-name > :not(.schedule-leader-title) {
+  flex: none;
+}
+
+.schedule-leader-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .schedule-leader-key {
   font-family: var(--mono);
   font-size: 12px;
@@ -7830,17 +7842,6 @@ body {
     gap: 6px;
     font-size: 13px;
     font-weight: 600;
-  }
-
-  .schedule-leader-name > :not(.schedule-leader-title) {
-    flex: none;
-  }
-
-  .schedule-leader-title {
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
   }
 
   .schedule-mine {

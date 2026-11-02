@@ -4,7 +4,9 @@ import {
   certificateAt,
   certificateText,
   certificateTitle,
+  emptyTurn,
   matchesQuery,
+  producingSlot,
   rewardTitle,
   SLOTS_PER_TURN,
   unheldSlots,
@@ -78,6 +80,12 @@ function jumpText(jump: Jump): string {
 
 /** A slot's place in the turn being produced: the one in progress, or one still to come. */
 type NowRow = "current" | "upcoming" | null;
+
+function nowRowOf(slot: number, producing: number | null): NowRow {
+  if (producing === null) return null;
+  if (slot === producing) return "current";
+  return slot > producing ? "upcoming" : null;
+}
 
 function fetchSpan(store: Store, first: number, count: number): Promise<SlotRange> {
   return store.request("slot.range", { first_slot: first, count });
@@ -286,8 +294,19 @@ export function SchedulePage({
   }, [index, found, leaderOf, leaderRevision]);
 
   const slow = found?.slow ?? null;
+
+  // The turn being produced, while the list runs from now. Before its first shred arrives it is not
+  // held, and is drawn empty at the top.
+  const producing = jump ? null : producingSlot(live);
+  const nowTurn = producing === null ? null : turnNumberOf(producing);
+  const nowHeld = nowTurn !== null && index.turn(nowTurn) !== undefined;
+  const ahead = useMemo(
+    () => (nowTurn === null || nowHeld ? null : { number: nowTurn, turn: emptyTurn(nowTurn, leaderOf, identity) }),
+    [nowTurn, nowHeld, leaderOf, identity, leaderRevision],
+  );
+
   const shown = useMemo(() => {
-    if (!searching) return numbers;
+    if (!searching) return ahead ? [ahead.number, ...numbers] : numbers;
     // A jumped list is the validator's alone, from where it landed.
     if (jump) return found?.numbers() ?? [];
     const live = index.liveNumbers().filter((number) => {
@@ -301,13 +320,7 @@ export function SchedulePage({
     });
     return [...live, ...(found?.numbers() ?? [])];
     // `foundPages` stands for the results, which change in place.
-  }, [index, numbers, found, foundPages, leaderRevision, searching, query, oursOnly, conditions, slow, jump]);
-
-  // The turn being produced: the newest held, while the list runs from now.
-  const nowTurn = useMemo(() => {
-    const newest = live.at(-1);
-    return jump || !newest ? null : turnNumberOf(newest.slot);
-  }, [live, jump]);
+  }, [index, numbers, ahead, found, foundPages, leaderRevision, searching, query, oursOnly, conditions, slow, jump]);
   const nowShown = nowTurn !== null && shown[0] === nowTurn;
 
   const [stripes] = useState(() => new Stripes());
@@ -319,8 +332,8 @@ export function SchedulePage({
     (number: number) =>
       searching && found && liveStartTurn !== null && number < liveStartTurn
         ? found.turn(number, leaderOf)
-        : index.turn(number),
-    [searching, found, liveStartTurn, index, leaderOf],
+        : (index.turn(number) ?? (number === ahead?.number ? ahead.turn : undefined)),
+    [searching, found, liveStartTurn, index, leaderOf, ahead],
   );
   const entryOf = useCallback((slot: number) => index.entry(slot) ?? found?.entry(slot), [index, found]);
   const sizeClass = useCallback(
@@ -348,6 +361,7 @@ export function SchedulePage({
         certificates={alpenglow ? turn.slots.map((slot) => certificateAt(slot.slot, entryOf)) : NO_CERTIFICATES}
         tinted={stripes.tinted(number)}
         now={number === nowTurn}
+        producing={number === nowTurn ? producing : null}
         only={conditions}
         slow={slow}
       />
@@ -494,6 +508,7 @@ const TurnCard = memo(
     certificates,
     tinted,
     now,
+    producing,
     only,
     slow,
   }: {
@@ -506,18 +521,13 @@ const TurnCard = memo(
     tinted: boolean;
     /** The turn being produced. */
     now: boolean;
+    /** The slot being produced, in this turn; null in every other. */
+    producing: number | null;
     /** The filters; rows meeting them are marked and the rest dimmed. */
     only: readonly Only[];
     slow: SlowCutOffs | null;
   }) {
     const alpenglow = useAlpenglow();
-    // Rows run newest first, so the first one begun is being produced and those above it are to come.
-    const begun = now ? turn.slots.findIndex((slot) => slot.entry !== null) : -1;
-    const nowRow = (row: number): NowRow => {
-      if (!now) return null;
-      if (begun === -1 || row < begun) return "upcoming";
-      return row === begun && turn.slots[row]?.entry?.level === "incomplete" ? "current" : null;
-    };
     return (
       <div className={`schedule-group${turn.mine ? " is-ours" : ""}${tinted ? " is-tinted" : ""}${now ? " is-now" : ""}`}>
         <TurnLeader turn={turn} peer={peer} totalStake={totalStake} now={now} />
@@ -529,7 +539,7 @@ const TurnCard = memo(
               slot={slot}
               rates={rates}
               certificate={certificates[row]}
-              now={nowRow(row)}
+              now={nowRowOf(slot.slot, producing)}
               met={only.length === 0 ? null : meets(slot.slot, slot.entry, only, slow) ? only : NO_CONDITIONS}
             />
           ))}
@@ -549,6 +559,7 @@ const TurnCard = memo(
     before.rates === after.rates &&
     before.tinted === after.tinted &&
     before.now === after.now &&
+    before.producing === after.producing &&
     before.only === after.only &&
     before.slow === after.slow &&
     before.certificates.length === after.certificates.length &&

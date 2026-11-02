@@ -1,6 +1,7 @@
 /** The hash never reaches the server. */
 
 import { useCallback, useEffect, useState } from "react";
+import { decodeConditions, encodeConditions, type Condition } from "./scheduleConditions";
 import { readOnly, type Only } from "./scheduleFilters";
 
 export type Page = "overview" | "slots" | "schedule" | "gossip" | "cluster";
@@ -16,9 +17,24 @@ export interface Route {
   from: string;
   /** The schedule's filters. */
   only: readonly Only[];
+  /** The schedule's range, each end as typed. */
+  since: string;
+  until: string;
+  /** The schedule's column conditions. */
+  where: readonly Condition[];
 }
 
-export const HOME: Route = { page: "overview", slot: null, query: "", ours: false, from: "", only: [] };
+export const HOME: Route = {
+  page: "overview",
+  slot: null,
+  query: "",
+  ours: false,
+  from: "",
+  only: [],
+  since: "",
+  until: "",
+  where: [],
+};
 
 export function readRoute(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#\/?/, "").split("?");
@@ -33,6 +49,9 @@ export function readRoute(hash: string): Route {
     ours: page === "schedule" && params.has("ours"),
     from: page === "schedule" ? (params.get("from") ?? "") : "",
     only: page === "schedule" ? readOnly(params.get("only")) : [],
+    since: page === "schedule" ? (params.get("since") ?? "") : "",
+    until: page === "schedule" ? (params.get("until") ?? "") : "",
+    where: page === "schedule" ? decodeConditions(params.get("where")) : [],
   };
 }
 
@@ -48,6 +67,9 @@ export function routeHash(route: Route): string {
         ours: route.ours,
         from: route.from,
         only: route.only.join(","),
+        since: route.since,
+        until: route.until,
+        where: encodeConditions(route.where),
       });
     case "gossip":
       return withSearch("#/gossip", { q: route.query });

@@ -189,8 +189,9 @@ every five seconds while either is asked for and once a minute otherwise,
 `epoch.query` for a held epoch's schedule, `slot.range` for a run of slots
 out of the packed history, which holds an epoch, `slot.search` for a page of
 the turns in it that match a leader's name or key, a slot number, this
-validator or a condition on their slots, down or up from a given slot or time,
-answered off the async threads and one at a time, and
+validator or a condition on their slots or leaders, down or up from a given
+slot or time, `slot.summary` for the same matches summed up overall and by
+leader client, both answered off the async threads and one at a time, and
 `peers.gossip` for every node in gossip, which the server gathers only while it
 is being asked for, `handoff.bin` for the settled leaders whose median handoff
 gap falls in a range, from the figures each ten-second handoff summary keeps,

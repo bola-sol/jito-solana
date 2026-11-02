@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { NO_LEADER, type LeaderRef } from "./schedule";
 import { HAS_CLOCK, HAS_SHREDS, type SlotRange, type WireRow } from "./slotHistory";
-import { FoundTurns, liveFloor, TurnIndex, turnNumberOf } from "./turnIndex";
+import { NO_RANGE } from "./scheduleConditions";
+import { FoundTurns, liveFloor, TurnIndex, turnNumberOf, type SearchAsk } from "./turnIndex";
 import type { SlotEntry } from "./types";
 
 function entry(slot: number, mine = false, level: SlotEntry["level"] = "finalized"): SlotEntry {
@@ -136,12 +137,14 @@ describe("TurnIndex", () => {
 });
 
 describe("FoundTurns", () => {
+  const ask = (query: string): SearchAsk => ({ query, ours: false, only: [], where: [], range: NO_RANGE });
+
   function range(turnStart: number): SlotRange {
     return { first_slot: turnStart - 8, rows: rows(turnStart - 8, turnStart + 4) };
   }
 
   it("lists each page's turns in order and reads certificates from the rows before them", () => {
-    const found = new FoundTurns("x", false, 400);
+    const found = new FoundTurns(ask("x"), 400);
     found.add([range(360), range(200)], 200, undefined, undefined);
     found.add([range(40)], null, undefined, undefined);
     expect(found.numbers()).toEqual([90, 50, 10]);
@@ -151,7 +154,7 @@ describe("FoundTurns", () => {
   });
 
   it("puts each forward page above what it holds, newest first", () => {
-    const found = new FoundTurns("", false, 200, [], null, true);
+    const found = new FoundTurns(ask(""), 200, null, true);
     found.add([range(200), range(204)], 208, undefined, undefined);
     found.add([range(208)], null, undefined, undefined);
     expect(found.numbers()).toEqual([52, 51, 50]);

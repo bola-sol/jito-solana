@@ -66,6 +66,9 @@ export function App(): ReactElement {
             ours={route.ours}
             from={route.from}
             only={route.only}
+            since={route.since}
+            until={route.until}
+            where={route.where}
             onFilter={(next) => go({ ...route, ...next }, true)}
           />
         )}

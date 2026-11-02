@@ -16,6 +16,7 @@ use {
             Bundles, CostDetail, Execution, ProducedBlock, ProducedDetail, ProducedStore, held_from,
         },
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
+        search::{LeaderMap, LeaderTraits},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         snapshot::{self, SnapshotTracker, Snapshots},
         startup::StartupPublisher,
@@ -82,6 +83,8 @@ pub use self::{
 const SLOW_TICK: Duration = Duration::from_secs(5);
 /// An epoch's skip spread moves slowly, and each pass walks the epoch's slot history.
 const CLUSTER_FIGURES_EVERY: Duration = Duration::from_secs(30);
+/// Stakes and gossip versions move slowly; the schedule's leader conditions read them.
+const LEADER_TRAITS_EVERY: Duration = Duration::from_secs(10);
 
 /// The tip counts the slot still arriving, so a node in step reads a slot or two behind it.
 const IN_STEP_SLOTS: u64 = 4;
@@ -108,6 +111,8 @@ pub struct Replies {
     /// The Cluster page's charts, gathered only while someone is asking.
     pub cluster_charts: RwLock<Arc<str>>,
     pub cluster_charts_wanted: AtomicU64,
+    /// Every staked node's client, country and stake, for the schedule's leader conditions.
+    pub leader_traits: RwLock<LeaderMap>,
 }
 
 impl Replies {
@@ -179,6 +184,7 @@ impl Default for Replies {
             handoff_leaders: RwLock::default(),
             cluster_charts: RwLock::new(Arc::from("null")),
             cluster_charts_wanted: AtomicU64::new(0),
+            leader_traits: RwLock::default(),
         }
     }
 }
@@ -514,6 +520,7 @@ pub struct Collector {
     voting: bool,
     last_slow_tick: Instant,
     cluster_figures_at: Instant,
+    leader_traits_at: Instant,
     /// Unix milliseconds the Cluster page's charts were last gathered.
     cluster_charts_made: u64,
     /// Unix milliseconds this node caught up with the cluster, where it had to.
@@ -623,6 +630,7 @@ impl Collector {
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
             cluster_figures_at: now.checked_sub(CLUSTER_FIGURES_EVERY).unwrap_or(now),
+            leader_traits_at: now.checked_sub(LEADER_TRAITS_EVERY).unwrap_or(now),
             cluster_charts_made: 0,
             caught_up_millis: None,
             previous_skips: None,
@@ -805,6 +813,10 @@ impl Collector {
             if now.duration_since(self.cluster_figures_at) >= CLUSTER_FIGURES_EVERY {
                 self.cluster_figures_at = now;
                 self.collect_cluster_figures(&root_bank);
+            }
+            if now.duration_since(self.leader_traits_at) >= LEADER_TRAITS_EVERY {
+                self.leader_traits_at = now;
+                self.collect_leader_traits(&working_bank, &peers);
             }
             self.collect_finalization_share(&working_bank, &peers);
             self.collect_cert_formation(&root_bank);
@@ -1342,6 +1354,30 @@ impl Collector {
             .upcoming
             .publish(&self.publisher, TOPIC_SLOT, "upcoming", upcoming);
         leaders
+    }
+
+    /// Every staked node's client, country and stake, which the schedule's leader conditions and
+    /// its by-client summary read.
+    fn collect_leader_traits(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
+        let mut map = LeaderMap::new();
+        for (stake, account) in bank.vote_accounts().values() {
+            if *stake == 0 {
+                continue;
+            }
+            let traits: &mut LeaderTraits = map.entry(*account.node_pubkey()).or_default();
+            traits.stake = traits.stake.saturating_add(*stake);
+        }
+        for (contact_info, _) in peers {
+            if let Some(traits) = map.get_mut(contact_info.pubkey()) {
+                traits.client = Some(contact_info.version().client().to_string());
+                traits.country = contact_info
+                    .gossip()
+                    .and_then(|addr| geoip::country(addr.ip()));
+            }
+        }
+        if let Ok(mut held) = self.replies.leader_traits.write() {
+            *held = map;
+        }
     }
 
     fn collect_peer_table(

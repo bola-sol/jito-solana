@@ -1,4 +1,5 @@
 import { NO_LEADER, SLOTS_PER_TURN, turnsOf, type LeaderRef, type Turn } from "./schedule";
+import type { RangeBounds, ServerCondition } from "./scheduleConditions";
 import type { Only, SlowCutOffs } from "./scheduleFilters";
 import { SlotColumns, SlotRows } from "./slotColumns";
 import type { SlotRange, WireRow } from "./slotHistory";
@@ -224,6 +225,15 @@ export class TurnIndex {
 
 /** A search's matching turns, a page at a time as the validator finds them, each with the rows its
  *  certificates are read from. */
+/** What a search asks of the validator, apart from where it starts. */
+export interface SearchAsk {
+  query: string;
+  ours: boolean;
+  only: readonly Only[];
+  where: readonly ServerCondition[];
+  range: RangeBounds;
+}
+
 export class FoundTurns {
   private rows = new SlotRows();
   private epoch: EpochInfo | undefined;
@@ -237,9 +247,7 @@ export class FoundTurns {
   pages = 0;
   /** A page is on its way. */
   loading = false;
-  readonly query: string;
-  readonly ours: boolean;
-  readonly only: readonly Only[];
+  readonly ask: SearchAsk;
   /** For a jump to a time: turns begun after it are passed over. */
   readonly until: number | null;
   /** The validator's slow cut-offs, from the first page; later pages send them back. */
@@ -248,19 +256,10 @@ export class FoundTurns {
   readonly forward: boolean;
   readonly start: number;
 
-  constructor(
-    query: string,
-    ours: boolean,
-    before: number,
-    only: readonly Only[] = [],
-    until: number | null = null,
-    forward = false,
-  ) {
-    this.query = query;
-    this.ours = ours;
+  constructor(ask: SearchAsk, before: number, until: number | null = null, forward = false) {
+    this.ask = ask;
     this.next = before;
     this.start = before;
-    this.only = only;
     this.until = until;
     this.forward = forward;
   }

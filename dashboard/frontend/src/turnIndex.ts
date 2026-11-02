@@ -1,4 +1,5 @@
 import { NO_LEADER, SLOTS_PER_TURN, turnsOf, type LeaderRef, type Turn } from "./schedule";
+import type { Only, SlowCutOffs } from "./scheduleFilters";
 import { SlotColumns, SlotRows } from "./slotColumns";
 import type { SlotRange, WireRow } from "./slotHistory";
 import type { EpochInfo, SlotEntry } from "./types";
@@ -235,11 +236,18 @@ export class FoundTurns {
   loading = false;
   readonly query: string;
   readonly ours: boolean;
+  readonly only: readonly Only[];
+  /** For a jump to a time: turns begun after it are passed over. */
+  readonly until: number | null;
+  /** The validator's slow cut-offs, from the first page; later pages send them back. */
+  slow: SlowCutOffs | null = null;
 
-  constructor(query: string, ours: boolean, before: number) {
+  constructor(query: string, ours: boolean, before: number, only: readonly Only[] = [], until: number | null = null) {
     this.query = query;
     this.ours = ours;
     this.next = before;
+    this.only = only;
+    this.until = until;
   }
 
   add(
@@ -247,7 +255,9 @@ export class FoundTurns {
     next: number | null,
     epoch: EpochInfo | undefined,
     identity: string | undefined,
+    slow: SlowCutOffs | null = null,
   ): void {
+    this.slow ??= slow;
     this.epoch = epoch;
     this.identity = identity;
     const added: number[] = [];

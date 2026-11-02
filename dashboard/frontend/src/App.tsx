@@ -64,7 +64,9 @@ export function App(): ReactElement {
           <SchedulePage
             query={route.query}
             ours={route.ours}
-            onFilter={(query, ours) => go({ ...route, query, ours }, true)}
+            from={route.from}
+            only={route.only}
+            onFilter={(next) => go({ ...route, ...next }, true)}
           />
         )}
         {page === "cluster" && <ClusterPage />}

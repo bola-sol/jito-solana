@@ -7,10 +7,12 @@ export const LIVE_EDGE_PX = 120;
 export function ScrollTop({
   scroller,
   hold = true,
+  label = "Back to top",
 }: {
   scroller: RefObject<HTMLElement | null>;
   /** Off where the list holds its own place, as a virtual list does. */
   hold?: boolean;
+  label?: string;
 }): ReactElement {
   const [away, setAway] = useState(false);
   // Shared with the hook below: it needs to know where the list was left, to
@@ -50,7 +52,7 @@ export function ScrollTop({
             })
           }
         >
-          <span aria-hidden="true">↑</span> Back to top
+          <span aria-hidden="true">↑</span> {label}
         </button>
       )}
     </div>

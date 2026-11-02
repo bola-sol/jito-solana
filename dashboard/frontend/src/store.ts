@@ -3,6 +3,7 @@
 
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
 import type { SlotRange } from "./slotHistory";
+import type { Only, SlowCutOffs } from "./scheduleFilters";
 import type {
   ClusterCharts,
   Displays,
@@ -29,8 +30,15 @@ import type {
 export interface Requests {
   "slot.range": { params: { first_slot: number; count: number }; reply: SlotRange };
   "slot.search": {
-    params: { query: string; ours: boolean; before: number };
-    reply: { turns: SlotRange[]; next: number | null };
+    params: {
+      query: string;
+      ours: boolean;
+      before: number;
+      only: readonly Only[];
+      until_millis: number | null;
+      slow: SlowCutOffs | null;
+    };
+    reply: { turns: SlotRange[]; next: number | null; slow: SlowCutOffs | null };
   };
   "epoch.query": { params: { epoch: number }; reply: EpochInfo | null };
   "summary.displays": { params: Record<string, never>; reply: Displays };

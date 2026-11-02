@@ -782,8 +782,8 @@ export function SchedulePage({
     if (words !== query) onFilter({ query: words });
   };
 
-  // What Add takes from the box: conditions replace any on the same figure and comparison, and a
-  // range or jump is moved inside what the validator holds.
+  // What Add takes from the box, which keeps its text for the next change: conditions replace any
+  // on the same figure and comparison, and a range or jump is moved inside what the validator holds.
   const addFromBox = (): void => {
     const now = Date.now();
     const read = readSearch(boxText, syntaxOffered, now);
@@ -827,7 +827,6 @@ export function SchedulePage({
     next.where = nextWhere;
     next.only = ONLY.filter((condition) => nextOnly.has(condition));
     onFilter(next);
-    setBoxText(read.words);
     if (group) showColumns(group);
   };
 
@@ -839,8 +838,11 @@ export function SchedulePage({
     input?.focus();
     requestAnimationFrame(() => input?.setSelectionRange(text.length, text.length));
   };
+  // The box's expressions go with the filters they made; its words stay the name search.
   const clearAdvanced = (): void => {
     setJumpMoved(null);
+    setSyntaxError(null);
+    setBoxText(readSearch(boxText, syntaxOffered, Date.now()).words);
     onFilter({ since: "", until: "", where: [], from: "" });
   };
 
@@ -981,15 +983,6 @@ export function SchedulePage({
           </button>
         </div>
       </div>
-      {advancedOpen && (
-        <SyntaxSheet
-          offered={syntaxOffered}
-          held={held}
-          slot={newestSlot === null ? null : Math.floor((newestSlot - 20_000) / 1000) * 1000}
-          epoch={epoch?.epoch ?? null}
-          onPick={pickExample}
-        />
-      )}
       <FilterPills pills={pills} shareable={searching} onClearAll={clearAdvanced} onSave={() => setViewsOpen(true)} />
       {(syntaxError || conditions.length > 0 || jumpMoved) && (
         <div className="schedule-from">
@@ -1002,6 +995,15 @@ export function SchedulePage({
           {jumpMoved === "newer" && <span>Newer than the validator holds, back to live.</span>}
           {conditions.length > 0 && <span>{describeOnly(conditions, slow)}</span>}
         </div>
+      )}
+      {advancedOpen && (
+        <SyntaxSheet
+          offered={syntaxOffered}
+          held={held}
+          slot={newestSlot === null ? null : Math.floor((newestSlot - 20_000) / 1000) * 1000}
+          epoch={epoch?.epoch ?? null}
+          onPick={pickExample}
+        />
       )}
       {summary && (
         <>

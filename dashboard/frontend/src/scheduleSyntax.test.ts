@@ -109,6 +109,7 @@ describe("suggest", () => {
     ]);
     expect(suggest("client:Agave,a", offered).map((suggestion) => suggestion.insert)).toEqual(["client:Agave,AgaveBam"]);
     expect(suggest("duration>2", offered)).toEqual([]);
+    expect(suggest("voted:in,out", offered)).toEqual([]);
   });
 
   it("offers names by any part, quoting those that need it", () => {

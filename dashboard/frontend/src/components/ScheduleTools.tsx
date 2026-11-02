@@ -65,6 +65,11 @@ export function SyntaxSearch({
     placeCaret.current = next.caret;
     edit(next.text, next.caret);
   };
+  // The text stays for the next change; the suggestions close until it is edited.
+  const add = () => {
+    setDismissed(true);
+    onAdd();
+  };
   const choice = options[active];
   return (
     <span className="schedule-query">
@@ -100,14 +105,14 @@ export function SyntaxSearch({
           } else if (event.key === "Enter") {
             event.preventDefault();
             if (choice) pick(choice.insert);
-            else onAdd();
+            else add();
           } else if (event.key === "Escape" && options.length > 0) {
             event.preventDefault();
             setDismissed(true);
           }
         }}
       />
-      <button type="button" className={`schedule-add${ready ? " is-ready" : ""}`} onClick={onAdd}>
+      <button type="button" className={`schedule-add${ready ? " is-ready" : ""}`} onClick={add}>
         Add
       </button>
       {options.length > 0 && (

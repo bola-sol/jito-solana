@@ -334,7 +334,8 @@ export function suggest(before: string, offered: Offered): Suggestion[] {
   const fits = (value: string): boolean =>
     key.field === "name" ? value.toLowerCase().includes(lower) : value.toLowerCase().startsWith(lower);
   return valuesOf(key, offered)
-    .filter(([value]) => fits(value) && !already.has(value.toLowerCase()))
+    // A value typed in full is not offered again.
+    .filter(([value]) => fits(value) && value.toLowerCase() !== lower && !already.has(value.toLowerCase()))
     .slice(0, MAX_SUGGESTIONS)
     .map(([value, what]) => ({ insert: `${not}${name}:${done}${/[\s,]/.test(value) ? `"${value}"` : value}`, ghost: "", what }));
 }

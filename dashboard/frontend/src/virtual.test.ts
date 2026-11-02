@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { indexAt, offsetsOf, visibleRange } from "./virtual";
+import { cutShort, edgeSide, indexAt, offsetsOf, visibleRange } from "./virtual";
 
 describe("offsetsOf", () => {
   it("puts each item under the last, ending at the total", () => {
@@ -37,5 +37,39 @@ describe("visibleRange", () => {
 
   it("draws nothing for an empty list", () => {
     expect(visibleRange(offsetsOf([]), 0, 300, 200)).toEqual([0, -1]);
+  });
+});
+
+describe("cutShort", () => {
+  it("is a scroll that went up to the new bottom", () => {
+    expect(cutShort(4934, 5076, 5373, 439)).toBe(true);
+  });
+
+  it("is not a scroll that went up short of the bottom", () => {
+    expect(cutShort(4000, 5076, 5373, 439)).toBe(false);
+  });
+
+  it("is not a scroll that went down to the bottom", () => {
+    expect(cutShort(4934, 4800, 5373, 439)).toBe(false);
+  });
+
+  it("is not a first reading", () => {
+    expect(cutShort(4934, null, 5373, 439)).toBe(false);
+  });
+});
+
+describe("edgeSide", () => {
+  it("is in view at the top and while scrolled past by less than the margin", () => {
+    expect(edgeSide(0, 30, 500, 120)).toBe("in");
+    expect(edgeSide(-100, 30, 500, 120)).toBe("in");
+  });
+
+  it("is above once scrolled past by more than the margin", () => {
+    expect(edgeSide(-121, 30, 500, 120)).toBe("above");
+  });
+
+  it("is below once not wholly in view at the bottom", () => {
+    expect(edgeSide(470, 30, 500, 120)).toBe("in");
+    expect(edgeSide(471, 30, 500, 120)).toBe("below");
   });
 });

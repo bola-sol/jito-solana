@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { offsetsOf, visibleRange } from "../virtual";
+import { cutShort, edgeSide, offsetsOf, visibleRange, type EdgeSide } from "../virtual";
 import { LIVE_EDGE_PX } from "./ScrollTop";
 
 /** A screen past each edge is drawn, so a fast scroll does not show blank space. */
@@ -39,6 +39,8 @@ export function VirtualList({
   follow = true,
   reveal,
   revealGap = 0,
+  marker,
+  onMarker,
 }: {
   keys: readonly number[];
   sizeClass: (key: number) => number;
@@ -56,6 +58,11 @@ export function VirtualList({
   reveal?: number | null;
   /** Left above a revealed item, for whatever floats over the list's top. */
   revealGap?: number;
+  /** Held in preference to the first item in view while within the live edge's reach of the top, so
+   *  it stays put as items move from one side of it to the other. */
+  marker?: number;
+  /** Told whenever the marker moves to another side of the view. */
+  onMarker?: (side: EdgeSide) => void;
 }): ReactElement {
   const container = useRef<HTMLDivElement>(null);
   // Each drawn item's height and the size class it was measured in.
@@ -167,6 +174,10 @@ export function VirtualList({
     viewport.height * OVERSCAN_SCREENS,
   );
   const total = offsets[keys.length] ?? 0;
+  const markerAt = marker === undefined ? -1 : keys.indexOf(marker);
+  // A screen below the marker, so it can reach the top while what is below it still loads; else the
+  // browser cuts the scroll short, which reads as the reader moving.
+  const height = Math.max(total, markerAt < 0 ? 0 : (offsets[markerAt] ?? 0) + (scroller.current?.clientHeight ?? 0));
 
   // Holds the first item in view where the reader left it, when the list is away from its top. The
   // place is kept exact and each correction aimed at it, so the browser's rounding of `scrollTop`
@@ -185,7 +196,9 @@ export function VirtualList({
     if (index < 0 || offset === undefined) return;
     revealed.current = reveal;
     element.scrollTop = start + offset - revealGap;
-    anchor.current = { key: reveal, place: start + offset - element.scrollTop };
+    // The place meant, not the one reached: a list still too short to scroll that far is taken there
+    // as it grows.
+    anchor.current = { key: reveal, place: revealGap };
     settled.current = element.scrollTop;
   });
 
@@ -194,7 +207,9 @@ export function VirtualList({
     if (!element) return;
     const held = anchor.current;
     const current = element.scrollTop;
-    const moved = settled.current === null ? null : current - settled.current;
+    // The browser cutting the scroll short as the list shrank is not the reader moving.
+    const clamped = cutShort(current, settled.current, element.scrollHeight, element.clientHeight);
+    const moved = settled.current === null ? null : clamped ? 0 : current - settled.current;
     const index = held && (current > LIVE_EDGE_PX || !follow) ? keys.indexOf(held.key) : -1;
     const offset = offsets[index];
     if (held && moved !== null && offset !== undefined) {
@@ -203,11 +218,27 @@ export function VirtualList({
       if (Math.abs(current - target) >= 0.5) element.scrollTop = target;
     }
     if (!held || moved !== 0 || offset === undefined) {
-      const [inView] = visibleRange(offsets, element.scrollTop - start, 0, 0);
+      const markerPlace = start + (offsets[markerAt] ?? 0) - element.scrollTop;
+      const [inView] =
+        markerAt >= 0 && Math.abs(markerPlace) <= LIVE_EDGE_PX
+          ? [markerAt]
+          : visibleRange(offsets, element.scrollTop - start, 0, 0);
       const key = keys[inView];
       anchor.current = key === undefined ? null : { key, place: start + (offsets[inView] ?? 0) - element.scrollTop };
     }
     settled.current = element.scrollTop;
+  });
+
+  const side = useRef<EdgeSide | null>(null);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const top = offsets[markerAt];
+    const bottom = offsets[markerAt + 1];
+    if (!element || !onMarker || top === undefined || bottom === undefined) return;
+    const now = edgeSide(start + top - element.scrollTop, bottom - top, element.clientHeight, LIVE_EDGE_PX);
+    if (now === side.current) return;
+    side.current = now;
+    onMarker(now);
   });
 
   // Observes what is drawn and lets go of what no longer is.
@@ -226,7 +257,9 @@ export function VirtualList({
 
   useEffect(() => {
     if (!onNearStart || viewport.height === 0 || keys.length === 0) return;
-    if (viewport.top - start < viewport.height * NEAR_END_SCREENS) onNearStart();
+    // Read afresh: a reveal moves the scroll a frame before the viewport hears of it.
+    const top = scroller.current?.scrollTop ?? viewport.top;
+    if (top - start < viewport.height * NEAR_END_SCREENS) onNearStart();
   });
 
   const items: ReactNode[] = [];
@@ -246,7 +279,7 @@ export function VirtualList({
   }
 
   return (
-    <div className="virtual-list" ref={container} style={{ height: total }}>
+    <div className="virtual-list" ref={container} style={{ height }}>
       {items}
     </div>
   );

@@ -32,3 +32,21 @@ export function visibleRange(
   if (items <= 0) return [0, -1];
   return [indexAt(offsets, Math.max(0, top - overscan)), indexAt(offsets, top + height + overscan)];
 }
+
+/** The browser cut the scroll short as the list shrank: it went up, to as far down as it now goes. */
+export function cutShort(current: number, settled: number | null, scrollHeight: number, clientHeight: number): boolean {
+  return settled !== null && current < settled && current >= scrollHeight - clientHeight - 0.5;
+}
+
+/** Where a marked item sits against the view: above it, in it, or below it. */
+export type EdgeSide = "above" | "in" | "below";
+
+/**
+ * Where a line at `offset` (from the view's top) sits: above once scrolled past by more than
+ * `margin`, below once not wholly in view at the bottom.
+ */
+export function edgeSide(offset: number, height: number, viewHeight: number, margin: number): EdgeSide {
+  if (offset < -margin) return "above";
+  if (offset > viewHeight - height) return "below";
+  return "in";
+}

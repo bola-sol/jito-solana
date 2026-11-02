@@ -2386,6 +2386,16 @@ body {
   justify-content: center;
 }
 
+.scroll-top-anchor.is-below {
+  top: auto;
+  bottom: 0;
+  align-items: flex-end;
+}
+
+.scroll-top-anchor.is-below .scroll-top {
+  top: -8px;
+}
+
 /* Solid and in the accent, so it reads over the figures it floats above in either theme. */
 .scroll-top {
   position: relative;
@@ -8498,6 +8508,73 @@ body {
 .schedule-row.is-upcoming,
 .schedule-row.is-upcoming .schedule-slot {
   color: var(--text-faint);
+}
+
+.schedule-group.is-future .schedule-leader-when,
+.schedule-group.is-future .schedule-leader-time {
+  color: var(--text-faint);
+}
+
+/* The live edge, between the turns to come and the live one. */
+.schedule-edge,
+.schedule-epoch-end {
+  display: flex;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.schedule-edge {
+  border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+}
+
+.schedule-edge b {
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.schedule-edge-next {
+  color: var(--text);
+}
+
+.schedule-edge-dim,
+.schedule-epoch-end {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedule-epoch-end {
+  border-bottom: 1px solid var(--border);
+}
+
+.schedule-epoch-end b {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+@media (max-width: 700px) {
+  .schedule-edge,
+  .schedule-epoch-end {
+    flex-wrap: wrap;
+    padding: 6px 12px;
+    white-space: normal;
+  }
+
+  .schedule-edge > b {
+    flex-basis: 100%;
+  }
+
+  .schedule-edge-wide {
+    display: none;
+  }
 }
 
 /* The slot a jump asked for, outlined for as long as the list is parked there. */

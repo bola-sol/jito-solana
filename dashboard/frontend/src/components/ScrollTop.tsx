@@ -9,6 +9,8 @@ export function ScrollTop({
   hold = true,
   label = "Back to top",
   onPress,
+  shown,
+  below = false,
 }: {
   scroller: RefObject<HTMLElement | null>;
   /** Off where the list holds its own place, as a virtual list does. */
@@ -16,6 +18,10 @@ export function ScrollTop({
   label?: string;
   /** In place of scrolling to the top, where the top is somewhere else to go back to. */
   onPress?: () => void;
+  /** In place of showing once scrolled down, where the place to go back to is somewhere else. */
+  shown?: boolean;
+  /** Floats at the foot of the list, pointing down. */
+  below?: boolean;
 }): ReactElement {
   const [away, setAway] = useState(false);
   // Shared with the hook below: it needs to know where the list was left, to
@@ -39,8 +45,8 @@ export function ScrollTop({
   }, [scroller]);
 
   return (
-    <div className="scroll-top-anchor">
-      {away && (
+    <div className={`scroll-top-anchor${below ? " is-below" : ""}`}>
+      {(shown ?? away) && (
         <button
           type="button"
           className="scroll-top"
@@ -59,7 +65,7 @@ export function ScrollTop({
             });
           }}
         >
-          <span aria-hidden="true">↑</span> {label}
+          <span aria-hidden="true">{below ? "↓" : "↑"}</span> {label}
         </button>
       )}
     </div>

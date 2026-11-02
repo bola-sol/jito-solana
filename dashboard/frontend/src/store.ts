@@ -34,6 +34,7 @@ export interface Requests {
       query: string;
       ours: boolean;
       before: number;
+      forward: boolean;
       only: readonly Only[];
       until_millis: number | null;
       slow: SlowCutOffs | null;

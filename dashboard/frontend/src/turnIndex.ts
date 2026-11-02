@@ -229,9 +229,12 @@ export class FoundTurns {
   private epoch: EpochInfo | undefined;
   private identity: string | undefined;
   private order: readonly number[] = [];
+  private held = new Set<number>();
   private built = new BuiltTurns();
   /** Where the next page starts; null once the validator has read its history to the end. */
   next: number | null;
+  /** Pages added so far. */
+  pages = 0;
   /** A page is on its way. */
   loading = false;
   readonly query: string;
@@ -241,13 +244,25 @@ export class FoundTurns {
   readonly until: number | null;
   /** The validator's slow cut-offs, from the first page; later pages send them back. */
   slow: SlowCutOffs | null = null;
+  /** Reads up from `start` rather than down from it, for the turns above a jump. */
+  readonly forward: boolean;
+  readonly start: number;
 
-  constructor(query: string, ours: boolean, before: number, only: readonly Only[] = [], until: number | null = null) {
+  constructor(
+    query: string,
+    ours: boolean,
+    before: number,
+    only: readonly Only[] = [],
+    until: number | null = null,
+    forward = false,
+  ) {
     this.query = query;
     this.ours = ours;
     this.next = before;
+    this.start = before;
     this.only = only;
     this.until = until;
+    this.forward = forward;
   }
 
   add(
@@ -263,14 +278,22 @@ export class FoundTurns {
     const added: number[] = [];
     for (const range of turns) {
       this.rows.add(range.first_slot, range.rows);
-      added.push(turnNumberOf(range.first_slot + range.rows.length - 1));
+      const number = turnNumberOf(range.first_slot + range.rows.length - 1);
+      added.push(number);
+      this.held.add(number);
     }
-    this.order = [...this.order, ...added];
+    // Kept newest first; a forward page comes oldest first and goes above.
+    this.order = this.forward ? [...added.reverse(), ...this.order] : [...this.order, ...added];
     this.next = next;
+    this.pages += 1;
   }
 
   numbers(): readonly number[] {
     return this.order;
+  }
+
+  holds(number: number): boolean {
+    return this.held.has(number);
   }
 
   entry(slot: number): SlotEntry | undefined {

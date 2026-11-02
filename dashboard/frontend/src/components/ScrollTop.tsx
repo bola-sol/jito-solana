@@ -8,11 +8,14 @@ export function ScrollTop({
   scroller,
   hold = true,
   label = "Back to top",
+  onPress,
 }: {
   scroller: RefObject<HTMLElement | null>;
   /** Off where the list holds its own place, as a virtual list does. */
   hold?: boolean;
   label?: string;
+  /** In place of scrolling to the top, where the top is somewhere else to go back to. */
+  onPress?: () => void;
 }): ReactElement {
   const [away, setAway] = useState(false);
   // Shared with the hook below: it needs to know where the list was left, to
@@ -41,7 +44,11 @@ export function ScrollTop({
         <button
           type="button"
           className="scroll-top"
-          onClick={() =>
+          onClick={() => {
+            if (onPress) {
+              onPress();
+              return;
+            }
             scroller.current?.scrollTo({
               top: 0,
               // A list holding its own place moves the scroll as items arrive, which would cut a
@@ -49,8 +56,8 @@ export function ScrollTop({
               // animate the corrections below too.
               behavior:
                 !hold || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-            })
-          }
+            });
+          }}
         >
           <span aria-hidden="true">↑</span> {label}
         </button>

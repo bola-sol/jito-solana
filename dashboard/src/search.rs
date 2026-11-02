@@ -67,8 +67,12 @@ pub struct SearchParams {
     pub query: String,
     #[serde(default)]
     pub ours: bool,
-    /// Turns starting below this slot are searched, newest first.
+    /// Turns starting below this slot are searched, newest first; with `forward`, turns starting at
+    /// or above it, oldest first.
     pub before: Slot,
+    /// Searches up from `before`, for scrolling up from a jump.
+    #[serde(default)]
+    pub forward: bool,
     #[serde(default)]
     pub limit: Option<usize>,
     #[serde(default)]
@@ -331,8 +335,21 @@ pub fn search(
     let rows = usize::try_from(lead.saturating_add(SLOTS_PER_TURN)).unwrap_or(usize::MAX);
 
     // Passed once a turn at or before the time is reached; older turns are older still.
-    let mut reached = params.until_millis.is_none();
+    let mut reached = params.until_millis.is_none() || params.forward;
+    // Each turn's first slot in the order searched, as far as the ring can reach either way.
+    let ceiling = params.before.saturating_add(capacity);
     let mut turn = params.before.checked_div(SLOTS_PER_TURN).unwrap_or(0);
+    let mut next_start = || -> Option<Slot> {
+        if params.forward {
+            let start = turn.saturating_mul(SLOTS_PER_TURN);
+            turn = turn.saturating_add(1);
+            (start < ceiling).then_some(start)
+        } else {
+            turn = turn.checked_sub(1)?;
+            let start = turn.saturating_mul(SLOTS_PER_TURN);
+            (start >= floor).then_some(start)
+        }
+    };
     let mut found = Vec::new();
     let mut text = String::new();
     loop {
@@ -344,22 +361,13 @@ pub fn search(
             };
         };
         for _ in 0..TURNS_PER_LOCK {
-            let Some(below) = turn.checked_sub(1) else {
+            let Some(start) = next_start() else {
                 return SearchReply {
                     turns: found,
                     next: None,
                     slow,
                 };
             };
-            turn = below;
-            let start = turn.saturating_mul(SLOTS_PER_TURN);
-            if start < floor {
-                return SearchReply {
-                    turns: found,
-                    next: None,
-                    slow,
-                };
-            }
             if !reached {
                 match (began_millis(&history, start), params.until_millis) {
                     (Some(began), Some(until)) if began <= until => reached = true,
@@ -371,9 +379,14 @@ pub fn search(
             }
             found.push(history.range(start.saturating_sub(lead), rows));
             if found.len() >= limit {
+                let next = if params.forward {
+                    start.saturating_add(SLOTS_PER_TURN)
+                } else {
+                    start
+                };
                 return SearchReply {
                     turns: found,
-                    next: Some(start),
+                    next: Some(next),
                     slow,
                 };
             }
@@ -435,6 +448,7 @@ mod tests {
             ours,
             before,
             limit,
+            forward: false,
             only: Vec::new(),
             until_millis: None,
             slow: None,
@@ -711,6 +725,24 @@ mod tests {
             },
         );
         assert_eq!(starts(&reply), vec![START + 8, START + 4, START]);
+    }
+
+    #[test]
+    fn test_a_forward_search_reads_up_from_its_start_a_page_at_a_time() {
+        let epochs = [epoch(&["a"])];
+        let held = history(START, START + 19);
+        let forward = |before: Slot| SearchParams {
+            forward: true,
+            ..params("", false, before, Some(2))
+        };
+        let first = search(&held, &RwLock::default(), &epochs, &forward(START + 4));
+        assert_eq!(starts(&first), vec![START + 4, START + 8], "oldest first");
+        assert_eq!(first.next, Some(START + 12));
+        let rest = search(&held, &RwLock::default(), &epochs, &forward(START + 12));
+        assert_eq!(starts(&rest), vec![START + 12, START + 16]);
+        let past = search(&held, &RwLock::default(), &epochs, &forward(START + 20));
+        assert_eq!(starts(&past), Vec::<Slot>::new());
+        assert_eq!(past.next, None, "nothing above the newest held");
     }
 
     #[test]

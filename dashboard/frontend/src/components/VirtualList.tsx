@@ -35,7 +35,10 @@ export function VirtualList({
   render,
   scroller,
   onNearEnd,
+  onNearStart,
+  follow = true,
   reveal,
+  revealGap = 0,
 }: {
   keys: readonly number[];
   sizeClass: (key: number) => number;
@@ -44,8 +47,15 @@ export function VirtualList({
   render: (key: number) => ReactNode;
   scroller: RefObject<HTMLElement | null>;
   onNearEnd?: () => void;
+  /** Asked when two screens are left above, for a list that loads upward too. */
+  onNearStart?: () => void;
+  /** Off where the list's top is not the newest item: the first item in view then holds its place
+   *  there too, as items load above it. */
+  follow?: boolean;
   /** Brought to the top of the view once, when it first appears among the keys. */
   reveal?: number | null;
+  /** Left above a revealed item, for whatever floats over the list's top. */
+  revealGap?: number;
 }): ReactElement {
   const container = useRef<HTMLDivElement>(null);
   // Each drawn item's height and the size class it was measured in.
@@ -164,7 +174,8 @@ export function VirtualList({
   const anchor = useRef<{ key: number; place: number } | null>(null);
   const settled = useRef<number | null>(null);
 
-  // Before the anchor below, which then holds the item there as those above it are measured.
+  // Before the anchor below, which then holds the revealed item itself, as those above it, placed
+  // by estimate, are measured.
   const revealed = useRef<number | null>(null);
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -173,7 +184,9 @@ export function VirtualList({
     const offset = offsets[index];
     if (index < 0 || offset === undefined) return;
     revealed.current = reveal;
-    element.scrollTop = start + offset;
+    element.scrollTop = start + offset - revealGap;
+    anchor.current = { key: reveal, place: start + offset - element.scrollTop };
+    settled.current = element.scrollTop;
   });
 
   useLayoutEffect(() => {
@@ -182,7 +195,7 @@ export function VirtualList({
     const held = anchor.current;
     const current = element.scrollTop;
     const moved = settled.current === null ? null : current - settled.current;
-    const index = held && current > LIVE_EDGE_PX ? keys.indexOf(held.key) : -1;
+    const index = held && (current > LIVE_EDGE_PX || !follow) ? keys.indexOf(held.key) : -1;
     const offset = offsets[index];
     if (held && moved !== null && offset !== undefined) {
       // What the reader scrolled is kept; what arrived or grew above is taken back out.
@@ -209,6 +222,11 @@ export function VirtualList({
   useEffect(() => {
     if (!onNearEnd || viewport.height === 0) return;
     if (total - (viewport.top - start + viewport.height) < viewport.height * NEAR_END_SCREENS) onNearEnd();
+  });
+
+  useEffect(() => {
+    if (!onNearStart || viewport.height === 0 || keys.length === 0) return;
+    if (viewport.top - start < viewport.height * NEAR_END_SCREENS) onNearStart();
   });
 
   const items: ReactNode[] = [];

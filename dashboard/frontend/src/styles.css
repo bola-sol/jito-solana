@@ -7606,8 +7606,9 @@ body {
   background: var(--good);
 }
 
+/* Held at `9999 + 999 ms`, so every row's track starts and ends at the same place. */
 .schedule-tl-text {
-  min-width: 6em;
+  min-width: 13ch;
   text-align: right;
 }
 

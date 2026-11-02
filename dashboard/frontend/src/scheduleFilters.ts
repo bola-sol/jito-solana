@@ -174,3 +174,72 @@ function localTime(year: number, month: number, day: number, clock: readonly (st
   const date = new Date(year, month, day, hours, minutes, seconds);
   return date.getMonth() === month && date.getDate() === day ? date.getTime() : null;
 }
+
+/** The oldest slot the validator holds, and when it began. */
+export interface Held {
+  slot: number;
+  millis: number | null;
+}
+
+/** An entry once finished: moved to the oldest held where older, emptied (live) where newer. */
+export interface Clamped {
+  text: string;
+  moved: "older" | "newer" | null;
+}
+
+/** A time as the jump field reads it back: `Nov 2 08:00`, seconds where there are any. */
+export function typedTime(millis: number): string {
+  const at = new Date(millis);
+  const name = MONTHS[at.getMonth()] ?? "jan";
+  const month = name.charAt(0).toUpperCase() + name.slice(1);
+  const clock = [at.getHours(), at.getMinutes()].map((part) => String(part).padStart(2, "0")).join(":");
+  const seconds = at.getSeconds() > 0 ? `:${String(at.getSeconds()).padStart(2, "0")}` : "";
+  return `${month} ${at.getDate()} ${clock}${seconds}`;
+}
+
+/** A local time as a date-and-time picker takes it. */
+export function pickerValue(millis: number): string {
+  const at = new Date(millis);
+  const two = (part: number) => String(part).padStart(2, "0");
+  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`;
+}
+
+/** Where an entry lies against what the validator holds, from `held` to `newest` and now. */
+export function placeEntry(
+  jump: Jump,
+  held: Held | null,
+  newest: number | null,
+  epoch: EpochInfo | undefined,
+  now: number,
+): "older" | "newer" | null {
+  switch (jump.kind) {
+    case "slot":
+      if (held && jump.slot < held.slot) return "older";
+      return newest !== null && jump.slot > newest ? "newer" : null;
+    case "time":
+      if (held?.millis != null && jump.millis < held.millis) return "older";
+      return jump.millis > now ? "newer" : null;
+    case "epoch": {
+      if (!epoch) return null;
+      const first = epoch.start_slot + (jump.epoch - epoch.epoch) * epoch.slots_in_epoch;
+      if (held && first + epoch.slots_in_epoch - 1 < held.slot) return "older";
+      return newest !== null && first > newest ? "newer" : null;
+    }
+  }
+}
+
+/** A finished entry, moved inside what is held. Unreadable text is left as typed. */
+export function clampEntry(
+  text: string,
+  held: Held | null,
+  newest: number | null,
+  epoch: EpochInfo | undefined,
+  now: number,
+): Clamped {
+  const jump = parseJump(text, now);
+  if (!jump) return { text, moved: null };
+  const moved = placeEntry(jump, held, newest, epoch, now);
+  if (moved === "older" && held) return { text: held.slot.toLocaleString("en-US"), moved };
+  if (moved === "newer") return { text: "", moved };
+  return { text, moved: null };
+}

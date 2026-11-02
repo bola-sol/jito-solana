@@ -28,15 +28,37 @@ import {
   ONLY_COLUMNS,
   ONLY_LABELS,
   ONLY_TITLES,
+  clampEntry,
   parseJump,
+  pickerValue,
+  placeEntry,
+  type Held,
   type Jump,
   type Only,
-  type SlowCutOffs,
 } from "../scheduleFilters";
-import { FoundTurns, TurnIndex, turnNumberOf } from "../turnIndex";
+import {
+  conditionHolds,
+  describeCondition,
+  FIELD_ORDER,
+  FIELDS,
+  hasRange,
+  inRange,
+  rangeBounds,
+  ready,
+  toServer,
+  type Condition,
+  type LeaderFacts,
+} from "../scheduleConditions";
+import { readViews, withoutView, withView, writeViews, type SavedView } from "../scheduleViews";
+import { setFoldsOpen, useFoldOpen } from "../folds";
+import type { ScanParams } from "../store";
+import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
+import type { ScheduleSummary } from "../types";
+import { AdvancedFold, ClientTable, DateField, FilterPills, heldText, SummaryLine, ViewsMenu } from "./ScheduleTools";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
+import { useMedia } from "../useMedia";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
@@ -57,6 +79,40 @@ const SEARCH_PAUSE_MS = 250;
 
 /** Room above a jump's turn for the top button, which floats there. */
 const REVEAL_GAP = 40;
+
+/** How often this epoch's figures are asked for again while nothing is filtered. */
+const SUMMARY_EVERY_MS = 30_000;
+
+/** The schedule's folds, closed until opened and then remembered. */
+const ADVANCED_FOLD = "schedule-advanced";
+const CLIENTS_FOLD = "schedule-by-client";
+
+/** What both history scans are asked, apart from where they start. */
+function scanParams(ask: SearchAsk): Omit<ScanParams, "before" | "slow"> {
+  return { query: ask.query, ours: ask.ours, only: ask.only, where: ask.where, ...ask.range };
+}
+
+/** A validator older than the page answers the summary with an error, which is no summary. */
+function asSummary(reply: unknown): ScheduleSummary | null {
+  const summary = reply as ScheduleSummary | null;
+  return summary !== null &&
+    typeof summary === "object" &&
+    typeof summary.figures === "object" &&
+    summary.figures !== null &&
+    Array.isArray(summary.clients)
+    ? summary
+    : null;
+}
+
+function asksAnything(ask: SearchAsk): boolean {
+  return ask.query !== "" || ask.ours || ask.only.length > 0 || ask.where.length > 0 || hasRange(ask.range);
+}
+
+function leaderFacts(peer: Peer | undefined): LeaderFacts | null {
+  return peer ? { client: peer.client ?? null, country: peer.country ?? null, stake: peer.stake } : null;
+}
+
+const NO_KEYS: readonly string[] = [];
 
 const COLUMN_NAMES: Record<ScheduleColumns, string> = {
   status: "Status",
@@ -127,6 +183,10 @@ export interface ScheduleFilter {
   /** The jump, as typed. */
   from: string;
   only: readonly Only[];
+  /** The range's ends, as typed. */
+  since: string;
+  until: string;
+  where: readonly Condition[];
 }
 
 export function SchedulePage({
@@ -134,6 +194,9 @@ export function SchedulePage({
   ours: oursOnly,
   from,
   only,
+  since,
+  until,
+  where,
   onFilter,
 }: ScheduleFilter & { onFilter: (next: Partial<ScheduleFilter>) => void }): ReactElement {
   const store = useStore();
@@ -166,9 +229,30 @@ export function SchedulePage({
   const jump = useMemo(() => parseJump(from, Date.now()), [from]);
   const [chipsOpen, setChipsOpen] = useState(() => only.length > 0);
 
+  // The column conditions and range in the validator's terms; tips there are before jito's cut.
+  const tipCut = rates?.jito_cut_bps ?? null;
+  const fields = useMemo(
+    () =>
+      FIELD_ORDER.filter(
+        (field) => (field !== "tips" || hasTips) && ((field !== "voted" && field !== "left_out") || alpenglow),
+      ),
+    [hasTips, alpenglow],
+  );
+  const columnConds = useMemo(
+    () => where.filter((condition) => fields.includes(condition.field) && ready(condition)),
+    [where, fields],
+  );
+  // `tipCut` stands for the rates, whose object is republished unchanged.
+  const serverWhere = useMemo(() => columnConds.map((condition) => toServer(condition, rates)), [columnConds, tipCut]);
+  const epochKey = epoch ? `${epoch.epoch}:${epoch.start_slot}:${epoch.slots_in_epoch}` : "";
+  const range = useMemo(() => rangeBounds(since, until, epoch, Date.now()), [since, until, epochKey]);
+  const ranged = hasRange(range);
+  const filterActive = conditions.length > 0 || columnConds.length > 0 || ranged;
+  const filtered = query.trim().length > 0 || oursOnly || filterActive;
+
   // Filtering to ours counts as searching: only sixty-four of our own slots are pushed, the rest are
   // in the history. A jump is a search for every turn from where it lands.
-  const searching = query.trim().length > 0 || oursOnly || conditions.length > 0 || jump !== null;
+  const searching = filtered || jump !== null;
 
   const [index] = useState(() => new TurnIndex());
   const [fetched, setFetched] = useState(0);
@@ -228,14 +312,15 @@ export function SchedulePage({
   }, [index, exhausted, store, epoch]);
 
   // What the validator is asked, once typing pauses; the live window is matched here as typed.
-  const [asked, setAsked] = useState({ query: query.trim(), ours: oursOnly, only: conditions, jump });
+  const ask = useMemo(
+    (): SearchAsk => ({ query: query.trim(), ours: oursOnly, only: conditions, where: serverWhere, range }),
+    [query, oursOnly, conditions, serverWhere, range],
+  );
+  const [asked, setAsked] = useState({ ask, jump });
   useEffect(() => {
-    const timer = setTimeout(
-      () => setAsked({ query: query.trim(), ours: oursOnly, only: conditions, jump }),
-      SEARCH_PAUSE_MS,
-    );
+    const timer = setTimeout(() => setAsked({ ask, jump }), SEARCH_PAUSE_MS);
     return () => clearTimeout(timer);
-  }, [query, oursOnly, conditions, jump]);
+  }, [ask, jump]);
 
   useEffect(() => {
     if (!searching) return;
@@ -255,11 +340,9 @@ export function SchedulePage({
       setFoundPages((was) => was + 1);
       try {
         const reply = await store.request("slot.search", {
-          query: results.query,
-          ours: results.ours,
+          ...scanParams(results.ask),
           before: results.next,
           forward: results.forward,
-          only: results.only,
           until_millis: results.until,
           slow: results.slow,
         });
@@ -280,7 +363,7 @@ export function SchedulePage({
   // A new search starts below the live window's first turn, or where a jump lands, and reads down a
   // page at a time.
   useEffect(() => {
-    if ((!asked.query && !asked.ours && asked.only.length === 0 && !asked.jump) || liveStartTurn === null) {
+    if ((!asksAnything(asked.ask) && !asked.jump) || liveStartTurn === null) {
       setFound(null);
       return;
     }
@@ -288,7 +371,7 @@ export function SchedulePage({
     const start = asked.jump
       ? jumpStart(asked.jump, epoch, top)
       : { before: liveStartTurn * SLOTS_PER_TURN, until: null };
-    const results = new FoundTurns(asked.query, asked.ours, start.before, asked.only, start.until);
+    const results = new FoundTurns(asked.ask, start.before, start.until);
     setFound(results);
     void loadFound(results);
     // The newest turn is read as the search starts; a new one arriving does not restart it.
@@ -304,14 +387,7 @@ export function SchedulePage({
       if (!hasLanded || !found) return null;
       if (was?.below === found) return was;
       const top = found.numbers()[0];
-      const turns = new FoundTurns(
-        found.query,
-        found.ours,
-        top === undefined ? found.start : (top + 1) * SLOTS_PER_TURN,
-        found.only,
-        null,
-        true,
-      );
+      const turns = new FoundTurns(found.ask, top === undefined ? found.start : (top + 1) * SLOTS_PER_TURN, null, true);
       turns.slow = found.slow;
       return { below: found, turns };
     });
@@ -326,7 +402,36 @@ export function SchedulePage({
   }, [index, found, up, leaderOf, leaderRevision]);
 
   const slow = found?.slow ?? null;
-  const filtered = query.trim().length > 0 || oursOnly || conditions.length > 0;
+
+  // The matches summed up by the validator, or this epoch's slots when nothing is filtered, asked
+  // for again now and then since every slot moves them.
+  const [summary, setSummary] = useState<ScheduleSummary | null>(null);
+  const hasLive = liveStartTurn !== null;
+  useEffect(() => {
+    if (!hasLive) return;
+    let current = true;
+    const read = (): void => {
+      const top = ((index.numbers()[0] ?? 0) + 1) * SLOTS_PER_TURN;
+      store.request("slot.summary", { ...scanParams(asked.ask), before: top, slow: null }).then(
+        (reply) => {
+          if (current) setSummary(asSummary(reply));
+        },
+        () => {},
+      );
+    };
+    read();
+    const timer = setInterval(read, SUMMARY_EVERY_MS);
+    return () => {
+      current = false;
+      clearInterval(timer);
+    };
+  }, [asked.ask, hasLive, index, store]);
+  const held: Held | null = summary?.held_from ?? null;
+  const summaryFiltered = asksAnything(asked.ask);
+  // An epoch the validator does not hold whole yet: since when it does.
+  const heldSince =
+    !summaryFiltered && held?.millis != null && epoch !== undefined && held.slot > epoch.start_slot ? held.millis : null;
+  const [jumpMoved, setJumpMoved] = useState<"older" | "newer" | null>(null);
 
   // A jumped list meets the live one once the turns read upward reach it: the validator has nothing
   // newer, or, unfiltered, the index already holds the turn above.
@@ -347,6 +452,19 @@ export function SchedulePage({
     [nowTurn, nowHeld, leaderOf, identity, leaderRevision],
   );
 
+  const byIdentity = useStablePeers(peers);
+
+  // A slot meets the chips, the column conditions and the range; a turn the validator returned has
+  // already met its leader's conditions.
+  const slotMatches = useCallback(
+    (slot: TurnSlot, leader: LeaderFacts | null | "matched"): boolean =>
+      (conditions.length === 0 ? slot.entry != null : meets(slot.slot, slot.entry, conditions, slow)) &&
+      columnConds.every((condition) => conditionHolds(condition, slot.entry, leader, rates)) &&
+      (!ranged || (slot.entry != null && inRange(range, slot.entry))),
+    // `tipCut` stands for the rates.
+    [conditions, slow, columnConds, tipCut, ranged, range],
+  );
+
   const shown = useMemo(() => {
     const newest = ahead ? [ahead.number, ...numbers] : numbers;
     if (!searching) return newest;
@@ -357,7 +475,10 @@ export function SchedulePage({
           turn !== undefined &&
           matchesQuery(turn, query) &&
           (!oursOnly || turn.mine) &&
-          (conditions.length === 0 || turn.slots.some((slot) => meets(slot.slot, slot.entry, conditions, slow)))
+          (!filterActive ||
+            turn.slots.some((slot) =>
+              slotMatches(slot, leaderFacts(turn.leader ? byIdentity.get(turn.leader) : undefined)),
+            ))
         );
       });
     if (!jumping) return [...liveMatches(), ...(found?.numbers() ?? [])];
@@ -367,17 +488,18 @@ export function SchedulePage({
     if (top === undefined || !reachedLive) return around;
     return [...(filtered ? liveMatches() : newest).filter((number) => number > top), ...around];
     // `foundPages` stands for the results, which change in place.
-  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, conditions, slow]);
+  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, filterActive, slotMatches, byIdentity]);
   const nowShown = nowTurn !== null && shown[0] === nowTurn;
 
   const [stripes] = useState(() => new Stripes());
-  const listed = searching ? `${oursOnly ? "ours" : "all"}:${query.trim()}:${conditionsKey}:${from.trim()}` : "";
+  const listed = searching
+    ? `${oursOnly ? "ours" : "all"}:${query.trim()}:${conditionsKey}:${from.trim()}:${JSON.stringify(serverWhere)}:${JSON.stringify(range)}`
+    : "";
   useMemo(() => stripes.update(listed, shown), [stripes, listed, shown]);
 
   // Where a turn is read from: the index for the live window and what it has loaded, else the search.
   // Around a jump the index wins above its lowest turn, which can be partial, as its rows keep
   // updating.
-  const byIdentity = useStablePeers(peers);
   const sourceOf = useCallback(
     (number: number): "index" | "found" | "up" => {
       if (!searching || !found) return "index";
@@ -435,18 +557,27 @@ export function SchedulePage({
   }, [asked.jump, epoch, landingTurn, turnOf]);
 
   const backToLive = (): void => {
+    setJumpMoved(null);
     onFilter({ from: "" });
     list.current?.scrollTo({ top: 0 });
   };
+
+  // The figures a row was kept for, toned where it matched: the chips' and the conditions' columns.
+  const whyKeys = useMemo(
+    (): readonly string[] => [...conditions, ...columnConds.map((condition) => condition.field)],
+    [conditions, columnConds],
+  );
 
   const renderTurn = (number: number): ReactElement | null => {
     const turn = turnOf(number);
     if (!turn) return null;
     const first = turn.slots.at(-1)?.slot ?? number * SLOTS_PER_TURN;
+    const peer = turn.leader ? byIdentity.get(turn.leader) : undefined;
+    const leader = sourceOf(number) === "index" ? leaderFacts(peer) : "matched";
     return (
       <TurnCard
         turn={turn}
-        peer={turn.leader ? byIdentity.get(turn.leader) : undefined}
+        peer={peer}
         totalStake={stake?.total_stake}
         rates={rates}
         certificates={alpenglow ? turn.slots.map((slot) => certificateAt(slot.slot, entryOf)) : NO_CERTIFICATES}
@@ -454,8 +585,8 @@ export function SchedulePage({
         now={number === nowTurn}
         producing={number === nowTurn ? producing : null}
         landed={landedSlot !== null && turnNumberOf(landedSlot) === turnNumberOf(first) ? landedSlot : null}
-        only={conditions}
-        slow={slow}
+        marks={filterActive ? turn.slots.map((slot) => slotMatches(slot, leader)) : null}
+        whyKeys={whyKeys}
       />
     );
   };
@@ -465,15 +596,95 @@ export function SchedulePage({
     ? (nowLeader.leader_name ?? (nowLeader.leader ? shortKey(nowLeader.leader, 6, 5) : null))
     : null;
 
+  // Where the table shows one group of columns, the one with a figure just filtered on.
+  const showColumns = (group: ScheduleColumns): void => {
+    if (!columnBar.current || columnBar.current.offsetParent === null) return;
+    setColumns(group);
+    writeScheduleColumns(group);
+  };
+
   const toggle = (condition: Only): void => {
     const on = !conditions.includes(condition);
     onFilter({ only: ONLY.filter((held) => (held === condition ? on : conditions.includes(held))) });
-    // Where the table shows one group of columns, the one with the condition's figure.
-    if (on && columnBar.current && columnBar.current.offsetParent !== null) {
-      setColumns(ONLY_COLUMNS[condition]);
-      writeScheduleColumns(ONLY_COLUMNS[condition]);
-    }
+    if (on) showColumns(ONLY_COLUMNS[condition]);
   };
+
+  // The jump: a draft until Enter or leaving the field, then moved inside what the validator holds.
+  const phone = useMedia("(max-width: 700px)");
+  const newestSlot = live.at(-1)?.slot ?? null;
+  const [jumpDraft, setJumpDraft] = useState(from);
+  useEffect(() => setJumpDraft(from), [from]);
+  const [jumpFocused, setJumpFocused] = useState(false);
+  const draftJump = useMemo(() => parseJump(jumpDraft, Date.now()), [jumpDraft]);
+  const draftOlder = draftJump !== null && placeEntry(draftJump, held, newestSlot, epoch, Date.now()) === "older";
+  const commitJump = (text: string): string => {
+    const clamped = clampEntry(text, held, newestSlot, epoch, Date.now());
+    setJumpMoved(clamped.moved);
+    onFilter({ from: clamped.text });
+    if (!clamped.text) list.current?.scrollTo({ top: 0 });
+    return clamped.text;
+  };
+  // The picker greys out what the validator does not hold.
+  const pickerMin = held?.millis != null ? pickerValue(held.millis) : undefined;
+  const pickerMax = pickerValue(Date.now());
+
+  const commitRange = (nextSince: string, nextUntil: string): readonly [string, string] => {
+    const now = Date.now();
+    const kept = [
+      clampEntry(nextSince, held, newestSlot, epoch, now).text,
+      clampEntry(nextUntil, held, newestSlot, epoch, now).text,
+    ] as const;
+    onFilter({ since: kept[0], until: kept[1] });
+    return kept;
+  };
+  const clearAdvanced = (): void => onFilter({ since: "", until: "", where: [] });
+
+  const rangeText = since && until ? `From ${since} to ${until}` : since ? `From ${since} to now` : until ? `Up to ${until}` : "";
+  const pills = [
+    ...(rangeText ? [{ key: "range", text: rangeText, onRemove: () => onFilter({ since: "", until: "" }) }] : []),
+    ...where.flatMap((condition, at) =>
+      ready(condition) && fields.includes(condition.field)
+        ? [
+            {
+              key: `where:${at}`,
+              text: describeCondition(condition),
+              onRemove: () => onFilter({ where: where.filter((_, index) => index !== at) }),
+            },
+          ]
+        : [],
+    ),
+  ];
+  const advancedCount = (rangeText ? 1 : 0) + columnConds.length;
+  const advancedOpen = useFoldOpen(ADVANCED_FOLD);
+
+  const [views, setViews] = useState(readViews);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const keepViews = (next: SavedView[]): void => {
+    setViews(next);
+    writeViews(next);
+  };
+  // The view keeps the filters, not where a jump landed.
+  const saveView = (name: string): void => {
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    params.delete("from");
+    const search = params.toString();
+    const parts = [
+      query.trim() && `"${query.trim()}"`,
+      oursOnly && "Ours",
+      ...conditions.map((condition) => ONLY_LABELS[condition]),
+      rangeText,
+      ...columnConds.map(describeCondition),
+    ].filter(Boolean);
+    keepViews(
+      withView(views, {
+        name,
+        hash: search ? `#/schedule?${search}` : "#/schedule",
+        summary: parts.join(" · ") || "Everything",
+      }),
+    );
+  };
+
+  const clientsOpen = useFoldOpen(CLIENTS_FOLD);
 
   const reading = searching ? (found?.loading ?? false) : loading;
   const finished = searching ? found?.next === null : exhausted;
@@ -489,24 +700,28 @@ export function SchedulePage({
           aria-label="Filter the schedule by leader name, pubkey or slot"
           onChange={(event) => onFilter({ query: event.target.value })}
         />
-        <input
-          type="search"
-          className={`schedule-jump${jump ? " is-set" : ""}`}
+        <DateField
+          className="schedule-jump"
           value={from}
-          placeholder="Jump to slot or time"
+          placeholder={phone ? "Slot or time" : "Slot or time, e.g. Nov 2 08:00"}
           title="A slot, a time such as 08:00 or Nov 2 08:00, or an epoch such as epoch 1071."
-          aria-label="Jump to a slot, time or epoch"
-          aria-invalid={from.trim() !== "" && jump === null}
-          onChange={(event) => onFilter({ from: event.target.value })}
+          label="Jump to a slot, time or epoch"
+          warn={draftOlder}
+          invalid={from.trim() !== "" && jump === null}
+          min={pickerMin}
+          max={pickerMax}
+          onDraft={setJumpDraft}
+          onCommit={commitJump}
+          onFocusChange={setJumpFocused}
         />
         {/* Opens the conditions on a phone; elsewhere they are always shown. */}
         <button
           type="button"
-          className={`schedule-only-toggle${conditions.length > 0 ? " is-on" : ""}`}
+          className={`schedule-only-toggle${conditions.length + advancedCount > 0 ? " is-on" : ""}`}
           aria-expanded={chipsOpen}
           onClick={() => setChipsOpen((open) => !open)}
         >
-          Filter{conditions.length > 0 && <b>{conditions.length}</b>}
+          Filter{conditions.length + advancedCount > 0 && <b>{conditions.length + advancedCount}</b>}
         </button>
         <div className={`schedule-only${chipsOpen ? " is-open" : ""}`} role="group" aria-label="Only slots that are">
           <span className="schedule-only-label">Only</span>
@@ -522,6 +737,26 @@ export function SchedulePage({
               {ONLY_LABELS[condition]}
             </button>
           ))}
+          <button
+            type="button"
+            className="schedule-fold-toggle"
+            aria-expanded={advancedOpen}
+            onClick={() => setFoldsOpen([ADVANCED_FOLD], !advancedOpen)}
+          >
+            Advanced{advancedCount > 0 && <b>{advancedCount}</b>}{" "}
+            <span className="schedule-caret">{advancedOpen ? "▴" : "▾"}</span>
+          </button>
+          <ViewsMenu
+            open={viewsOpen}
+            views={views}
+            onToggle={() => setViewsOpen((open) => !open)}
+            onApply={(view) => {
+              setViewsOpen(false);
+              window.location.hash = view.hash;
+            }}
+            onDelete={(name) => keepViews(withoutView(views, name))}
+            onSave={saveView}
+          />
         </div>
         <div className="toggle-group" role="group" aria-label="Which leaders to list">
           <button type="button" aria-pressed={!oursOnly} onClick={() => onFilter({ ours: false })}>
@@ -532,8 +767,46 @@ export function SchedulePage({
           </button>
         </div>
       </div>
-      {(jump || conditions.length > 0) && (
+      {held && (jumpFocused || draftOlder) && (
         <div className="schedule-from">
+          {draftOlder && <span className="schedule-warn">Older than held.</span>}
+          <span>
+            Held from {heldText(held)} to now.{draftOlder ? " Enter moves to the oldest." : ""}
+          </span>
+        </div>
+      )}
+      {advancedOpen && (
+        <AdvancedFold
+          since={since}
+          until={until}
+          where={where}
+          offered={fields}
+          choices={summary?.choices ?? null}
+          held={held}
+          pickerMin={pickerMin}
+          pickerMax={pickerMax}
+          onRange={commitRange}
+          onWhere={(next, field) => {
+            onFilter({ where: next });
+            if (field) showColumns(FIELDS[field].group);
+          }}
+          onClear={clearAdvanced}
+        />
+      )}
+      <FilterPills
+        pills={advancedOpen ? [] : pills}
+        shareable={searching}
+        onClearAll={clearAdvanced}
+        onSave={() => setViewsOpen(true)}
+      />
+      {(jump || conditions.length > 0 || jumpMoved) && (
+        <div className="schedule-from">
+          {jumpMoved === "older" && held && (
+            <span>
+              <span className="schedule-warn">Older than held,</span> moved to the oldest.
+            </span>
+          )}
+          {jumpMoved === "newer" && <span>Newer than the validator holds, back to live.</span>}
           {jump && <span>At {jumpText(jump)}</span>}
           {conditions.length > 0 && <span>{describeOnly(conditions, slow)}</span>}
           {jump && (
@@ -542,6 +815,19 @@ export function SchedulePage({
             </button>
           )}
         </div>
+      )}
+      {summary && (
+        <>
+          <SummaryLine
+            summary={summary}
+            filtered={summaryFiltered}
+            since={heldSince}
+            rates={rates}
+            open={clientsOpen}
+            onToggle={() => setFoldsOpen([CLIENTS_FOLD], !clientsOpen)}
+          />
+          {clientsOpen && <ClientTable summary={summary} rates={rates} />}
+        </>
       )}
       {/* Shown only where the table is too wide to fit, which the stylesheet decides. */}
       <div className="schedule-columns" ref={columnBar} role="group" aria-label="Which columns to show">
@@ -613,8 +899,8 @@ const TurnCard = memo(
     now,
     producing,
     landed,
-    only,
-    slow,
+    marks,
+    whyKeys,
   }: {
     turn: Turn;
     peer: Peer | undefined;
@@ -629,9 +915,10 @@ const TurnCard = memo(
     producing: number | null;
     /** The slot a jump asked for, in this turn. */
     landed: number | null;
-    /** The filters; rows meeting them are marked and the rest dimmed. */
-    only: readonly Only[];
-    slow: SlowCutOffs | null;
+    /** Under filters, whether each row matched, in the rows' order; null without filters. */
+    marks: readonly boolean[] | null;
+    /** The figures a matching row is toned for. */
+    whyKeys: readonly string[];
   }) {
     const alpenglow = useAlpenglow();
     return (
@@ -647,7 +934,7 @@ const TurnCard = memo(
               certificate={certificates[row]}
               now={nowRowOf(slot.slot, producing)}
               landed={slot.slot === landed}
-              met={only.length === 0 ? null : meets(slot.slot, slot.entry, only, slow) ? only : NO_CONDITIONS}
+              met={marks === null ? null : marks[row] ? whyKeys : NO_KEYS}
             />
           ))}
           {unheldSlots(turn).map((slot) => (
@@ -668,8 +955,12 @@ const TurnCard = memo(
     before.now === after.now &&
     before.producing === after.producing &&
     before.landed === after.landed &&
-    before.only === after.only &&
-    before.slow === after.slow &&
+    before.whyKeys === after.whyKeys &&
+    (before.marks === after.marks ||
+      (before.marks !== null &&
+        after.marks !== null &&
+        before.marks.length === after.marks.length &&
+        before.marks.every((mark, row) => mark === after.marks?.[row]))) &&
     before.certificates.length === after.certificates.length &&
     before.certificates.every((certificate, row) => certificate === after.certificates[row]),
 );
@@ -784,11 +1075,11 @@ function TurnLeader({
   );
 }
 
-function Timeline({ entry }: { entry: SlotEntry | null }) {
+function Timeline({ entry, toned = "" }: { entry: SlotEntry | null; toned?: string }) {
   const timeline = timelineOf(entry);
   if (!timeline) {
     return (
-      <span className="schedule-tl sc-timing">
+      <span className={`schedule-tl sc-timing${toned}`}>
         <span className="schedule-tl-text">—</span>
       </span>
     );
@@ -803,7 +1094,7 @@ function Timeline({ entry }: { entry: SlotEntry | null }) {
       ? `Block full ${timeline.wait} ms after its first shred. Replay's finish was not seen.`
       : `Block full ${timeline.wait} ms after its first shred, replayed ${timeline.run} ms after that.${spent}`;
   return (
-    <span className="schedule-tl sc-timing" title={title}>
+    <span className={`schedule-tl sc-timing${toned}`} title={title}>
       <span className="schedule-tl-track" aria-hidden="true">
         <i className="is-wait" style={{ left: 0, width: `${timeline.waitShare * 100}%` }} />
         {timeline.run !== null && (
@@ -837,7 +1128,7 @@ function SlotRow({
   now?: NowRow;
   landed?: boolean;
   /** Under filters, the conditions this slot meets, empty where it misses; null without filters. */
-  met?: readonly Only[] | null;
+  met?: readonly string[] | null;
 }) {
   const alpenglow = useAlpenglow();
   const entry = slot.entry;
@@ -847,6 +1138,7 @@ function SlotRow({
   const filled =
     block && block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null;
   const level = entry?.level ?? "scheduled";
+  const toned = (...keys: string[]): string => (keys.some((key) => met?.includes(key)) ? " is-met" : "");
 
   return (
     <div
@@ -862,19 +1154,19 @@ function SlotRow({
         <span className="sc-status">{votes === null ? "—" : count(votes)}</span>
       )}
       {alpenglow && <CertificateCell certificate={certificate} />}
-      <span className={`sc-status${met?.includes("few_transactions") ? " is-met" : ""}`}>
+      <span className={`sc-status${toned("few_transactions", "transactions")}`}>
         {block ? count(block.non_vote_transactions) : "—"}
       </span>
-      <span className="sc-fees">{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
-      <span className="sc-fees">{block ? sol(block.priority_fees, 4) : "—"}</span>
-      <span className={`sc-fees sc-tips${met?.includes("no_tips") ? " is-met" : ""}`}>
+      <span className={`sc-fees${toned("base_fee")}`}>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
+      <span className={`sc-fees${toned("priority")}`}>{block ? sol(block.priority_fees, 4) : "—"}</span>
+      <span className={`sc-fees sc-tips${toned("no_tips", "tips")}`}>
         {/* Absent where tips were never measured; nought is a real reading. */}
         {rates && block?.tips != null ? sol(jitoShare(block.tips, rates), 4) : "—"}
       </span>
-      <span className={`sc-timing${met?.includes("slow") ? " is-met" : ""}`}>
+      <span className={`sc-timing${toned("slow", "duration")}`}>
         {entry?.duration_nanos == null ? "—" : `${Math.round(entry.duration_nanos / 1e6)} ms`}
       </span>
-      <span className="sc-load">
+      <span className={`sc-load${toned("shreds", "repaired")}`}>
         {entry?.shreds ? count(entry.shreds.count) : "—"}
         {entry?.shreds && entry.shreds.repaired > 0 && (
           <span className="schedule-repaired">
@@ -882,8 +1174,8 @@ function SlotRow({
           </span>
         )}
       </span>
-      <Timeline entry={entry} />
-      <span className="sc-load">
+      <Timeline entry={entry} toned={toned("received", "replay")} />
+      <span className={`sc-load${toned("compute", "block_fill")}`}>
         {block ? count(block.block_cost) : "—"}
         {filled !== null && <span className="schedule-fill">{percent(filled, 0)}</span>}
       </span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeOnly, jumpStart, meets, parseJump, readOnly } from "./scheduleFilters";
+import { clampEntry, describeOnly, jumpStart, meets, parseJump, pickerValue, readOnly, typedTime } from "./scheduleFilters";
 import type { EpochInfo, SlotEntry } from "./types";
 
 function entry(fill: Partial<SlotEntry> = {}): SlotEntry {
@@ -121,5 +121,36 @@ describe("jumpStart", () => {
 
   it("leaves a time to the validator, which knows when each turn began", () => {
     expect(jumpStart({ kind: "time", millis: 5 }, epoch, 4_600)).toEqual({ before: 4_600, until: 5 });
+  });
+});
+
+describe("clampEntry", () => {
+  const held = { slot: 1_000, millis: new Date(2026, 10, 1, 10, 10).getTime() };
+  const now = new Date(2026, 10, 2, 12, 0).getTime();
+
+  it("moves an entry older than held to the oldest held slot", () => {
+    expect(clampEntry("500", held, 2_000, undefined, now)).toEqual({ text: "1,000", moved: "older" });
+    expect(clampEntry("Oct 30 09:00", held, 2_000, undefined, now)).toEqual({ text: "1,000", moved: "older" });
+  });
+
+  it("empties an entry newer than held, which is live", () => {
+    expect(clampEntry("3,000", held, 2_000, undefined, now)).toEqual({ text: "", moved: "newer" });
+    expect(clampEntry("13:00", held, 2_000, undefined, new Date(2026, 10, 2, 12, 0).getTime()).moved).toBe(null);
+  });
+
+  it("leaves what is held, and what it cannot read, as typed", () => {
+    expect(clampEntry("1,500", held, 2_000, undefined, now)).toEqual({ text: "1,500", moved: null });
+    expect(clampEntry("Helius", held, 2_000, undefined, now)).toEqual({ text: "Helius", moved: null });
+    expect(clampEntry("500", null, null, undefined, now)).toEqual({ text: "500", moved: null });
+  });
+});
+
+describe("typedTime and pickerValue", () => {
+  it("write a time back as the fields read it", () => {
+    const at = new Date(2026, 10, 2, 8, 5).getTime();
+    expect(typedTime(at)).toBe("Nov 2 08:05");
+    expect(typedTime(at + 7_000)).toBe("Nov 2 08:05:07");
+    expect(parseJump(typedTime(at), at + 1)).toEqual({ kind: "time", millis: at });
+    expect(pickerValue(at)).toBe("2026-11-02T08:05");
   });
 });

@@ -198,6 +198,35 @@ export interface UpcomingSlot {
 }
 
 /** Absent without a tip payment program; `commission_bps` absent without the flag. */
+/** The schedule's matches summed up by the validator; fees in lamports, tips before jito's cut. */
+export interface ScanFigures {
+  slots: number;
+  skipped: number;
+  transactions: number;
+  duration_ms: number | null;
+  replay_ms: number | null;
+  base_fee: number | null;
+  priority_fee: number | null;
+  tips: number | null;
+  compute: number | null;
+}
+
+export interface ClientFigures extends ScanFigures {
+  /** Null for leaders gossip names no client for. */
+  client: string | null;
+}
+
+export interface ScheduleSummary {
+  turns: number;
+  figures: ScanFigures;
+  clients: ClientFigures[];
+  /** The oldest slot the validator holds. */
+  held_from: { slot: number; millis: number | null } | null;
+  /** The clients and countries among staked nodes. */
+  choices: { clients: string[]; countries: string[] };
+  slow: (number | null)[] | null;
+}
+
 export interface TipRates {
   jito_cut_bps: number;
   commission_bps: number | null;

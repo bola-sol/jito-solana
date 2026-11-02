@@ -3,6 +3,7 @@
 
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
 import type { SlotRange } from "./slotHistory";
+import type { ServerCondition } from "./scheduleConditions";
 import type { Only, SlowCutOffs } from "./scheduleFilters";
 import type {
   ClusterCharts,
@@ -17,6 +18,7 @@ import type {
   Peer,
   ProducedBlock,
   ProducedDetail,
+  ScheduleSummary,
   Published,
   SlotCost,
   SlotEntry,
@@ -26,21 +28,28 @@ import type {
   WrittenList,
 } from "./types";
 
+/** What both history scans take: the schedule's filters, a range, and where to start. */
+export interface ScanParams {
+  query: string;
+  ours: boolean;
+  before: number;
+  only: readonly Only[];
+  where: readonly ServerCondition[];
+  from_slot: number | null;
+  to_slot: number | null;
+  from_millis: number | null;
+  to_millis: number | null;
+  slow: SlowCutOffs | null;
+}
+
 /** Each request the server answers, as `topic.key`, with its parameters and reply. */
 export interface Requests {
   "slot.range": { params: { first_slot: number; count: number }; reply: SlotRange };
   "slot.search": {
-    params: {
-      query: string;
-      ours: boolean;
-      before: number;
-      forward: boolean;
-      only: readonly Only[];
-      until_millis: number | null;
-      slow: SlowCutOffs | null;
-    };
+    params: ScanParams & { forward: boolean; until_millis: number | null };
     reply: { turns: SlotRange[]; next: number | null; slow: SlowCutOffs | null };
   };
+  "slot.summary": { params: ScanParams; reply: ScheduleSummary | null };
   "epoch.query": { params: { epoch: number }; reply: EpochInfo | null };
   "summary.displays": { params: Record<string, never>; reply: Displays };
   "summary.misses": { params: Record<string, never>; reply: MissList };

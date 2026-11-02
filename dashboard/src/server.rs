@@ -10,7 +10,7 @@ use {
             DEFLATE_PROTOCOL, Frame, Message, Publisher, Request, coalesce, encode_json_with_id,
             encode_with_id,
         },
-        search::{SearchParams, search},
+        search::{SearchParams, search, summarize},
         validator_info::ValidatorInfoCache,
     },
     soketto::{
@@ -657,7 +657,9 @@ async fn serve_websocket(
             sleep(wait).await;
         }
         let reply = match search_request(&incoming) {
-            Some((id, params)) => Some(answer_search(id, params, &history, &info, &epochs).await),
+            Some((scan, id, params)) => {
+                Some(answer_search(scan, id, params, &history, &info, &epochs, &replies).await)
+            }
             None => respond(&incoming, &history, &info, &epochs, &replies),
         };
         if let Some(reply) = reply {
@@ -754,46 +756,90 @@ struct SlotRangeParams {
     count: usize,
 }
 
-/// A search request's id and parameters; `None` inside for parameters that do not parse, which
-/// are still answered.
-fn search_request(payload: &[u8]) -> Option<(Option<u64>, Option<SearchParams>)> {
-    let request: Request = serde_json::from_slice(payload).ok()?;
-    if request.topic != "slot" || request.key != "search" {
-        return None;
+/// The two requests that scan the history: a page of turns, or the matches summed up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scan {
+    Search,
+    Summary,
+}
+
+impl Scan {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Summary => "summary",
+        }
     }
-    Some((request.id, serde_json::from_value(request.params).ok()))
+}
+
+/// A scanning request's kind, id and parameters; `None` inside for parameters that do not parse,
+/// which are still answered.
+fn search_request(payload: &[u8]) -> Option<(Scan, Option<u64>, Option<SearchParams>)> {
+    let request: Request = serde_json::from_slice(payload).ok()?;
+    let scan = match (request.topic.as_str(), request.key.as_str()) {
+        ("slot", "search") => Scan::Search,
+        ("slot", "summary") => Scan::Summary,
+        _ => return None,
+    };
+    Some((
+        scan,
+        request.id,
+        serde_json::from_value(request.params).ok(),
+    ))
 }
 
 /// Run on the blocking pool and one at a time, so a scan of the history holds up no other
 /// client's updates and at most one core.
 async fn answer_search(
+    scan: Scan,
     id: Option<u64>,
     params: Option<SearchParams>,
     history: &Arc<RwLock<SlotHistory>>,
     info: &Arc<RwLock<ValidatorInfoCache>>,
     epochs: &Arc<RwLock<Vec<EpochInfo>>>,
+    replies: &Arc<Replies>,
 ) -> Message {
+    let key = scan.key();
     let Some(params) = params else {
         return encode_with_id(
             "slot",
-            "search",
+            key,
             id,
-            &serde_json::json!({ "error": "search needs a before slot" }),
+            &serde_json::json!({ "error": "a scan needs a before slot" }),
         );
     };
     let Ok(_permit) = SEARCHES.acquire().await else {
-        return encode_with_id("slot", "search", id, &());
+        return encode_with_id("slot", key, id, &());
     };
-    let (history, info, epochs) = (Arc::clone(history), Arc::clone(info), Arc::clone(epochs));
+    let (history, info, epochs, replies) = (
+        Arc::clone(history),
+        Arc::clone(info),
+        Arc::clone(epochs),
+        Arc::clone(replies),
+    );
     let found = spawn_blocking(move || {
         // Held for the scan; the collector writes the epoch records once an epoch.
         let epochs = epochs.read().ok()?;
-        Some(search(&history, &info, &epochs, &params))
+        let leaders = &replies.leader_traits;
+        Some(match scan {
+            Scan::Search => encode_with_id(
+                "slot",
+                key,
+                id,
+                &search(&history, &info, leaders, &epochs, &params),
+            ),
+            Scan::Summary => encode_with_id(
+                "slot",
+                key,
+                id,
+                &summarize(&history, &info, leaders, &epochs, &params),
+            ),
+        })
     })
     .await;
     match found {
-        Ok(Some(reply)) => encode_with_id("slot", "search", id, &reply),
-        _ => encode_with_id("slot", "search", id, &()),
+        Ok(Some(reply)) => reply,
+        _ => encode_with_id("slot", key, id, &()),
     }
 }
 
@@ -1648,16 +1694,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_search_is_answered_with_its_id() {
-        let (id, params) = search_request(
+        let (scan, id, params) = search_request(
             br#"{"topic":"slot","key":"search","id":7,"params":{"query":"x","before":64}}"#,
         )
         .expect("a search");
         let reply = answer_search(
+            scan,
             id,
             params,
             &empty_history(),
             &no_info_shared(),
             &no_epochs_shared(),
+            &no_replies_shared(),
         )
         .await;
         assert!(reply.contains(r#""id":7"#), "{reply}");
@@ -1666,22 +1714,45 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_search_without_a_before_slot_is_told_so() {
-        let (id, params) =
+        let (scan, id, params) =
             search_request(br#"{"topic":"slot","key":"search","id":8,"params":{"query":"x"}}"#)
                 .expect("a search");
         assert!(params.is_none());
         let reply = answer_search(
+            scan,
             id,
             params,
             &empty_history(),
             &no_info_shared(),
             &no_epochs_shared(),
+            &no_replies_shared(),
         )
         .await;
         assert!(
             reply.contains(r#""id":8"#) && reply.contains("error"),
             "{reply}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_a_summary_is_answered_with_its_id() {
+        let (scan, id, params) = search_request(
+            br#"{"topic":"slot","key":"summary","id":12,"params":{"before":64,"where":[{"field":"base_fee","op":"gt","value":5000}]}}"#,
+        )
+        .expect("a summary");
+        assert_eq!(scan, Scan::Summary);
+        let reply = answer_search(
+            scan,
+            id,
+            params,
+            &empty_history(),
+            &no_info_shared(),
+            &no_epochs_shared(),
+            &no_replies_shared(),
+        )
+        .await;
+        assert!(reply.contains(r#""id":12"#), "{reply}");
+        assert!(reply.contains(r#""clients":[]"#), "{reply}");
     }
 
     #[test]

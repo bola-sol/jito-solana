@@ -30,6 +30,9 @@ describe("readRoute", () => {
       ours: true,
       from: "",
       only: [],
+      since: "",
+      until: "",
+      where: [],
     });
     expect(readRoute("#/schedule?from=08%3A00&only=slow,left_out")).toEqual({
       ...HOME,
@@ -59,6 +62,16 @@ describe("routeHash", () => {
       { ...HOME, page: "schedule", query: "a b&c", ours: true },
       { ...HOME, page: "schedule", ours: true },
       { ...HOME, page: "schedule", from: "Nov 2 08:00", only: ["skipped", "no_tips"] },
+      {
+        ...HOME,
+        page: "schedule",
+        since: "Nov 2 08:00",
+        until: "464,000,000",
+        where: [
+          { field: "base_fee", op: "gt", value: 0.0025, values: [] },
+          { field: "client", op: "is", value: null, values: ["Agave Bam", "x|y"] },
+        ],
+      },
       { ...HOME, page: "gossip" },
       { ...HOME, page: "gossip", query: "64.130" },
       { ...HOME, page: "cluster" },

@@ -12,6 +12,7 @@ const offered: Offered = {
     ["JitoLabs", 17_309],
   ],
   countries: ["DE", "NL", "US"],
+  names: ["Helius", "Coinbase 05", "Coinbase Cloud", "Hamsa, Labs"],
 };
 const now = new Date(2026, 10, 2, 12, 0).getTime();
 
@@ -43,6 +44,19 @@ describe("readSearch", () => {
       { field: "country", op: "is_not", value: null, values: ["DE"] },
       { field: "voted", op: "is", value: null, values: ["unpaid"] },
       { field: "leader", op: "is", value: null, values: ["delinquent"] },
+    ]);
+  });
+
+  it("names validators, quoted where a name holds a space or comma", () => {
+    const read = readSearch('name:Helius,"Coinbase 05" -name:"Hamsa, Labs" duration>400', offered, now);
+    expect(read.errors).toEqual([]);
+    expect(read.filters.map((filter) => (filter.kind === "condition" ? filter.condition : filter))).toEqual([
+      { field: "name", op: "is", value: null, values: ["Helius", "Coinbase 05"] },
+      { field: "name", op: "is_not", value: null, values: ["Hamsa, Labs"] },
+      { field: "duration", op: "gt", value: 400, values: [] },
+    ]);
+    expect(readSearch('name:"a duration>3"', offered, now).filters).toEqual([
+      { kind: "condition", condition: { field: "name", op: "is", value: null, values: ["a duration>3"] } },
     ]);
   });
 
@@ -95,6 +109,16 @@ describe("suggest", () => {
     ]);
     expect(suggest("client:Agave,a", offered).map((suggestion) => suggestion.insert)).toEqual(["client:Agave,AgaveBam"]);
     expect(suggest("duration>2", offered)).toEqual([]);
+  });
+
+  it("offers names by any part, quoting those that need it", () => {
+    expect(suggest("name:coin", offered).map((suggestion) => suggestion.insert)).toEqual([
+      'name:"Coinbase 05"',
+      'name:"Coinbase Cloud"',
+    ]);
+    expect(suggest("name:Helius,ham", offered).map((suggestion) => suggestion.insert)).toEqual([
+      'name:Helius,"Hamsa, Labs"',
+    ]);
   });
 });
 

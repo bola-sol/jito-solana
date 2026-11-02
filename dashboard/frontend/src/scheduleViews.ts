@@ -48,3 +48,19 @@ export function withoutView(views: readonly SavedView[], name: string): SavedVie
 export function writeViews(views: readonly SavedView[]): void {
   writeStored(VIEWS_STORAGE_KEY, JSON.stringify(views));
 }
+
+export const START_VIEW_STORAGE_KEY = "agave-dashboard-schedule-start-view";
+
+/** The view the schedule opens with when its address asks for nothing, by name. */
+export function readStartView(): string | null {
+  return readStored(START_VIEW_STORAGE_KEY) || null;
+}
+
+export function writeStartView(name: string | null): void {
+  writeStored(START_VIEW_STORAGE_KEY, name ?? "");
+}
+
+/** The start view's address, while a view of that name is still saved. */
+export function startHash(views: readonly SavedView[], start: string | null): string | null {
+  return start === null ? null : (views.find((view) => view.name === start)?.hash ?? null);
+}

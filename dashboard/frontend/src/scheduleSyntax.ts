@@ -33,6 +33,7 @@ export const KEYS: readonly Key[] = [
   { name: "received", kind: "number", field: "received", group: "slot", op: ">", example: "300", what: "last shred received, ms" },
   { name: "replay", kind: "number", field: "replay", group: "slot", op: ">", example: "20", what: "replay, ms" },
   { name: "leftout", kind: "number", field: "left_out", group: "slot", op: ">", example: "0", what: "votes left out of the certificate" },
+  { name: "name", kind: "list", field: "name", group: "leader", op: ":", example: 'Helius,"Coinbase 05"', what: "part of a validator's name or key" },
   { name: "client", kind: "list", field: "client", group: "leader", op: ":", example: "Agave,JitoLabs", what: "any of these clients" },
   { name: "geo", kind: "list", field: "country", group: "leader", op: ":", example: "DE,NL", what: "any of these countries" },
   { name: "stake", kind: "number", field: "stake", group: "leader", op: ">", example: "1000000", what: "leader's stake, SOL" },
@@ -81,6 +82,8 @@ export interface Offered {
   /** Every leader client, by slots led this epoch where known; empty from a validator too old to say. */
   clients: readonly (readonly [client: string, slots: number])[];
   countries: readonly string[];
+  /** Validator names to suggest, the most staked first. */
+  names: readonly string[];
 }
 
 export type Filter =
@@ -136,6 +139,9 @@ function listValues(key: Key, typed: readonly string[], offered: Offered): strin
         if (!/^[a-z]{2}$/.test(lower)) return `${value} is not a country code, e.g. geo:DE.`;
         named = lower.toUpperCase();
         break;
+      case "name":
+        named = value;
+        break;
       case "leader":
         named = lower in LEADER_TITLES ? lower : undefined;
         if (!named) return "leader takes delinquent or voting.";
@@ -152,8 +158,24 @@ function listValues(key: Key, typed: readonly string[], offered: Offered): strin
   return values;
 }
 
+/** A list's values: split at commas outside double quotes, which are dropped. */
+export function splitValues(text: string): string[] {
+  const values: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (const char of text) {
+    if (char === '"') quoted = !quoted;
+    else if (char === "," && !quoted) {
+      values.push(value);
+      value = "";
+    } else value += char;
+  }
+  values.push(value);
+  return values.map((part) => part.trim()).filter(Boolean);
+}
+
 function readList(key: Key, op: string, text: string, not: boolean, offered: Offered): Filter[] | string {
-  const typed = text.split(",").map((value) => value.trim()).filter(Boolean);
+  const typed = splitValues(text);
   if (op !== ":" && op !== "=") return `${key.name} takes ":", e.g. ${key.name}:${key.example}.`;
   if (typed.length === 0) return `${key.name} needs a value, e.g. ${key.name}:${key.example}.`;
   if (key.kind === "is") {
@@ -218,6 +240,8 @@ export function readSearch(text: string, offered: Offered, now: number): ReadSea
   const errors: string[] = [];
   let cursor = 0;
   starts.forEach((start, at) => {
+    // Inside the value before it, as in a quoted name.
+    if (start.at < cursor) return;
     words.push(text.slice(cursor, start.at));
     const limit = starts[at + 1]?.at ?? text.length;
     const rest = text.slice(start.end, limit);
@@ -238,7 +262,8 @@ export function readSearch(text: string, offered: Offered, now: number): ReadSea
       cursor = limit;
       return;
     }
-    const value = /^\S*/.exec(rest)?.[0] ?? "";
+    // A quoted run can hold spaces, and what looks like an expression.
+    const value = /^(?:"[^"]*"?|[^\s"])*/.exec(text.slice(start.end))?.[0] ?? "";
     cursor = start.end + value.length;
     if (!key) {
       errors.push(`No filter named ${start.name}.`);
@@ -250,7 +275,7 @@ export function readSearch(text: string, offered: Offered, now: number): ReadSea
     }
     if (key.kind === "number") {
       if (start.not) {
-        errors.push(`Only client, geo, leader and voted take a leading "-".`);
+        errors.push(`Only name, client, geo, leader and voted take a leading "-".`);
         return;
       }
       const read = readNumber(key, start.op, value);
@@ -303,17 +328,22 @@ export function suggest(before: string, offered: Offered): Suggestion[] {
   const [, not = "", name = "", done = "", typing = ""] = listed;
   const key = keyNamed(name);
   if (!key || (key.kind !== "list" && key.kind !== "is") || !keyOffered(key, offered)) return [];
-  const already = new Set(done.split(",").map((value) => value.toLowerCase()));
-  const lower = typing.toLowerCase();
+  const already = new Set(splitValues(done).map((value) => value.toLowerCase()));
+  const lower = typing.replace(/^"/, "").toLowerCase();
+  // A name is found by any part of it, the rest by how they start.
+  const fits = (value: string): boolean =>
+    key.field === "name" ? value.toLowerCase().includes(lower) : value.toLowerCase().startsWith(lower);
   return valuesOf(key, offered)
-    .filter(([value]) => value.toLowerCase().startsWith(lower) && !already.has(value.toLowerCase()))
+    .filter(([value]) => fits(value) && !already.has(value.toLowerCase()))
     .slice(0, MAX_SUGGESTIONS)
-    .map(([value, what]) => ({ insert: `${not}${name}:${done}${value}`, ghost: "", what }));
+    .map(([value, what]) => ({ insert: `${not}${name}:${done}${/[\s,]/.test(value) ? `"${value}"` : value}`, ghost: "", what }));
 }
 
 function valuesOf(key: Key, offered: Offered): (readonly [value: string, what: string])[] {
   if (key.kind === "is") return isNames(offered).map((name) => [name, chipTitle(IS_NAMES[name])]);
   switch (key.field) {
+    case "name":
+      return offered.names.map((named) => [named, ""]);
     case "client":
       return offered.clients.map(([client, slots]) => [client, slots > 0 ? `${slots.toLocaleString("en-US")} slots this epoch` : ""]);
     case "country":

@@ -41,13 +41,23 @@ import {
   FIELDS,
   hasRange,
   inRange,
+  nameHolds,
   rangeBounds,
   ready,
   toServer,
   type Condition,
   type LeaderFacts,
 } from "../scheduleConditions";
-import { readViews, withoutView, withView, writeViews, type SavedView } from "../scheduleViews";
+import {
+  readStartView,
+  readViews,
+  startHash,
+  withoutView,
+  withView,
+  writeStartView,
+  writeViews,
+  type SavedView,
+} from "../scheduleViews";
 import { setFoldsOpen, useFoldOpen } from "../folds";
 import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
@@ -241,6 +251,8 @@ export function SchedulePage({
     () => where.filter((condition) => fields.includes(condition.field) && ready(condition)),
     [where, fields],
   );
+  // Matched on the turn's leader, which names the turn.
+  const nameConds = useMemo(() => columnConds.filter((condition) => condition.field === "name"), [columnConds]);
   // `tipCut` stands for the rates, whose object is republished unchanged.
   const serverWhere = useMemo(() => columnConds.map((condition) => toServer(condition, rates)), [columnConds, tipCut]);
   const epochKey = epoch ? `${epoch.epoch}:${epoch.start_slot}:${epoch.slots_in_epoch}` : "";
@@ -486,6 +498,7 @@ export function SchedulePage({
           turn !== undefined &&
           matchesQuery(turn, query) &&
           (!oursOnly || turn.mine) &&
+          nameConds.every((condition) => nameHolds(condition, turn.leader_name, turn.leader)) &&
           (!filterActive ||
             turn.slots.some((slot) =>
               slotMatches(
@@ -505,7 +518,7 @@ export function SchedulePage({
     if (top === undefined || !reachedLive) return around;
     return [...(filtered ? liveMatches() : newest).filter((number) => number > top), ...around];
     // `foundPages` stands for the results, which change in place.
-  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, filterActive, slotMatches, byIdentity, delinquentVotes]);
+  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, nameConds, filterActive, slotMatches, byIdentity, delinquentVotes]);
   const nowShown = nowTurn !== null && shown[0] === nowTurn;
 
   const [stripes] = useState(() => new Stripes());
@@ -647,8 +660,12 @@ export function SchedulePage({
     const clients = (choices?.clients ?? [])
       .map((client) => [client, slots.get(client) ?? 0] as const)
       .sort((a, b) => b[1] - a[1]);
-    return { fields, only: offered, clients, countries: choices?.countries ?? [] };
-  }, [fields, offered, choices, clientSlots]);
+    const names = (peers ?? [])
+      .filter((peer) => peer.name && peer.stake > 0)
+      .sort((a, b) => b.stake - a.stake)
+      .map((peer) => peer.name ?? "");
+    return { fields, only: offered, clients, countries: choices?.countries ?? [], names };
+  }, [fields, offered, choices, clientSlots, peers]);
   const boxRead = useMemo(() => readSearch(boxText, syntaxOffered, Date.now()), [boxText, syntaxOffered]);
   // A search set elsewhere, by a view or the address, replaces what the box holds.
   useEffect(() => {
@@ -750,6 +767,17 @@ export function SchedulePage({
     setViews(next);
     writeViews(next);
   };
+  const [startView, setStartView] = useState(readStartView);
+  const keepStart = (name: string | null): void => {
+    setStartView(name);
+    writeStartView(name);
+  };
+  // Arriving with nothing asked, the schedule takes the start view; clearing filters later does not.
+  useEffect(() => {
+    const hash = startHash(views, startView);
+    const bare = !query && !oursOnly && !from && only.length === 0 && !since && !until && where.length === 0;
+    if (hash && bare) window.location.replace(`${window.location.pathname}${window.location.search}${hash}`);
+  }, []);
   // The view keeps the filters, not where a jump landed.
   const saveView = (name: string): void => {
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
@@ -832,7 +860,12 @@ export function SchedulePage({
               setViewsOpen(false);
               window.location.hash = view.hash;
             }}
-            onDelete={(name) => keepViews(withoutView(views, name))}
+            start={startView}
+            onStart={keepStart}
+            onDelete={(name) => {
+              keepViews(withoutView(views, name));
+              if (name === startView) keepStart(null);
+            }}
             onSave={saveView}
           />
         </div>

@@ -10,6 +10,7 @@ import type { EpochInfo, SlotEntry, TipRates } from "./types";
 
 export type Field =
   | "leader"
+  | "name"
   | "client"
   | "country"
   | "stake"
@@ -50,6 +51,7 @@ interface FieldInfo {
 
 export const FIELDS: Record<Field, FieldInfo> = {
   leader: { label: "Leader", unit: "", list: true, group: "status", leader: true },
+  name: { label: "Validator", unit: "", list: true, group: "status", leader: true },
   client: { label: "Client", unit: "", list: true, group: "status", leader: true },
   country: { label: "Country", unit: "", list: true, group: "status", leader: true },
   stake: { label: "Stake", unit: "SOL", list: false, group: "status", leader: true },
@@ -212,6 +214,7 @@ function figure(
     case "block_fill":
       return block && block.block_cost_limit > 0 ? (block.block_cost / block.block_cost_limit) * 100 : null;
     case "leader":
+    case "name":
     case "client":
     case "country":
     case "voted":
@@ -219,8 +222,19 @@ function figure(
   }
 }
 
+/** Whether a turn's leader is named by a name condition: part of its name or key, any case. */
+export function nameHolds(condition: Condition, name: string | null | undefined, key: string | null | undefined): boolean {
+  const parts = [name, key].filter((part): part is string => !!part).map((part) => part.toLowerCase());
+  const named = condition.values.some((value) => {
+    const wanted = value.trim().toLowerCase();
+    return wanted !== "" && parts.some((part) => part.includes(wanted));
+  });
+  return condition.op === "is_not" ? !named : named;
+}
+
 /** On the page, as the validator matches it. With no leader facts, a leader condition is taken as
- *  met: the validator already matched it for the turns it returned. */
+ *  met: the validator already matched it for the turns it returned. A name is matched on the turn,
+ *  by `nameHolds`. */
 export function conditionHolds(
   condition: Condition,
   entry: SlotEntry | null | undefined,
@@ -229,7 +243,7 @@ export function conditionHolds(
 ): boolean {
   if (!entry) return false;
   const info = FIELDS[condition.field];
-  if (info.leader && leader === "matched") return true;
+  if ((info.leader && leader === "matched") || condition.field === "name") return true;
   const facts = leader === "matched" ? null : leader;
   if (info.list) {
     const value =

@@ -249,14 +249,19 @@ export function FilterPills({
 export function ViewsMenu({
   open,
   views,
+  start,
   onToggle,
+  onStart,
   onApply,
   onDelete,
   onSave,
 }: {
   open: boolean;
   views: readonly SavedView[];
+  /** The view the schedule opens with, by name. */
+  start: string | null;
   onToggle: () => void;
+  onStart: (name: string | null) => void;
   onApply: (view: SavedView) => void;
   onDelete: (name: string) => void;
   onSave: (name: string) => void;
@@ -275,6 +280,16 @@ export function ViewsMenu({
               <button type="button" className="schedule-view-apply" onClick={() => onApply(view)}>
                 {view.name}
                 <small>{view.summary}</small>
+              </button>
+              <button
+                type="button"
+                className="schedule-view-start"
+                aria-pressed={view.name === start}
+                aria-label={`Open the schedule with ${view.name}`}
+                title="Open the schedule with this view."
+                onClick={() => onStart(view.name === start ? null : view.name)}
+              >
+                {view.name === start ? "★" : "☆"}
               </button>
               <button type="button" className="schedule-view-delete" aria-label={`Delete ${view.name}`} onClick={() => onDelete(view.name)}>
                 ✕
@@ -299,7 +314,7 @@ export function ViewsMenu({
             />
             <button type="submit">Save</button>
           </form>
-          <div className="schedule-views-note">Kept in this browser. Copy link to share one.</div>
+          <div className="schedule-views-note">Kept in this browser. ★ opens the schedule with that view. Copy link to share one.</div>
         </div>
       )}
     </span>

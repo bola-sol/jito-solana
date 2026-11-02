@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   conditionHolds,
   decodeConditions,
+  nameHolds,
   describeCondition,
   encodeConditions,
   hasRange,
@@ -113,6 +114,15 @@ describe("conditionHolds", () => {
     expect(conditionHolds(number("stake", "ge", 5000), entry(), facts, null)).toBe(true);
     expect(conditionHolds(list("leader", "is", ["delinquent"]), entry(), facts, null)).toBe(true);
     expect(conditionHolds(list("leader", "is", ["voting"]), entry(), { ...facts, delinquent: false }, null)).toBe(true);
+  });
+});
+
+describe("nameHolds", () => {
+  it("matches part of a name or key, any case, and any value listed", () => {
+    expect(nameHolds(list("name", "is", ["nobody", "HELIUS"]), "Helius 2", "Key1")).toBe(true);
+    expect(nameHolds(list("name", "is", ["key1"]), null, "Key1abc")).toBe(true);
+    expect(nameHolds(list("name", "is_not", ["helius"]), "Helius", "Key1")).toBe(false);
+    expect(nameHolds(list("name", "is", ["helius"]), null, null)).toBe(false);
   });
 });
 

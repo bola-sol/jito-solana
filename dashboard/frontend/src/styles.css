@@ -6981,6 +6981,7 @@ body {
   background: var(--panel-raised);
 }
 
+.schedule-view-start,
 .schedule-view-delete {
   margin: 0;
   padding: 2px 6px;
@@ -6989,6 +6990,10 @@ body {
   font: inherit;
   color: var(--text-faint);
   cursor: pointer;
+}
+
+.schedule-view-start[aria-pressed="true"] {
+  color: var(--accent);
 }
 
 .schedule-view-apply {

@@ -89,6 +89,8 @@ pub type LeaderMap = HashMap<Pubkey, LeaderTraits>;
 pub enum Field {
     /// Whether the leader is voting now: `delinquent` or `voting`.
     Leader,
+    /// Part of the leader's name or identity key, any case.
+    Name,
     Client,
     Country,
     Stake,
@@ -127,7 +129,8 @@ pub struct Condition {
     /// For a comparison, in the field's own unit: lamports, milliseconds, compute units, percent.
     #[serde(default)]
     pub value: f64,
-    /// For `is` and `is_not`: clients, country codes, or `paid`, `unpaid` and `none` for voted.
+    /// For `is` and `is_not`: names, clients, country codes, or `paid`, `unpaid` and `none` for
+    /// voted.
     #[serde(default)]
     pub values: Vec<String>,
 }
@@ -180,10 +183,16 @@ pub struct SearchReply {
     pub slow: Option<Vec<Option<u32>>>,
 }
 
-/// One epoch's leaders, each marked for whether its name or key matches, with its traits.
+/// The name conditions as matched: whether each is `is`, and its values in lower case.
+type NameWants = [(bool, Vec<String>)];
+
+/// One epoch's leaders, each marked for whether its name or key matches the search and the name
+/// conditions, with its traits.
 struct EpochLeaders<'a> {
     epoch: &'a EpochInfo,
     named: Vec<bool>,
+    /// Empty where no name condition is asked.
+    names_held: Vec<bool>,
     ours: Option<u16>,
     traits: Vec<Option<LeaderTraits>>,
 }
@@ -192,32 +201,47 @@ struct EpochLeaders<'a> {
 #[derive(Clone, Copy)]
 struct LeaderAt<'a> {
     named: bool,
+    names_held: bool,
     ours: bool,
     traits: Option<&'a LeaderTraits>,
     block_cost_limit: u64,
 }
 
 impl<'a> EpochLeaders<'a> {
-    fn new(epoch: &'a EpochInfo, info: &ValidatorInfoCache, map: &LeaderMap, needle: &str) -> Self {
+    fn new(
+        epoch: &'a EpochInfo,
+        info: &ValidatorInfoCache,
+        map: &LeaderMap,
+        needle: &str,
+        names: &NameWants,
+    ) -> Self {
         let traits = epoch
             .leaders
             .iter()
             .map(|key| map.get(&Pubkey::from_str(key).ok()?).cloned())
             .collect();
-        let named = epoch
-            .leaders
-            .iter()
-            .map(|key| {
-                !needle.is_empty()
-                    && (key.to_lowercase().contains(needle)
-                        || Pubkey::from_str(key)
-                            .ok()
-                            .and_then(|identity| {
-                                info.get(&identity)?.name.as_deref().map(str::to_lowercase)
-                            })
-                            .is_some_and(|name| name.contains(needle)))
-            })
-            .collect();
+        let (named, names_held) = if needle.is_empty() && names.is_empty() {
+            (Vec::new(), Vec::new())
+        } else {
+            epoch
+                .leaders
+                .iter()
+                .map(|key| {
+                    let name = Pubkey::from_str(key).ok().and_then(|identity| {
+                        info.get(&identity)?.name.as_deref().map(str::to_lowercase)
+                    });
+                    let key = key.to_lowercase();
+                    let has = |part: &str| {
+                        key.contains(part)
+                            || name.as_deref().is_some_and(|name| name.contains(part))
+                    };
+                    let held = names
+                        .iter()
+                        .all(|(is, values)| values.iter().any(|value| has(value)) == *is);
+                    (!needle.is_empty() && has(needle), names.is_empty() || held)
+                })
+                .unzip()
+        };
         let ours = epoch
             .my_leader_slots
             .first()
@@ -225,6 +249,7 @@ impl<'a> EpochLeaders<'a> {
         Self {
             epoch,
             named,
+            names_held,
             ours,
             traits,
         }
@@ -236,6 +261,11 @@ impl<'a> EpochLeaders<'a> {
         let index = usize::from(leader_index(self.epoch, slot)?);
         Some(LeaderAt {
             named: self.named.get(index).copied().unwrap_or(false),
+            names_held: self
+                .names_held
+                .get(index)
+                .copied()
+                .unwrap_or(self.names_held.is_empty()),
             ours: self.ours.map(usize::from) == Some(index),
             traits: self.traits.get(index).and_then(Option::as_ref),
             block_cost_limit: self.epoch.block_cost_limit,
@@ -417,6 +447,8 @@ fn holds(
         ),
         Field::Country => listed(condition, traits.and_then(|traits| traits.country)),
         Field::Voted => listed(condition, voted(row)),
+        // Every name condition, matched once per leader.
+        Field::Name => leader.is_some_and(|leader| leader.names_held),
         Field::Leader => listed(
             condition,
             traits.map(|traits| {
@@ -501,7 +533,7 @@ fn figure(
                 .filter(|limit| *limit > 0)?;
             return block.then(|| f64::from(row.compute) / limit as f64 * 100.0);
         }
-        Field::Leader | Field::Client | Field::Country | Field::Voted => None,
+        Field::Leader | Field::Name | Field::Client | Field::Country | Field::Voted => None,
     };
     whole.map(|value| value as f64)
 }
@@ -568,11 +600,32 @@ fn prepare<'a>(
         .take(MAX_QUERY_CHARS)
         .collect::<String>()
         .to_lowercase();
+    let names: Vec<(bool, Vec<String>)> = params
+        .conditions
+        .iter()
+        .filter(|condition| condition.field == Field::Name)
+        .map(|condition| {
+            let values = condition
+                .values
+                .iter()
+                .map(|value| {
+                    value
+                        .trim()
+                        .chars()
+                        .take(MAX_QUERY_CHARS)
+                        .collect::<String>()
+                        .to_lowercase()
+                })
+                .filter(|value| !value.is_empty())
+                .collect();
+            (condition.op != Op::IsNot, values)
+        })
+        .collect();
     let leaders = {
         let info = info.read().ok()?;
         epochs
             .iter()
-            .map(|epoch| EpochLeaders::new(epoch, &info, map, &needle))
+            .map(|epoch| EpochLeaders::new(epoch, &info, map, &needle, &names))
             .collect()
     };
     let capacity = u64::try_from(history.read().ok()?.capacity()).unwrap_or(u64::MAX);
@@ -1450,6 +1503,60 @@ mod tests {
             found(vec![condition(Field::Leader, Op::Is, 0.0, &["delinquent"])]),
             vec![START + 12, START + 4],
             "a leader not voting now"
+        );
+    }
+
+    #[test]
+    fn test_a_name_condition_keeps_any_leader_named_or_keyed() {
+        let (ours, other) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let epochs = [epoch(&[&ours.to_string(), &other.to_string()])];
+        let held = history(START, START + 15);
+        let info = named(&other, "Hamsa Labs");
+        let found = |conditions: Vec<Condition>| {
+            starts(&search(
+                &held,
+                &info,
+                &RwLock::default(),
+                &epochs,
+                &SearchParams {
+                    conditions,
+                    ..params("", false, START + 16, None)
+                },
+            ))
+        };
+        assert_eq!(
+            found(vec![condition(
+                Field::Name,
+                Op::Is,
+                0.0,
+                &["hamsa", "nobody"]
+            )]),
+            vec![START + 12, START + 4],
+            "any of the names, part of one, any case"
+        );
+        let key: String = ours.to_string().chars().take(8).collect();
+        assert_eq!(
+            found(vec![condition(Field::Name, Op::Is, 0.0, &["HAMSA", &key])]),
+            vec![START + 12, START + 8, START + 4, START],
+            "a key as well as a name"
+        );
+        assert_eq!(
+            found(vec![condition(
+                Field::Name,
+                Op::IsNot,
+                0.0,
+                &["Hamsa Labs"]
+            )]),
+            vec![START + 8, START],
+            "every leader but those named"
+        );
+        assert_eq!(
+            found(vec![
+                condition(Field::Name, Op::Is, 0.0, &["hamsa"]),
+                condition(Field::Name, Op::IsNot, 0.0, &["labs"]),
+            ]),
+            Vec::<Slot>::new(),
+            "every name condition at once"
         );
     }
 

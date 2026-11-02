@@ -53,6 +53,8 @@ const LIST: GossipPeers = {
     null,
     [151_000, 34_000, 612_000, 203_000],
   ],
+  delinquent: [false, false, false, true],
+  last_vote: [9_990, 9_995, null, 1_000],
 };
 
 const PEERS = gossipPeers(LIST);
@@ -127,7 +129,14 @@ describe("finalize arrival", () => {
 
 describe("filters and search", () => {
   it("counts every filter over the same rows", () => {
-    expect(filterCounts(PEERS, NOW)).toEqual({ all: 4, staked: 3, rpc: 1, silent: 1, restarted: 2 });
+    expect(filterCounts(PEERS, NOW)).toEqual({ all: 4, staked: 3, rpc: 1, silent: 1, restarted: 2, delinquent: 1 });
+  });
+
+  it("reads delinquency, and how far the last vote is behind our root", () => {
+    const old = PEERS.find((peer) => peer.identity === "Old4444");
+    expect([old?.delinquent, old?.voteBehind]).toEqual([true, 9_000]);
+    const older = gossipPeers({ ...LIST, delinquent: undefined, last_vote: undefined });
+    expect(older.every((peer) => !peer.delinquent && peer.voteBehind === null)).toBe(true);
   });
 
   it("matches any part of a name, client, IP or identity", () => {

@@ -74,6 +74,10 @@ pub struct LeaderTraits {
     pub country: Option<&'static str>,
     /// In lamports.
     pub stake: u64,
+    /// Not voting: never, or too far behind the tip.
+    pub delinquent: bool,
+    /// The oldest last vote among its staked vote accounts.
+    pub last_vote: Option<Slot>,
 }
 
 /// Every staked node's traits, written by the collector.
@@ -83,6 +87,8 @@ pub type LeaderMap = HashMap<Pubkey, LeaderTraits>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
+    /// Whether the leader is voting now: `delinquent` or `voting`.
+    Leader,
     Client,
     Country,
     Stake,
@@ -411,6 +417,16 @@ fn holds(
         ),
         Field::Country => listed(condition, traits.and_then(|traits| traits.country)),
         Field::Voted => listed(condition, voted(row)),
+        Field::Leader => listed(
+            condition,
+            traits.map(|traits| {
+                if traits.delinquent {
+                    "delinquent"
+                } else {
+                    "voting"
+                }
+            }),
+        ),
         field => figure(field, history, slot, row, leader).is_some_and(|figure| {
             let value = condition.value;
             match condition.op {
@@ -485,7 +501,7 @@ fn figure(
                 .filter(|limit| *limit > 0)?;
             return block.then(|| f64::from(row.compute) / limit as f64 * 100.0);
         }
-        Field::Client | Field::Country | Field::Voted => None,
+        Field::Leader | Field::Client | Field::Country | Field::Voted => None,
     };
     whole.map(|value| value as f64)
 }
@@ -788,6 +804,13 @@ pub struct HeldFrom {
     pub millis: Option<u64>,
 }
 
+/// A leader not voting now, which the page tags wherever its turns show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DelinquentLeader {
+    pub identity: String,
+    pub last_vote: Option<Slot>,
+}
+
 /// What the page offers in its client and country lists: those among staked nodes.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct Choices {
@@ -806,6 +829,8 @@ pub struct SummaryReply {
     pub held_from: Option<HeldFrom>,
     pub choices: Choices,
     pub slow: Option<Vec<Option<u32>>>,
+    /// Every staked node not voting now.
+    pub delinquent: Vec<DelinquentLeader>,
 }
 
 /// The oldest held slot between `floor` and `top`.
@@ -853,6 +878,15 @@ pub fn summarize(
             countries: countries.into_iter().collect(),
         }
     };
+    let mut delinquent: Vec<DelinquentLeader> = map
+        .iter()
+        .filter(|(_, traits)| traits.delinquent)
+        .map(|(identity, traits)| DelinquentLeader {
+            identity: identity.to_string(),
+            last_vote: traits.last_vote,
+        })
+        .collect();
+    delinquent.sort_by(|a, b| a.identity.cmp(&b.identity));
     let Some(Prepared {
         wanted,
         capacity: _,
@@ -939,6 +973,7 @@ pub fn summarize(
         held_from: held_from(history, floor, params.before),
         choices,
         slow,
+        delinquent,
     }
 }
 
@@ -1026,6 +1061,8 @@ mod tests {
                 client: Some("AgaveBam".into()),
                 country: Some("DE"),
                 stake: 5_000,
+                delinquent: true,
+                last_vote: Some(7),
             },
         )]);
         (
@@ -1409,6 +1446,11 @@ mod tests {
             found(vec![condition(Field::Stake, Op::Ge, 5_000.0, &[])]),
             vec![START + 12, START + 4]
         );
+        assert_eq!(
+            found(vec![condition(Field::Leader, Op::Is, 0.0, &["delinquent"])]),
+            vec![START + 12, START + 4],
+            "a leader not voting now"
+        );
     }
 
     #[test]
@@ -1486,6 +1528,8 @@ mod tests {
         );
         assert_eq!(reply.choices.clients, vec!["AgaveBam".to_string()]);
         assert_eq!(reply.choices.countries, vec!["DE"]);
+        assert_eq!(reply.delinquent.len(), 1);
+        assert_eq!(reply.delinquent[0].last_vote, Some(7));
     }
 
     #[test]

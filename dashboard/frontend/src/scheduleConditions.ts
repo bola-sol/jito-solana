@@ -9,6 +9,7 @@ import { jitoShare } from "./tips";
 import type { EpochInfo, SlotEntry, TipRates } from "./types";
 
 export type Field =
+  | "leader"
   | "client"
   | "country"
   | "stake"
@@ -48,6 +49,7 @@ interface FieldInfo {
 }
 
 export const FIELDS: Record<Field, FieldInfo> = {
+  leader: { label: "Leader", unit: "", list: true, group: "status", leader: true },
   client: { label: "Client", unit: "", list: true, group: "status", leader: true },
   country: { label: "Country", unit: "", list: true, group: "status", leader: true },
   stake: { label: "Stake", unit: "SOL", list: false, group: "status", leader: true },
@@ -72,6 +74,12 @@ export const NUMBER_OPS: readonly Op[] = ["gt", "ge", "lt", "le", "eq"];
 export const LIST_OPS: readonly Op[] = ["is", "is_not"];
 
 export const OP_LABELS: Record<Op, string> = { gt: ">", ge: "≥", lt: "<", le: "≤", eq: "=", is: "is", is_not: "is not" };
+
+/** Whether a leader is voting now. */
+export const LEADER_STATES: readonly (readonly [value: string, label: string])[] = [
+  ["delinquent", "delinquent"],
+  ["voting", "voting"],
+];
 
 /** Our vote's verdict, as the Voted column marks it. */
 export const VOTED: readonly (readonly [value: string, label: string])[] = [
@@ -164,6 +172,7 @@ export interface LeaderFacts {
   client: string | null;
   country: string | null;
   stake: number;
+  delinquent: boolean;
 }
 
 function voted(entry: SlotEntry): string | null {
@@ -214,6 +223,7 @@ function figure(
       return block ? block.block_cost : null;
     case "block_fill":
       return block && block.block_cost_limit > 0 ? (block.block_cost / block.block_cost_limit) * 100 : null;
+    case "leader":
     case "client":
     case "country":
     case "voted":
@@ -235,7 +245,13 @@ export function conditionHolds(
   const facts = leader === "matched" ? null : leader;
   if (info.list) {
     const value =
-      condition.field === "voted" ? voted(entry) : condition.field === "client" ? facts?.client : facts?.country;
+      condition.field === "voted"
+        ? voted(entry)
+        : condition.field === "leader"
+          ? facts && (facts.delinquent ? "delinquent" : "voting")
+          : condition.field === "client"
+            ? facts?.client
+            : facts?.country;
     if (value == null) return false;
     const named = condition.values.includes(value);
     return condition.op === "is_not" ? !named : named;

@@ -140,6 +140,15 @@ export function delinquentText(
   return `delinquent, last vote ${agoLabel((behind * slotNanos) / 1e6)} (${slots})`;
 }
 
+/** A delinquent tag's title: how long since the validator last voted, as of now. */
+export function delinquentTitle(behind: number | null, slotNanos: number | undefined): string {
+  if (behind === null) return "Delinquent now: never voted.";
+  const slots = `${count(behind)} ${behind === 1 ? "slot" : "slots"}`;
+  return slotNanos
+    ? `Delinquent now: last vote ${agoLabel((behind * slotNanos) / 1e6)} (${slots}).`
+    : `Delinquent now: last vote ${slots} ago.`;
+}
+
 export const LEFT_OUT_MOST = 3;
 
 /** Null where no certificate left out anybody else. */

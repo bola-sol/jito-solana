@@ -108,7 +108,7 @@ The collector polls every 200 ms and holds the bank forks read lock only to clon
 | --- | --- |
 | `BankForks::root_bank`, `working_bank`, `highest_slot`, `frozen_banks` | The slot readouts. Per slot detail where no notification channel is wired. Once, at attach, validator names from the banks frozen while the ledger loaded, which replay does not notify. |
 | `BankForks::migration_status`, `Bank::is_alpenglow` | The consensus in use, and which cluster tip to read |
-| `Bank::vote_accounts`, with each account's `vote_state_view` | Our stake, commission, BLS key and vote credits this epoch under TowerBFT, against the best and the median. The Cluster card's counts and delinquency. Each validator's delinquency and last vote in the certificate lists. Stake in the peer table and in the wait's list. |
+| `Bank::vote_accounts`, with each account's `vote_state_view` | Our stake, commission, BLS key and vote credits this epoch under TowerBFT, against the best and the median. The Cluster card's counts and delinquency. Each validator's delinquency and last vote in the certificate lists, the Gossip page's peers table and the schedule's leader tags and conditions. Stake in the peer table and in the wait's list. |
 | `Bank::get_rank_map` for this epoch and the next, `get_vat_health_for_next_epoch` | Under alpenglow: if our vote account has a seat this epoch and next, and how far it is short of the ticket. The header's "no seat" figure. |
 | `Bank::get_lamports_per_signature`, `minimum_vote_account_balance_for_vat`, `get_minimum_balance_for_rent_exemption`, our vote account's `pending_delegator_rewards` | What voting costs: a day of fees under TowerBFT, the admission ticket under alpenglow, with the delegators' pending rewards the vote account must also hold. The header's balance warnings and the vote balance's runway. |
 | `Bank::epoch_schedule`, `epoch`, `slot`, `block_height`, `ns_per_slot_at_slot` | This epoch card, block height and the configured slot time. The root bank's epoch also sets how far back our blocks are kept. |
@@ -155,11 +155,11 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | --- | --- |
 | `slot.range` | Up to 4,096 rows of the slot history, which holds 432,000 slots |
 | `slot.search` | Up to 128 leader turns that match a name, key or slot number, our own turns, or a slot condition (skipped, slow for its place in the turn, our vote left out, few transactions, no tips), from a slot or a time, down or up. One search at a time, on a blocking thread. |
-| `slot.summary` | The same matches summed up over everything held (this epoch when nothing is asked): turns, slots, skipped, transactions, means of duration, replay, fees, tips and compute, the same per leader client, the oldest slot held, and the clients and countries among staked nodes. Shares the search's one-at-a-time blocking thread. |
+| `slot.summary` | The same matches summed up over everything held (this epoch when nothing is asked): turns, slots, skipped, transactions, means of duration, replay, fees, tips and compute, the same per leader client, the oldest slot held, and the clients and countries among staked nodes, and the staked nodes not voting now. Shares the search's one-at-a-time blocking thread. |
 | `epoch.query` | An epoch's slots, leader turns, our leader slots and cost limits |
 | `summary.displays` | Validator names and icons |
 | `summary.misses`, `summary.written` | Our unrewarded votes, and how often our certificates left out each validator |
-| `peers.gossip` | The Gossip page's peers table |
+| `peers.gossip` | The Gossip page's peers table, with each staked node's delinquency and last vote |
 | `produced.figures` | This epoch's blocks, and the previous epoch's until a fifth of this one has passed, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
 | `produced.detail` | Our blocks in a range of up to 64 slots, with their turns, waterfalls and costs |
 | `cluster.charts` | The Cluster page: Transactions, CU Used, Slot Time, Notarized Stake and Fast Finalization in up to 120 bins from catching up to now, each at least three 20-slot runs wide, the failed share of the transactions in each step of the Transactions distribution, the epoch's skips, and stake by client and by country. Gathered on a page's first ask and every fifteen seconds while it keeps asking; charts held from an earlier viewing are not served. |

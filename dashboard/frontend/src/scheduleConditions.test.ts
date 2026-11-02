@@ -87,7 +87,7 @@ describe("toServer", () => {
 });
 
 describe("conditionHolds", () => {
-  const facts = { client: "AgaveBam", country: "DE", stake: 5_000_000_000_000 };
+  const facts = { client: "AgaveBam", country: "DE", stake: 5_000_000_000_000, delinquent: true };
 
   it("compares a slot's figures in the units shown", () => {
     expect(conditionHolds(number("base_fee", "eq", 0.002), entry(), null, null)).toBe(true);
@@ -111,6 +111,8 @@ describe("conditionHolds", () => {
   it("takes a leader condition as met for a turn the validator returned", () => {
     expect(conditionHolds(list("country", "is", ["JP"]), entry(), "matched", null)).toBe(true);
     expect(conditionHolds(number("stake", "ge", 5000), entry(), facts, null)).toBe(true);
+    expect(conditionHolds(list("leader", "is", ["delinquent"]), entry(), facts, null)).toBe(true);
+    expect(conditionHolds(list("leader", "is", ["voting"]), entry(), { ...facts, delinquent: false }, null)).toBe(true);
   });
 });
 

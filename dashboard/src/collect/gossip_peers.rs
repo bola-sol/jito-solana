@@ -2,7 +2,7 @@
 //! client is asking for it.
 
 use {
-    super::Collector,
+    super::{Collector, is_delinquent},
     crate::{geoip, metrics_tap::VoteArrival},
     serde::Serialize,
     solana_clock::{Epoch, Slot},
@@ -56,6 +56,10 @@ pub struct GossipPeers {
     pub snapshot_full: Vec<Option<Slot>>,
     pub snapshot_incremental: Vec<Option<Slot>>,
     pub lowest: Vec<Option<Slot>>,
+    /// Staked and not voting: never, or too far behind the tip.
+    pub delinquent: Vec<bool>,
+    /// The oldest last vote among a staked node's vote accounts.
+    pub last_vote: Vec<Option<Slot>>,
 }
 
 impl Collector {
@@ -91,6 +95,7 @@ impl Collector {
         now_millis: u64,
     ) -> GossipPeers {
         let mut stakes: HashMap<Pubkey, u64> = HashMap::new();
+        let mut stalest: HashMap<Pubkey, Option<Slot>> = HashMap::new();
         let mut total: u64 = 0;
         for (stake, account) in bank.vote_accounts().values() {
             if *stake == 0 {
@@ -99,7 +104,11 @@ impl Collector {
             let held = stakes.entry(*account.node_pubkey()).or_insert(0);
             *held = held.saturating_add(*stake);
             total = total.saturating_add(*stake);
+            let last_vote = account.vote_state_view().last_voted_slot();
+            let vote = stalest.entry(*account.node_pubkey()).or_insert(last_vote);
+            *vote = (*vote).min(last_vote);
         }
+        let tip = bank.slot();
         let stake_of = |key: &Pubkey| stakes.get(key).copied().unwrap_or(0);
         let finalization = self.finalization_by_node(bank, now_millis);
         let (arrival_epoch, arrivals) = self.metrics_tap.vote_arrivals();
@@ -186,6 +195,10 @@ impl Collector {
             list.snapshot_full.push(full);
             list.snapshot_incremental.push(incremental);
             list.lowest.push(lowest);
+            let last_vote = stalest.get(key).copied();
+            list.delinquent
+                .push(last_vote.is_some_and(|vote| is_delinquent(vote, tip)));
+            list.last_vote.push(last_vote.flatten());
         }
         list
     }

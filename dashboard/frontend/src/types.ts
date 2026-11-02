@@ -186,6 +186,10 @@ export interface GossipPeers {
   /** Under Alpenglow, microseconds from a slot starting here to the peer's votes arriving: notarize
    *  mean, spread and worst, then the finalize mean; then the notarize votes the mean is over. */
   vote_arrival: ([number, number | null, number | null, number | null, (number | null)?] | null)[];
+  /** Staked and not voting now; absent from a validator older than the page. */
+  delinquent?: boolean[];
+  /** The oldest last vote among a staked node's vote accounts. */
+  last_vote?: (number | null)[];
 }
 
 /** Published on the slow tier; filter against the completed slot before rendering. */
@@ -225,6 +229,8 @@ export interface ScheduleSummary {
   /** The clients and countries among staked nodes. */
   choices: { clients: string[]; countries: string[] };
   slow: (number | null)[] | null;
+  /** Every staked node not voting now. */
+  delinquent: { identity: string; last_vote: number | null }[];
 }
 
 export interface TipRates {

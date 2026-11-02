@@ -6665,8 +6665,13 @@ body {
 
 .schedule-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.schedule-controls > .schedule-search {
+  flex-basis: 200px;
 }
 
 .schedule-search {
@@ -6685,6 +6690,175 @@ body {
 .schedule-search:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+.schedule-jump {
+  flex: 0 1 230px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.schedule-jump.is-set {
+  border-color: var(--text-faint);
+}
+
+.schedule-jump[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+
+.schedule-jump:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Behind a button on a phone only. */
+.schedule-only-toggle {
+  display: none;
+}
+
+.schedule-only {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-only-label {
+  margin-right: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.schedule-chip {
+  margin: 0;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.schedule-chip:hover {
+  color: var(--text-dim);
+}
+
+.schedule-chip[aria-pressed="true"] {
+  border-color: var(--text-faint);
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.schedule-chip:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Where a jump landed and what the filters keep. */
+.schedule-from {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.schedule-from button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Below the width the controls need on one line, the conditions take their own. */
+@container schedule (width < 1000px) {
+  .schedule-controls > .toggle-group {
+    order: 2;
+  }
+
+  .schedule-only {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+/* A phone: search and All/Ours, then the jump and the button that opens the conditions. */
+@media (max-width: 700px) {
+  .schedule-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .schedule-controls > .schedule-search {
+    grid-area: 1 / 1;
+    max-width: none;
+  }
+
+  .schedule-controls > .toggle-group {
+    grid-area: 1 / 2;
+    margin-left: 0;
+  }
+
+  .schedule-jump {
+    grid-area: 2 / 1;
+  }
+
+  .schedule-only-toggle {
+    grid-area: 2 / 2;
+    display: inline-flex;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-faint);
+    cursor: pointer;
+  }
+
+  .schedule-only-toggle.is-on {
+    border-color: var(--text-faint);
+    background: var(--panel-raised);
+    color: var(--text);
+  }
+
+  .schedule-only-toggle b {
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .schedule-only {
+    grid-area: 3 / 1 / 4 / 3;
+    display: none;
+  }
+
+  .schedule-only.is-open {
+    display: flex;
+  }
+
+  .schedule-only-label {
+    display: none;
+  }
 }
 
 .schedule-group {
@@ -7800,6 +7974,69 @@ body {
 .schedule-cert.is-none,
 .schedule-cert.is-unknown {
   color: var(--text-faint);
+}
+
+/* The turn being produced, after the stripes and our own turns' rules so it wins over both. */
+.schedule-group.is-now {
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+}
+
+.schedule-group.is-now:not(.is-ours) {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.schedule-now {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.schedule-now::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: schedule-now-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes schedule-now-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .schedule-now::before {
+    animation: none;
+  }
+}
+
+.schedule-row.is-current {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.schedule-row.is-current .schedule-slot {
+  color: var(--accent);
+}
+
+.schedule-row.is-upcoming,
+.schedule-row.is-upcoming .schedule-slot {
+  color: var(--text-faint);
+}
+
+/* Under filters, rows that miss are dimmed and the figure a row was kept for is toned. */
+.schedule-row.is-miss > span {
+  opacity: 0.32;
+}
+
+.schedule-row > .is-met {
+  color: var(--warn);
 }
 
 /* The columns' least width, 53.5em and five 12px gaps. Named, since each validator cell is a

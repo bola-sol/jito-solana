@@ -28,7 +28,16 @@ describe("readRoute", () => {
       slot: null,
       query: "Mithril Alpenglow",
       ours: true,
+      from: "",
+      only: [],
     });
+    expect(readRoute("#/schedule?from=08%3A00&only=slow,left_out")).toEqual({
+      ...HOME,
+      page: "schedule",
+      from: "08:00",
+      only: ["slow", "left_out"],
+    });
+    expect(readRoute("#/gossip?from=1&only=slow")).toEqual({ ...HOME, page: "gossip" });
     expect(readRoute("#/schedule?ours").ours).toBe(true);
     expect(readRoute("#/slots?q=826&ours")).toEqual({ ...HOME, page: "slots", query: "826" });
     expect(readRoute("#/slots/5539826?q=826").slot).toBe(5_539_826);
@@ -49,6 +58,7 @@ describe("routeHash", () => {
       { ...HOME, page: "schedule" },
       { ...HOME, page: "schedule", query: "a b&c", ours: true },
       { ...HOME, page: "schedule", ours: true },
+      { ...HOME, page: "schedule", from: "Nov 2 08:00", only: ["skipped", "no_tips"] },
       { ...HOME, page: "gossip" },
       { ...HOME, page: "gossip", query: "64.130" },
       { ...HOME, page: "cluster" },

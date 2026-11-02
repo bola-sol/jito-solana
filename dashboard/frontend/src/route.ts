@@ -1,6 +1,7 @@
 /** The hash never reaches the server. */
 
 import { useCallback, useEffect, useState } from "react";
+import { readOnly, type Only } from "./scheduleFilters";
 
 export type Page = "overview" | "slots" | "schedule" | "gossip" | "cluster";
 
@@ -11,9 +12,13 @@ export interface Route {
   slot: number | null;
   query: string;
   ours: boolean;
+  /** The schedule's jump, as typed. */
+  from: string;
+  /** The schedule's filters. */
+  only: readonly Only[];
 }
 
-export const HOME: Route = { page: "overview", slot: null, query: "", ours: false };
+export const HOME: Route = { page: "overview", slot: null, query: "", ours: false, from: "", only: [] };
 
 export function readRoute(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#\/?/, "").split("?");
@@ -26,6 +31,8 @@ export function readRoute(hash: string): Route {
     // Only the pages with a search box keep one.
     query: page === "overview" || page === "cluster" ? "" : (params.get("q") ?? ""),
     ours: page === "schedule" && params.has("ours"),
+    from: page === "schedule" ? (params.get("from") ?? "") : "",
+    only: page === "schedule" ? readOnly(params.get("only")) : [],
   };
 }
 
@@ -34,20 +41,28 @@ export function routeHash(route: Route): string {
     case "overview":
       return "#";
     case "slots":
-      return withSearch(route.slot === null ? "#/slots" : `#/slots/${route.slot}`, route.query, false);
+      return withSearch(route.slot === null ? "#/slots" : `#/slots/${route.slot}`, { q: route.query });
     case "schedule":
-      return withSearch("#/schedule", route.query, route.ours);
+      return withSearch("#/schedule", {
+        q: route.query,
+        ours: route.ours,
+        from: route.from,
+        only: route.only.join(","),
+      });
     case "gossip":
-      return withSearch("#/gossip", route.query, false);
+      return withSearch("#/gossip", { q: route.query });
     case "cluster":
       return "#/cluster";
   }
 }
 
-function withSearch(path: string, query: string, ours: boolean): string {
+/** Empty and false values are left out; true is written as a bare key. */
+function withSearch(path: string, values: Record<string, string | boolean>): string {
   const params = new URLSearchParams();
-  if (query) params.set("q", query);
-  if (ours) params.set("ours", "");
+  for (const [key, value] of Object.entries(values)) {
+    if (value === true) params.set(key, "");
+    else if (value) params.set(key, value);
+  }
   const search = params.toString();
   return search ? `${path}?${search}` : path;
 }

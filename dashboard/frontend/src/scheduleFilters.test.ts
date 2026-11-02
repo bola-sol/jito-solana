@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampEntry, describeOnly, jumpStart, meets, parseJump, pickerValue, readOnly, typedTime } from "./scheduleFilters";
+import { clampEntry, describeOnly, jumpStart, meets, parseJump, readOnly, typedTime } from "./scheduleFilters";
 import type { EpochInfo, SlotEntry } from "./types";
 
 function entry(fill: Partial<SlotEntry> = {}): SlotEntry {
@@ -145,12 +145,11 @@ describe("clampEntry", () => {
   });
 });
 
-describe("typedTime and pickerValue", () => {
-  it("write a time back as the fields read it", () => {
+describe("typedTime", () => {
+  it("writes a time back as the box reads it", () => {
     const at = new Date(2026, 10, 2, 8, 5).getTime();
     expect(typedTime(at)).toBe("Nov 2 08:05");
     expect(typedTime(at + 7_000)).toBe("Nov 2 08:05:07");
     expect(parseJump(typedTime(at), at + 1)).toEqual({ kind: "time", millis: at });
-    expect(pickerValue(at)).toBe("2026-11-02T08:05");
   });
 });

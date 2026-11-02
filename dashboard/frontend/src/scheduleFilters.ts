@@ -1,5 +1,5 @@
-/** The schedule's filters and its jump: what each condition asks of a slot, and what the jump field
- *  reads. The validator applies the same conditions to its history in `search.rs`. */
+/** The schedule's filters and its jump: what each condition asks of a slot, and the slots and times
+ *  a range or jump reads. The validator applies the same conditions to its history in `search.rs`. */
 
 import type { ScheduleColumns } from "./layout";
 import { SLOTS_PER_TURN } from "./schedule";
@@ -187,7 +187,7 @@ export interface Clamped {
   moved: "older" | "newer" | null;
 }
 
-/** A time as the jump field reads it back: `Nov 2 08:00`, seconds where there are any. */
+/** A time as the search box reads it back: `Nov 2 08:00`, seconds where there are any. */
 export function typedTime(millis: number): string {
   const at = new Date(millis);
   const name = MONTHS[at.getMonth()] ?? "jan";
@@ -197,15 +197,8 @@ export function typedTime(millis: number): string {
   return `${month} ${at.getDate()} ${clock}${seconds}`;
 }
 
-/** A local time as a date-and-time picker takes it. */
-export function pickerValue(millis: number): string {
-  const at = new Date(millis);
-  const two = (part: number) => String(part).padStart(2, "0");
-  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`;
-}
-
 /** Where an entry lies against what the validator holds, from `held` to `newest` and now. */
-export function placeEntry(
+function placeEntry(
   jump: Jump,
   held: Held | null,
   newest: number | null,

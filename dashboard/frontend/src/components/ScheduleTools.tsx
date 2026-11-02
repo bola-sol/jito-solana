@@ -1,17 +1,7 @@
-import { useEffect, useRef, useState, type ReactElement } from "react";
-import { count, countryName } from "../format";
-import {
-  FIELDS,
-  fresh,
-  LEADER_STATES,
-  LIST_OPS,
-  NUMBER_OPS,
-  OP_LABELS,
-  VOTED,
-  type Condition,
-  type Field,
-} from "../scheduleConditions";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
+import { count } from "../format";
 import { typedTime, type Held } from "../scheduleFilters";
+import { complete, KEYS, keyOffered, suggest, type Key, type KeyGroup, type Offered } from "../scheduleSyntax";
 import type { SavedView } from "../scheduleViews";
 import { jitoShare } from "../tips";
 import type { ScanFigures, ScheduleSummary, TipRates } from "../types";
@@ -21,356 +11,182 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 /** Clients with fewer slots than this are left out of the table, their means being noise. */
 const MIN_CLIENT_SLOTS = 8;
 
-const CALENDAR = (
-  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-    <rect x="2" y="3" width="12" height="11" rx="1.5" />
-    <path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" />
-  </svg>
-);
-
 /** Where the validator's history starts, in a line. */
 export function heldText(held: Held): string {
   return `slot ${count(held.slot)}${held.millis === null ? "" : ` (${typedTime(held.millis)})`}`;
 }
 
 /**
- * A slot or time typed, or picked from the browser's own date and time picker. What is typed is
- * kept as a draft and handed over only on Enter or on leaving the field, since every partial
- * number on the way to a slot is itself a slot.
+ * The search box. Words search leader names, keys and slots as typed; expressions are offered as
+ * they are typed and become filters on Add or Enter.
  */
-export function DateField({
-  value,
+export function SyntaxSearch({
+  text,
   placeholder,
-  title,
-  label,
-  className = "",
-  warn = false,
-  invalid = false,
-  min,
-  max,
-  onDraft,
-  onCommit,
-  onFocusChange,
+  offered,
+  ready,
+  inputRef,
+  onText,
+  onAdd,
 }: {
-  value: string;
+  text: string;
   placeholder: string;
-  title?: string;
-  label: string;
-  className?: string;
-  warn?: boolean;
-  invalid?: boolean;
-  /** The picker's bounds, as it takes them. */
-  min?: string;
-  max?: string;
-  onDraft?: (text: string) => void;
-  /** Answers the text as kept, which the field then shows: moved, or emptied for live. */
-  onCommit: (text: string) => string | void;
-  onFocusChange?: (focused: boolean) => void;
+  offered: Offered;
+  /** Whether the text holds an expression for Add to take. */
+  ready: boolean;
+  inputRef: RefObject<HTMLInputElement>;
+  onText: (text: string) => void;
+  onAdd: () => void;
 }): ReactElement {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  const picker = useRef<HTMLInputElement>(null);
-  const edit = (text: string) => {
-    setDraft(text);
-    onDraft?.(text);
+  // The caret while the box has focus; suggestions follow the word before it.
+  const [caret, setCaret] = useState<number | null>(null);
+  const [active, setActive] = useState(-1);
+  const [dismissed, setDismissed] = useState(false);
+  const placeCaret = useRef<number | null>(null);
+  const options = useMemo(
+    () => (caret === null || dismissed ? [] : suggest(text.slice(0, caret), offered)),
+    [text, caret, dismissed, offered],
+  );
+  useLayoutEffect(() => {
+    const at = placeCaret.current;
+    if (at === null || !inputRef.current) return;
+    placeCaret.current = null;
+    inputRef.current.setSelectionRange(at, at);
+    setCaret(at);
+  }, [text, inputRef]);
+  const edit = (next: string, at: number | null) => {
+    setActive(-1);
+    setDismissed(false);
+    setCaret(at);
+    onText(next);
   };
-  const commit = (text: string) => {
-    const kept = onCommit(text);
-    if (typeof kept === "string") edit(kept);
+  const pick = (insert: string) => {
+    const next = complete(text, caret ?? text.length, insert);
+    placeCaret.current = next.caret;
+    edit(next.text, next.caret);
   };
+  const choice = options[active];
   return (
-    <span className={`schedule-field ${className}`}>
+    <span className="schedule-query">
       <input
+        ref={inputRef}
         type="search"
-        className={`schedule-field-input${value ? " is-set" : ""}${warn ? " is-warn" : ""}`}
-        value={draft}
+        className="schedule-search"
+        value={text}
         placeholder={placeholder}
-        title={title}
-        aria-label={label}
-        aria-invalid={invalid}
-        onChange={(event) => edit(event.target.value)}
+        role="combobox"
+        aria-label="Search by leader name, key or slot, or filter, e.g. duration>240"
+        aria-autocomplete="list"
+        aria-expanded={options.length > 0}
+        aria-controls="schedule-suggest"
+        aria-activedescendant={choice ? `schedule-suggest-${active}` : undefined}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(event) => edit(event.target.value, event.target.selectionStart)}
+        onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+        onFocus={(event) => setCaret(event.currentTarget.selectionStart)}
+        onBlur={() => setCaret(null)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") commit(event.currentTarget.value);
-        }}
-        onFocus={() => onFocusChange?.(true)}
-        onBlur={(event) => {
-          onFocusChange?.(false);
-          if (event.currentTarget.value !== value) commit(event.currentTarget.value);
-        }}
-      />
-      <button
-        type="button"
-        className="schedule-calendar"
-        title="Pick a date and time"
-        aria-label={`${label}: pick a date and time`}
-        onClick={() => {
-          try {
-            picker.current?.showPicker();
-          } catch {
-            picker.current?.focus();
+          if ((event.key === "ArrowDown" || event.key === "ArrowUp") && options.length > 0) {
+            event.preventDefault();
+            // Past either end is none chosen.
+            const last = options.length - 1;
+            const down = event.key === "ArrowDown";
+            setActive((was) => (down ? (was >= last ? -1 : was + 1) : was === -1 ? last : was - 1));
+          } else if (event.key === "Tab" && !event.shiftKey && options.length > 0) {
+            event.preventDefault();
+            const taken = choice ?? options[0];
+            if (taken) pick(taken.insert);
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            if (choice) pick(choice.insert);
+            else onAdd();
+          } else if (event.key === "Escape" && options.length > 0) {
+            event.preventDefault();
+            setDismissed(true);
           }
         }}
-      >
-        {CALENDAR}
-      </button>
-      <input
-        ref={picker}
-        type="datetime-local"
-        className="schedule-picker"
-        tabIndex={-1}
-        aria-hidden="true"
-        min={min}
-        max={max}
-        onChange={(event) => {
-          const at = new Date(event.target.value).getTime();
-          if (Number.isNaN(at)) return;
-          const text = typedTime(at);
-          edit(text);
-          commit(text);
-        }}
       />
-    </span>
-  );
-}
-
-/** A number typed, handed over on Enter or on leaving the field. */
-function NumberField({
-  value,
-  label,
-  onCommit,
-}: {
-  value: number | null;
-  label: string;
-  onCommit: (value: number | null) => void;
-}): ReactElement {
-  const shown = value === null ? "" : String(value);
-  const [draft, setDraft] = useState(shown);
-  useEffect(() => setDraft(shown), [shown]);
-  const commit = (text: string) => {
-    const read = Number(text.replace(/,/g, "").trim());
-    onCommit(text.trim() === "" || !Number.isFinite(read) ? null : read);
-  };
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      className="schedule-cond-value"
-      value={draft}
-      aria-label={label}
-      onChange={(event) => setDraft(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") commit(event.currentTarget.value);
-      }}
-      onBlur={(event) => {
-        if (event.currentTarget.value !== shown) commit(event.currentTarget.value);
-      }}
-    />
-  );
-}
-
-/** Several values, any of which matches, picked from what is offered. */
-function ValueTokens({
-  field,
-  values,
-  choices,
-  onChange,
-}: {
-  field: Field;
-  values: readonly string[];
-  choices: readonly (readonly [value: string, label: string])[];
-  onChange: (values: readonly string[]) => void;
-}): ReactElement {
-  const labelOf = (value: string) => choices.find(([held]) => held === value)?.[1] ?? value;
-  const left = choices.filter(([value]) => !values.includes(value));
-  return (
-    <span className="schedule-tokens">
-      {values.map((value) => (
-        <span key={value} className="schedule-token">
-          {field === "country" ? value : labelOf(value)}
-          <button
-            type="button"
-            className="schedule-token-remove"
-            aria-label={`Remove ${labelOf(value)}`}
-            onClick={() => onChange(values.filter((held) => held !== value))}
-          >
-            ✕
-          </button>
-        </span>
-      ))}
-      {left.length > 0 && (
-        <select
-          className="schedule-token-add"
-          value=""
-          aria-label={`Add a ${FIELDS[field].label.toLowerCase()}`}
-          onChange={(event) => {
-            if (event.target.value) onChange([...values, event.target.value]);
-          }}
-        >
-          <option value="">+ add</option>
-          {left.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      )}
-    </span>
-  );
-}
-
-function ConditionRow({
-  condition,
-  offered,
-  choicesOf,
-  onChange,
-  onRemove,
-}: {
-  condition: Condition;
-  offered: readonly Field[];
-  choicesOf: (field: Field) => readonly (readonly [string, string])[];
-  onChange: (condition: Condition) => void;
-  onRemove: () => void;
-}): ReactElement {
-  const info = FIELDS[condition.field];
-  const label = info.label;
-  return (
-    <div className="schedule-cond">
-      <select
-        className="schedule-cond-field"
-        value={condition.field}
-        aria-label="Column"
-        onChange={(event) => onChange(fresh(event.target.value as Field))}
-      >
-        {offered.map((field) => (
-          <option key={field} value={field}>
-            {FIELDS[field].label}
-          </option>
-        ))}
-      </select>
-      <select
-        className="schedule-cond-op"
-        value={condition.op}
-        aria-label={`${label}: comparison`}
-        onChange={(event) => onChange({ ...condition, op: event.target.value as Condition["op"] })}
-      >
-        {(info.list ? LIST_OPS : NUMBER_OPS).map((op) => (
-          <option key={op} value={op}>
-            {OP_LABELS[op]}
-          </option>
-        ))}
-      </select>
-      {info.list ? (
-        <ValueTokens
-          field={condition.field}
-          values={condition.values}
-          choices={choicesOf(condition.field)}
-          onChange={(values) => onChange({ ...condition, values })}
-        />
-      ) : (
-        <NumberField value={condition.value} label={`${label}: value`} onCommit={(value) => onChange({ ...condition, value })} />
-      )}
-      <span className="schedule-cond-unit">{info.unit}</span>
-      <button type="button" className="schedule-cond-remove" aria-label={`Remove the ${label.toLowerCase()} condition`} onClick={onRemove}>
-        ✕
+      <button type="button" className={`schedule-add${ready ? " is-ready" : ""}`} onClick={onAdd}>
+        Add
       </button>
-    </div>
+      {options.length > 0 && (
+        <div className="schedule-suggest" id="schedule-suggest" role="listbox">
+          {options.map((option, at) => (
+            <div
+              key={option.insert}
+              id={`schedule-suggest-${at}`}
+              role="option"
+              aria-selected={at === active}
+              className="schedule-suggest-option"
+              // Keeps the focus in the box.
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pick(option.insert);
+              }}
+            >
+              <code>
+                {option.insert}
+                <i>{option.ghost}</i>
+              </code>
+              <span>{option.what}</span>
+            </div>
+          ))}
+          <div className="schedule-suggest-hint">
+            <kbd>Tab</kbd> completes · <kbd>Enter</kbd> or Add makes it a filter · a word on its own searches names and keys
+          </div>
+        </div>
+      )}
+    </span>
   );
 }
 
-/** A range and conditions on any column, opened from the controls. */
-export function AdvancedFold({
-  since,
-  until,
-  where,
+const GROUP_TITLES: Record<KeyGroup, string> = { slot: "Slot", leader: "Leader and our vote", range: "Range and jump" };
+
+/** An example of a key, with live slot and epoch numbers where it needs them. */
+function exampleOf(key: Key, slot: number | null, epoch: number | null): string {
+  if (key.kind === "range" && key.name === "slot") return `slot:${slot ?? 0}..`;
+  if (key.kind === "epoch") return `epoch:${epoch ?? 0}`;
+  if (key.kind === "at") return `at:${slot ?? "08:00"}`;
+  return `${key.name}${key.op}${key.example}`;
+}
+
+/** Every expression the search box takes, each a button that puts it in the box. */
+export function SyntaxSheet({
   offered,
-  choices,
   held,
-  pickerMin,
-  pickerMax,
-  onRange,
-  onWhere,
-  onClear,
+  slot,
+  epoch,
+  onPick,
 }: {
-  since: string;
-  until: string;
-  where: readonly Condition[];
-  offered: readonly Field[];
-  choices: ScheduleSummary["choices"] | null;
+  offered: Offered;
   held: Held | null;
-  pickerMin?: string;
-  pickerMax?: string;
-  /** Answers both ends as kept. */
-  onRange: (since: string, until: string) => readonly [since: string, until: string];
-  /** `field` is the condition just added or changed, for the column group to show. */
-  onWhere: (where: readonly Condition[], field: Field | null) => void;
-  onClear: () => void;
+  /** A recent slot and the current epoch, for the examples. */
+  slot: number | null;
+  epoch: number | null;
+  onPick: (example: string) => void;
 }): ReactElement {
-  const choicesOf = (field: Field): readonly (readonly [string, string])[] => {
-    if (field === "voted") return VOTED;
-    if (field === "leader") return LEADER_STATES;
-    if (field === "client") return (choices?.clients ?? []).map((client) => [client, client]);
-    return (choices?.countries ?? []).map((code) => [code, `${code}, ${countryName(code)}`]);
-  };
-  const replace = (at: number, condition: Condition) =>
-    onWhere(
-      where.map((held, index) => (index === at ? condition : held)),
-      condition.field,
-    );
   return (
     <div className="schedule-advanced">
-      <span className="schedule-advanced-label">Range</span>
-      <div className="schedule-range">
-        <span className="schedule-range-end">From</span>
-        <DateField
-          value={since}
-          placeholder="Slot or time"
-          label="Range from"
-          min={pickerMin}
-          max={pickerMax}
-          onCommit={(text) => onRange(text, until)[0]}
-        />
-        <span className="schedule-range-end">to</span>
-        <DateField
-          value={until}
-          placeholder="Slot or time, or now"
-          label="Range to"
-          min={pickerMin}
-          max={pickerMax}
-          onCommit={(text) => onRange(since, text)[1]}
-        />
-      </div>
-      {held && <div className="schedule-held">Held from {heldText(held)} to now.</div>}
-      <span className="schedule-advanced-label">Where</span>
-      <div className="schedule-conds">
-        {where.map((condition, index) => (
-          <ConditionRow
-            // Rows are edited in place; a removal remounts those after it.
-            key={`${index}:${condition.field}`}
-            condition={condition}
-            offered={offered}
-            choicesOf={choicesOf}
-            onChange={(next) => replace(index, next)}
-            onRemove={() => onWhere(where.filter((_, at) => at !== index), null)}
-          />
-        ))}
-        <button
-          type="button"
-          className="schedule-cond-add"
-          onClick={() => {
-            const field = offered.find((candidate) => !where.some((held) => held.field === candidate) && !FIELDS[candidate].leader) ?? "duration";
-            onWhere([...where, fresh(field)], field);
-          }}
-        >
-          + Add condition
-        </button>
-      </div>
+      {(Object.keys(GROUP_TITLES) as KeyGroup[]).map((group) => (
+        <div key={group} className="schedule-syntax-group">
+          <h4>{GROUP_TITLES[group]}</h4>
+          {KEYS.filter((key) => key.group === group && keyOffered(key, offered)).map((key) => {
+            const example = exampleOf(key, slot, epoch);
+            return (
+              <div key={key.name} className="schedule-syntax-row">
+                <button type="button" onClick={() => onPick(example)}>
+                  {example}
+                </button>
+                <span>{key.what}</span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
       <div className="schedule-advanced-foot">
-        <span>Every condition, in the same slot. Fees in SOL, times in ms, your local time.</span>
-        {(since || until || where.length > 0) && (
-          <button type="button" onClick={onClear}>
-            Clear all
-          </button>
-        )}
+        An example goes into the search box to edit; Add makes it a filter. Fees in SOL, times in ms and your local
+        time, &quot;-&quot; before a list leaves it out.{held && ` Held from ${heldText(held)} to now.`}
       </div>
     </div>
   );
@@ -460,7 +276,7 @@ export function ViewsMenu({
                 {view.name}
                 <small>{view.summary}</small>
               </button>
-              <button type="button" className="schedule-cond-remove" aria-label={`Delete ${view.name}`} onClick={() => onDelete(view.name)}>
+              <button type="button" className="schedule-view-delete" aria-label={`Delete ${view.name}`} onClick={() => onDelete(view.name)}>
                 ✕
               </button>
             </div>
@@ -475,7 +291,7 @@ export function ViewsMenu({
             }}
           >
             <input
-              className="schedule-cond-value"
+              className="schedule-views-name"
               value={name}
               placeholder="Name the current view"
               aria-label="Name the current view"

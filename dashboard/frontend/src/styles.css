@@ -6673,8 +6673,106 @@ body {
   gap: 8px;
 }
 
-.schedule-controls > .schedule-search {
-  flex-basis: 200px;
+/* The search box and its Add, with the suggestions beneath. */
+.schedule-query {
+  position: relative;
+  display: flex;
+  flex: 1 1 360px;
+  gap: 6px;
+  min-width: 0;
+  max-width: 560px;
+}
+
+.schedule-query > .schedule-search {
+  max-width: none;
+}
+
+.schedule-add {
+  flex: none;
+  margin: 0;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.schedule-add.is-ready {
+  border-color: var(--accent);
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.schedule-add:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.schedule-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 6;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 13px;
+}
+
+.schedule-suggest-option {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.schedule-suggest-option:hover,
+.schedule-suggest-option[aria-selected="true"] {
+  background: var(--panel-raised);
+}
+
+.schedule-suggest-option code {
+  flex: none;
+  min-width: 150px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.schedule-suggest-option i {
+  margin-left: 2px;
+  font-style: normal;
+  color: var(--text-faint);
+}
+
+.schedule-suggest-option span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.schedule-suggest-hint {
+  margin-top: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.schedule-suggest-hint kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font: inherit;
 }
 
 .schedule-search {
@@ -6693,91 +6791,6 @@ body {
 .schedule-search:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
-}
-
-/* A slot or time typed, with a button for the browser's own date and time picker. */
-.schedule-field {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.schedule-controls > .schedule-jump {
-  flex: 0 1 260px;
-}
-
-.schedule-field-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 34px 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--panel);
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.schedule-field-input.is-set {
-  border-color: var(--text-faint);
-}
-
-.schedule-field-input[aria-invalid="true"] {
-  border-color: var(--bad);
-}
-
-.schedule-field-input.is-warn {
-  border-color: var(--warn);
-}
-
-.schedule-field-input:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.schedule-calendar {
-  position: absolute;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 3px;
-  background: none;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.schedule-calendar:hover {
-  background: var(--panel-raised);
-  color: var(--text);
-}
-
-.schedule-calendar:focus-visible {
-  outline: 1px solid var(--accent);
-}
-
-.schedule-calendar svg {
-  width: 15px;
-  height: 15px;
-}
-
-/* Drawn, so the browser can open its picker from it, but never seen. */
-.schedule-picker {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .schedule-warn {
@@ -6810,11 +6823,11 @@ body {
   color: var(--text-faint);
 }
 
+/* Every expression the search box takes, by group. */
 .schedule-advanced {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  gap: 10px 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 24px;
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -6822,162 +6835,51 @@ body {
   font-size: 13px;
 }
 
-.schedule-advanced-label {
-  align-self: start;
-  padding-top: 6px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.schedule-range {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.schedule-range > .schedule-field {
-  flex: 0 1 230px;
-}
-
-.schedule-range .schedule-field-input,
-.schedule-cond-value,
-.schedule-cond select,
-.schedule-tokens {
-  background: var(--bg);
-}
-
-.schedule-range-end {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.schedule-held {
-  grid-column: 2;
-  margin-top: -4px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.schedule-conds {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.schedule-cond {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.schedule-cond select,
-.schedule-cond-value {
-  min-width: 0;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.schedule-cond-field {
-  width: 150px;
-}
-
-.schedule-cond-op {
-  width: 72px;
-}
-
-.schedule-cond .schedule-cond-value {
-  width: 100px;
-  font-family: var(--mono);
-  text-align: right;
-}
-
-.schedule-cond-unit {
-  min-width: 28px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.schedule-cond-remove {
-  margin: 0;
-  padding: 2px 6px;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.schedule-cond-add {
-  margin: 0;
-  padding: 2px 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-/* Several values for a client or country, any of which matches. */
-.schedule-tokens {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-height: 30px;
-  padding: 2px 4px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-
-.schedule-token {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 1px 2px 1px 8px;
-  border-radius: 3px;
-  background: var(--panel-raised);
-  font-size: 12.5px;
-  color: var(--text);
-}
-
-.schedule-token-remove {
-  margin: 0;
-  padding: 0 4px;
-  border: 0;
-  background: none;
-  font: inherit;
+.schedule-syntax-group h4 {
+  margin: 0 0 6px;
   font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
   color: var(--text-faint);
+}
+
+.schedule-syntax-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.schedule-syntax-row button {
+  flex: none;
+  min-width: 150px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--accent);
+  text-align: left;
   cursor: pointer;
 }
 
-.schedule-tokens .schedule-token-add {
-  padding: 2px 4px;
-  border: 0;
-  background: none;
-  font-size: 12.5px;
-  color: var(--accent);
+.schedule-syntax-row button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .schedule-advanced-foot {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
   font-size: 12px;
   color: var(--text-faint);
 }
 
-.schedule-advanced-foot button,
 .schedule-pills-clear,
 .schedule-by-client {
   flex: none;
@@ -7079,6 +6981,16 @@ body {
   background: var(--panel-raised);
 }
 
+.schedule-view-delete {
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
 .schedule-view-apply {
   flex: 1;
   min-width: 0;
@@ -7109,7 +7021,7 @@ body {
   border-top: 1px solid var(--border);
 }
 
-.schedule-views-save .schedule-cond-value {
+.schedule-views-name {
   flex: 1;
   padding: 5px 8px;
   border: 1px solid var(--border);
@@ -7294,25 +7206,32 @@ body {
   }
 }
 
-/* A phone: search and All/Ours, then the jump and the button that opens the conditions. */
+/* A phone: the search and its Add, then the button that opens the conditions and All/Ours. */
 @media (max-width: 700px) {
   .schedule-controls {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .schedule-controls > .schedule-search {
-    grid-area: 1 / 1;
+  .schedule-query {
+    grid-area: 1 / 1 / 2 / 3;
     max-width: none;
   }
 
   .schedule-controls > .toggle-group {
-    grid-area: 1 / 2;
+    grid-area: 2 / 2;
     margin-left: 0;
   }
 
-  .schedule-controls > .schedule-jump {
-    grid-area: 2 / 1;
+  /* The syntax over what it means, which then wraps rather than being cut. */
+  .schedule-suggest-option {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .schedule-suggest-option span {
+    font-size: 12px;
+    white-space: normal;
   }
 
   /* The Views menu spans the controls rather than its button, which sits far to the left. */
@@ -7335,58 +7254,12 @@ body {
 
   .schedule-advanced {
     grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
+    gap: 10px;
     padding: 10px;
   }
 
-  .schedule-advanced-label {
-    margin-top: 4px;
-    padding-top: 0;
-  }
-
-  .schedule-range {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: 6px 8px;
-  }
-
-  .schedule-held {
-    grid-column: 1;
-    margin-top: 0;
-  }
-
-  .schedule-conds {
-    align-items: stretch;
-  }
-
-  /* Two lines a condition: the column, then the comparison, value and its removal. */
-  .schedule-cond {
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr) 32px auto;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .schedule-cond .schedule-cond-field {
-    grid-column: 1 / -1;
-    width: auto;
-  }
-
-  .schedule-cond .schedule-cond-op,
-  .schedule-cond .schedule-cond-value {
-    width: auto;
-  }
-
-  .schedule-cond .schedule-tokens {
-    grid-column: 2 / 4;
-  }
-
-  .schedule-cond .schedule-tokens + .schedule-cond-unit {
-    display: none;
-  }
-
-  .schedule-cond-add {
-    align-self: flex-start;
+  .schedule-syntax-row button {
+    min-width: 128px;
   }
 
   .schedule-pill-tools {
@@ -7395,7 +7268,8 @@ body {
   }
 
   .schedule-only-toggle {
-    grid-area: 2 / 2;
+    grid-area: 2 / 1;
+    justify-self: start;
     display: inline-flex;
     align-self: stretch;
     align-items: center;

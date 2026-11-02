@@ -70,31 +70,19 @@ export const FIELDS: Record<Field, FieldInfo> = {
 
 export const FIELD_ORDER = Object.keys(FIELDS) as Field[];
 
-export const NUMBER_OPS: readonly Op[] = ["gt", "ge", "lt", "le", "eq"];
-export const LIST_OPS: readonly Op[] = ["is", "is_not"];
+const NUMBER_OPS: readonly Op[] = ["gt", "ge", "lt", "le", "eq"];
+const LIST_OPS: readonly Op[] = ["is", "is_not"];
 
-export const OP_LABELS: Record<Op, string> = { gt: ">", ge: "≥", lt: "<", le: "≤", eq: "=", is: "is", is_not: "is not" };
-
-/** Whether a leader is voting now. */
-export const LEADER_STATES: readonly (readonly [value: string, label: string])[] = [
-  ["delinquent", "delinquent"],
-  ["voting", "voting"],
-];
+const OP_LABELS: Record<Op, string> = { gt: ">", ge: "≥", lt: "<", le: "≤", eq: "=", is: "is", is_not: "is not" };
 
 /** Our vote's verdict, as the Voted column marks it. */
-export const VOTED: readonly (readonly [value: string, label: string])[] = [
+const VOTED: readonly (readonly [value: string, label: string])[] = [
   ["paid", "✓ in"],
   ["unpaid", "✗ left out"],
   ["none", "○ none written"],
 ];
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
-
-export function fresh(field: Field): Condition {
-  return FIELDS[field].list
-    ? { field, op: "is", value: null, values: [] }
-    : { field, op: "gt", value: null, values: [] };
-}
 
 /** Whether a condition is complete enough to ask for. */
 export function ready(condition: Condition): boolean {

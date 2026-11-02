@@ -2,6 +2,8 @@
    the header toggle sets `data-theme`, never from the OS. */
 
 :root {
+  /* The browser's own controls, such as a search box's clear button, follow the theme, not the OS. */
+  color-scheme: dark;
   --bg: #0b1004;
   --panel: #151d0b;
   --panel-raised: #1e2811;
@@ -62,6 +64,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #f4f5ef;
   --panel: #ffffff;
   --panel-raised: #dce2cf;

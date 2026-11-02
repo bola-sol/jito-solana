@@ -8031,6 +8031,12 @@ body {
   color: var(--text-faint);
 }
 
+/* The slot a jump asked for, outlined for as long as the list is parked there. */
+.schedule-row.is-landed {
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 /* Under filters, rows that miss are dimmed and the figure a row was kept for is toned. */
 .schedule-row.is-miss > span {
   opacity: 0.32;

@@ -154,7 +154,7 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | Request | Answers with |
 | --- | --- |
 | `slot.range` | Up to 4,096 rows of the slot history, which holds 432,000 slots |
-| `slot.search` | Up to 128 leader turns that match a name, key or slot number, our own turns, or a slot condition (skipped, slow for its place in the turn, our vote left out, few transactions, no tips), from a slot or a time. One search at a time, on a blocking thread. |
+| `slot.search` | Up to 128 leader turns that match a name, key or slot number, our own turns, or a slot condition (skipped, slow for its place in the turn, our vote left out, few transactions, no tips), from a slot or a time, down or up. One search at a time, on a blocking thread. |
 | `epoch.query` | An epoch's slots, leader turns, our leader slots and cost limits |
 | `summary.displays` | Validator names and icons |
 | `summary.misses`, `summary.written` | Our unrewarded votes, and how often our certificates left out each validator |

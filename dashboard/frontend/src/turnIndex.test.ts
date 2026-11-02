@@ -149,4 +149,12 @@ describe("FoundTurns", () => {
     expect(found.turn(90, nobody)?.slots.map((slot) => slot.slot)).toEqual([363, 362, 361, 360]);
     expect(found.entry(352)?.slot).toBe(352);
   });
+
+  it("puts each forward page above what it holds, newest first", () => {
+    const found = new FoundTurns("", false, 200, [], null, true);
+    found.add([range(200), range(204)], 208, undefined, undefined);
+    found.add([range(208)], null, undefined, undefined);
+    expect(found.numbers()).toEqual([52, 51, 50]);
+    expect([found.holds(51), found.holds(49), found.pages]).toEqual([true, false, 2]);
+  });
 });

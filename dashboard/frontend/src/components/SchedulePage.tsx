@@ -55,6 +55,9 @@ const RETRY_AFTER_MS = 5000;
 /** A search is sent once typing pauses this long. */
 const SEARCH_PAUSE_MS = 250;
 
+/** Room above a jump's turn for the top button, which floats there. */
+const REVEAL_GAP = 40;
+
 const COLUMN_NAMES: Record<ScheduleColumns, string> = {
   status: "Status",
   fees: "Fees",
@@ -255,11 +258,15 @@ export function SchedulePage({
           query: results.query,
           ours: results.ours,
           before: results.next,
+          forward: results.forward,
           only: results.only,
           until_millis: results.until,
           slow: results.slow,
         });
         results.add(reply.turns, reply.next, epoch, identity, reply.slow);
+        // Turns from the previous epoch need its schedule to name their leaders.
+        const oldest = reply.turns.at(results.forward ? 0 : -1)?.first_slot;
+        if (epoch && oldest !== undefined && oldest < epoch.start_slot) await store.loadEpoch(epoch.epoch - 1);
       } catch {
         failedAt.current = Date.now();
       } finally {
@@ -287,17 +294,52 @@ export function SchedulePage({
     // The newest turn is read as the search starts; a new one arriving does not restart it.
   }, [asked, liveStartTurn, loadFound, index, epoch]);
 
+  // Once a jump has landed, the turns above it, read upward as the list is scrolled up. They carry
+  // the first page's slow cut-offs so both directions keep to the same.
+  const jumping = asked.jump !== null;
+  const [above, setAbove] = useState<{ below: FoundTurns; turns: FoundTurns } | null>(null);
+  const hasLanded = jumping && found !== null && found.pages > 0;
+  useEffect(() => {
+    setAbove((was) => {
+      if (!hasLanded || !found) return null;
+      if (was?.below === found) return was;
+      const top = found.numbers()[0];
+      const turns = new FoundTurns(
+        found.query,
+        found.ours,
+        top === undefined ? found.start : (top + 1) * SLOTS_PER_TURN,
+        found.only,
+        null,
+        true,
+      );
+      turns.slow = found.slow;
+      return { below: found, turns };
+    });
+  }, [hasLanded, found]);
+  const up = above?.below === found ? above.turns : null;
+
   // Turns keep their objects while their leader answers the same.
   useMemo(() => {
     index.relabel();
     found?.relabel(leaderOf);
-  }, [index, found, leaderOf, leaderRevision]);
+    up?.relabel(leaderOf);
+  }, [index, found, up, leaderOf, leaderRevision]);
 
   const slow = found?.slow ?? null;
+  const filtered = query.trim().length > 0 || oursOnly || conditions.length > 0;
+
+  // A jumped list meets the live one once the turns read upward reach it: the validator has nothing
+  // newer, or, unfiltered, the index already holds the turn above.
+  const landedTop = up?.numbers()[0] ?? found?.numbers()[0];
+  const lowest = numbers.at(-1);
+  const reachedLive =
+    jumping &&
+    landedTop !== undefined &&
+    (up?.next === null || (!filtered && lowest !== undefined && lowest <= landedTop + 1));
 
   // The turn being produced, while the list runs from now. Before its first shred arrives it is not
   // held, and is drawn empty at the top.
-  const producing = jump ? null : producingSlot(live);
+  const producing = jumping && !reachedLive ? null : producingSlot(live);
   const nowTurn = producing === null ? null : turnNumberOf(producing);
   const nowHeld = nowTurn !== null && index.turn(nowTurn) !== undefined;
   const ahead = useMemo(
@@ -306,40 +348,67 @@ export function SchedulePage({
   );
 
   const shown = useMemo(() => {
-    if (!searching) return ahead ? [ahead.number, ...numbers] : numbers;
-    // A jumped list is the validator's alone, from where it landed.
-    if (jump) return found?.numbers() ?? [];
-    const live = index.liveNumbers().filter((number) => {
-      const turn = index.turn(number);
-      return (
-        turn !== undefined &&
-        matchesQuery(turn, query) &&
-        (!oursOnly || turn.mine) &&
-        (conditions.length === 0 || turn.slots.some((slot) => meets(slot.slot, slot.entry, conditions, slow)))
-      );
-    });
-    return [...live, ...(found?.numbers() ?? [])];
+    const newest = ahead ? [ahead.number, ...numbers] : numbers;
+    if (!searching) return newest;
+    const liveMatches = (): number[] =>
+      index.liveNumbers().filter((number) => {
+        const turn = index.turn(number);
+        return (
+          turn !== undefined &&
+          matchesQuery(turn, query) &&
+          (!oursOnly || turn.mine) &&
+          (conditions.length === 0 || turn.slots.some((slot) => meets(slot.slot, slot.entry, conditions, slow)))
+        );
+      });
+    if (!jumping) return [...liveMatches(), ...(found?.numbers() ?? [])];
+    // Around the landing: what was read upward, then down from it; the live turns join above once met.
+    const around = [...(up?.numbers() ?? []), ...(found?.numbers() ?? [])];
+    const top = around[0];
+    if (top === undefined || !reachedLive) return around;
+    return [...(filtered ? liveMatches() : newest).filter((number) => number > top), ...around];
     // `foundPages` stands for the results, which change in place.
-  }, [index, numbers, ahead, found, foundPages, leaderRevision, searching, query, oursOnly, conditions, slow, jump]);
+  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, conditions, slow]);
   const nowShown = nowTurn !== null && shown[0] === nowTurn;
 
   const [stripes] = useState(() => new Stripes());
   const listed = searching ? `${oursOnly ? "ours" : "all"}:${query.trim()}:${conditionsKey}:${from.trim()}` : "";
   useMemo(() => stripes.update(listed, shown), [stripes, listed, shown]);
 
+  // Where a turn is read from: the index for the live window and what it has loaded, else the search.
+  // Around a jump the index wins above its lowest turn, which can be partial, as its rows keep
+  // updating.
   const byIdentity = useStablePeers(peers);
-  const turnOf = useCallback(
-    (number: number) =>
-      searching && found && liveStartTurn !== null && number < liveStartTurn
-        ? found.turn(number, leaderOf)
-        : (index.turn(number) ?? (number === ahead?.number ? ahead.turn : undefined)),
-    [searching, found, liveStartTurn, index, leaderOf, ahead],
+  const sourceOf = useCallback(
+    (number: number): "index" | "found" | "up" => {
+      if (!searching || !found) return "index";
+      if (!jumping) return liveStartTurn !== null && number < liveStartTurn ? "found" : "index";
+      if (lowest !== undefined && number > lowest && index.turn(number) !== undefined) return "index";
+      if (up?.holds(number)) return "up";
+      return found.holds(number) ? "found" : "index";
+    },
+    [searching, found, up, jumping, liveStartTurn, lowest, index],
   );
-  const entryOf = useCallback((slot: number) => index.entry(slot) ?? found?.entry(slot), [index, found]);
+  const turnOf = useCallback(
+    (number: number) => {
+      const source = sourceOf(number);
+      if (source === "found") return found?.turn(number, leaderOf);
+      if (source === "up") return up?.turn(number, leaderOf);
+      return index.turn(number) ?? (number === ahead?.number ? ahead.turn : undefined);
+    },
+    [sourceOf, found, up, index, leaderOf, ahead],
+  );
+  const entryOf = useCallback(
+    (slot: number) => index.entry(slot) ?? found?.entry(slot) ?? up?.entry(slot),
+    [index, found, up],
+  );
   const sizeClass = useCallback(
-    (number: number) =>
-      searching && found && liveStartTurn !== null && number < liveStartTurn ? found.rowCount(number) : index.rowCount(number),
-    [searching, found, liveStartTurn, index],
+    (number: number) => {
+      const source = sourceOf(number);
+      if (source === "found" && found) return found.rowCount(number);
+      if (source === "up" && up) return up.rowCount(number);
+      return index.rowCount(number);
+    },
+    [sourceOf, found, up, index],
   );
   const nearEnd = useCallback(() => {
     if (searching) {
@@ -348,10 +417,32 @@ export function SchedulePage({
       void loadOlder();
     }
   }, [searching, found, loadFound, loadOlder]);
+  const nearStart = useCallback(() => {
+    if (up && !reachedLive) void loadFound(up);
+  }, [up, reachedLive, loadFound]);
+
+  // The slot a jump asked for, marked where it is drawn.
+  const landingTurn = jumping ? (found?.numbers()[0] ?? null) : null;
+  const landedSlot = useMemo((): number | null => {
+    const target = asked.jump;
+    if (!target) return null;
+    if (target.kind === "slot") return target.slot;
+    if (target.kind === "epoch") return epoch ? jumpStart(target, epoch, Number.MAX_SAFE_INTEGER).before - 1 : null;
+    if (landingTurn === null) return null;
+    // The newest of the landing turn's slots begun by the time asked for.
+    const turn = turnOf(landingTurn);
+    return turn?.slots.find((slot) => slot.entry?.time_millis != null && slot.entry.time_millis <= target.millis)?.slot ?? null;
+  }, [asked.jump, epoch, landingTurn, turnOf]);
+
+  const backToLive = (): void => {
+    onFilter({ from: "" });
+    list.current?.scrollTo({ top: 0 });
+  };
 
   const renderTurn = (number: number): ReactElement | null => {
     const turn = turnOf(number);
     if (!turn) return null;
+    const first = turn.slots.at(-1)?.slot ?? number * SLOTS_PER_TURN;
     return (
       <TurnCard
         turn={turn}
@@ -362,6 +453,7 @@ export function SchedulePage({
         tinted={stripes.tinted(number)}
         now={number === nowTurn}
         producing={number === nowTurn ? producing : null}
+        landed={landedSlot !== null && turnNumberOf(landedSlot) === turnNumberOf(first) ? landedSlot : null}
         only={conditions}
         slow={slow}
       />
@@ -442,10 +534,10 @@ export function SchedulePage({
       </div>
       {(jump || conditions.length > 0) && (
         <div className="schedule-from">
-          {jump && <span>From {jumpText(jump)}</span>}
+          {jump && <span>At {jumpText(jump)}</span>}
           {conditions.length > 0 && <span>{describeOnly(conditions, slow)}</span>}
           {jump && (
-            <button type="button" onClick={() => onFilter({ from: "" })}>
+            <button type="button" onClick={backToLive}>
               Back to live
             </button>
           )}
@@ -476,17 +568,28 @@ export function SchedulePage({
         </div>
       </div>
       <div className="schedule-list" ref={list}>
-        <ScrollTop scroller={list} hold={false} label={nowName ? `${nowName} leading now` : undefined} />
+        <ScrollTop
+          scroller={list}
+          hold={false}
+          label={jumping ? "Back to live" : nowName ? `${nowName} leading now` : undefined}
+          onPress={jumping ? backToLive : undefined}
+        />
         {shown.length === 0 && !reading && (searching ? found !== null : true) && (
           <div className="list-empty">{live.length === 0 ? "waiting for slots…" : "nothing matches that"}</div>
         )}
+        {/* Mounted afresh for each jump, so each lands at its turn. */}
         <VirtualList
+          key={asked.jump ? JSON.stringify(asked.jump) : "live"}
           keys={shown}
           sizeClass={sizeClass}
           fallback={TURN_HEIGHT_GUESS}
           render={renderTurn}
           scroller={list}
           onNearEnd={nearEnd}
+          onNearStart={jumping ? nearStart : undefined}
+          follow={!jumping}
+          reveal={landingTurn}
+          revealGap={REVEAL_GAP}
         />
         {reading && <div className="schedule-capped">reading back through what the validator has kept…</div>}
         {finished && (
@@ -509,6 +612,7 @@ const TurnCard = memo(
     tinted,
     now,
     producing,
+    landed,
     only,
     slow,
   }: {
@@ -523,6 +627,8 @@ const TurnCard = memo(
     now: boolean;
     /** The slot being produced, in this turn; null in every other. */
     producing: number | null;
+    /** The slot a jump asked for, in this turn. */
+    landed: number | null;
     /** The filters; rows meeting them are marked and the rest dimmed. */
     only: readonly Only[];
     slow: SlowCutOffs | null;
@@ -540,6 +646,7 @@ const TurnCard = memo(
               rates={rates}
               certificate={certificates[row]}
               now={nowRowOf(slot.slot, producing)}
+              landed={slot.slot === landed}
               met={only.length === 0 ? null : meets(slot.slot, slot.entry, only, slow) ? only : NO_CONDITIONS}
             />
           ))}
@@ -560,6 +667,7 @@ const TurnCard = memo(
     before.tinted === after.tinted &&
     before.now === after.now &&
     before.producing === after.producing &&
+    before.landed === after.landed &&
     before.only === after.only &&
     before.slow === after.slow &&
     before.certificates.length === after.certificates.length &&
@@ -718,6 +826,7 @@ function SlotRow({
   certificate,
   unheld = false,
   now = null,
+  landed = false,
   met = null,
 }: {
   slot: TurnSlot;
@@ -726,6 +835,7 @@ function SlotRow({
   /** Below what is held, drawn so the turn keeps four rows. */
   unheld?: boolean;
   now?: NowRow;
+  landed?: boolean;
   /** Under filters, the conditions this slot meets, empty where it misses; null without filters. */
   met?: readonly Only[] | null;
 }) {
@@ -740,7 +850,7 @@ function SlotRow({
 
   return (
     <div
-      className={`schedule-row level-${level}${unheld ? " is-unheld" : ""}${now ? ` is-${now}` : ""}${met?.length === 0 ? " is-miss" : ""}`}
+      className={`schedule-row level-${level}${unheld ? " is-unheld" : ""}${now ? ` is-${now}` : ""}${landed ? " is-landed" : ""}${met?.length === 0 ? " is-miss" : ""}`}
     >
       <span className="schedule-slot" title={unheld ? "Not read yet, or older than the validator keeps." : undefined}>
         {entry?.mine ? <SlotLink slot={slot.slot} /> : count(slot.slot)}

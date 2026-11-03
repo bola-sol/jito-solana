@@ -362,8 +362,8 @@ export function SyntaxSearch({
   );
 }
 
-/** A link to the filtered schedule and a way to keep it. */
-export function ShareTools({ onSave }: { onSave: () => void }): ReactElement {
+/** A link to the filtered schedule and a way to keep it; hidden, not removed, while nothing is searched. */
+export function ShareTools({ shown, onSave }: { shown: boolean; onSave: () => void }): ReactElement {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -371,7 +371,7 @@ export function ShareTools({ onSave }: { onSave: () => void }): ReactElement {
     return () => clearTimeout(timer);
   }, [copied]);
   return (
-    <span className="schedule-share-tools">
+    <span className={`schedule-share-tools${shown ? "" : " is-idle"}`}>
       <button
         type="button"
         className={`schedule-tool${copied ? " is-done" : ""}`}

@@ -998,9 +998,7 @@ export function SchedulePage({
           }}
           onSave={saveView}
         />
-        {searching && (
-          <ShareTools onSave={() => setViewsOpen(true)} />
-        )}
+        <ShareTools shown={searching} onSave={() => setViewsOpen(true)} />
         <div className="toggle-group" role="group" aria-label="Which leaders to list">
           <button type="button" aria-pressed={!oursOnly} onClick={() => onFilter({ ours: false })}>
             All

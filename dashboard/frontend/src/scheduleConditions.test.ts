@@ -7,6 +7,7 @@ import {
   encodeConditions,
   hasRange,
   inRange,
+  nextOp,
   rangeBounds,
   toServer,
   type Condition,
@@ -73,6 +74,20 @@ describe("describeCondition", () => {
     expect(describeCondition(list("country", "is", ["DE", "NL"]))).toBe("Country is DE, NL");
     expect(describeCondition(list("voted", "is_not", ["unpaid"]))).toBe("Voted is not ✗ left out");
     expect(describeCondition(number("compute", "ge", 40_000_000))).toBe("Compute ≥ 40,000,000 CU");
+  });
+});
+
+describe("nextOp", () => {
+  it("moves a number round every comparison and a list between is and is not", () => {
+    const seen = ["gt"];
+    let condition = number("duration", "gt", 240);
+    for (let step = 0; step < 5; step += 1) {
+      condition = { ...condition, op: nextOp(condition) };
+      seen.push(condition.op);
+    }
+    expect(seen).toEqual(["gt", "ge", "lt", "le", "eq", "gt"]);
+    expect(nextOp(list("client", "is", ["Agave"]))).toBe("is_not");
+    expect(nextOp(list("client", "is_not", ["Agave"]))).toBe("is");
   });
 });
 

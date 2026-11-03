@@ -6863,26 +6863,61 @@ body {
   gap: 8px;
 }
 
-/* The search box and its Add, with the suggestions beneath. */
+/* The search box, its filters as pills before the text, with the suggestions beneath. */
 .schedule-query {
   position: relative;
   display: flex;
-  flex: 1 1 360px;
-  gap: 6px;
+  flex: 1 1 560px;
   min-width: 0;
-  max-width: 560px;
+  max-width: 860px;
 }
 
-.schedule-query > .schedule-search {
-  max-width: none;
-}
-
-.schedule-add {
-  flex: none;
-  margin: 0;
-  padding: 0 16px;
+.schedule-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 30px 3px 4px;
   border: 1px solid var(--border);
   border-radius: 4px;
+  background: var(--panel);
+  font-size: 12.5px;
+  cursor: text;
+}
+
+.schedule-field:focus-within {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.schedule-field > .schedule-search {
+  flex: 1 1 120px;
+  min-width: 120px;
+  max-width: none;
+  padding: 3px 6px;
+  border: 0;
+  background: none;
+}
+
+.schedule-field > .schedule-search:focus-visible {
+  outline: 0;
+}
+
+/* The box's own clear stands in for the browser's. */
+.schedule-field > .schedule-search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.schedule-clear {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
   background: none;
   font: inherit;
   font-size: 13px;
@@ -6890,14 +6925,8 @@ body {
   cursor: pointer;
 }
 
-.schedule-add.is-ready {
-  border-color: var(--accent);
-  background: var(--panel-raised);
+.schedule-clear:hover {
   color: var(--text);
-}
-
-.schedule-add:focus-visible {
-  outline: 1px solid var(--accent);
 }
 
 .schedule-suggest {
@@ -6906,6 +6935,9 @@ body {
   left: 0;
   right: 0;
   z-index: 6;
+  display: flex;
+  flex-direction: column;
+  max-height: min(360px, 60vh);
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -6951,6 +6983,34 @@ body {
 }
 
 .schedule-suggest-hint {
+  flex: none;
+  margin-bottom: 4px;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* The rows scroll under the hint; the last fade while more lie below. */
+.schedule-suggest-scroll {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.schedule-suggest-scroll.has-more {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+}
+
+.schedule-suggest-group {
+  margin: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.schedule-suggest-foot {
   margin-top: 4px;
   padding: 6px 8px 2px;
   border-top: 1px solid var(--border);
@@ -6987,7 +7047,7 @@ body {
   color: var(--warn);
 }
 
-/* Advanced and Views, opened from the end of the chips. */
+/* Views, beside the search box. */
 .schedule-fold-toggle {
   display: inline-flex;
   align-items: center;
@@ -7013,64 +7073,6 @@ body {
   color: var(--text-faint);
 }
 
-/* Every expression the search box takes, by group. */
-.schedule-advanced {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px 24px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--panel);
-  font-size: 13px;
-}
-
-.schedule-syntax-group h4 {
-  margin: 0 0 6px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.schedule-syntax-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 2px 0;
-  font-size: 12.5px;
-  color: var(--text-dim);
-}
-
-.schedule-syntax-row button {
-  flex: none;
-  min-width: 150px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  color: var(--accent);
-  text-align: left;
-  cursor: pointer;
-}
-
-.schedule-syntax-row button:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.schedule-advanced-foot {
-  grid-column: 1 / -1;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.schedule-pills-clear,
 .schedule-by-client {
   flex: none;
   margin: 0;
@@ -7085,26 +7087,69 @@ body {
   cursor: pointer;
 }
 
-/* The range and conditions while the fold is closed, with a link to them and a way to keep them. */
-.schedule-pills {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-}
-
+/* A filter in the box: its comparison and value change in place. */
 .schedule-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 4px 2px 10px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 2px 1px 8px;
   border: 1px solid var(--text-faint);
   border-radius: 999px;
   background: var(--panel-raised);
   color: var(--text);
   white-space: nowrap;
+}
+
+.schedule-pill.is-editing {
+  border-color: var(--accent);
+}
+
+.schedule-pill-label,
+.schedule-pill-unit {
+  color: var(--text-dim);
+}
+
+.schedule-pill-op,
+.schedule-pill-value {
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px dotted var(--text-faint);
+  border-radius: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.schedule-pill-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedule-pill-op:hover,
+.schedule-pill-value:hover {
+  border-bottom-color: var(--accent);
+}
+
+.schedule-pill-input {
+  margin: 0;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  outline: 0;
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.schedule-pill-input::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
 }
 
 .schedule-pill-remove {
@@ -7325,52 +7370,6 @@ body {
   color: var(--text-faint);
 }
 
-/* Behind a button on a phone only. */
-.schedule-only-toggle {
-  display: none;
-}
-
-.schedule-only {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.schedule-only-label {
-  margin-right: 2px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.schedule-chip {
-  margin: 0;
-  padding: 4px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: none;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.schedule-chip:hover {
-  color: var(--text-dim);
-}
-
-.schedule-chip[aria-pressed="true"] {
-  border-color: var(--text-faint);
-  background: var(--panel-raised);
-  color: var(--text);
-}
-
-.schedule-chip:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
 /* Where a jump landed and what the filters keep. */
 .schedule-from {
   display: flex;
@@ -7379,6 +7378,10 @@ body {
   gap: 4px 10px;
   font-size: 12.5px;
   color: var(--text-dim);
+}
+
+.schedule-from-hint {
+  color: var(--text-faint);
 }
 
 .schedule-from button {
@@ -7393,47 +7396,7 @@ body {
   cursor: pointer;
 }
 
-/* Below the width the controls need on one line, the conditions take their own. */
-@container schedule (width < 1140px) {
-  .schedule-controls > .toggle-group,
-  .schedule-share-tools {
-    order: 2;
-  }
-
-  .schedule-only {
-    order: 3;
-    flex-basis: 100%;
-  }
-}
-
-/* Copy link and Save view take the room beside the search, then end the conditions' line. */
-@container schedule (1140px <= width < 1360px) {
-  .schedule-controls.has-share > .toggle-group,
-  .has-share > .schedule-share-tools {
-    order: 2;
-  }
-
-  .has-share > .schedule-only {
-    order: 3;
-    flex-basis: 100%;
-  }
-}
-
-@container schedule (width < 820px) {
-  .has-share > .schedule-share-tools {
-    order: 4;
-  }
-
-  .has-share > .toggle-group {
-    margin-left: auto;
-  }
-
-  .has-share > .schedule-only {
-    flex-basis: calc(100% - 163px);
-  }
-}
-
-/* A phone: the search and its Add, then the button that opens the conditions and All/Ours. */
+/* A phone: the search, then Views and All/Ours, then Copy link and Save view. */
 @media (max-width: 700px) {
   .schedule-controls {
     display: grid;
@@ -7448,6 +7411,11 @@ body {
   .schedule-controls > .toggle-group {
     grid-area: 2 / 2;
     margin-left: 0;
+  }
+
+  .schedule-controls > .schedule-views {
+    grid-area: 2 / 1;
+    justify-self: start;
   }
 
   /* The syntax over what it means, which then wraps rather than being cut. */
@@ -7479,63 +7447,10 @@ body {
     margin-left: 0;
   }
 
-  .schedule-advanced {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-    padding: 10px;
-  }
-
-  .schedule-syntax-row button {
-    min-width: 128px;
-  }
-
   .schedule-share-tools {
     grid-column: 1 / 3;
     justify-self: start;
     margin-left: 0;
-  }
-
-  .schedule-only-toggle {
-    grid-area: 2 / 1;
-    justify-self: start;
-    display: inline-flex;
-    align-self: stretch;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    margin: 0;
-    padding: 0 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: none;
-    font: inherit;
-    font-size: 13px;
-    color: var(--text-faint);
-    cursor: pointer;
-  }
-
-  .schedule-only-toggle.is-on {
-    border-color: var(--text-faint);
-    background: var(--panel-raised);
-    color: var(--text);
-  }
-
-  .schedule-only-toggle b {
-    font-weight: 600;
-    color: var(--accent);
-  }
-
-  .schedule-only {
-    grid-area: 3 / 1 / 4 / 3;
-    display: none;
-  }
-
-  .schedule-only.is-open {
-    display: flex;
-  }
-
-  .schedule-only-label {
-    display: none;
   }
 }
 

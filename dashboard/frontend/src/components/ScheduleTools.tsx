@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 import { count } from "../format";
 import { typedTime, type Held } from "../scheduleFilters";
-import { complete, KEYS, keyOffered, suggest, type Key, type KeyGroup, type Offered } from "../scheduleSyntax";
+import { complete, suggest, type BrowseGroup, type BrowseRow, type Offered } from "../scheduleSyntax";
 import type { SavedView } from "../scheduleViews";
 import { jitoShare } from "../tips";
 import type { ScanFigures, ScheduleSummary, TipRates } from "../types";
@@ -16,210 +16,349 @@ export function heldText(held: Held): string {
   return `slot ${count(held.slot)}${held.millis === null ? "" : ` (${typedTime(held.millis)})`}`;
 }
 
+/** A filter in the search box: a comparison or list to change in place, or a range, jump or chip to remove. */
+export type Pill = { key: string; label: string; onRemove: () => void } & (
+  | { kind: "plain" }
+  | {
+      kind: "condition";
+      op: string;
+      value: string;
+      unit: string;
+      /** The value as typed, to edit. */
+      draft: string;
+      onCycle: () => void;
+      /** Takes a typed value; why it cannot be read, or null once taken. */
+      onValue: (text: string) => string | null;
+    }
+);
+
+const GROUP_TITLES: Record<BrowseGroup, string> = {
+  only: "Only slots that are",
+  slot: "Slot",
+  leader: "Leader and our vote",
+  range: "Range and jump",
+};
+
+/** A list scrolled to within this of its end is at the end. */
+const FADE_SLACK_PX = 2;
+
+/** A pill's value being typed: Enter takes it, Escape or leaving it unchanged puts the old one back. */
+function PillValue({
+  draft,
+  label,
+  onValue,
+  onCancel,
+}: {
+  draft: string;
+  label: string;
+  onValue: (text: string) => string | null;
+  onCancel: () => void;
+}): ReactElement {
+  const [text, setText] = useState(draft);
+  const input = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  return (
+    <input
+      ref={input}
+      className="schedule-pill-input"
+      value={text}
+      style={{ width: `${Math.max(text.length, 2) + 1}ch` }}
+      aria-label={`${label} value`}
+      autoComplete="off"
+      spellCheck={false}
+      onChange={(event) => setText(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onValue(text);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+      // A value that cannot be read is dropped rather than left open.
+      onBlur={() => {
+        if (text === draft || onValue(text) !== null) onCancel();
+      }}
+    />
+  );
+}
+
+function FilterPill({
+  pill,
+  editing,
+  onEdit,
+}: {
+  pill: Pill;
+  editing: boolean;
+  onEdit: (key: string | null) => void;
+}): ReactElement {
+  const remove = (
+    <button type="button" className="schedule-pill-remove" aria-label={`Remove ${pill.label}`} onClick={pill.onRemove}>
+      ✕
+    </button>
+  );
+  if (pill.kind === "plain") {
+    return (
+      <span className="schedule-pill">
+        {pill.label}
+        {remove}
+      </span>
+    );
+  }
+  return (
+    <span className={`schedule-pill${editing ? " is-editing" : ""}`}>
+      <span className="schedule-pill-label">{pill.label}</span>
+      <button
+        type="button"
+        className="schedule-pill-op"
+        title="Click for the next comparison"
+        aria-label={`${pill.label} ${pill.op}, change the comparison`}
+        onClick={pill.onCycle}
+      >
+        {pill.op}
+      </button>
+      {editing ? (
+        <PillValue draft={pill.draft} label={pill.label} onValue={pill.onValue} onCancel={() => onEdit(null)} />
+      ) : (
+        <button
+          type="button"
+          className="schedule-pill-value"
+          aria-label={`${pill.label} ${pill.value}, change the value`}
+          onClick={() => onEdit(pill.key)}
+        >
+          {pill.value}
+        </button>
+      )}
+      {pill.unit && <span className="schedule-pill-unit">{pill.unit}</span>}
+      {remove}
+    </span>
+  );
+}
+
 /**
- * The search box. Words search leader names, keys and slots as typed; expressions are offered as
- * they are typed and become filters on Add or Enter.
+ * The search box, its filters as pills before the text. Words search leader names, keys and slots
+ * as typed; expressions are offered as they are typed and become pills on Enter. With nothing typed
+ * the box offers every expression, and one click adds it.
  */
 export function SyntaxSearch({
   text,
   placeholder,
   offered,
-  ready,
+  rows,
+  foot,
+  pills,
+  editing,
   inputRef,
   onText,
   onAdd,
+  onBrowse,
+  onEdit,
+  onClear,
 }: {
   text: string;
   placeholder: string;
   offered: Offered;
-  /** Whether the text holds an expression for Add to take. */
-  ready: boolean;
+  /** Offered while nothing is typed at the caret. */
+  rows: readonly BrowseRow[];
+  /** A last line under those rows. */
+  foot: string;
+  pills: readonly Pill[];
+  /** The pill whose value is being typed. */
+  editing: string | null;
   inputRef: RefObject<HTMLInputElement>;
   onText: (text: string) => void;
   onAdd: () => void;
+  onBrowse: (row: BrowseRow) => void;
+  onEdit: (key: string | null) => void;
+  onClear: () => void;
 }): ReactElement {
   // The caret while the box has focus; suggestions follow the word before it.
   const [caret, setCaret] = useState<number | null>(null);
   const [active, setActive] = useState(-1);
   const [dismissed, setDismissed] = useState(false);
-  const placeCaret = useRef<number | null>(null);
-  const options = useMemo(
-    () => (caret === null || dismissed ? [] : suggest(text.slice(0, caret), offered)),
-    [text, caret, dismissed, offered],
-  );
+  const [more, setMore] = useState(false);
+  const placeCaret = useRef<readonly [from: number, to: number] | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const before = caret === null || dismissed ? null : text.slice(0, caret);
+  const browsing = before !== null && /(^|\s)$/.test(before);
+  const options = useMemo(() => (before === null || browsing ? [] : suggest(before, offered)), [before, browsing, offered]);
+  const shown = browsing ? rows.length : options.length;
   useLayoutEffect(() => {
     const at = placeCaret.current;
     if (at === null || !inputRef.current) return;
     placeCaret.current = null;
-    inputRef.current.setSelectionRange(at, at);
-    setCaret(at);
+    inputRef.current.setSelectionRange(at[0], at[1]);
+    setCaret(at[1]);
   }, [text, inputRef]);
+  // The last rows fade while more lie below.
+  const measure = (): void => {
+    const list = scroller.current;
+    setMore(!!list && list.scrollTop + list.clientHeight < list.scrollHeight - FADE_SLACK_PX);
+  };
+  useLayoutEffect(measure, [shown, browsing]);
+  useEffect(() => {
+    if (active >= 0) document.getElementById(`schedule-suggest-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
   const edit = (next: string, at: number | null) => {
     setActive(-1);
     setDismissed(false);
     setCaret(at);
     onText(next);
   };
-  const pick = (insert: string) => {
+  const pick = (insert: string, select = 0) => {
     const next = complete(text, caret ?? text.length, insert);
-    placeCaret.current = next.caret;
+    placeCaret.current = [next.caret - select, next.caret];
     edit(next.text, next.caret);
   };
-  // The text stays for the next change; the suggestions close until it is edited.
+  const choose = (row: BrowseRow) => {
+    if (row.action.kind === "type") {
+      pick(row.action.text, row.action.text.length - row.action.from);
+      return;
+    }
+    setDismissed(true);
+    onBrowse(row);
+  };
   const add = () => {
     setDismissed(true);
     onAdd();
   };
-  const choice = options[active];
+  const choice = browsing ? undefined : options[active];
+  const chosen = browsing ? rows[active] : undefined;
+  const hint = browsing ? (
+    <>
+      Click to add, value ready to type over · <kbd>↑</kbd>
+      <kbd>↓</kbd> to move, <kbd>Enter</kbd> to add · a word on its own searches names
+    </>
+  ) : (
+    <>
+      <kbd>Tab</kbd> completes · <kbd>Enter</kbd> makes it a filter · a word on its own searches names and keys
+    </>
+  );
   return (
     <span className="schedule-query">
-      <input
-        ref={inputRef}
-        type="search"
-        className="schedule-search"
-        value={text}
-        placeholder={placeholder}
-        role="combobox"
-        aria-label="Search by leader name, key or slot, or filter, e.g. duration>240"
-        aria-autocomplete="list"
-        aria-expanded={options.length > 0}
-        aria-controls="schedule-suggest"
-        aria-activedescendant={choice ? `schedule-suggest-${active}` : undefined}
-        autoComplete="off"
-        spellCheck={false}
-        onChange={(event) => edit(event.target.value, event.target.selectionStart)}
-        onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
-        onFocus={(event) => setCaret(event.currentTarget.selectionStart)}
-        onBlur={() => setCaret(null)}
-        onKeyDown={(event) => {
-          if ((event.key === "ArrowDown" || event.key === "ArrowUp") && options.length > 0) {
-            event.preventDefault();
-            // Past either end is none chosen.
-            const last = options.length - 1;
-            const down = event.key === "ArrowDown";
-            setActive((was) => (down ? (was >= last ? -1 : was + 1) : was === -1 ? last : was - 1));
-          } else if (event.key === "Tab" && !event.shiftKey && options.length > 0) {
-            event.preventDefault();
-            const taken = choice ?? options[0];
-            if (taken) pick(taken.insert);
-          } else if (event.key === "Enter") {
-            event.preventDefault();
-            if (choice) pick(choice.insert);
-            else add();
-          } else if (event.key === "Escape" && options.length > 0) {
-            event.preventDefault();
-            setDismissed(true);
-          }
+      <span
+        className="schedule-field"
+        // A click between the pills goes to the text.
+        onMouseDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          inputRef.current?.focus();
         }}
-      />
-      <button type="button" className={`schedule-add${ready ? " is-ready" : ""}`} onClick={add}>
-        Add
-      </button>
-      {options.length > 0 && (
-        <div className="schedule-suggest" id="schedule-suggest" role="listbox">
-          {options.map((option, at) => (
-            <div
-              key={option.insert}
-              id={`schedule-suggest-${at}`}
-              role="option"
-              aria-selected={at === active}
-              className="schedule-suggest-option"
-              // Keeps the focus in the box.
-              onMouseDown={(event) => {
-                event.preventDefault();
-                pick(option.insert);
-              }}
-            >
-              <code>
-                {option.insert}
-                <i>{option.ghost}</i>
-              </code>
-              <span>{option.what}</span>
-            </div>
-          ))}
-          <div className="schedule-suggest-hint">
-            <kbd>Tab</kbd> completes · <kbd>Enter</kbd> or Add makes it a filter · a word on its own searches names and keys
+      >
+        {pills.map((pill) => (
+          <FilterPill key={pill.key} pill={pill} editing={pill.key === editing} onEdit={onEdit} />
+        ))}
+        <input
+          ref={inputRef}
+          type="search"
+          className="schedule-search"
+          value={text}
+          placeholder={placeholder}
+          role="combobox"
+          aria-label="Search by leader name, key or slot, or filter, e.g. duration>240"
+          aria-autocomplete="list"
+          aria-expanded={shown > 0}
+          aria-controls="schedule-suggest"
+          aria-activedescendant={choice || chosen ? `schedule-suggest-${active}` : undefined}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => edit(event.target.value, event.target.selectionStart)}
+          onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+          onFocus={(event) => {
+            setCaret(event.currentTarget.selectionStart);
+            setDismissed(false);
+          }}
+          onClick={() => setDismissed(false)}
+          onBlur={() => {
+            setCaret(null);
+            setActive(-1);
+          }}
+          onKeyDown={(event) => {
+            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && shown > 0) {
+              event.preventDefault();
+              // Past either end is none chosen.
+              const last = shown - 1;
+              const down = event.key === "ArrowDown";
+              setActive((was) => (down ? (was >= last ? -1 : was + 1) : was === -1 ? last : was - 1));
+            } else if (event.key === "Tab" && !event.shiftKey && options.length > 0) {
+              event.preventDefault();
+              const taken = choice ?? options[0];
+              if (taken) pick(taken.insert);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              if (chosen) choose(chosen);
+              else if (choice) pick(choice.insert);
+              else add();
+            } else if (event.key === "Escape" && shown > 0) {
+              event.preventDefault();
+              setDismissed(true);
+            }
+          }}
+        />
+        {(pills.length > 0 || text !== "") && (
+          <button type="button" className="schedule-clear" aria-label="Clear the search and every filter" onClick={onClear}>
+            ✕
+          </button>
+        )}
+      </span>
+      {shown > 0 && (
+        <div className="schedule-suggest">
+          <div className="schedule-suggest-hint">{hint}</div>
+          <div
+            ref={scroller}
+            className={`schedule-suggest-scroll${more ? " has-more" : ""}`}
+            id="schedule-suggest"
+            role="listbox"
+            onScroll={measure}
+          >
+            {browsing
+              ? rows.map((row, at) => (
+                  <Fragment key={row.syntax}>
+                    {row.group !== rows[at - 1]?.group && <div className="schedule-suggest-group">{GROUP_TITLES[row.group]}</div>}
+                    <div
+                      id={`schedule-suggest-${at}`}
+                      role="option"
+                      aria-selected={at === active}
+                      className="schedule-suggest-option"
+                      // Keeps the focus in the box.
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        choose(row);
+                      }}
+                    >
+                      <code>{row.syntax}</code>
+                      <span>{row.what}</span>
+                    </div>
+                  </Fragment>
+                ))
+              : options.map((option, at) => (
+                  <div
+                    key={option.insert}
+                    id={`schedule-suggest-${at}`}
+                    role="option"
+                    aria-selected={at === active}
+                    className="schedule-suggest-option"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      pick(option.insert);
+                    }}
+                  >
+                    <code>
+                      {option.insert}
+                      <i>{option.ghost}</i>
+                    </code>
+                    <span>{option.what}</span>
+                  </div>
+                ))}
+            {browsing && foot && <div className="schedule-suggest-foot">{foot}</div>}
           </div>
         </div>
       )}
     </span>
-  );
-}
-
-const GROUP_TITLES: Record<KeyGroup, string> = { slot: "Slot", leader: "Leader and our vote", range: "Range and jump" };
-
-/** An example of a key, with live slot and epoch numbers where it needs them. */
-function exampleOf(key: Key, slot: number | null, epoch: number | null): string {
-  if (key.kind === "range" && key.name === "slot") return `slot:${slot ?? 0}..`;
-  if (key.kind === "epoch") return `epoch:${epoch ?? 0}`;
-  if (key.kind === "at") return `at:${slot ?? "08:00"}`;
-  return `${key.name}${key.op}${key.example}`;
-}
-
-/** Every expression the search box takes, each a button that puts it in the box. */
-export function SyntaxSheet({
-  offered,
-  held,
-  slot,
-  epoch,
-  onPick,
-}: {
-  offered: Offered;
-  held: Held | null;
-  /** A recent slot and the current epoch, for the examples. */
-  slot: number | null;
-  epoch: number | null;
-  onPick: (example: string) => void;
-}): ReactElement {
-  return (
-    <div className="schedule-advanced">
-      {(Object.keys(GROUP_TITLES) as KeyGroup[]).map((group) => (
-        <div key={group} className="schedule-syntax-group">
-          <h4>{GROUP_TITLES[group]}</h4>
-          {KEYS.filter((key) => key.group === group && keyOffered(key, offered)).map((key) => {
-            const example = exampleOf(key, slot, epoch);
-            return (
-              <div key={key.name} className="schedule-syntax-row">
-                <button type="button" onClick={() => onPick(example)}>
-                  {example}
-                </button>
-                <span>{key.what}</span>
-              </div>
-            );
-          })}
-        </div>
-      ))}
-      <div className="schedule-advanced-foot">
-        An example goes into the search box to edit; Add makes it a filter. Fees in SOL, times in ms and your local
-        time, &quot;-&quot; before a list leaves it out.{held && ` Held from ${heldText(held)} to now.`}
-      </div>
-    </div>
-  );
-}
-
-/** The active range and conditions as pills. */
-export function FilterPills({
-  pills,
-  onClearAll,
-}: {
-  pills: readonly { key: string; text: string; onRemove: () => void }[];
-  onClearAll: () => void;
-}): ReactElement | null {
-  if (pills.length === 0) return null;
-  return (
-    <div className="schedule-pills">
-      {pills.map((pill) => (
-        <span key={pill.key} className="schedule-pill">
-          {pill.text}
-          <button type="button" className="schedule-pill-remove" aria-label={`Remove ${pill.text}`} onClick={pill.onRemove}>
-            ✕
-          </button>
-        </span>
-      ))}
-      <button type="button" className="schedule-pills-clear" onClick={onClearAll}>
-        Clear all
-      </button>
-    </div>
   );
 }
 

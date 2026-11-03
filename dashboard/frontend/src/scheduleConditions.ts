@@ -125,16 +125,35 @@ export function decodeConditions(text: string | null): Condition[] {
   return read;
 }
 
-/** A pill's text: "Base fee > 0.0025 SOL", "Country is DE, NL". */
-export function describeCondition(condition: Condition): string {
+export interface ConditionParts {
+  label: string;
+  op: string;
+  value: string;
+  unit: string;
+}
+
+/** A pill's parts: "Base fee", ">", "0.0025", "SOL". */
+export function conditionParts(condition: Condition): ConditionParts {
   const info = FIELDS[condition.field];
-  const shown =
+  const value =
     condition.field === "voted"
-      ? condition.values.map((value) => VOTED.find(([held]) => held === value)?.[1] ?? value).join(", ")
+      ? condition.values.map((held) => VOTED.find(([named]) => named === held)?.[1] ?? held).join(", ")
       : info.list
         ? condition.values.join(", ")
-        : `${condition.value?.toLocaleString("en-US", { maximumFractionDigits: 6 }) ?? ""}${info.unit ? ` ${info.unit}` : ""}`;
-  return `${info.label} ${OP_LABELS[condition.op]} ${shown}`;
+        : (condition.value?.toLocaleString("en-US", { maximumFractionDigits: 6 }) ?? "");
+  return { label: info.label, op: OP_LABELS[condition.op], value, unit: info.list ? "" : info.unit };
+}
+
+/** A pill's text: "Base fee > 0.0025 SOL", "Country is DE, NL". */
+export function describeCondition(condition: Condition): string {
+  const { label, op, value, unit } = conditionParts(condition);
+  return `${label} ${op} ${value}${unit ? ` ${unit}` : ""}`;
+}
+
+/** The comparison a pill moves to on a click. */
+export function nextOp(condition: Condition): Op {
+  const ops = FIELDS[condition.field].list ? LIST_OPS : NUMBER_OPS;
+  return ops[(ops.indexOf(condition.op) + 1) % ops.length] ?? condition.op;
 }
 
 export interface ServerCondition {

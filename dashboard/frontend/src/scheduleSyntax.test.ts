@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { FIELD_ORDER } from "./scheduleConditions";
+import { FIELD_ORDER, type Condition } from "./scheduleConditions";
 import { ONLY } from "./scheduleFilters";
-import { complete, readSearch, suggest, type Offered } from "./scheduleSyntax";
+import { browse, complete, readSearch, suggest, valueText, withValue, type Offered } from "./scheduleSyntax";
 
 const offered: Offered = {
   fields: FIELD_ORDER,
@@ -126,5 +126,59 @@ describe("suggest", () => {
 describe("complete", () => {
   it("replaces the word at the caret", () => {
     expect(complete("1000x dur rest", 9, "duration>")).toEqual({ text: "1000x duration> rest", caret: 15 });
+  });
+});
+
+describe("valueText and withValue", () => {
+  const voted: Condition = { field: "voted", op: "is_not", value: null, values: ["unpaid", "none"] };
+  const named: Condition = { field: "name", op: "is", value: null, values: ["Hamsa, Labs", "Coinbase 05"] };
+  const duration: Condition = { field: "duration", op: "ge", value: 240, values: [] };
+
+  it("types a value as the box would take it", () => {
+    expect(valueText(duration)).toBe("240");
+    expect(valueText(voted)).toBe("out, none");
+    expect(valueText(named)).toBe('"Hamsa, Labs", Coinbase 05');
+  });
+
+  it("reads a typed value back, keeping the comparison", () => {
+    expect(withValue(duration, " 1,000 ms", offered)).toEqual({ ...duration, value: 1000 });
+    expect(withValue(voted, "in", offered)).toEqual({ ...voted, values: ["paid"] });
+    expect(withValue(named, valueText(named), offered)).toEqual(named);
+    expect(withValue({ field: "client", op: "is", value: null, values: ["Agave"] }, "jitolabs, agave", offered)).toEqual({
+      field: "client",
+      op: "is",
+      value: null,
+      values: ["JitoLabs", "Agave"],
+    });
+  });
+
+  it("says why a typed value cannot be read", () => {
+    expect(withValue(duration, "soon", offered)).toBe("duration needs a number, e.g. duration>240.");
+    expect(withValue(duration, "", offered)).toBe("duration needs a number, e.g. duration>240.");
+    expect(withValue(voted, "", offered)).toBe("voted needs a value, e.g. voted:out.");
+    expect(withValue(voted, "maybe", offered)).toBe("voted takes in, out or none.");
+  });
+});
+
+describe("browse", () => {
+  it("offers the chips first, then every key with an action", () => {
+    const rows = browse(offered, 460_022_000, 1077);
+    expect(rows.slice(0, 2).map((row) => [row.group, row.syntax])).toEqual([
+      ["only", "is:skipped"],
+      ["only", "is:slow"],
+    ]);
+    const find = (syntax: string) => rows.find((row) => row.syntax === syntax)?.action;
+    expect(find("is:slow")).toEqual({ kind: "only", only: "slow" });
+    expect(find("txs<100")).toEqual({ kind: "condition", condition: { field: "transactions", op: "lt", value: 100, values: [] } });
+    expect(find("client:")).toEqual({ kind: "type", text: "client:", from: 7 });
+    expect(find("time:08:00..09:30")).toEqual({ kind: "type", text: "time:08:00..09:30", from: 5 });
+    expect(find("epoch:1077")).toEqual({ kind: "type", text: "epoch:1077", from: 6 });
+    expect(rows.some((row) => row.syntax.startsWith("is:") && row.group !== "only")).toBe(false);
+  });
+
+  it("leaves out what this validator does not offer", () => {
+    const rows = browse({ ...offered, fields: FIELD_ORDER.filter((field) => field !== "tips"), only: ["slow"] }, null, null);
+    expect(rows.filter((row) => row.group === "only").map((row) => row.syntax)).toEqual(["is:slow"]);
+    expect(rows.some((row) => row.syntax.startsWith("tips"))).toBe(false);
   });
 });

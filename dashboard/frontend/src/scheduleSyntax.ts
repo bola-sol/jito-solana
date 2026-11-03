@@ -60,6 +60,10 @@ const IS_NAMES: Readonly<Record<string, Only>> = {
 /** Our vote's verdict by its typed name. */
 const VOTED_NAMES: Readonly<Record<string, string>> = { in: "paid", out: "unpaid", none: "none" };
 
+const VOTED_TYPED: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(VOTED_NAMES).map(([name, value]) => [value, name]),
+);
+
 const VOTED_TITLES: Readonly<Record<string, string>> = {
   in: "our vote in the certificate",
   out: "our vote left out",
@@ -369,4 +373,76 @@ export function complete(text: string, caret: number, insert: string): { text: s
   const after = text.slice(caret);
   const joined = `${before.slice(0, start)}${insert}`;
   return { text: `${joined}${after}`, caret: joined.length };
+}
+
+const TYPED_OPS: Readonly<Partial<Record<Op, string>>> = { gt: ">", ge: ">=", lt: "<", le: "<=", eq: "=" };
+
+/** A condition's value as typed in its pill: the number, or the list with quotes where a value holds a comma. */
+export function valueText(condition: Condition): string {
+  if (condition.value !== null) return String(condition.value);
+  return condition.values
+    .map((value) => (condition.field === "voted" ? (VOTED_TYPED[value] ?? value) : value))
+    .map((value) => (value.includes(",") ? `"${value}"` : value))
+    .join(", ");
+}
+
+/** The condition with the value typed in its pill, or why that cannot be read. */
+export function withValue(condition: Condition, text: string, offered: Offered): Condition | string {
+  const key = KEYS.find((candidate) => candidate.field === condition.field);
+  if (!key) return `No filter takes ${FIELDS[condition.field].label.toLowerCase()}.`;
+  const expression = FIELDS[condition.field].list
+    ? `${condition.op === "is_not" ? "-" : ""}${key.name}:${splitValues(text)
+        .map((value) => `"${value}"`)
+        .join(",")}`
+    : `${key.name}${TYPED_OPS[condition.op] ?? "="}${text.replace(/\s+/g, "")}`;
+  const read = readSearch(expression, offered, Date.now());
+  const [error] = read.errors;
+  if (error) return error;
+  const [filter] = read.filters;
+  if (filter?.kind !== "condition" || read.words) return `${key.name} needs a value, e.g. ${key.name}${key.op}${key.example}.`;
+  return filter.condition;
+}
+
+export type BrowseGroup = "only" | KeyGroup;
+
+export type BrowseAction =
+  | { kind: "condition"; condition: Condition }
+  | { kind: "only"; only: Only }
+  /** Text for the box, the value from `from` on selected to type over. */
+  | { kind: "type"; text: string; from: number };
+
+export interface BrowseRow {
+  group: BrowseGroup;
+  syntax: string;
+  what: string;
+  action: BrowseAction;
+}
+
+/** An example of a key, with live slot and epoch numbers where it needs them. */
+function exampleOf(key: Key, slot: number | null, epoch: number | null): string {
+  if (key.kind === "range" && key.name === "slot") return `slot:${slot ?? 0}..`;
+  if (key.kind === "epoch") return `epoch:${epoch ?? 0}`;
+  if (key.kind === "at") return `at:${slot ?? "08:00"}`;
+  return `${key.name}${key.op}${key.example}`;
+}
+
+/** Every expression the box takes, offered when nothing is typed: the chips first, each one row. */
+export function browse(offered: Offered, slot: number | null, epoch: number | null): BrowseRow[] {
+  const chips = isNames(offered).flatMap((name): BrowseRow[] => {
+    const only = IS_NAMES[name];
+    if (!only) return [];
+    return [{ group: "only", syntax: `is:${name}`, what: ONLY_TITLES[only].replace(/\.$/, ""), action: { kind: "only", only } }];
+  });
+  const keys = KEYS.filter((key) => key.kind !== "is" && keyOffered(key, offered)).map((key): BrowseRow => {
+    const syntax = exampleOf(key, slot, epoch);
+    const op = OPS[key.op];
+    if (key.kind === "number" && key.field && op) {
+      const condition = { field: key.field, op, value: Number(key.example), values: [] };
+      return { group: key.group, syntax, what: key.what, action: { kind: "condition", condition } };
+    }
+    // A list's values are offered once its name is in the box.
+    const text = key.kind === "list" ? `${key.name}:` : syntax;
+    return { group: key.group, syntax: text, what: key.what, action: { kind: "type", text, from: key.name.length + 1 } };
+  });
+  return [...chips, ...keys];
 }

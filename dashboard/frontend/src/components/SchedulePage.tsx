@@ -38,7 +38,6 @@ import {
   ONLY,
   ONLY_COLUMNS,
   ONLY_LABELS,
-  ONLY_TITLES,
   clampEntry,
   parseJump,
   type Held,
@@ -47,12 +46,14 @@ import {
 } from "../scheduleFilters";
 import {
   conditionHolds,
+  conditionParts,
   describeCondition,
   FIELD_ORDER,
   FIELDS,
   hasRange,
   inRange,
   nameHolds,
+  nextOp,
   rangeBounds,
   ready,
   toServer,
@@ -73,8 +74,8 @@ import { setFoldsOpen, useFoldOpen } from "../folds";
 import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
 import type { ScheduleSummary } from "../types";
-import { readSearch, type Offered } from "../scheduleSyntax";
-import { ClientTable, FilterPills, ShareTools, SummaryLine, SyntaxSearch, SyntaxSheet, ViewsMenu } from "./ScheduleTools";
+import { browse, readSearch, valueText, withValue, type BrowseRow, type Offered } from "../scheduleSyntax";
+import { ClientTable, heldText, ShareTools, SummaryLine, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
@@ -250,7 +251,6 @@ export function SchedulePage({
   const conditionsKey = conditions.join(",");
   // Read when the text changes, so a bare time keeps the day it meant when typed.
   const jump = useMemo(() => parseJump(from, Date.now()), [from]);
-  const [chipsOpen, setChipsOpen] = useState(() => only.length > 0);
 
   // The column conditions and range in the validator's terms; tips there are before jito's cut.
   const tipCut = rates?.jito_cut_bps ?? null;
@@ -769,7 +769,6 @@ export function SchedulePage({
       .map((peer) => peer.name ?? "");
     return { fields, only: offered, clients, countries: choices?.countries ?? [], names };
   }, [fields, offered, choices, clientSlots, peers]);
-  const boxRead = useMemo(() => readSearch(boxText, syntaxOffered, Date.now()), [boxText, syntaxOffered]);
   // A search set elsewhere, by a view or the address, replaces what the box holds.
   useEffect(() => {
     setBoxText((was) => (readSearch(was, syntaxOffered, Date.now()).words === query ? was : query));
@@ -782,8 +781,8 @@ export function SchedulePage({
     if (words !== query) onFilter({ query: words });
   };
 
-  // What Add takes from the box, which keeps its text for the next change: conditions replace any
-  // on the same figure and comparison, and a range or jump is moved inside what the validator holds.
+  // What Enter takes from the box, leaving its words: conditions replace any on the same figure and
+  // comparison, and a range or jump is moved inside what the validator holds.
   const addFromBox = (): void => {
     const now = Date.now();
     const read = readSearch(boxText, syntaxOffered, now);
@@ -827,44 +826,92 @@ export function SchedulePage({
     next.where = nextWhere;
     next.only = ONLY.filter((condition) => nextOnly.has(condition));
     onFilter(next);
+    setBoxText(read.words);
     if (group) showColumns(group);
   };
 
-  // A cheat sheet example goes after what the box holds, to edit before adding.
-  const pickExample = (example: string): void => {
-    const text = boxText.trim() ? `${boxText.trim()} ${example}` : example;
-    typeInBox(text);
-    const input = searchBox.current;
-    input?.focus();
-    requestAnimationFrame(() => input?.setSelectionRange(text.length, text.length));
-  };
-  // The box's expressions go with the filters they made; its words stay the name search.
-  const clearAdvanced = (): void => {
-    setJumpMoved(null);
+  // The pill whose value is being typed, by its key.
+  const [editing, setEditing] = useState<string | null>(null);
+  const editPill = (key: string | null): void => {
+    setEditing(key);
     setSyntaxError(null);
-    setBoxText(readSearch(boxText, syntaxOffered, Date.now()).words);
-    onFilter({ since: "", until: "", where: [], from: "" });
+  };
+  const putCondition = (at: number, condition: Condition): void => {
+    onFilter({ where: where.map((held, index) => (index === at ? condition : held)) });
+    showColumns(FIELDS[condition.field].group);
+  };
+  const typeValue = (at: number, text: string): string | null => {
+    const held = where[at];
+    if (!held) return null;
+    const read = withValue(held, text, syntaxOffered);
+    if (typeof read === "string") {
+      setSyntaxError(read);
+      return read;
+    }
+    editPill(null);
+    putCondition(at, read);
+    return null;
+  };
+  // A picked condition replaces any on the same figure and comparison, its value open to type.
+  const pickRow = (row: BrowseRow): void => {
+    if (row.action.kind === "only") {
+      toggle(row.action.only);
+      return;
+    }
+    if (row.action.kind !== "condition") return;
+    const condition = row.action.condition;
+    const held = where.findIndex((was) => was.field === condition.field && was.op === condition.op);
+    const at = held === -1 ? where.length : held;
+    onFilter({ where: held === -1 ? [...where, condition] : where.map((was, index) => (index === at ? condition : was)) });
+    showColumns(FIELDS[condition.field].group);
+    editPill(`where:${at}`);
+  };
+  const exampleSlot = newestSlot === null ? null : Math.floor((newestSlot - 20_000) / 1000) * 1000;
+  const rows = useMemo(
+    () =>
+      browse(syntaxOffered, exampleSlot, epoch?.epoch ?? null).filter(
+        (row) => row.action.kind !== "only" || !conditions.includes(row.action.only),
+      ),
+    [syntaxOffered, exampleSlot, epoch?.epoch, conditions],
+  );
+  const clearAll = (): void => {
+    setJumpMoved(null);
+    editPill(null);
+    setBoxText("");
+    onFilter({ query: "", since: "", until: "", where: [], from: "", only: [] });
   };
 
   const rangeText = since && until ? `From ${since} to ${until}` : since ? `From ${since} to now` : until ? `Up to ${until}` : "";
-  const pills = [
-    ...(jump ? [{ key: "at", text: `At ${jumpText(jump)}`, onRemove: backToLive }] : []),
-    ...(rangeText ? [{ key: "range", text: rangeText, onRemove: () => onFilter({ since: "", until: "" }) }] : []),
-    ...where.flatMap((condition, at) =>
+  const pills: Pill[] = [
+    ...(jump ? [{ kind: "plain", key: "at", label: `At ${jumpText(jump)}`, onRemove: backToLive } as const] : []),
+    ...(rangeText
+      ? [{ kind: "plain", key: "range", label: rangeText, onRemove: () => onFilter({ since: "", until: "" }) } as const]
+      : []),
+    ...conditions.map((condition) => ({
+      kind: "plain" as const,
+      key: `only:${condition}`,
+      label: ONLY_LABELS[condition],
+      onRemove: () => toggle(condition),
+    })),
+    ...where.flatMap((condition, at): Pill[] =>
       ready(condition) && fields.includes(condition.field)
         ? [
             {
+              kind: "condition",
               key: `where:${at}`,
-              text: describeCondition(condition),
-              onRemove: () => onFilter({ where: where.filter((_, index) => index !== at) }),
+              ...conditionParts(condition),
+              draft: valueText(condition),
+              onCycle: () => putCondition(at, { ...condition, op: nextOp(condition) }),
+              onValue: (text) => typeValue(at, text),
+              onRemove: () => {
+                editPill(null);
+                onFilter({ where: where.filter((_, index) => index !== at) });
+              },
             },
           ]
         : [],
     ),
   ];
-  const advancedCount = (rangeText ? 1 : 0) + columnConds.length;
-  // Always starts closed: a reference, not a filter.
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [views, setViews] = useState(readViews);
   const [viewsOpen, setViewsOpen] = useState(false);
@@ -915,72 +962,44 @@ export function SchedulePage({
         <SyntaxSearch
           text={boxText}
           placeholder={
-            phone
-              ? "Search or filter, e.g. duration>240"
-              : "Search or filter: name, duration>240, client:Agave, time:08:00..09:30"
+            pills.length > 0
+              ? phone
+                ? "Filter or search…"
+                : "Add another filter or search…"
+              : phone
+                ? "Search or filter, e.g. duration>240"
+                : "Search or filter: name, duration>240, client:Agave, time:08:00..09:30"
           }
           offered={syntaxOffered}
-          ready={boxRead.syntax}
+          rows={rows}
+          foot={held ? `Fees in SOL, times in ms and local. Held from ${heldText(held)} to now.` : ""}
+          pills={pills}
+          editing={editing}
           inputRef={searchBox}
           onText={typeInBox}
           onAdd={addFromBox}
+          onBrowse={pickRow}
+          onEdit={editPill}
+          onClear={clearAll}
         />
-        {/* Opens the conditions on a phone; elsewhere they are always shown. */}
-        <button
-          type="button"
-          className={`schedule-only-toggle${conditions.length + advancedCount > 0 ? " is-on" : ""}`}
-          aria-expanded={chipsOpen}
-          onClick={() => setChipsOpen((open) => !open)}
-        >
-          Filter{conditions.length + advancedCount > 0 && <b>{conditions.length + advancedCount}</b>}
-        </button>
-        <div className={`schedule-only${chipsOpen ? " is-open" : ""}`} role="group" aria-label="Only slots that are">
-          <span className="schedule-only-label">Only</span>
-          {offered.map((condition) => (
-            <button
-              key={condition}
-              type="button"
-              className="schedule-chip"
-              title={ONLY_TITLES[condition]}
-              aria-pressed={conditions.includes(condition)}
-              onClick={() => toggle(condition)}
-            >
-              {ONLY_LABELS[condition]}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="schedule-fold-toggle"
-            aria-expanded={advancedOpen}
-            onClick={() => setAdvancedOpen((open) => !open)}
-          >
-            Advanced{" "}
-            <span className="schedule-caret">{advancedOpen ? "▴" : "▾"}</span>
-          </button>
-          <ViewsMenu
-            open={viewsOpen}
-            views={views}
-            onToggle={() => setViewsOpen((open) => !open)}
-            onApply={(view) => {
-              setViewsOpen(false);
-              window.location.hash = view.hash;
-            }}
-            start={startView}
-            onStart={keepStart}
-            onDelete={(name) => {
-              keepViews(withoutView(views, name));
-              if (name === startView) keepStart(null);
-            }}
-            onSave={saveView}
-          />
-        </div>
+        <ViewsMenu
+          open={viewsOpen}
+          views={views}
+          onToggle={() => setViewsOpen((open) => !open)}
+          onApply={(view) => {
+            setViewsOpen(false);
+            window.location.hash = view.hash;
+          }}
+          start={startView}
+          onStart={keepStart}
+          onDelete={(name) => {
+            keepViews(withoutView(views, name));
+            if (name === startView) keepStart(null);
+          }}
+          onSave={saveView}
+        />
         {searching && (
-          <ShareTools
-            onSave={() => {
-              setChipsOpen(true);
-              setViewsOpen(true);
-            }}
-          />
+          <ShareTools onSave={() => setViewsOpen(true)} />
         )}
         <div className="toggle-group" role="group" aria-label="Which leaders to list">
           <button type="button" aria-pressed={!oursOnly} onClick={() => onFilter({ ours: false })}>
@@ -991,10 +1010,10 @@ export function SchedulePage({
           </button>
         </div>
       </div>
-      <FilterPills pills={pills} onClearAll={clearAdvanced} />
-      {(syntaxError || conditions.length > 0 || jumpMoved) && (
+      {(syntaxError || editing || conditions.length > 0 || jumpMoved) && (
         <div className="schedule-from">
           {syntaxError && <span className="schedule-warn">{syntaxError}</span>}
+          {editing && <span className="schedule-from-hint">Enter applies, Esc cancels.</span>}
           {jumpMoved === "older" && held && (
             <span>
               <span className="schedule-warn">Older than held,</span> moved to the oldest.
@@ -1003,15 +1022,6 @@ export function SchedulePage({
           {jumpMoved === "newer" && <span>Newer than the validator holds, back to live.</span>}
           {conditions.length > 0 && <span>{describeOnly(conditions, slow)}</span>}
         </div>
-      )}
-      {advancedOpen && (
-        <SyntaxSheet
-          offered={syntaxOffered}
-          held={held}
-          slot={newestSlot === null ? null : Math.floor((newestSlot - 20_000) / 1000) * 1000}
-          epoch={epoch?.epoch ?? null}
-          onPick={pickExample}
-        />
       )}
       {summary && (
         <>

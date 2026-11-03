@@ -4,8 +4,10 @@ import {
   binLabel,
   chartWindowStart,
   clusterVerdict,
+  density,
   epochThrough,
   gridlines,
+  halfViolin,
   linePath,
   niceTop,
   skipBaseline,
@@ -133,6 +135,27 @@ describe("shapes", () => {
   it("draws a band per unbroken run of two or more bins", () => {
     const shapes = bandPaths([1, 1, null, 1, 1, 1], [3, 3, null, 3, null, 3], x, y);
     expect(shapes).toEqual(["M0.0,97.0L10.0,97.0L10.0,99.0L0.0,99.0Z"]);
+  });
+
+  it("smooths a histogram into rows peaking where its readings sit", () => {
+    // Ten steps of ten over a 100-row axis: each step spans ten rows.
+    const rows = density({ hist: [0, 0, 4, 0, 0, 0, 0, 0, 0, 0], floor: 0, top: 100 }, y, 100);
+    expect(rows).toHaveLength(101);
+    const peak = rows.indexOf(Math.max(...rows));
+    expect(peak).toBe(75);
+    expect(rows[65]).toBeCloseTo(rows[85]);
+    expect(rows[0]).toBeLessThan(1e-6);
+  });
+
+  it("leaves out an empty histogram", () => {
+    expect(density({ hist: [0, 0], floor: 0, top: 10 }, y, 4).every((row) => row === 0)).toBe(true);
+    expect(halfViolin([0, 0, 0], 0, 22, 21, 1)).toBeNull();
+  });
+
+  it("draws half a violin on its side, trimmed to the rows wide enough to see", () => {
+    const half = halfViolin([0, 1, 2, 1, 0], 2, 22, 20, -1);
+    expect(half).toEqual({ d: "M22,1L12.0,1L2.0,2L12.0,3L22,3Z", from: 1, to: 3 });
+    expect(halfViolin([0, 2, 0], 2, 22, 20, 1)?.d).toBe("M22,1L42.0,1L22,1Z");
   });
 });
 

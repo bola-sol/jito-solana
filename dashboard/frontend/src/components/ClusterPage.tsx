@@ -13,8 +13,10 @@ import {
   binLabel,
   chartWindowStart,
   clusterVerdict,
+  density,
   epochThrough,
   gridlines,
+  halfViolin,
   linePath,
   niceTop,
   percentText,
@@ -68,8 +70,10 @@ interface ChartView {
   floor: number;
   top: number;
   hist: number[];
-  /** Percent of each step's transactions that failed, drawn against the axis. */
-  histFailed?: (number | null)[];
+  /** Failed and succeeded drawn as one split violin in place of the histogram. */
+  split?: { failed: ChartSeries; succeeded: ChartSeries };
+  /** Failed transactions' median per bin, on this chart's axis. */
+  failedLine?: (number | null)[];
   /** In place of p5 and p95, where those say nothing. */
   caption?: ReactNode;
   /** Too few readings yet; the card holds its place. */
@@ -230,10 +234,24 @@ function ChartCard({
       outer: bandPaths(view.p05, view.p95, x, y),
       inner: bandPaths(view.p25, view.p75, x, y),
       line: linePath(view.p50, x, y),
+      failed: view.failedLine ? linePath(view.failedLine, x, y) : "",
     }),
     // The scales follow from the view and the plot's width.
     [view, plot, height],
   );
+  const violin = useMemo(() => {
+    if (!view.split) return null;
+    const failed = density(view.split.failed, y, height);
+    const succeeded = density(view.split.succeeded, y, height);
+    const widest = Math.max(...failed, ...succeeded);
+    const mid = HIST / 2;
+    const left = halfViolin(failed, widest, mid, mid - 1, -1);
+    const right = halfViolin(succeeded, widest, mid, mid - 1, 1);
+    const from = Math.min(left?.from ?? Infinity, right?.from ?? Infinity);
+    const to = Math.max(left?.to ?? -Infinity, right?.to ?? -Infinity);
+    return { left, right, mid, from, to };
+    // The scale follows from the view and the plot's height.
+  }, [view, height]);
   const histMax = Math.max(1, ...view.hist);
   const histStep = view.hist.length > 0 ? height / view.hist.length : 0;
   const at = hover === null ? null : from + ((hover + 0.5) / bins) * (to - from);
@@ -331,6 +349,7 @@ function ChartCard({
               />
             )}
             <path className="cl-line" d={shape.line} />
+            {shape.failed && <path className="cl-line-failed" d={shape.failed} />}
             {hover !== null && <line className="cl-cross" x1={x(hover)} x2={x(hover)} y1={0} y2={height} />}
           </svg>
           {grid.map((tick) => (
@@ -340,19 +359,27 @@ function ChartCard({
           ))}
         </div>
         <svg className="cl-hist" width={HIST} height={height} style={{ marginTop: TOP }} aria-hidden="true">
-          {view.hist.map((n, index) => {
-            const length = (n / histMax) * HIST;
-            if (length < 1) return null;
-            const row = height - (index + 1) * histStep + 0.5;
-            const thick = Math.max(1, histStep - 1);
-            const failed = ((view.histFailed?.[index] ?? 0) / 100) * length;
-            return (
-              <g key={index}>
-                {failed > 0 && <rect className="cl-hist-failed" x={0} y={row} width={failed} height={thick} />}
-                <rect x={failed} y={row} width={length - failed} height={thick} />
-              </g>
-            );
-          })}
+          {violin ? (
+            <>
+              {violin.left && <path className="cl-violin-failed" d={violin.left.d} />}
+              {violin.right && <path className="cl-violin-succeeded" d={violin.right.d} />}
+              {violin.from <= violin.to && (
+                <line className="cl-violin-mid" x1={violin.mid} x2={violin.mid} y1={violin.from} y2={violin.to} />
+              )}
+            </>
+          ) : (
+            view.hist.map((n, index) =>
+              (n / histMax) * HIST >= 1 ? (
+                <rect
+                  key={index}
+                  x={0}
+                  y={height - (index + 1) * histStep + 0.5}
+                  width={(n / histMax) * HIST}
+                  height={Math.max(1, histStep - 1)}
+                />
+              ) : null,
+            )
+          )}
         </svg>
       </div>
       <XAxis from={from} to={to} />
@@ -360,7 +387,7 @@ function ChartCard({
   );
 }
 
-const TX_EXPLAIN = "Transactions per second over each run of twenty slots, with the failed share in red at the right under All.";
+const TX_EXPLAIN = "Transactions per second over each run of twenty slots, with failed in red under All.";
 
 const TX_VIEWS: { view: TxView; label: string }[] = [
   { view: "all", label: "All" },
@@ -377,10 +404,14 @@ function TransactionsCard({ charts, fill }: { charts: ClusterCharts; fill?: bool
       series
         ? {
             ...seriesView(series, "Transactions", TX_EXPLAIN, "", 0),
-            histFailed: view === "all" ? charts.tps_failed : undefined,
+            split:
+              view === "all" && charts.failed && charts.succeeded
+                ? { failed: charts.failed, succeeded: charts.succeeded }
+                : undefined,
+            failedLine: view === "all" ? charts.failed?.p50 : undefined,
           }
         : waitingView("Transactions", TX_EXPLAIN),
-    [series, view, charts.tps_failed],
+    [series, view, charts.failed, charts.succeeded],
   );
   return (
     <ChartCard

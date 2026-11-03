@@ -1,6 +1,7 @@
 /** The Cluster page's verdict and the shapes its charts are drawn from. */
 
 import { count } from "./format";
+import type { ChartSeries } from "./types";
 import type { Tone } from "./verdict";
 
 /** The readings the verdict judges, each over the last ten minutes against a baseline. */
@@ -186,6 +187,50 @@ export function bandPaths(
   });
   flush();
   return shapes;
+}
+
+/** Rows under this share of the widest are left off a violin. */
+const VIOLIN_EDGE = 0.004;
+
+/** Readings per pixel row of a chart `rows` tall, smoothed, from a histogram of equal steps from
+ *  `floor` to `top`; `y` places a value on the chart's axis. */
+export function density(
+  series: Pick<ChartSeries, "hist" | "floor" | "top">,
+  y: (value: number) => number,
+  rows: number,
+): number[] {
+  const step = (series.top - series.floor) / Math.max(1, series.hist.length);
+  const spread = Math.max(3, Math.abs(y(series.floor) - y(series.floor + step)));
+  const out = new Array<number>(Math.max(0, Math.ceil(rows)) + 1).fill(0);
+  series.hist.forEach((n, index) => {
+    if (n === 0) return;
+    const at = y(series.floor + (index + 0.5) * step);
+    out.forEach((_, row) => {
+      const d = (row - at) / spread;
+      out[row] += (n * Math.exp(-0.5 * d * d)) / spread;
+    });
+  });
+  return out;
+}
+
+/** One half of a violin out from `mid`, `reach` wide at `widest`, leftward when `side` is -1;
+ *  null where every row is too thin to draw. */
+export function halfViolin(
+  rows: number[],
+  widest: number,
+  mid: number,
+  reach: number,
+  side: 1 | -1,
+): { d: string; from: number; to: number } | null {
+  if (!(widest > 0)) return null;
+  const from = rows.findIndex((value) => value / widest > VIOLIN_EDGE);
+  if (from < 0) return null;
+  let to = rows.length - 1;
+  while (rows[to] / widest <= VIOLIN_EDGE) to -= 1;
+  const edge = rows
+    .slice(from, to + 1)
+    .map((value, index) => `L${(mid + side * (value / widest) * reach).toFixed(1)},${from + index}`);
+  return { d: `M${mid},${from}${edge.join("")}L${mid},${to}Z`, from, to };
 }
 
 /** How long one of `bins` is over a window, as the key names it. */

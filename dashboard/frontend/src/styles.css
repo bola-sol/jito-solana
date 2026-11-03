@@ -9865,13 +9865,26 @@ body {
   pointer-events: none;
 }
 
-.cl-hist rect {
+.cl-hist rect,
+.cl-violin-succeeded {
   fill: var(--path-3);
 }
 
 /* The Overview's red for failed transactions. */
-.cl-hist .cl-hist-failed {
+.cl-violin-failed {
   fill: var(--bad);
+}
+
+.cl-violin-mid {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+}
+
+.cl-line-failed {
+  fill: none;
+  stroke: var(--bad);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
 }
 
 .cl-skip {

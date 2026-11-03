@@ -7117,10 +7117,14 @@ body {
   cursor: pointer;
 }
 
-.schedule-pill-tools {
+.schedule-share-tools {
   display: inline-flex;
   gap: 6px;
   margin-left: auto;
+}
+
+.schedule-share-tools + .toggle-group {
+  margin-left: 0;
 }
 
 .schedule-tool {
@@ -7391,13 +7395,41 @@ body {
 
 /* Below the width the controls need on one line, the conditions take their own. */
 @container schedule (width < 1140px) {
-  .schedule-controls > .toggle-group {
+  .schedule-controls > .toggle-group,
+  .schedule-share-tools {
     order: 2;
   }
 
   .schedule-only {
     order: 3;
     flex-basis: 100%;
+  }
+}
+
+/* Copy link and Save view take the room beside the search, then end the conditions' line. */
+@container schedule (1140px <= width < 1360px) {
+  .schedule-controls.has-share > .toggle-group,
+  .has-share > .schedule-share-tools {
+    order: 2;
+  }
+
+  .has-share > .schedule-only {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+@container schedule (width < 820px) {
+  .has-share > .schedule-share-tools {
+    order: 4;
+  }
+
+  .has-share > .toggle-group {
+    margin-left: auto;
+  }
+
+  .has-share > .schedule-only {
+    flex-basis: calc(100% - 163px);
   }
 }
 
@@ -7457,8 +7489,9 @@ body {
     min-width: 128px;
   }
 
-  .schedule-pill-tools {
-    flex-basis: 100%;
+  .schedule-share-tools {
+    grid-column: 1 / 3;
+    justify-self: start;
     margin-left: 0;
   }
 

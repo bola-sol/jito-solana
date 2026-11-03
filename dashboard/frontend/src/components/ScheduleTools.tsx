@@ -197,26 +197,15 @@ export function SyntaxSheet({
   );
 }
 
-/** The active range and conditions as pills, with a link to them and a way to keep them. */
+/** The active range and conditions as pills. */
 export function FilterPills({
   pills,
-  shareable,
   onClearAll,
-  onSave,
 }: {
   pills: readonly { key: string; text: string; onRemove: () => void }[];
-  /** Anything filtered at all, chips and search included. */
-  shareable: boolean;
   onClearAll: () => void;
-  onSave: () => void;
 }): ReactElement | null {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  if (pills.length === 0 && !shareable) return null;
+  if (pills.length === 0) return null;
   return (
     <div className="schedule-pills">
       {pills.map((pill) => (
@@ -227,26 +216,36 @@ export function FilterPills({
           </button>
         </span>
       ))}
-      {pills.length > 0 && (
-        <button type="button" className="schedule-pills-clear" onClick={onClearAll}>
-          Clear all
-        </button>
-      )}
-      <span className="schedule-pill-tools">
-        <button
-          type="button"
-          className={`schedule-tool${copied ? " is-done" : ""}`}
-          onClick={() => {
-            void navigator.clipboard?.writeText(window.location.href).then(() => setCopied(true), () => {});
-          }}
-        >
-          {copied ? "Copied" : "Copy link"}
-        </button>
-        <button type="button" className="schedule-tool" onClick={onSave}>
-          Save view
-        </button>
-      </span>
+      <button type="button" className="schedule-pills-clear" onClick={onClearAll}>
+        Clear all
+      </button>
     </div>
+  );
+}
+
+/** A link to the filtered schedule and a way to keep it. */
+export function ShareTools({ onSave }: { onSave: () => void }): ReactElement {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <span className="schedule-share-tools">
+      <button
+        type="button"
+        className={`schedule-tool${copied ? " is-done" : ""}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(window.location.href).then(() => setCopied(true), () => {});
+        }}
+      >
+        {copied ? "Copied" : "Copy link"}
+      </button>
+      <button type="button" className="schedule-tool" onClick={onSave}>
+        Save view
+      </button>
+    </span>
   );
 }
 

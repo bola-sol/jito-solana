@@ -74,7 +74,7 @@ import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
 import type { ScheduleSummary } from "../types";
 import { readSearch, type Offered } from "../scheduleSyntax";
-import { ClientTable, FilterPills, SummaryLine, SyntaxSearch, SyntaxSheet, ViewsMenu } from "./ScheduleTools";
+import { ClientTable, FilterPills, ShareTools, SummaryLine, SyntaxSearch, SyntaxSheet, ViewsMenu } from "./ScheduleTools";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
@@ -911,7 +911,7 @@ export function SchedulePage({
 
   return (
     <section className={`schedule columns-${columns}${rates ? " has-tips" : ""}`}>
-      <div className="schedule-controls">
+      <div className={`schedule-controls${searching ? " has-share" : ""}`}>
         <SyntaxSearch
           text={boxText}
           placeholder={
@@ -974,6 +974,14 @@ export function SchedulePage({
             onSave={saveView}
           />
         </div>
+        {searching && (
+          <ShareTools
+            onSave={() => {
+              setChipsOpen(true);
+              setViewsOpen(true);
+            }}
+          />
+        )}
         <div className="toggle-group" role="group" aria-label="Which leaders to list">
           <button type="button" aria-pressed={!oursOnly} onClick={() => onFilter({ ours: false })}>
             All
@@ -983,7 +991,7 @@ export function SchedulePage({
           </button>
         </div>
       </div>
-      <FilterPills pills={pills} shareable={searching} onClearAll={clearAdvanced} onSave={() => setViewsOpen(true)} />
+      <FilterPills pills={pills} onClearAll={clearAdvanced} />
       {(syntaxError || conditions.length > 0 || jumpMoved) && (
         <div className="schedule-from">
           {syntaxError && <span className="schedule-warn">{syntaxError}</span>}

@@ -1,3 +1,6 @@
+import { useSyncExternalStore } from "react";
+import { readLogosHidden, writeLogosHidden } from "./layout";
+
 /** The first letter or digit of a name, for a logo's stand-in; empty where there is none. */
 export function monogram(name: string | null | undefined): string {
   const first = name?.match(/[\p{L}\p{N}]/u)?.[0];
@@ -24,7 +27,7 @@ const preloaded = new Map<string, HTMLImageElement>();
 /** Fetches a logo ahead of its leader's turn, so the browser has it cached when it is shown. The
  *  same referrer policy as the shown image, so the cached copy is the one used. */
 export function preloadLogo(url: string): void {
-  if (preloaded.has(url)) return;
+  if (logosHidden() || preloaded.has(url)) return;
   const image = new Image();
   image.referrerPolicy = "no-referrer";
   image.decoding = "async";
@@ -34,6 +37,37 @@ export function preloadLogo(url: string): void {
     const oldest = preloaded.keys().next().value;
     if (oldest !== undefined) preloaded.delete(oldest);
   }
+}
+
+/** Hidden logos are never requested, since each one tells its host the viewer's address. */
+let hidden: boolean | null = null;
+const listeners = new Set<() => void>();
+
+export function logosHidden(): boolean {
+  if (hidden === null) hidden = readLogosHidden();
+  return hidden;
+}
+
+export function toggleLogosHidden(): void {
+  hidden = !logosHidden();
+  writeLogosHidden(hidden);
+  if (hidden) {
+    // Cancels the fetches still in flight.
+    for (const image of preloaded.values()) image.removeAttribute("src");
+    preloaded.clear();
+  }
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function useLogosHidden(): boolean {
+  return useSyncExternalStore(subscribe, logosHidden, logosHidden);
 }
 
 /** How many logos are held; for tests. */

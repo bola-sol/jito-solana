@@ -610,6 +610,7 @@ body {
 
 .theme-toggle,
 .balances-toggle,
+.logos-toggle,
 .folds-toggle {
   display: flex;
   align-items: center;
@@ -626,18 +627,21 @@ body {
 
 .theme-toggle:hover,
 .balances-toggle:hover,
+.logos-toggle:hover,
 .folds-toggle:hover {
   color: var(--text);
   border-color: var(--text-faint);
 }
 
-.balances-toggle[aria-pressed="true"] {
+.balances-toggle[aria-pressed="true"],
+.logos-toggle[aria-pressed="true"] {
   color: var(--text);
   border-color: var(--text-faint);
 }
 
 .theme-toggle:focus-visible,
 .balances-toggle:focus-visible,
+.logos-toggle:focus-visible,
 .folds-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -3200,6 +3204,50 @@ body {
 
 .produced-averages + :not(.produced-averages) {
   margin-top: 2px;
+}
+
+/* The slot search in the space left of the averages. Their labels share one column, wide enough for
+   "Mean × clear", so the three start together; the figures keep the list's columns. */
+@media (min-width: 701px) {
+  .produced-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    column-gap: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .produced-top > .schedule-search {
+    grid-area: 1 / 1;
+    align-self: center;
+    width: 100%;
+  }
+
+  .produced-top > .produced-averages {
+    grid-column: 2;
+    grid-template-columns: 7em 7em 7em 8em 5em;
+    justify-content: end;
+  }
+
+  .produced-top > .produced-averages:nth-of-type(2) {
+    grid-row: 2;
+  }
+
+  .produced-top > .produced-averages:last-child {
+    grid-row: 3;
+    border-bottom: 0;
+  }
+}
+
+/* A phone: the search above the averages, as before. */
+@media (max-width: 700px) {
+  .produced-top {
+    display: contents;
+  }
+
+  .produced-top > .schedule-search {
+    max-width: none;
+    margin-bottom: 8px;
+  }
 }
 
 .produced-avg-label {

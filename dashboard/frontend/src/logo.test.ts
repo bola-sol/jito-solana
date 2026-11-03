@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { monogram, preloadedCount, preloadLogo, upcomingIcons } from "./logo";
+import { LOGOS_STORAGE_KEY } from "./layout";
+import { logosHidden, monogram, preloadedCount, preloadLogo, toggleLogosHidden, upcomingIcons } from "./logo";
 
 describe("monogram", () => {
   it("takes the first letter or digit, past emoji and symbols", () => {
@@ -39,6 +40,7 @@ describe("preloadLogo", () => {
         set src(url: string) {
           made.push(url);
         }
+        removeAttribute() {}
       },
     );
     preloadLogo("https://example.com/a.png");
@@ -46,5 +48,49 @@ describe("preloadLogo", () => {
     expect(made).toEqual(["https://example.com/a.png"]);
     for (let index = 0; index < 300; index += 1) preloadLogo(`https://example.com/${index}.png`);
     expect(preloadedCount()).toBe(256);
+  });
+});
+
+describe("logosHidden", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("stops preloading while hidden, cancels what is in flight, and writes the choice down", () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => void values.set(key, value),
+      },
+    });
+    const made: string[] = [];
+    const cancelled: string[] = [];
+    vi.stubGlobal(
+      "Image",
+      class {
+        referrerPolicy = "";
+        decoding = "";
+        url = "";
+        set src(url: string) {
+          this.url = url;
+          made.push(url);
+        }
+        removeAttribute() {
+          cancelled.push(this.url);
+        }
+      },
+    );
+    if (logosHidden()) toggleLogosHidden();
+    preloadLogo("https://example.com/in-flight.png");
+    toggleLogosHidden();
+    expect(logosHidden()).toBe(true);
+    expect(values.get(LOGOS_STORAGE_KEY)).toBe("hidden");
+    expect(cancelled).toContain("https://example.com/in-flight.png");
+    expect(preloadedCount()).toBe(0);
+    preloadLogo("https://example.com/later.png");
+    expect(made).not.toContain("https://example.com/later.png");
+    toggleLogosHidden();
+    expect(values.get(LOGOS_STORAGE_KEY)).toBe("shown");
   });
 });

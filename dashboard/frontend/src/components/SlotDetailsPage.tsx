@@ -230,24 +230,25 @@ export function SlotDetailsPage({
 
   return (
     <section className="slot-details">
-      <div className="schedule-controls">
-        <input
-          type="search"
-          className="schedule-search"
-          value={query}
-          placeholder="Slot number"
-          aria-label="Filter the blocks by slot number"
-          onChange={(event) => onQuery(event.target.value)}
-        />
-      </div>
       <div className="produced">
-        <SummaryRows
-          summary={summary}
-          scope={scope}
-          sort={sort}
-          onSort={toggle}
-          onClear={() => setSort(null)}
-        />
+        {/* The search sits in the space left of the figures, which keep their columns. */}
+        <div className="produced-top">
+          <input
+            type="search"
+            className="schedule-search"
+            value={query}
+            placeholder="Slot number"
+            aria-label="Filter the blocks by slot number"
+            onChange={(event) => onQuery(event.target.value)}
+          />
+          <SummaryRows
+            summary={summary}
+            scope={scope}
+            sort={sort}
+            onSort={toggle}
+            onClear={() => setSort(null)}
+          />
+        </div>
         <FeePayersFold summary={feePayers} />
       </div>
       <div className="produced-list" ref={list}>

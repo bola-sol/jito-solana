@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
-import { monogram } from "../logo";
+import { monogram, useLogosHidden } from "../logo";
 
 /** A logo in a circle, with the name's first letter until it loads, or where there is none or it
  *  fails. Keyed by URL, so a new leader never shows the last one's logo while its own loads;
@@ -16,7 +16,8 @@ export function Logo({
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const image = useRef<HTMLImageElement>(null);
-  const src = url && failedUrl !== url ? url : null;
+  const hidden = useLogosHidden();
+  const src = !hidden && url && failedUrl !== url ? url : null;
 
   // A cached image is complete before paint; caught here so its letter does not flash.
   useLayoutEffect(() => {

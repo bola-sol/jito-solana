@@ -22,6 +22,16 @@ export function writeBalancesHidden(hidden: boolean): void {
   writeStored(BALANCES_STORAGE_KEY, hidden ? "hidden" : "shown");
 }
 
+export const LOGOS_STORAGE_KEY = "agave-dashboard-logos";
+
+export function readLogosHidden(): boolean {
+  return readStored(LOGOS_STORAGE_KEY) === "hidden";
+}
+
+export function writeLogosHidden(hidden: boolean): void {
+  writeStored(LOGOS_STORAGE_KEY, hidden ? "hidden" : "shown");
+}
+
 /** The certificates panel's list, closed until the viewer opens it. */
 export const CERTIFICATES_STORAGE_KEY = "agave-dashboard-certificates";
 

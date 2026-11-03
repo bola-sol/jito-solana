@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type ReactElement } from "react";
 import { blockStamp, buildLabel, count, duration, LAMPORTS_PER_SOL, percent, shortKey, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
+import { toggleLogosHidden, useLogosHidden } from "../logo";
 import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type VoteRunway } from "../voteCost";
 import { noSeatLabel } from "../admission";
 import { bootTimes, type BootTimes } from "../startup";
@@ -10,6 +11,7 @@ import { BalancesToggle } from "./BalancesToggle";
 import { Copyable } from "./Copyable";
 import { FoldsToggle } from "./FoldsToggle";
 import { Logo } from "./Logo";
+import { LogosToggle } from "./LogosToggle";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
 import { NodeVerdict } from "./Verdict";
@@ -49,6 +51,7 @@ export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): Reac
   const build = buildLabel(client, version);
   // The balances can be taken off a screen others see; remembered per host.
   const balancesHidden = useBalancesHidden();
+  const logosHidden = useLogosHidden();
 
   const upMillis = uptimeNanos === undefined ? undefined : uptimeNanos / 1e6;
   const staked = solCompact(stake?.activated_stake);
@@ -81,6 +84,7 @@ export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): Reac
           <Connection state={connection} lagMs={feedLag} />
           {folds && <FoldsToggle />}
           <BalancesToggle hidden={balancesHidden} onToggle={toggleBalancesHidden} />
+          <LogosToggle hidden={logosHidden} onToggle={toggleLogosHidden} />
           <ThemeToggle />
         </span>
       </div>

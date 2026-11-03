@@ -188,11 +188,16 @@ body {
   gap: 4px 14px;
 }
 
+/* The buttons sit close as one group, so a long name keeps more of its width. */
 .who-right {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 6px;
+}
+
+.who-right > .connection {
+  margin-right: 8px;
 }
 
 @container header (width < 963px) {

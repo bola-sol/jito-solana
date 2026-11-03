@@ -24,6 +24,13 @@ use {
 
 const ACCOUNTS_DB_TIMINGS: &str = "accounts_db_store_timings";
 
+/// Each part of the validator that reports its own size, for the host card's memory split.
+const ACCOUNTS_INDEX: &str = "accounts_index";
+const ACCOUNTS_WRITE_CACHE: &str = "accounts_cache_size";
+/// One point per column family every ten seconds, tagged with its name.
+const BLOCKSTORE_CFS: &str = "blockstore_rocksdb_cfs";
+const CF_NAME: &str = "cf_name";
+
 const SHREDS_TURBINE: &str = "shred_fetch_receiver";
 const SHREDS_REPAIR: &str = "shred_fetch_repair_receiver";
 
@@ -231,6 +238,7 @@ pub struct MetricsTap {
     pub repair_sent_millis: AtomicU64,
 
     accounts: Mutex<AccountsSet>,
+    memory: Mutex<MemorySet>,
 
     program_cache: Mutex<ProgramCacheSet>,
 
@@ -656,6 +664,25 @@ struct AccountsSet {
     levels: AccountsLevels,
 }
 
+/// Sizes the validator's parts report of themselves; `None` until first reported.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct MemoryParts {
+    /// Agave's own estimate, which counts one slot list entry per account.
+    pub index_estimate: Option<u64>,
+    pub write_cache: Option<u64>,
+    pub read_cache: Option<u64>,
+    /// Memtables, block cache and table readers, summed over the column families.
+    pub blockstore: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct MemorySet {
+    index_estimate: Option<u64>,
+    write_cache: Option<u64>,
+    read_cache: Option<u64>,
+    blockstore: BTreeMap<String, u64>,
+}
+
 counter_totals! {
     pub struct ProgramCacheTotals {
         pub hits: u64,
@@ -977,6 +1004,7 @@ impl MetricsTap {
         match point.name {
             ACCOUNTS_DB_TIMINGS => {
                 add_to(&self.accounts, point);
+                add_to(&self.memory, point);
                 for (name, value) in &point.fields {
                     let counter = match *name {
                         "read_only_accounts_cache_hits" => &self.accounts_cache_hits,
@@ -1031,6 +1059,7 @@ impl MetricsTap {
             WFSM_GOSSIP => self.remember_stake_in_gossip(point),
             COST_TRACKER => self.remember_cost(point),
             ACCOUNTS_LOADS | ACCOUNTS_STORES | ACCOUNTS_FLUSH => add_to(&self.accounts, point),
+            ACCOUNTS_INDEX | ACCOUNTS_WRITE_CACHE | BLOCKSTORE_CFS => add_to(&self.memory, point),
             PROGRAM_CACHE => add_to(&self.program_cache, point),
             QUIC_TPU => add_to(&self.quic, point),
             QUIC_TPU_FORWARDS => add_to(&self.quic_forwards, point),
@@ -1775,6 +1804,24 @@ impl MetricsTap {
         self.stake_in_gossip.lock().ok().and_then(|held| *held)
     }
 
+    pub fn memory_parts(&self) -> MemoryParts {
+        let Ok(memory) = self.memory.lock() else {
+            return MemoryParts::default();
+        };
+        MemoryParts {
+            index_estimate: memory.index_estimate,
+            write_cache: memory.write_cache,
+            read_cache: memory.read_cache,
+            blockstore: (!memory.blockstore.is_empty()).then(|| {
+                memory
+                    .blockstore
+                    .values()
+                    .copied()
+                    .fold(0, u64::saturating_add)
+            }),
+        }
+    }
+
     pub fn xdp(&self) -> Option<XdpConfig> {
         self.xdp.lock().ok().and_then(|held| held.clone())
     }
@@ -1970,6 +2017,56 @@ impl AddPoint for AccountsSet {
                 _ => continue,
             };
             add_value(counter, value);
+        }
+    }
+}
+
+impl AddPoint for MemorySet {
+    fn add_point(&mut self, point: &DataPoint) {
+        let field = |wanted: &str| {
+            point
+                .fields
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .and_then(|(_, value)| field_u64(value))
+        };
+        match point.name {
+            ACCOUNTS_DB_TIMINGS => {
+                if let Some(bytes) = field("read_only_accounts_cache_data_size") {
+                    self.read_cache = Some(bytes);
+                }
+            }
+            ACCOUNTS_INDEX => {
+                if let Some(bytes) = field("estimate_mem_bytes") {
+                    self.index_estimate = Some(bytes);
+                }
+            }
+            ACCOUNTS_WRITE_CACHE => {
+                if let Some(bytes) = field("total_size") {
+                    self.write_cache = Some(bytes);
+                }
+            }
+            BLOCKSTORE_CFS => {
+                let Some((_, cf)) = point.tags.iter().find(|(name, _)| *name == CF_NAME) else {
+                    return;
+                };
+                // A property RocksDB could not read comes as -1, which is not a u64.
+                let bytes = [
+                    "size_all_mem_tables",
+                    "block_cache_usage",
+                    "estimate_table_readers_mem",
+                ]
+                .into_iter()
+                .filter_map(field)
+                .fold(0, u64::saturating_add);
+                match self.blockstore.get_mut(cf.as_str()) {
+                    Some(held) => *held = bytes,
+                    None => {
+                        self.blockstore.insert(cf.clone(), bytes);
+                    }
+                }
+            }
+            _ => (),
         }
     }
 }
@@ -2330,6 +2427,45 @@ mod tests {
         let mut point = named(VOTE_ARRIVAL, fields);
         point.add_tag(VOTE_ACCOUNT, &vote.to_string());
         point
+    }
+
+    #[test]
+    fn test_memory_parts_keep_each_latest_size_and_sum_the_column_families() {
+        let tap = MetricsTap::default();
+        assert_eq!(tap.memory_parts(), MemoryParts::default());
+
+        let column = |cf: &str, memtables: &str| {
+            let mut point = named(
+                BLOCKSTORE_CFS,
+                &[
+                    ("size_all_mem_tables", memtables),
+                    ("block_cache_usage", "200i"),
+                    ("estimate_table_readers_mem", "-1i"),
+                ],
+            );
+            point.add_tag(CF_NAME, cf);
+            point
+        };
+        tap.observe(&column("data_shred", "100i"));
+        tap.observe(&column("meta", "50i"));
+        tap.observe(&column("data_shred", "300i"));
+        tap.observe(&named(ACCOUNTS_INDEX, &[("estimate_mem_bytes", "9000i")]));
+        tap.observe(&named(
+            "accounts_index_startup",
+            &[("estimate_mem_bytes", "1i")],
+        ));
+        tap.observe(&named(ACCOUNTS_WRITE_CACHE, &[("total_size", "700i")]));
+        tap.observe(&point(&[("read_only_accounts_cache_data_size", "800i")]));
+
+        assert_eq!(
+            tap.memory_parts(),
+            MemoryParts {
+                index_estimate: Some(9000),
+                write_cache: Some(700),
+                read_cache: Some(800),
+                blockstore: Some(500 + 250),
+            }
+        );
     }
 
     #[test]

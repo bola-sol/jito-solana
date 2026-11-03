@@ -234,14 +234,30 @@ pub fn filesystem(_path: &Path) -> io::Result<Filesystem> {
     ))
 }
 
+/// The process's resident memory, and how much of it is heap, mapped files and shared memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessMemory {
+    pub resident: u64,
+    /// `None` on kernels before 4.5, which do not split the figure.
+    pub kinds: Option<ResidentKinds>,
+}
+
+/// The three add up to the resident figure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ResidentKinds {
+    pub anonymous: u64,
+    pub file: u64,
+    pub shared: u64,
+}
+
 #[cfg(target_os = "linux")]
-pub fn process_resident() -> io::Result<u64> {
+pub fn process_memory() -> io::Result<ProcessMemory> {
     let status = std::fs::read_to_string("/proc/self/status")?;
-    parse_resident(&status).ok_or_else(|| invalid("status has no VmRSS line"))
+    parse_process_memory(&status).ok_or_else(|| invalid("status has no VmRSS line"))
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn process_resident() -> io::Result<u64> {
+pub fn process_memory() -> io::Result<ProcessMemory> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "process memory is only available on Linux",
@@ -249,12 +265,24 @@ pub fn process_resident() -> io::Result<u64> {
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn parse_resident(status: &str) -> Option<u64> {
-    let line = status
-        .lines()
-        .find_map(|line| line.strip_prefix("VmRSS:"))?;
-    let kib: u64 = line.split_whitespace().next()?.parse().ok()?;
-    Some(kib.saturating_mul(1024))
+fn parse_process_memory(status: &str) -> Option<ProcessMemory> {
+    let bytes = |key: &str| {
+        let line = status.lines().find_map(|line| line.strip_prefix(key))?;
+        let kib: u64 = line.split_whitespace().next()?.parse().ok()?;
+        Some(kib.saturating_mul(1024))
+    };
+    let kinds = match (bytes("RssAnon:"), bytes("RssFile:"), bytes("RssShmem:")) {
+        (Some(anonymous), Some(file), Some(shared)) => Some(ResidentKinds {
+            anonymous,
+            file,
+            shared,
+        }),
+        _ => None,
+    };
+    Some(ProcessMemory {
+        resident: bytes("VmRSS:")?,
+        kinds,
+    })
 }
 
 /// Four accounts directories under one mount are one filesystem, not four.
@@ -596,11 +624,35 @@ ctxt 6789
 ";
 
     #[test]
-    fn test_resident_memory_is_the_rss_line_in_bytes() {
-        let status =
-            "Name:\tagave-validator\nVmPeak:\t  900000 kB\nVmRSS:\t  524288 kB\nThreads:\t48\n";
-        assert_eq!(parse_resident(status), Some(524_288 * 1024));
-        assert_eq!(parse_resident("Name:\tx\n"), None);
+    fn test_resident_memory_is_the_rss_lines_in_bytes() {
+        let status = "\
+Name:\tagave-validator
+VmPeak:\t  900000 kB
+VmRSS:\t  524288 kB
+RssAnon:\t  500000 kB
+RssFile:\t   24000 kB
+RssShmem:\t     288 kB
+Threads:\t48
+";
+        assert_eq!(
+            parse_process_memory(status),
+            Some(ProcessMemory {
+                resident: 524_288 * 1024,
+                kinds: Some(ResidentKinds {
+                    anonymous: 500_000 * 1024,
+                    file: 24_000 * 1024,
+                    shared: 288 * 1024,
+                }),
+            })
+        );
+        assert_eq!(
+            parse_process_memory("VmRSS:\t  1 kB\n"),
+            Some(ProcessMemory {
+                resident: 1024,
+                kinds: None,
+            })
+        );
+        assert_eq!(parse_process_memory("Name:\tx\n"), None);
     }
 
     #[test]

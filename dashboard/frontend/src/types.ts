@@ -935,10 +935,29 @@ export interface Host {
   swap: { total: number; used: number } | null;
   process_resident: number | null;
   process_resident_hour_ago: number | null;
+  /** Null on kernels before 4.5, which do not split the resident figure. */
+  process_kinds: ResidentKinds | null;
+  memory_parts: MemoryParts;
   snapshot_device: string | null;
 
   filesystems: FilesystemUsage[];
   devices: DeviceLoad[];
+}
+
+/** The three add up to `process_resident`. */
+export interface ResidentKinds {
+  anonymous: number;
+  file: number;
+  shared: number;
+}
+
+/** Sizes the validator's parts report of themselves; null until first reported. */
+export interface MemoryParts {
+  /** Agave's own estimate, which counts one slot list entry per account. */
+  index_estimate: number | null;
+  write_cache: number | null;
+  read_cache: number | null;
+  blockstore: number | null;
 }
 
 export interface ThreadGroup {

@@ -13,7 +13,9 @@ import {
   residentTrend,
   slowGovernor,
   swapTone,
+  validatorSplit,
   waitTone,
+  type ValidatorSplit,
 } from "../host";
 import { readThreadsCollapsed, writeThreadsCollapsed } from "../layout";
 import { useNarrow } from "../narrow";
@@ -39,6 +41,11 @@ export function HostCard(): ReactElement | null {
   if (!host) return null;
 
   const memory = memoryUse(host);
+  const split = validatorSplit(host);
+  // The validator's file and shared pages sit in the page cache, so only its heap is in use.
+  const validatorHeap = host.process_kinds
+    ? Math.min(Math.max(0, host.process_kinds.anonymous), memory.inUse)
+    : 0;
   const trend = loadTrend(host);
   const resident = residentTrend(host);
   const snapshots = store.get("summary", "snapshots");
@@ -141,7 +148,13 @@ export function HostCard(): ReactElement | null {
 
         <div className="host-figure">
           <div className="host-label">
-            <Explain text="Memory in use less the page cache, which is the lighter part of the bar.">
+            <Explain
+              text={
+                validatorHeap > 0
+                  ? "Memory in use less the page cache; the bar shows validator heap, other processes, page cache."
+                  : "Memory in use less the page cache, which is the lighter part of the bar."
+              }
+            >
               Memory in use
             </Explain>
           </div>
@@ -149,7 +162,13 @@ export function HostCard(): ReactElement | null {
             {bytes(memory.inUse)} <small>of {bytes(memory.total)}</small>
           </div>
           <div className="host-memory" aria-hidden="true">
-            <i className="is-used" style={{ width: share(memory.inUse, memory.total) }} />
+            {validatorHeap > 0 && (
+              <i className="is-validator" style={{ width: share(validatorHeap, memory.total) }} />
+            )}
+            <i
+              className={validatorHeap > 0 ? "is-others" : "is-used"}
+              style={{ width: share(memory.inUse - validatorHeap, memory.total) }}
+            />
             <i className="is-cache" style={{ width: share(memory.reclaimable, memory.total) }} />
           </div>
           <div className="host-sub">
@@ -160,7 +179,11 @@ export function HostCard(): ReactElement | null {
             {host.process_resident !== null && (
               <>
                 <br />
-                validator {bytes(host.process_resident)}
+                {split ? (
+                  <ValidatorMemory split={split} />
+                ) : (
+                  <>validator {bytes(host.process_resident)}</>
+                )}
                 {/* A line of its own, kept even when empty, so the figure does not change height
                     as the trend comes and goes. */}
                 <br />
@@ -237,6 +260,40 @@ export function HostCard(): ReactElement | null {
       <Threads samples={samples} />
       </div>
     </Fold>
+  );
+}
+
+/** The validator line, with a bar of its parts that opens them as a list. */
+function ValidatorMemory({ split }: { split: ValidatorSplit }): ReactElement {
+  const whole = split.segments.reduce((sum, segment) => sum + segment.bytes, 0);
+  const rest = split.segments.find((segment) => segment.key === "rest")?.bytes ?? 0;
+  const list = (
+    <>
+      <span className="figure-panel-label">Validator memory, {bytes(split.resident)}</span>
+      {split.rows.map((row) => (
+        <span key={row.key} className={`memory-row is-depth-${row.depth}`}>
+          <i className={`memory-key is-${row.key}`} />
+          <span className="memory-name">{row.label}</span>
+          <span className="memory-n">
+            {row.key === "index" ? `~${bytes(row.bytes)} est.` : bytes(row.bytes)}
+          </span>
+        </span>
+      ))}
+    </>
+  );
+  return (
+    <Explain className="memory-split" text={list}>
+      validator {bytes(split.resident)}
+      <span className="memory-split-bar" aria-hidden="true">
+        {split.segments.map((segment) => (
+          <i key={segment.key} className={`is-${segment.key}`} style={{ width: share(segment.bytes, whole) }}>
+            {segment.key === "rest" && split.indexEstimate !== null && (
+              <b style={{ width: share(split.indexEstimate, rest) }} />
+            )}
+          </i>
+        ))}
+      </span>
+    </Explain>
   );
 }
 

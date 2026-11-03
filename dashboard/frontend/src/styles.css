@@ -5804,6 +5804,133 @@ body {
   background: var(--path-5);
 }
 
+.host-memory .is-validator {
+  background: var(--part-3);
+}
+
+.host-memory .is-others {
+  background: var(--part-5);
+}
+
+/* One line tall, so the tile keeps its height. */
+.memory-split {
+  display: inline-flex;
+  width: 100%;
+  height: 18px;
+  vertical-align: top;
+  gap: 10px;
+}
+
+.memory-split .explain-trigger {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.memory-split-bar {
+  display: flex;
+  flex: 0 1 200px;
+  min-width: 60px;
+  height: 6px;
+  gap: 1px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--panel-raised);
+}
+
+.memory-split-bar i {
+  display: block;
+  height: 100%;
+}
+
+.memory-split-bar .is-rest {
+  position: relative;
+}
+
+/* The index estimate, hatched inside the rest of the heap it is part of. */
+.memory-split-bar .is-rest b,
+.memory-key.is-index {
+  background-image: repeating-linear-gradient(135deg, transparent 0 2px, rgb(0 0 0 / 38%) 2px 3.5px);
+}
+
+.memory-split-bar .is-rest b {
+  position: absolute;
+  inset: 0 auto 0 0;
+}
+
+.memory-split-bar .is-rest,
+.memory-key.is-rest,
+.memory-key.is-index {
+  background-color: var(--part-3);
+}
+
+.memory-split-bar .is-blockstore,
+.memory-key.is-blockstore {
+  background: var(--part-1);
+}
+
+.memory-split-bar .is-read,
+.memory-key.is-read {
+  background: var(--part-2);
+}
+
+.memory-split-bar .is-write,
+.memory-key.is-write {
+  background: var(--part-4);
+}
+
+.memory-split-bar .is-files,
+.memory-key.is-files {
+  background: var(--part-6);
+}
+
+.memory-split-bar .is-shared,
+.memory-key.is-shared {
+  background: var(--path-4);
+}
+
+.memory-split .explain-bubble {
+  max-width: min(300px, calc(100vw - 24px));
+}
+
+.memory-split .explain-bubble.is-open {
+  min-width: 220px;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 8px;
+}
+
+.memory-key {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+}
+
+.memory-n {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+.memory-row.is-depth-1 .memory-name {
+  padding-left: 12px;
+  color: var(--text-dim);
+}
+
+.memory-row.is-depth-2 .memory-name {
+  padding-left: 24px;
+  color: var(--text-faint);
+}
+
+.memory-row.is-depth-2 .memory-n {
+  color: var(--text-faint);
+}
+
 .host-group {
   display: flex;
   align-items: baseline;

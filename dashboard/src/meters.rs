@@ -6,12 +6,12 @@ use {
     crate::{
         collect::{CATCH_UP_SLOTS_PER_SECOND, FAILED_UNREAD, system_time_nanos},
         context::{DashboardContext, StartProgress},
-        host_stats::{self, CpuUse, HostSnapshot},
+        host_stats::{self, CpuUse, HostSnapshot, ResidentKinds},
         metrics_tap::{
             AccountsTotals, BundleTotals, ExecutedTotals, GOSSIP_ENTRY_TYPES, GossipEntryTotals,
-            GossipTotals, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals, ReplaySlotTimes,
-            SchedulerSource, SchedulerTotals, TapCounters, VerifyTotals, WindowedCounters,
-            XdpConfig,
+            GossipTotals, MemoryParts, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals,
+            ReplaySlotTimes, SchedulerSource, SchedulerTotals, TapCounters, VerifyTotals,
+            WindowedCounters, XdpConfig,
         },
         net_ifaces::{self, InterfaceKind, InterfaceReading},
         net_stats::{self, Counted, InterfaceCounters, NetCounters, NetReading},
@@ -203,6 +203,8 @@ pub struct Host {
     pub swap: Option<Swap>,
     pub process_resident: Option<u64>,
     pub process_resident_hour_ago: Option<u64>,
+    pub process_kinds: Option<ResidentKinds>,
+    pub memory_parts: MemoryParts,
     pub snapshot_device: Option<String>,
 
     pub filesystems: Vec<FilesystemUsage>,
@@ -896,7 +898,8 @@ impl Meters {
         // cheap and keeps the charts whole for a viewer connecting.
         let watched = self.publisher.subscriber_count() > 0;
         if watched {
-            self.host.tick(&self.ctx, &self.publisher);
+            self.host
+                .tick(&self.ctx, &self.metrics_tap, &self.publisher);
             self.threads.tick(&self.publisher);
         }
         // Until startup ends whether or not anyone watches, so the totals begin there.
@@ -1282,7 +1285,7 @@ const RESIDENT_HISTORY: Duration = Duration::from_secs(3600);
 const RESIDENT_HOUR_AGO: Duration = Duration::from_secs(3300);
 
 impl HostMeter {
-    fn tick(&mut self, ctx: &DashboardContext, publisher: &Publisher) {
+    fn tick(&mut self, ctx: &DashboardContext, tap: &MetricsTap, publisher: &Publisher) {
         if self.unavailable {
             return;
         }
@@ -1307,7 +1310,8 @@ impl HostMeter {
                     .flatten()
             })
             .clone();
-        let process_resident = host_stats::process_resident().ok();
+        let process_memory = host_stats::process_memory().ok();
+        let process_resident = process_memory.map(|memory| memory.resident);
         if let Some(resident) = process_resident {
             self.resident.push_back((now, resident));
         }
@@ -1361,6 +1365,8 @@ impl HostMeter {
             }),
             process_resident,
             process_resident_hour_ago,
+            process_kinds: process_memory.and_then(|memory| memory.kinds),
+            memory_parts: tap.memory_parts(),
             snapshot_device,
             filesystems: paths
                 .iter()

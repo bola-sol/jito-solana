@@ -13,6 +13,7 @@ import {
   residentTrend,
   slowGovernor,
   swapTone,
+  validatorSplit,
   waitTone,
 } from "./host";
 import type { DeviceLoad, Host } from "./types";
@@ -36,12 +37,77 @@ function host(over: Partial<Host> = {}): Host {
     swap: { total: 8 * GB, used: 0 },
     process_resident: null,
     process_resident_hour_ago: null,
+    process_kinds: null,
+    memory_parts: { index_estimate: null, write_cache: null, read_cache: null, blockstore: null },
     snapshot_device: null,
     filesystems: [],
     devices: [],
     ...over,
   };
 }
+
+describe("validatorSplit", () => {
+  const kinds = { anonymous: 150 * GB, file: 3 * GB, shared: 1 * GB };
+
+  it("waits for the kernel's split", () => {
+    expect(validatorSplit(host({ process_resident: 154 * GB }))).toBeNull();
+  });
+
+  it("takes the measured parts out of the heap and adds up to the resident figure", () => {
+    const split = validatorSplit(
+      host({
+        process_resident: 154 * GB,
+        process_kinds: kinds,
+        memory_parts: { index_estimate: 90 * GB, write_cache: 2 * GB, read_cache: 3 * GB, blockstore: 5 * GB },
+      }),
+    )!;
+    expect(split.segments.map((segment) => [segment.key, segment.bytes / GB])).toEqual([
+      ["rest", 140],
+      ["blockstore", 5],
+      ["read", 3],
+      ["write", 2],
+      ["files", 3],
+      ["shared", 1],
+    ]);
+    expect(split.segments.reduce((sum, segment) => sum + segment.bytes, 0)).toBe(154 * GB);
+    expect(split.indexEstimate).toBe(90 * GB);
+    expect(split.rows.map((row) => [row.key, row.depth])).toEqual([
+      ["heap", 0],
+      ["rest", 1],
+      ["index", 2],
+      ["blockstore", 1],
+      ["read", 1],
+      ["write", 1],
+      ["files", 0],
+      ["shared", 0],
+    ]);
+  });
+
+  it("caps the estimate at the rest of the heap and never subtracts it", () => {
+    const split = validatorSplit(
+      host({
+        process_resident: 154 * GB,
+        process_kinds: kinds,
+        memory_parts: { index_estimate: 400 * GB, write_cache: null, read_cache: null, blockstore: 10 * GB },
+      }),
+    )!;
+    expect(split.indexEstimate).toBe(140 * GB);
+    expect(split.segments[0]).toEqual({ key: "rest", bytes: 140 * GB });
+    expect(split.rows.map((row) => row.key)).toEqual(["heap", "rest", "index", "blockstore", "files", "shared"]);
+  });
+
+  it("keeps the rest at zero when the parts briefly pass the heap", () => {
+    const split = validatorSplit(
+      host({
+        process_resident: 154 * GB,
+        process_kinds: kinds,
+        memory_parts: { index_estimate: null, write_cache: 100 * GB, read_cache: 60 * GB, blockstore: null },
+      }),
+    )!;
+    expect(split.segments[0]).toEqual({ key: "rest", bytes: 0 });
+    expect(split.indexEstimate).toBeNull();
+  });
+});
 
 describe("residentTrend", () => {
   it("names the hour's move and its direction", () => {

@@ -130,6 +130,76 @@ export function deviceLabel(device: DeviceLoad): string {
   return device.roles.join(" and ");
 }
 
+export type MemoryPartKey = "rest" | "blockstore" | "read" | "write" | "files" | "shared";
+
+export interface MemorySegment {
+  key: MemoryPartKey;
+  bytes: number;
+}
+
+export interface MemoryRow {
+  key: MemoryPartKey | "heap" | "index";
+  label: string;
+  bytes: number;
+  depth: 0 | 1 | 2;
+}
+
+export interface ValidatorSplit {
+  resident: number;
+  /** Left to right; the measured parts come out of the heap, so they add up to the resident figure. */
+  segments: MemorySegment[];
+  /** Capped at the rest of the heap, and never taken out of it. */
+  indexEstimate: number | null;
+  rows: MemoryRow[];
+}
+
+/** Null until the kernel splits the resident figure. */
+export function validatorSplit(host: Host): ValidatorSplit | null {
+  const kinds = host.process_kinds;
+  if (!kinds || host.process_resident === null) return null;
+  const parts = host.memory_parts;
+  const measured: { key: MemoryPartKey; label: string; bytes: number | null }[] = [
+    { key: "blockstore", label: "blockstore", bytes: parts.blockstore },
+    { key: "read", label: "read cache", bytes: parts.read_cache },
+    { key: "write", label: "write cache", bytes: parts.write_cache },
+  ];
+  const reported = measured.flatMap((part) =>
+    part.bytes === null ? [] : [{ key: part.key, label: part.label, bytes: Math.max(0, part.bytes) }],
+  );
+  const heap = Math.max(0, kinds.anonymous);
+  const files = Math.max(0, kinds.file);
+  const shared = Math.max(0, kinds.shared);
+  // The parts report at their own moments, so their sum can briefly pass the heap's.
+  const rest = Math.max(0, heap - reported.reduce((sum, part) => sum + part.bytes, 0));
+  const indexEstimate =
+    parts.index_estimate === null ? null : Math.min(Math.max(0, parts.index_estimate), rest);
+
+  const rows: MemoryRow[] = [
+    { key: "heap", label: "heap", bytes: heap, depth: 0 },
+    { key: "rest", label: "rest of heap", bytes: rest, depth: 1 },
+  ];
+  if (indexEstimate !== null) {
+    rows.push({ key: "index", label: "accounts index", bytes: indexEstimate, depth: 2 });
+  }
+  for (const part of reported) rows.push({ ...part, depth: 1 });
+  rows.push(
+    { key: "files", label: "mapped files", bytes: files, depth: 0 },
+    { key: "shared", label: "shared", bytes: shared, depth: 0 },
+  );
+
+  return {
+    resident: host.process_resident,
+    segments: [
+      { key: "rest", bytes: rest },
+      ...reported.map(({ key, bytes }) => ({ key, bytes })),
+      { key: "files", bytes: files },
+      { key: "shared", bytes: shared },
+    ],
+    indexEstimate,
+    rows,
+  };
+}
+
 /** A move in resident memory under this, over an hour, is noise. */
 export const RESIDENT_NOISE = 512 * 1024 ** 2;
 

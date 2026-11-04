@@ -73,7 +73,7 @@ export function App(): ReactElement {
           />
         )}
         {page === "cluster" && <ClusterPage />}
-        {page === "gossip" && <GossipPage query={route.query} onQuery={(query) => go({ ...route, query }, true)} />}
+        {page === "gossip" && <GossipPage />}
         <footer className="footer">
           <a href="https://db-ip.com" target="_blank" rel="noreferrer">
             IP Geolocation by DB-IP

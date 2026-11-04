@@ -84,7 +84,7 @@ import { HOME, openAddress, routeAddress } from "../route";
 import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
 import type { ScheduleSummary } from "../types";
-import { browse, readSearch, valueText, withValue, type BrowseRow, type Offered } from "../scheduleSyntax";
+import { browse, BROWSE_TITLES, readSearch, suggest, valueText, withValue, type BrowseRow, type Offered } from "../scheduleSyntax";
 import { ClientTable, heldText, ShareTools, SummaryLine, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
@@ -917,6 +917,7 @@ export function SchedulePage({
       .map((peer) => peer.name ?? "");
     return { fields, only: offered, clients, countries: choices?.countries ?? [], versions: choices?.versions ?? [], names };
   }, [fields, offered, choices, clientSlots, peers]);
+  const suggestFor = useCallback((before: string) => suggest(before, syntaxOffered), [syntaxOffered]);
   // A search set elsewhere, by a view or the address, replaces what the box holds.
   useEffect(() => {
     setBoxText((was) => (readSearch(was, syntaxOffered, Date.now()).words === query ? was : query));
@@ -1108,6 +1109,8 @@ export function SchedulePage({
       <div className={`schedule-controls${searching ? " has-share" : ""}`}>
         <SyntaxSearch
           text={boxText}
+          label="Search by leader name, key or slot, or filter, e.g. duration>240"
+          searches="names and keys"
           placeholder={
             pills.length > 0
               ? phone
@@ -1117,8 +1120,9 @@ export function SchedulePage({
                 ? "Search or filter, e.g. duration>240"
                 : "Search or filter: name, duration>240, client:Agave, time:08:00..09:30"
           }
-          offered={syntaxOffered}
+          suggestFor={suggestFor}
           rows={rows}
+          titles={BROWSE_TITLES}
           foot={held ? `Fees in SOL, times in ms and local. Held from ${heldText(held)} to now.` : ""}
           pills={pills}
           editing={editing}

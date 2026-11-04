@@ -7080,6 +7080,17 @@ body {
   text-overflow: ellipsis;
 }
 
+/* How many a row would list, in line between its syntax and what it means. */
+.schedule-suggest-option b {
+  flex: none;
+  width: 44px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--text-dim);
+}
+
 .schedule-suggest-hint {
   flex: none;
   margin-bottom: 4px;
@@ -7548,8 +7559,15 @@ body {
 
   /* The syntax over what it means, which then wraps rather than being cut. */
   .schedule-suggest-option {
+    position: relative;
     flex-direction: column;
     gap: 2px;
+  }
+
+  .schedule-suggest-option b {
+    position: absolute;
+    top: 6px;
+    right: 8px;
   }
 
   .schedule-suggest-option span {
@@ -9351,65 +9369,22 @@ body {
 
 .gossip-tools {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
 }
 
-.gossip-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.gossip-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.gossip-chip b {
-  font-family: var(--mono);
-  font-weight: 500;
-  color: var(--text-dim);
-}
-
-.gossip-chip:hover {
-  color: var(--text-dim);
-}
-
-.gossip-chip[aria-pressed="true"] {
-  background: var(--panel-raised);
-  color: var(--text);
-}
-
-.gossip-chip[aria-pressed="true"] b {
-  color: var(--text);
-}
-
-.gossip-chip:focus-visible,
 .gossip-sort:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
-}
-
-.gossip-tools .schedule-search {
-  flex: 1 1 280px;
 }
 
 .gossip-peers-scroll {
   max-height: 520px;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+
+/* Keeps the box in place as filters shorten the table. */
+.gossip-peers-scroll.is-searched {
+  min-height: 520px;
 }
 
 .gossip-table.is-peers th {
@@ -9550,13 +9525,12 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .gossip-tools .schedule-search {
-    flex-basis: 100%;
-    max-width: none;
-  }
-
   .gossip-peers-scroll {
     max-height: 60vh;
+  }
+
+  .gossip-peers-scroll.is-searched {
+    min-height: 60vh;
   }
 }
 
@@ -9989,10 +9963,6 @@ body {
 
 .cert-mirror .mirror-bar {
   cursor: pointer;
-}
-
-.gossip-chip.is-pick span {
-  color: var(--text-dim);
 }
 
 .cert-bubble b {

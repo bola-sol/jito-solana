@@ -129,7 +129,7 @@ describe("finalize arrival", () => {
 
 describe("filters and search", () => {
   it("counts every filter over the same rows", () => {
-    expect(filterCounts(PEERS, NOW)).toEqual({ all: 4, staked: 3, rpc: 1, silent: 1, restarted: 2, delinquent: 1 });
+    expect(filterCounts(PEERS, NOW)).toEqual({ staked: 3, rpc: 1, silent: 1, restarted: 2, delinquent: 1 });
   });
 
   it("reads delinquency, and how far the last vote is behind our root", () => {

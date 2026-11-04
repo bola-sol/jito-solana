@@ -142,6 +142,8 @@ describe("a gap condition", () => {
     expect(parseGap("90s")).toBe(90);
     expect(parseGap("1h30m")).toBe(5400);
     expect(parseGap("1.5h")).toBe(5400);
+    expect(parseGap("1d")).toBe(86_400);
+    expect(parseGap("1d2h")).toBe(93_600);
     expect(parseGap("30")).toBe(1800);
     expect(parseGap("")).toBeNull();
     expect(parseGap("soon")).toBeNull();
@@ -149,6 +151,7 @@ describe("a gap condition", () => {
 
   it("shows and writes the time", () => {
     expect(gapText(5400)).toBe("1h30m");
+    expect(gapText(93_600)).toBe("1d2h");
     expect(gapText(0)).toBe("0s");
     expect(describeCondition(gap("gt", 5400))).toBe("Gap > 1h 30m");
     expect(conditionParams([gap("gt", 1800)])).toEqual(["gap=over-30m"]);

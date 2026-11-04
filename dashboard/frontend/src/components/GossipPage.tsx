@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 import { count, percent, shortKey } from "../format";
 import { delinquentTitle } from "../misses";
 import {
@@ -11,7 +11,6 @@ import {
   dropPercent,
   dropShare,
   entryRows,
-  filterCounts,
   FIRST_SORT,
   gossipPeers,
   gossipVerdict,
@@ -39,7 +38,23 @@ import {
 import { timedFromReplay } from "../certFormation";
 import { useAlpenglow } from "../consensus";
 import { unitFor } from "../network";
+import {
+  nextPeerOp,
+  peerBrowse,
+  peerConditionParts,
+  peerHolds,
+  peerOffered,
+  peerSuggest,
+  PEER_TITLES,
+  peerValueText,
+  readPeerSearch,
+  withFilters,
+  withPeerValue,
+  type PeerCondition,
+  type PeerRow,
+} from "../peerSyntax";
 import type { Gossip, GossipPeers } from "../types";
+import { useMedia } from "../useMedia";
 import { useStore } from "../useStore";
 import { CertificatesSection } from "./CertificatesSection";
 import { CertFormationCard, type Pick } from "./CertFormationCard";
@@ -47,6 +62,7 @@ import { FinalizationCard } from "./FinalizationCard";
 import { Copyable } from "./Copyable";
 import { IpAddress } from "./IpAddress";
 import { Card, Meter, Stat } from "./primitives";
+import { SyntaxSearch, type Pill } from "./ScheduleTools";
 
 /** The server gathers the list on its five-second tick, and only while it is being asked for. */
 const POLL_MS = 5_000;
@@ -55,9 +71,19 @@ const FIRST_POLL_MS = 1_000;
 
 const ROWS_PER_PAGE = 200;
 
-const PEER_SEARCH_ID = "gossip-peer-search";
+/** Held by the page only: the search does not go in the address. */
+interface PeerSearch {
+  text: string;
+  only: readonly PeerFilter[];
+  where: readonly PeerCondition[];
+  picked: Pick | null;
+}
 
-export function GossipPage({ query, onQuery }: { query: string; onQuery: (query: string) => void }): ReactElement {
+const NO_SEARCH: PeerSearch = { text: "", only: [], where: [], picked: null };
+
+const conditionKey = (condition: PeerCondition): string => `${condition.key}${condition.op}${peerValueText(condition)}`;
+
+export function GossipPage(): ReactElement {
   const store = useStore();
   const gossip = store.get("summary", "gossip");
   const egress = store.get("summary", "network_egress")?.gossip_per_second ?? null;
@@ -70,20 +96,14 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
   const verdict = gossipVerdict(gossip, list);
   const alpenglow = useAlpenglow();
   const version = store.get("summary", "version");
-  const [filter, setFilter] = useState<PeerFilter>("all");
-  const [picked, setPicked] = useState<Pick | null>(null);
-  const listPicked = (pick: Pick) => {
-    setPicked(pick);
-    setFilter("all");
-    onQuery("");
-    document.getElementById(PEER_SEARCH_ID)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const [search, setSearch] = useState(NO_SEARCH);
+  const searchBox = useRef<HTMLInputElement>(null);
+  const listSearched = (next: PeerSearch): void => {
+    setSearch(next);
+    searchBox.current?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
-  const findInPeers = (identity: string) => {
-    setPicked(null);
-    setFilter("all");
-    onQuery(identity);
-    document.getElementById(PEER_SEARCH_ID)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
-  };
+  const listPicked = (picked: Pick) => listSearched({ ...NO_SEARCH, picked });
+  const findInPeers = (text: string) => listSearched({ ...NO_SEARCH, text });
 
   return (
     <>
@@ -108,15 +128,9 @@ export function GossipPage({ query, onQuery }: { query: string; onQuery: (query:
       {alpenglow && <CertificatesSection peers={list} onFind={findInPeers} />}
       <PeersCard
         list={list}
-        query={query}
-        onQuery={onQuery}
-        filter={filter}
-        onFilter={(next) => {
-          setPicked(null);
-          setFilter(next);
-        }}
-        picked={picked}
-        onUnpick={() => setPicked(null)}
+        search={search}
+        onSearch={setSearch}
+        searchBox={searchBox}
         ours={ours}
         slotMillis={slotMillis}
         arrivalsHidden={version === undefined || timedFromReplay(version)}
@@ -374,106 +388,178 @@ const HEADINGS: { column: PeerColumn; label: string; numeric: boolean }[] = [
 
 function PeersCard({
   list,
-  query,
-  onQuery,
-  filter,
-  onFilter,
-  picked,
-  onUnpick,
+  search,
+  onSearch,
+  searchBox,
   ours,
   slotMillis,
   arrivalsHidden,
 }: {
   list: GossipPeers | null;
-  query: string;
-  onQuery: (query: string) => void;
-  filter: PeerFilter;
-  onFilter: (filter: PeerFilter) => void;
-  picked: Pick | null;
-  onUnpick: () => void;
+  search: PeerSearch;
+  onSearch: (search: PeerSearch) => void;
+  searchBox: RefObject<HTMLInputElement>;
   ours: string | null;
   slotMillis: number | null;
   arrivalsHidden: boolean;
 }) {
+  const { text, only, where, picked } = search;
   const [sort, setSort] = useState<PeerSort>(FIRST_SORT);
   const onSort = useCallback((column: PeerColumn) => setSort((was) => nextSort(was, column)), []);
   // Read when the list arrives, so the filters and the table agree until the next one.
   const arrivalKind: ArrivalKind = picked?.kind ?? "notarize";
   const { peers, now } = useMemo(() => ({ peers: list ? gossipPeers(list) : [], now: Date.now() }), [list]);
-  const counts = useMemo(() => filterCounts(peers, now), [peers, now]);
-  const rows = useMemo(
-    () =>
-      sortPeers(
-        peers.filter((peer) =>
-          picked ? picked.identities.has(peer.identity) : inFilter(peer, filter, now) && matchesSearch(peer, query),
-        ),
-        sort,
-        now,
-        arrivalKind,
+  const offered = useMemo(() => peerOffered(peers, arrivalsHidden, now), [peers, arrivalsHidden, now]);
+  const words = useMemo(() => readPeerSearch(text, offered).words, [text, offered]);
+  const rows = useMemo(() => {
+    const clock = { now, slotMillis, arrivalKind };
+    return sortPeers(
+      peers.filter(
+        (peer) =>
+          (!picked || picked.identities.has(peer.identity)) &&
+          only.every((filter) => inFilter(peer, filter, now)) &&
+          where.every((condition) => peerHolds(condition, peer, clock)) &&
+          matchesSearch(peer, words),
       ),
-    [peers, filter, query, sort, now, picked, arrivalKind],
-  );
+      sort,
+      now,
+      arrivalKind,
+    );
+  }, [peers, picked, only, where, words, sort, now, slotMillis, arrivalKind]);
+  const searched = picked !== null || only.length > 0 || where.length > 0 || words !== "";
+
+  const phone = useMedia("(max-width: 700px)");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [syntaxError, setSyntaxError] = useState<string | null>(null);
+  const editPill = (key: string | null): void => {
+    setEditing(key);
+    setSyntaxError(null);
+  };
+  const suggestFor = useCallback((before: string) => peerSuggest(before, offered), [offered]);
+  const browseRows = useMemo(() => peerBrowse(offered, only), [offered, only]);
+  const addFromBox = (): void => {
+    const read = readPeerSearch(text, offered);
+    const [error] = read.errors;
+    if (error) {
+      setSyntaxError(error);
+      return;
+    }
+    if (read.filters.length > 0) onSearch({ ...search, ...withFilters(only, where, read.filters), text: read.words });
+  };
+  // A picked condition replaces any on the same key and comparison, its value open to type.
+  const pickRow = (row: PeerRow): void => {
+    if (row.action.kind === "type") return;
+    const next = withFilters(only, where, [row.action]);
+    onSearch({ ...search, ...next });
+    if (row.action.kind === "condition") {
+      const { key, op } = row.action.condition;
+      editPill(`where:${next.where.findIndex((held) => held.key === key && held.op === op)}`);
+    }
+  };
+  const putCondition = (at: number, condition: PeerCondition): void =>
+    onSearch({ ...search, where: where.map((held, index) => (index === at ? condition : held)) });
+  const pills: Pill[] = [
+    ...(picked
+      ? [{ kind: "plain", key: "picked", label: picked.label, onRemove: () => onSearch({ ...search, picked: null }) } as const]
+      : []),
+    ...PEER_FILTERS.filter((entry) => only.includes(entry.filter)).map(
+      (entry): Pill => ({
+        kind: "plain",
+        key: `only:${entry.filter}`,
+        label: entry.label,
+        onRemove: () => onSearch({ ...search, only: only.filter((held) => held !== entry.filter) }),
+      }),
+    ),
+    ...where.map(
+      (condition, at): Pill => ({
+        kind: "condition",
+        key: `where:${at}`,
+        ...peerConditionParts(condition),
+        draft: peerValueText(condition),
+        onCycle: () => putCondition(at, { ...condition, op: nextPeerOp(condition) }),
+        onValue: (typed) => {
+          const read = withPeerValue(condition, typed, offered);
+          if (typeof read === "string") {
+            setSyntaxError(read);
+            return read;
+          }
+          editPill(null);
+          putCondition(at, read);
+          return null;
+        },
+        onRemove: () => {
+          editPill(null);
+          onSearch({ ...search, where: where.filter((_, index) => index !== at) });
+        },
+      }),
+    ),
+  ];
+  const editingOpen = pills.some((pill) => pill.key === editing);
 
   return (
     <Card
       title="Peers"
       aside={
         <span aria-live="polite">
-          {list ? `${count(rows.length)} ${rows.length === 1 ? "node" : "nodes"}` : ""}
+          {list && (searched ? `${count(rows.length)} of ` : "")}
+          {list && `${count(peers.length)} ${peers.length === 1 ? "node" : "nodes"}`}
         </span>
       }
       className="gossip-peers"
     >
       <div className="gossip-tools">
-        <div className="gossip-chips" role="group" aria-label="Which peers to list">
-          {picked && (
-            <button type="button" className="gossip-chip is-pick" aria-pressed="true" onClick={onUnpick}>
-              {picked.label}
-              <b>{count(picked.identities.size)}</b>
-              <span aria-label="clear">×</span>
-            </button>
-          )}
-          {PEER_FILTERS.map((entry) => (
-            <button
-              key={entry.filter}
-              type="button"
-              className="gossip-chip"
-              aria-pressed={!picked && filter === entry.filter}
-              onClick={() => onFilter(entry.filter)}
-            >
-              {entry.label}
-              <b>{list ? count(counts[entry.filter]) : "—"}</b>
-            </button>
-          ))}
-        </div>
-        <input
-          id={PEER_SEARCH_ID}
-          type="search"
-          className="schedule-search"
-          value={query}
-          placeholder="Search name, client, IP or identity"
-          aria-label="Search peers by name, client, IP or identity"
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => {
-            onUnpick();
-            onQuery(event.target.value);
+        <SyntaxSearch
+          text={text}
+          placeholder={
+            pills.length > 0
+              ? phone
+                ? "Filter or search…"
+                : "Add another filter or search…"
+              : phone
+                ? "Search or filter: geo:DE"
+                : "Search or filter: name, client:Agave, finalization<50, geo:DE,NL"
+          }
+          label="Search peers by name, client, IP or key, or filter, e.g. geo:DE"
+          searches="names, clients, IPs and keys"
+          suggestFor={suggestFor}
+          rows={browseRows}
+          titles={PEER_TITLES}
+          foot="Times take s, m, h or d; a bare number is minutes."
+          pills={pills}
+          editing={editing}
+          inputRef={searchBox}
+          onText={(next) => {
+            setSyntaxError(null);
+            onSearch({ ...search, text: next });
+          }}
+          onAdd={addFromBox}
+          onBrowse={pickRow}
+          onEdit={editPill}
+          onClear={() => {
+            editPill(null);
+            onSearch(NO_SEARCH);
           }}
         />
       </div>
+      {(syntaxError || editingOpen) && (
+        <div className="schedule-from">
+          {syntaxError && <span className="schedule-warn">{syntaxError}</span>}
+          {editingOpen && <span className="schedule-from-hint">Enter applies, Esc cancels.</span>}
+        </div>
+      )}
       {list === null ? (
         <div className="gossip-empty">Gathering the peer list…</div>
       ) : (
         // Keyed so a new filter, search or order starts again from the top.
         <PeersTable
-          key={`${picked?.label ?? filter}|${query}|${sort.column}|${sort.reversed}`}
+          key={`${picked?.label}|${only.join()}|${where.map(conditionKey).join()}|${words}|${sort.column}|${sort.reversed}`}
           rows={rows}
           sort={sort}
           onSort={onSort}
           ours={ours}
           now={now}
           slotMillis={slotMillis}
-          searched={query.trim() !== ""}
+          searched={searched}
           arrivalEpoch={list.vote_arrival_epoch ?? null}
           arrivalKind={arrivalKind}
           arrivalsHidden={arrivalsHidden}
@@ -545,7 +631,7 @@ const PeersTable = memo(function PeersTable({
   }, [more, limit]);
 
   return (
-    <div className="gossip-peers-scroll" ref={scroller}>
+    <div className={`gossip-peers-scroll${searched ? " is-searched" : ""}`} ref={scroller}>
       <table className="gossip-table is-peers">
         <thead>
           <tr>
@@ -590,7 +676,7 @@ const PeersTable = memo(function PeersTable({
           {rows.length === 0 && (
             <tr>
               <td colSpan={headings.length} className="gossip-none">
-                {searched ? "No peer matches that name, client, IP or identity." : "No peer in this group."}
+                {searched ? "No peer matches this search." : "No peer listed."}
               </td>
             </tr>
           )}

@@ -77,10 +77,10 @@ export const FIELDS: Record<Field, FieldInfo> = {
 
 export const FIELD_ORDER = Object.keys(FIELDS) as Field[];
 
-const NUMBER_OPS: readonly Op[] = ["gt", "ge", "lt", "le", "eq"];
-const LIST_OPS: readonly Op[] = ["is", "is_not"];
+export const NUMBER_OPS: readonly Op[] = ["gt", "ge", "lt", "le", "eq"];
+export const LIST_OPS: readonly Op[] = ["is", "is_not"];
 
-const OP_LABELS: Record<Op, string> = { gt: ">", ge: "≥", lt: "<", le: "≤", eq: "=", is: "is", is_not: "is not" };
+export const OP_LABELS: Readonly<Record<Op, string>> = { gt: ">", ge: "≥", lt: "<", le: "≤", eq: "=", is: "is", is_not: "is not" };
 
 /** Our vote's verdict, as the Voted column marks it. */
 const VOTED: readonly (readonly [value: string, label: string])[] = [
@@ -101,20 +101,21 @@ export function ready(condition: Condition): boolean {
   return FIELDS[condition.field].list ? condition.values.length > 0 : condition.value !== null;
 }
 
-/** Seconds from `30m`, `2h`, `90s` or `1h30m`; a bare number is minutes. */
+/** Seconds from `30m`, `2h`, `90s`, `1d` or `1h30m`; a bare number is minutes. */
 export function parseGap(text: string): number | null {
   const bare = /^\d+(?:\.\d+)?$/.test(text);
   if (bare) return Number(text) * 60;
-  const parts = /^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/i.exec(text);
+  const parts = /^(?:(\d+(?:\.\d+)?)d)?(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/i.exec(text);
   if (!parts || text === "") return null;
-  return Number(parts[1] ?? 0) * 3600 + Number(parts[2] ?? 0) * 60 + Number(parts[3] ?? 0);
+  return Number(parts[1] ?? 0) * 86_400 + Number(parts[2] ?? 0) * 3600 + Number(parts[3] ?? 0) * 60 + Number(parts[4] ?? 0);
 }
 
-/** A gap as typed: `1h30m`, or with a separator as shown. */
+/** A gap as typed: `1d`, `1h30m`, or with a separator as shown. */
 export function gapText(seconds: number, separator = ""): string {
   const whole = Math.round(seconds);
   const parts: [number, string][] = [
-    [Math.floor(whole / 3600), "h"],
+    [Math.floor(whole / 86_400), "d"],
+    [Math.floor((whole % 86_400) / 3600), "h"],
     [Math.floor((whole % 3600) / 60), "m"],
     [whole % 60, "s"],
   ];
@@ -312,7 +313,7 @@ function figure(
 }
 
 /** Whether a turn's leader is named by a name condition: part of its name or key, any case. */
-export function nameHolds(condition: Condition, name: string | null | undefined, key: string | null | undefined): boolean {
+export function nameHolds(condition: Pick<Condition, "op" | "values">, name: string | null | undefined, key: string | null | undefined): boolean {
   const parts = [name, key].filter((part): part is string => !!part).map((part) => part.toLowerCase());
   const named = condition.values.some((value) => {
     const wanted = value.trim().toLowerCase();
@@ -322,7 +323,7 @@ export function nameHolds(condition: Condition, name: string | null | undefined,
 }
 
 /** Whether a version is named whole or by its start at a dot or dash: `4.4` holds `4.4.0`. */
-function versionNamed(condition: Condition, version: string): boolean {
+export function versionNamed(condition: Pick<Condition, "values">, version: string): boolean {
   return condition.values.some((value) => {
     if (!version.startsWith(value)) return false;
     const rest = version.slice(value.length);
@@ -361,7 +362,7 @@ export function conditionHolds(
   return compared(condition.op, figure(condition.field, entry, facts, rates), condition.value);
 }
 
-function compared(op: Op, value: number | null, wanted: number | null): boolean {
+export function compared(op: Op, value: number | null, wanted: number | null): boolean {
   if (value === null || wanted === null) return false;
   switch (op) {
     case "gt":

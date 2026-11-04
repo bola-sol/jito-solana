@@ -67,8 +67,8 @@ export function readRoute(address: string): Route {
   return {
     page,
     slot: page === "slots" && rest !== undefined && /^\d+$/.test(rest) ? Number(rest) : null,
-    // Only the pages with a search box keep one.
-    query: page === "overview" || page === "cluster" ? "" : text("q"),
+    // Only these pages keep their search in the address.
+    query: page === "slots" || page === "schedule" ? text("q") : "",
     ours: page === "schedule" && raw("ours") !== null,
     from: page === "schedule" ? text("from") : "",
     only: page === "schedule" ? readOnly(text("only")) : [],
@@ -103,7 +103,7 @@ export function routeAddress(route: Route): string {
         conditionParams(route.where),
       );
     case "gossip":
-      return withSearch("/gossip", { q: route.query });
+      return "/gossip";
     case "cluster":
       return "/cluster";
   }

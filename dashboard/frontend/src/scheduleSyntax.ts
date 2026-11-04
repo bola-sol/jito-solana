@@ -76,10 +76,10 @@ const LEADER_TITLES: Readonly<Record<string, string>> = { delinquent: "not votin
 
 const UNITS = /\s*(ms|sol|cu|%)$/i;
 
-const OPS: Readonly<Record<string, Op>> = { ">": "gt", ">=": "ge", "≥": "ge", "<": "lt", "<=": "le", "≤": "le", "=": "eq", ":": "eq" };
+export const OPS: Readonly<Record<string, Op>> = { ">": "gt", ">=": "ge", "≥": "ge", "<": "lt", "<=": "le", "≤": "le", "=": "eq", ":": "eq" };
 
 /** An expression's start: an optional `-`, a name, then its comparison. */
-const EXPRESSION = /(^|\s)(-?)([a-z]+)(>=|<=|≥|≤|>|<|=|:)/gi;
+export const EXPRESSION = /(^|\s)(-?)([a-z]+)(>=|<=|≥|≤|>|<|=|:)/gi;
 
 /** What the validator and this page offer to filter on. */
 export interface Offered {
@@ -423,16 +423,34 @@ export function withValue(condition: Condition, text: string, offered: Offered):
 
 export type BrowseGroup = "only" | KeyGroup;
 
-export type BrowseAction =
-  | { kind: "condition"; condition: Condition }
-  | { kind: "only"; only: Only }
-  /** Text for the box, the value from `from` on selected to type over. */
-  | { kind: "type"; text: string; from: number };
+export const BROWSE_TITLES: Readonly<Record<BrowseGroup, string>> = {
+  only: "Only slots that are",
+  slot: "Slot",
+  leader: "Leader and our vote",
+  range: "Range and jump",
+};
 
-export interface BrowseRow {
-  group: BrowseGroup;
+/** Text for the box, the value from `from` on selected to type over. */
+export interface TypeAction {
+  kind: "type";
+  text: string;
+  from: number;
+}
+
+/** A row of the box's list: its text goes in the box, or the page adds it as a filter. */
+export interface SearchRow {
+  group: string;
   syntax: string;
+  /** How many this row would list, where that is known. */
+  figure?: string;
   what: string;
+  action: TypeAction | { kind: "condition" | "only" };
+}
+
+export type BrowseAction = { kind: "condition"; condition: Condition } | { kind: "only"; only: Only } | TypeAction;
+
+export interface BrowseRow extends SearchRow {
+  group: BrowseGroup;
   action: BrowseAction;
 }
 

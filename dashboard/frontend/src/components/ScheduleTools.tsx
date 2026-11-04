@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 import { count, percent } from "../format";
 import { typedTime, type Held } from "../scheduleFilters";
-import { complete, suggest, type BrowseGroup, type BrowseRow, type Offered } from "../scheduleSyntax";
+import { complete, type SearchRow, type Suggestion } from "../scheduleSyntax";
 import type { SavedView } from "../scheduleViews";
 import { jitoShare } from "../tips";
 import type { ScanFigures, ScheduleSummary, TipRates } from "../types";
@@ -31,13 +31,6 @@ export type Pill = { key: string; label: string; onRemove: () => void } & (
       onValue: (text: string) => string | null;
     }
 );
-
-const GROUP_TITLES: Record<BrowseGroup, string> = {
-  only: "Only slots that are",
-  slot: "Slot",
-  leader: "Leader and our vote",
-  range: "Range and jump",
-};
 
 /** A list scrolled to within this of its end is at the end. */
 const FADE_SLACK_PX = 2;
@@ -144,11 +137,14 @@ function FilterPill({
  * as typed; expressions are offered as they are typed and become pills on Enter. With nothing typed
  * the box offers every expression, and one click adds it.
  */
-export function SyntaxSearch({
+export function SyntaxSearch<Row extends SearchRow>({
   text,
   placeholder,
-  offered,
+  label,
+  searches,
+  suggestFor,
   rows,
+  titles,
   foot,
   pills,
   editing,
@@ -161,9 +157,15 @@ export function SyntaxSearch({
 }: {
   text: string;
   placeholder: string;
-  offered: Offered;
+  label: string;
+  /** What a word on its own searches, for the hint. */
+  searches: string;
+  /** What to offer for the text up to the caret. */
+  suggestFor: (before: string) => readonly Suggestion[];
   /** Offered while nothing is typed at the caret. */
-  rows: readonly BrowseRow[];
+  rows: readonly Row[];
+  /** Each group's heading in those rows. */
+  titles: Readonly<Record<string, string>>;
   /** A last line under those rows. */
   foot: string;
   pills: readonly Pill[];
@@ -172,7 +174,7 @@ export function SyntaxSearch({
   inputRef: RefObject<HTMLInputElement>;
   onText: (text: string) => void;
   onAdd: () => void;
-  onBrowse: (row: BrowseRow) => void;
+  onBrowse: (row: Row) => void;
   onEdit: (key: string | null) => void;
   onClear: () => void;
 }): ReactElement {
@@ -185,8 +187,14 @@ export function SyntaxSearch({
   const scroller = useRef<HTMLDivElement>(null);
   const before = caret === null || dismissed ? null : text.slice(0, caret);
   const browsing = before !== null && /(^|\s)$/.test(before);
-  const options = useMemo(() => (before === null || browsing ? [] : suggest(before, offered)), [before, browsing, offered]);
+  const options = useMemo(() => (before === null || browsing ? [] : suggestFor(before)), [before, browsing, suggestFor]);
   const shown = browsing ? rows.length : options.length;
+  const list = useRef<HTMLDivElement>(null);
+  const open = shown > 0;
+  // A box low on the screen brings its list into view.
+  useEffect(() => {
+    if (open) list.current?.scrollIntoView({ block: "nearest" });
+  }, [open]);
   useLayoutEffect(() => {
     const at = placeCaret.current;
     if (at === null || !inputRef.current) return;
@@ -214,9 +222,10 @@ export function SyntaxSearch({
     placeCaret.current = [next.caret - select, next.caret];
     edit(next.text, next.caret);
   };
-  const choose = (row: BrowseRow) => {
-    if (row.action.kind === "type") {
-      pick(row.action.text, row.action.text.length - row.action.from);
+  const choose = (row: Row) => {
+    const action: SearchRow["action"] = row.action;
+    if (action.kind === "type") {
+      pick(action.text, action.text.length - action.from);
       return;
     }
     setDismissed(true);
@@ -231,11 +240,11 @@ export function SyntaxSearch({
   const hint = browsing ? (
     <>
       Click to add, value ready to type over · <kbd>↑</kbd>
-      <kbd>↓</kbd> to move, <kbd>Enter</kbd> to add · a word on its own searches names
+      <kbd>↓</kbd> to move, <kbd>Enter</kbd> to add · a word on its own searches {searches}
     </>
   ) : (
     <>
-      <kbd>Tab</kbd> completes · <kbd>Enter</kbd> makes it a filter · a word on its own searches names and keys
+      <kbd>Tab</kbd> completes · <kbd>Enter</kbd> makes it a filter · a word on its own searches {searches}
     </>
   );
   return (
@@ -259,7 +268,7 @@ export function SyntaxSearch({
           value={text}
           placeholder={placeholder}
           role="combobox"
-          aria-label="Search by leader name, key or slot, or filter, e.g. duration>240"
+          aria-label={label}
           aria-autocomplete="list"
           aria-expanded={shown > 0}
           aria-controls="schedule-suggest"
@@ -306,7 +315,7 @@ export function SyntaxSearch({
         )}
       </span>
       {shown > 0 && (
-        <div className="schedule-suggest">
+        <div ref={list} className="schedule-suggest">
           <div className="schedule-suggest-hint">{hint}</div>
           <div
             ref={scroller}
@@ -318,7 +327,7 @@ export function SyntaxSearch({
             {browsing
               ? rows.map((row, at) => (
                   <Fragment key={row.syntax}>
-                    {row.group !== rows[at - 1]?.group && <div className="schedule-suggest-group">{GROUP_TITLES[row.group]}</div>}
+                    {row.group !== rows[at - 1]?.group && <div className="schedule-suggest-group">{titles[row.group]}</div>}
                     <div
                       id={`schedule-suggest-${at}`}
                       role="option"
@@ -331,6 +340,7 @@ export function SyntaxSearch({
                       }}
                     >
                       <code>{row.syntax}</code>
+                      {row.figure !== undefined && <b>{row.figure}</b>}
                       <span>{row.what}</span>
                     </div>
                   </Fragment>

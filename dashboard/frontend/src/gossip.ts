@@ -15,6 +15,8 @@ export interface GossipPeer {
   name: string | null;
   stake: number;
   client: string;
+  clientName: string;
+  version: string;
   ip: string | null;
   country: string | null;
   rpc: number | null;
@@ -50,10 +52,11 @@ function behind(root: number, slot: number | null | undefined): number | null {
 }
 
 export function gossipPeers(list: GossipPeers): GossipPeer[] {
-  const clients = list.clients.map(([client, version]) => buildLabel(client, version));
+  const labels = list.clients.map(([client, version]) => buildLabel(client, version));
   return list.identity.map((identity, index) => {
     const name = list.name[index] ?? null;
-    const client = clients[list.client[index]] ?? "";
+    const client = labels[list.client[index]] ?? "";
+    const [clientName = "", version = ""] = list.clients[list.client[index]] ?? [];
     const ip = list.ip[index] ?? null;
     const country = list.country[index] ?? null;
     return {
@@ -61,6 +64,8 @@ export function gossipPeers(list: GossipPeers): GossipPeer[] {
       name,
       stake: list.stake[index] ?? 0,
       client,
+      clientName,
+      version,
       ip,
       country,
       rpc: list.rpc[index] ?? null,
@@ -126,10 +131,9 @@ export function arrivalTitle(arrival: VoteArrival, epoch: number | null, kind: A
   return `Notarize votes reached us ${millis(arrival.mean)} after the slot began on average${over}${spread}${worst}${finalize}.`;
 }
 
-export type PeerFilter = "all" | "staked" | "rpc" | "silent" | "restarted" | "delinquent";
+export type PeerFilter = "staked" | "rpc" | "silent" | "restarted" | "delinquent";
 
 export const PEER_FILTERS: { filter: PeerFilter; label: string }[] = [
-  { filter: "all", label: "All" },
   { filter: "staked", label: "Staked" },
   { filter: "rpc", label: "RPC" },
   { filter: "silent", label: "Silent over 1 min" },
@@ -139,8 +143,6 @@ export const PEER_FILTERS: { filter: PeerFilter; label: string }[] = [
 
 export function inFilter(peer: GossipPeer, filter: PeerFilter, nowMillis: number): boolean {
   switch (filter) {
-    case "all":
-      return true;
     case "staked":
       return peer.stake > 0;
     case "rpc":
@@ -155,7 +157,7 @@ export function inFilter(peer: GossipPeer, filter: PeerFilter, nowMillis: number
 }
 
 export function filterCounts(peers: GossipPeer[], nowMillis: number): Record<PeerFilter, number> {
-  const counts: Record<PeerFilter, number> = { all: 0, staked: 0, rpc: 0, silent: 0, restarted: 0, delinquent: 0 };
+  const counts: Record<PeerFilter, number> = { staked: 0, rpc: 0, silent: 0, restarted: 0, delinquent: 0 };
   for (const peer of peers) {
     for (const { filter } of PEER_FILTERS) if (inFilter(peer, filter, nowMillis)) counts[filter] += 1;
   }

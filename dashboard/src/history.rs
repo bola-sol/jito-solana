@@ -101,17 +101,28 @@ fn reward_bits(reward: Option<Reward>) -> u16 {
 /// The slot is kept beside its row so a row from a lap ago cannot answer for a current one.
 pub struct SlotHistory {
     rows: Vec<(Slot, PackedSlot)>,
+    /// Slots below this were replayed while catching up after a start.
+    live_from: Slot,
 }
 
 impl SlotHistory {
     pub fn new(capacity: usize) -> Self {
         Self {
             rows: vec![(0, PackedSlot::default()); capacity.max(1)],
+            live_from: 0,
         }
     }
 
     pub fn capacity(&self) -> usize {
         self.rows.len()
+    }
+
+    pub fn live_from(&self) -> Slot {
+        self.live_from
+    }
+
+    pub fn set_live_from(&mut self, slot: Slot) {
+        self.live_from = slot;
     }
 
     pub fn get(&self, slot: Slot) -> Option<&PackedSlot> {

@@ -1047,7 +1047,9 @@ impl Sums {
             self.transactions = self.transactions.saturating_add(u64::from(row.non_votes));
         }
         self.duration.add(duration_millis(history, slot));
-        self.replay.add(replay_millis(row));
+        // A span from catching up measures the backlog, not replay.
+        self.replay
+            .add(replay_millis(row).filter(|_| slot >= history.live_from()));
         self.base_fee
             .add(block.then(|| row.fees.saturating_sub(row.priority_fees)));
         self.priority_fee.add(block.then_some(row.priority_fees));
@@ -1152,8 +1154,29 @@ fn held_from(history: &RwLock<SlotHistory>, floor: Slot, top: Slot) -> Option<He
     None
 }
 
+fn asks_nothing(params: &SearchParams) -> bool {
+    params.query.trim().is_empty()
+        && !params.ours
+        && params.only.is_empty()
+        && params.conditions.is_empty()
+        && params.from_slot.is_none()
+        && params.to_slot.is_none()
+        && params.from_millis.is_none()
+        && params.to_millis.is_none()
+}
+
+/// Where a summary stops: with nothing asked, at the start of the newest turn's epoch.
+fn summary_floor(params: &SearchParams, epochs: &[EpochInfo], floor: Slot) -> Slot {
+    let newest = params.before.saturating_sub(1);
+    epochs
+        .iter()
+        .find(|epoch| (epoch.start_slot..=epoch.end_slot).contains(&newest))
+        .filter(|_| asks_nothing(params))
+        .map_or(floor, |epoch| floor.max(epoch.start_slot))
+}
+
 /// Every turn below `before` that a search would list, summed up overall and by client. With
-/// nothing asked, that is everything held.
+/// nothing asked, that is the newest turn's epoch.
 pub fn summarize(
     history: &RwLock<SlotHistory>,
     info: &RwLock<ValidatorInfoCache>,
@@ -1201,6 +1224,7 @@ pub fn summarize(
     };
     drop(map);
 
+    let stop_at = summary_floor(params, epochs, floor);
     let mut overall = Sums::default();
     let mut by_client: HashMap<Option<String>, Sums> = HashMap::new();
     let mut turns = 0u64;
@@ -1216,7 +1240,7 @@ pub fn summarize(
             };
             turn = below;
             let start = turn.saturating_mul(SLOTS_PER_TURN);
-            if start < floor {
+            if start < stop_at {
                 break 'scan;
             }
             match range_side(params, &history, start) {
@@ -1910,6 +1934,69 @@ mod tests {
         );
         assert_eq!((reply.turns, reply.figures.slots), (1, 1));
         assert_eq!(reply.figures.transactions, 50);
+    }
+
+    #[test]
+    fn test_a_summary_asked_nothing_stops_at_the_epoch_while_a_filter_reads_all_held() {
+        let held = rows(START - 8, START + 7, |_, _| {});
+        let (epochs, map) = two_leaders();
+        let reply = summarize(
+            &held,
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &params("", false, START + 8, None),
+        );
+        assert_eq!((reply.turns, reply.figures.slots), (2, 8));
+        assert_eq!(
+            reply.held_from.map(|held| held.slot),
+            Some(START - 8),
+            "the oldest slot held still reaches past the epoch"
+        );
+
+        let filtered = summarize(
+            &held,
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                conditions: vec![condition(Field::Transactions, Op::Gt, 100.0, &[])],
+                ..params("", false, START + 8, None)
+            },
+        );
+        assert_eq!((filtered.turns, filtered.figures.slots), (4, 16));
+    }
+
+    #[test]
+    fn test_a_summary_leaves_slots_replayed_while_catching_up_out_of_the_replay_mean() {
+        let held = rows(START, START + 7, |slot, row| {
+            row.flags |= HAS_SHREDS | HAS_REPLAYED;
+            row.full_millis = 200;
+            row.replayed_millis = if slot < START + 4 { 20_200 } else { 208 };
+        });
+        let (epochs, map) = two_leaders();
+        let read = |held: &RwLock<SlotHistory>| {
+            summarize(
+                held,
+                &RwLock::default(),
+                &map,
+                &epochs,
+                &params("", false, START + 8, None),
+            )
+        };
+        assert_eq!(read(&held).figures.replay_ms, Some(10_004.0));
+
+        held.write().unwrap().set_live_from(Slot::MAX);
+        assert_eq!(
+            read(&held).figures.replay_ms,
+            None,
+            "still catching up, nothing is live yet"
+        );
+
+        held.write().unwrap().set_live_from(START + 4);
+        let reply = read(&held);
+        assert_eq!(reply.figures.replay_ms, Some(8.0));
+        assert_eq!(reply.figures.slots, 8, "the slots themselves still count");
     }
 
     #[test]

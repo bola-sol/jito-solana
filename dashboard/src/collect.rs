@@ -2288,6 +2288,9 @@ impl Collector {
             return;
         };
         if behind > IN_STEP_SLOTS {
+            if !self.trailed_cluster {
+                self.history.write().unwrap().set_live_from(Slot::MAX);
+            }
             self.trailed_cluster = true;
             return;
         }
@@ -2295,6 +2298,10 @@ impl Collector {
             return;
         }
         self.caught_cluster = true;
+        self.history
+            .write()
+            .unwrap()
+            .set_live_from(self.last_completed_slot.saturating_add(1));
         self.caught_up_millis = Some(timestamp());
         self.publisher.publish(
             TOPIC_SUMMARY,
@@ -3801,6 +3808,30 @@ mod tests {
             harness
                 .published_key("summary", "caught_up_time_nanos")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn test_slots_count_as_live_only_above_where_the_node_caught_up() {
+        let harness = fixture();
+        harness.advance_to(64);
+        let mut collector = harness.collector();
+        collector.tick();
+        assert_eq!(
+            collector.history.read().unwrap().live_from(),
+            0,
+            "a node that never trailed has nothing to leave out"
+        );
+
+        harness.set_cluster_tip(100);
+        collector.tick();
+        assert_eq!(collector.history.read().unwrap().live_from(), Slot::MAX);
+
+        harness.advance_to(97);
+        collector.tick();
+        assert_eq!(
+            collector.history.read().unwrap().live_from(),
+            collector.last_completed_slot + 1
         );
     }
 

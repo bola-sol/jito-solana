@@ -561,7 +561,9 @@ export function ClientTable({
               <th>Slots</th>
               <th>Skipped</th>
               <th>Duration</th>
-              <th>Replay</th>
+              <th title="Block full to replay finished, leaving out blocks from before catching up after a restart.">
+                Replay
+              </th>
               <th>Txs / slot</th>
               <th>Compute</th>
               <th>Base</th>

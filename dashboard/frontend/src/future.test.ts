@@ -13,6 +13,7 @@ import {
   raiseTop,
   FutureMatches,
   futureWindow,
+  timeUntil,
 } from "./future";
 import { NO_RANGE, type RangeBounds } from "./scheduleConditions";
 import type { EpochInfo } from "./types";
@@ -166,5 +167,23 @@ describe("aboutClock", () => {
     const now = new Date(2026, 10, 2, 23, 0, 0).getTime();
     const tomorrow = new Date(2026, 10, 3, 1, 30, 0).getTime();
     expect(aboutClock(tomorrow, now)).toMatch(/^≈ \S+ 01:30$/);
+  });
+});
+
+describe("timeUntil", () => {
+  const now = new Date(2026, 10, 2, 12, 0, 0).getTime();
+
+  it("gives two units on the same day", () => {
+    expect(timeUntil(new Date(2026, 10, 2, 12, 2, 59).getTime(), now)).toBe("in 2m 59s");
+    expect(timeUntil(new Date(2026, 10, 2, 13, 9, 30).getTime(), now)).toBe("in 1h 9m");
+  });
+
+  it("gives one unit on another day", () => {
+    expect(timeUntil(new Date(2026, 10, 3, 8, 45, 0).getTime(), now)).toBe("in 20h");
+    expect(timeUntil(new Date(2026, 10, 3, 0, 2, 30).getTime(), new Date(2026, 10, 2, 23, 59, 0).getTime())).toBe("in 3m");
+  });
+
+  it("stops at nought once the time has passed", () => {
+    expect(timeUntil(now - 5_000, now)).toBe("in 0s");
   });
 });

@@ -1,3 +1,4 @@
+import { duration } from "./format";
 import { SLOTS_PER_TURN } from "./schedule";
 import type { RangeBounds } from "./scheduleConditions";
 import type { EpochInfo, FutureReply, Peer } from "./types";
@@ -132,11 +133,20 @@ export function expectedAt(slot: number, from: number, now: number, slotNanos: n
 const MINUTE = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "numeric", hour12: false });
 const WEEKDAY = new Intl.DateTimeFormat(undefined, { weekday: "short" });
 
+function isSameDay(millis: number, now: number): boolean {
+  return new Date(millis).toDateString() === new Date(now).toDateString();
+}
+
 /** To the minute, so the text holds still between slots; another day gets its weekday. */
 export function aboutClock(millis: number, now: number): string {
   const at = new Date(millis);
-  const day = at.toDateString() === new Date(now).toDateString() ? "" : `${WEEKDAY.format(at)} `;
+  const day = isSameDay(millis, now) ? "" : `${WEEKDAY.format(at)} `;
   return `≈ ${day}${MINUTE.format(at)}`;
+}
+
+/** The time left, in one unit on another day, where two don't fit beside the weekday. */
+export function timeUntil(millis: number, now: number): string {
+  return `in ${duration(Math.max(0, millis - now), isSameDay(millis, now) ? 2 : 1)}`;
 }
 
 /** The index in `turns`, oldest first, nearest a turn number. */

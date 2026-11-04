@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { count, duration } from "../format";
-import { aboutClock, expectedAt, nearestTurn } from "../future";
+import { aboutClock, expectedAt, nearestTurn, timeUntil } from "../future";
 import { SLOTS_PER_TURN } from "../schedule";
 import { useMedia } from "../useMedia";
 
@@ -91,7 +91,9 @@ export function TurnStrip({
       <div className="schedule-strip">
         <div className="schedule-strip-head">
           <span className="schedule-strip-title">
-            <b>▲ {filtered ? "No matching turns to come" : name === null ? "None of our turns left this epoch" : `No turns left this epoch for ${name}`}</b>
+            <span className="schedule-strip-who">
+              <b>{filtered ? "No matching turns to come" : name === null ? "None of our turns left this epoch" : `No turns left this epoch for ${name}`}</b>
+            </span>
           </span>
         </div>
       </div>
@@ -133,8 +135,12 @@ export function TurnStrip({
     <div className="schedule-strip" role="group" aria-label="Turns to come">
       <div className="schedule-strip-head">
         <span className="schedule-strip-title">
-          <b>▲ {name === null ? `Our ${words}` : `${name}: ${words}`}</b> <span className="schedule-strip-position">{position}</span>
-          <span className="schedule-strip-wide"> to come</span>
+          <b>Upcoming:</b>
+          <span className="schedule-strip-who">
+            {name === null ? `our ${words}` : name}
+            {name !== null && <span className="schedule-strip-wide">, {words}</span>}
+          </span>
+          <span className="schedule-strip-position">{position}</span>
         </span>
         {!fits && (
           <span className="schedule-strip-arrows">
@@ -196,7 +202,7 @@ export function TurnStrip({
                   ) : (
                     <>
                       <span className="schedule-strip-when">{when === null ? "—" : aboutClock(when, now)}</span>
-                      <span className="schedule-strip-count">{when === null ? "" : duration(Math.max(0, when - now), 2)}</span>
+                      <span className="schedule-strip-count">{when === null ? "" : timeUntil(when, now)}</span>
                     </>
                   )}
                 </div>

@@ -7620,18 +7620,29 @@ body {
 }
 
 .schedule-strip-title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* The name gives way, not the word before it or the position after it. */
+.schedule-strip-who {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .schedule-strip-title b {
-  font-weight: 500;
+  flex: none;
+  font-weight: 600;
   color: var(--accent);
 }
 
 .schedule-strip-position {
+  flex: none;
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text);

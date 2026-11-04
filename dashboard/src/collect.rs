@@ -1389,6 +1389,8 @@ impl Collector {
         for (contact_info, _) in peers {
             if let Some(traits) = map.get_mut(contact_info.pubkey()) {
                 traits.client = Some(contact_info.version().client().to_string());
+                traits.version = Some(contact_info.version().to_string());
+                traits.ip = contact_info.gossip().map(|addr| addr.ip().to_string());
                 traits.country = contact_info
                     .gossip()
                     .and_then(|addr| geoip::country(addr.ip()));

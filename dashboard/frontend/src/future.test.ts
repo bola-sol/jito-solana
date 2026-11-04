@@ -7,7 +7,10 @@ import {
   lastTurnOf,
   ourFutureNumbers,
   raiseTop,
+  FutureMatches,
+  futureWindow,
 } from "./future";
+import { NO_RANGE, type RangeBounds } from "./scheduleConditions";
 import type { EpochInfo } from "./types";
 
 const epoch: EpochInfo = {
@@ -21,6 +24,55 @@ const epoch: EpochInfo = {
   block_cost_limit: 0,
   account_cost_limit: 0,
 };
+
+describe("futureWindow", () => {
+  const range = (fill: Partial<RangeBounds>): RangeBounds => ({ ...NO_RANGE, ...fill });
+  const now = 1_000_000;
+
+  it("runs to the epoch's end with nothing asked", () => {
+    expect(futureWindow(NO_RANGE, 9_000, undefined, undefined, now)).toEqual({ from_slot: null, to_slot: 9_000 });
+  });
+
+  it("keeps a slot range inside the epoch", () => {
+    expect(futureWindow(range({ from_slot: 100, to_slot: 20_000 }), 9_000, 50, 400_000_000, now)).toEqual({
+      from_slot: 100,
+      to_slot: 9_000,
+    });
+  });
+
+  it("places times as the slots expected then", () => {
+    const window = futureWindow(range({ from_millis: now + 4_000, to_millis: now + 8_000 }), 9_000, 100, 400_000_000, now);
+    expect(window).toEqual({ from_slot: 110, to_slot: 120 });
+  });
+
+  it("is null for times it cannot place and for a range holding nothing", () => {
+    expect(futureWindow(range({ to_millis: now }), 9_000, undefined, undefined, now)).toBeNull();
+    expect(futureWindow(range({ from_slot: 9_001 }), 9_000, 100, 400_000_000, now)).toBeNull();
+  });
+});
+
+describe("FutureMatches", () => {
+  const leader = { identity: "a", client: "Agave", version: "4.4.1", ip: null, country: "DE", stake: 5 };
+
+  it("holds pages in order and drops turns passed", () => {
+    const held = new FutureMatches(40, { from_slot: null, to_slot: 99 });
+    held.add({ turns: [10, 12], leaders: [leader], next: 56, rest: 3 });
+    held.add({ turns: [14], leaders: [], next: null, rest: 0 });
+    expect(held.numbers(9)).toEqual([14, 12, 10]);
+    expect(held.numbers(12)).toEqual([14]);
+    expect(held.next).toBeNull();
+    expect(held.rest).toBe(0);
+  });
+
+  it("keeps a leader's object across pages", () => {
+    const held = new FutureMatches(40, { from_slot: null, to_slot: 99 });
+    held.add({ turns: [10], leaders: [leader], next: 44, rest: 1 });
+    const first = held.peers.get("a");
+    held.add({ turns: [11], leaders: [{ ...leader }], next: null, rest: 0 });
+    expect(held.peers.get("a")).toBe(first);
+    expect(first).toEqual({ ...leader, name: null, icon: null });
+  });
+});
 
 describe("lastTurnOf", () => {
   it("is the turn holding the epoch's last slot", () => {

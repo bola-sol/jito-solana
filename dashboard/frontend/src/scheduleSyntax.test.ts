@@ -12,6 +12,7 @@ const offered: Offered = {
     ["JitoLabs", 17_309],
   ],
   countries: ["DE", "NL", "US"],
+  versions: ["4.4.1", "4.4.0", "4.3.2"],
   names: ["Helius", "Coinbase 05", "Coinbase Cloud", "Hamsa, Labs"],
 };
 const now = new Date(2026, 10, 2, 12, 0).getTime();
@@ -91,6 +92,24 @@ describe("readSearch", () => {
 
   it("takes any client from a validator too old to name them", () => {
     expect(readSearch("client:Whatever", { ...offered, clients: [] }, now).errors).toEqual([]);
+  });
+});
+
+describe("version", () => {
+  it("reads a version with or without its v, and negates with a dash", () => {
+    expect(readSearch("version:v4.4,4.3.2 -version:4.4.0-rc.1", offered, now).filters).toEqual([
+      { kind: "condition", condition: { field: "version", op: "is", value: null, values: ["4.4", "4.3.2"] } },
+      { kind: "condition", condition: { field: "version", op: "is_not", value: null, values: ["4.4.0-rc.1"] } },
+    ]);
+  });
+
+  it("offers the versions seen", () => {
+    expect(suggest("version:4.4", offered).map((option) => option.insert)).toEqual(["version:4.4.1", "version:4.4.0"]);
+  });
+
+  it("types back as it was read", () => {
+    const condition: Condition = { field: "version", op: "is", value: null, values: ["4.4", "4.3.2"] };
+    expect(withValue(condition, valueText(condition), offered)).toEqual(condition);
   });
 });
 

@@ -3,6 +3,7 @@ import {
   conditionHolds,
   conditionParams,
   decodeConditions,
+  endsNextDay,
   nameHolds,
   describeCondition,
   hasRange,
@@ -104,6 +105,45 @@ describe("describeCondition", () => {
   });
 });
 
+describe("rangeBounds with a bare time", () => {
+  const now = new Date(2026, 10, 4, 15, 0).getTime();
+
+  it("ends a range after it starts, into the hours to come", () => {
+    expect(rangeBounds("14:00", "16:00", undefined, now)).toEqual({
+      from_slot: null,
+      to_slot: null,
+      from_millis: new Date(2026, 10, 4, 14, 0).getTime(),
+      to_millis: new Date(2026, 10, 4, 16, 0).getTime(),
+    });
+  });
+
+  it("says when an end has rolled over, which only a bare time can", () => {
+    expect(endsNextDay("14:00", "16:00", now)).toBe(true);
+    expect(endsNextDay("14:00", "14:30", now)).toBe(false);
+    expect(endsNextDay("Nov 4 14:00", "Nov 3 16:00", now)).toBe(false);
+    expect(endsNextDay("", "16:00", now)).toBe(false);
+  });
+
+  it("leaves dated ends and a range over midnight as read", () => {
+    expect(rangeBounds("23:00", "01:00", undefined, now).to_millis).toBe(new Date(2026, 10, 4, 1, 0).getTime());
+    expect(rangeBounds("Nov 5 08:00", "Nov 5 09:00", undefined, now).to_millis).toBe(new Date(2026, 10, 5, 9, 0).getTime());
+  });
+});
+
+describe("a version condition", () => {
+  const held = (values: string[], version: string | null, op: "is" | "is_not" = "is") =>
+    conditionHolds(list("version", op, values), entry(), { client: null, version, country: null, stake: 0, delinquent: false }, null);
+
+  it("names a version whole or by its start at a dot", () => {
+    expect(held(["4.4.1"], "4.4.1")).toBe(true);
+    expect(held(["4.4"], "4.4.1")).toBe(true);
+    expect(held(["4.4.0"], "4.4.0-rc.1")).toBe(true);
+    expect(held(["4.4"], "4.40.1")).toBe(false);
+    expect(held(["4.4"], null)).toBe(false);
+    expect(held(["4.3"], "4.4.1", "is_not")).toBe(true);
+  });
+});
+
 describe("nextOp", () => {
   it("moves a number round every comparison and a list between is and is not", () => {
     const seen = ["gt"];
@@ -130,7 +170,7 @@ describe("toServer", () => {
 });
 
 describe("conditionHolds", () => {
-  const facts = { client: "AgaveBam", country: "DE", stake: 5_000_000_000_000, delinquent: true };
+  const facts = { client: "AgaveBam", version: null, country: "DE", stake: 5_000_000_000_000, delinquent: true };
 
   it("compares a slot's figures in the units shown", () => {
     expect(conditionHolds(number("base_fee", "eq", 0.002), entry(), null, null)).toBe(true);

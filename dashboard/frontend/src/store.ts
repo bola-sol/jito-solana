@@ -18,6 +18,7 @@ import type {
   Peer,
   ProducedBlock,
   ProducedDetail,
+  FutureReply,
   ScheduleSummary,
   Published,
   SlotCost,
@@ -50,6 +51,7 @@ export interface Requests {
     reply: { turns: SlotRange[]; next: number | null; slow: SlowCutOffs | null };
   };
   "slot.summary": { params: ScanParams; reply: ScheduleSummary | null };
+  "slot.future": { params: ScanParams; reply: FutureReply | null };
   "epoch.query": { params: { epoch: number }; reply: EpochInfo | null };
   "summary.displays": { params: Record<string, never>; reply: Displays };
   "summary.misses": { params: Record<string, never>; reply: MissList };

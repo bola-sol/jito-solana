@@ -6,7 +6,9 @@ import {
   EPOCH_END_KEY,
   expectedAt,
   FUTURE_PAGE,
+  FutureMatches,
   futureNumbers,
+  futureWindow,
   lastTurnOf,
   ourFutureNumbers,
   raiseTop,
@@ -48,12 +50,14 @@ import {
   conditionHolds,
   conditionParts,
   describeCondition,
+  endsNextDay,
   FIELD_ORDER,
   FIELDS,
   hasRange,
   inRange,
   nameHolds,
   nextOp,
+  NO_RANGE,
   rangeBounds,
   ready,
   toServer,
@@ -107,6 +111,9 @@ const REVEAL_GAP = 40;
 /** How often this epoch's figures are asked for again while nothing is filtered. */
 const SUMMARY_EVERY_MS = 30_000;
 
+/** Turns to come in view when a list opens with no others matching. */
+const NEAREST_MATCHES = 3;
+
 /** By client is closed until opened and then remembered. */
 const CLIENTS_FOLD = "schedule-by-client";
 
@@ -132,7 +139,9 @@ function asksAnything(ask: SearchAsk): boolean {
 }
 
 function leaderFacts(peer: Peer | undefined, delinquent: boolean): LeaderFacts | null {
-  return peer ? { client: peer.client ?? null, country: peer.country ?? null, stake: peer.stake, delinquent } : null;
+  return peer
+    ? { client: peer.client ?? null, version: peer.version ?? null, country: peer.country ?? null, stake: peer.stake, delinquent }
+    : null;
 }
 
 const NO_KEYS: readonly string[] = [];
@@ -490,25 +499,80 @@ export function SchedulePage({
     [nowTurn, nowHeld, leaderOf, identity, leaderRevision],
   );
 
-  // The epoch's turns to come, above the live edge: all of them a page at a time, or ours. Not under a
-  // search, a filter or a jump, none of which a turn to come could meet.
-  const futureMode = jumping || filterActive || query.trim() !== "" ? null : oursOnly ? "ours" : "all";
   const newestTurn = Math.max(nowTurn ?? -1, numbers[0] ?? -1);
   const liveTurn = newestTurn < 0 ? null : newestTurn;
   const lastTurn = epoch ? lastTurnOf(epoch) : null;
+  // What a turn to come can meet: its leader and slot, not a slot's figures.
+  const plainList = !filterActive && query.trim() === "";
+  const askFuture = !jumping && !plainList && conditions.length === 0 && columnConds.every((held) => FIELDS[held.field].leader);
+  const [matched, setMatched] = useState<FutureMatches | null>(null);
+  const [matchedPages, setMatchedPages] = useState(0);
+  const futureFailedAt = useRef(0);
+  const matches = useMemo(
+    () => (matched === null || liveTurn === null ? NO_NUMBERS : matched.numbers(liveTurn)),
+    // `matchedPages` stands for the numbers, which grow in place.
+    [matched, matchedPages, liveTurn],
+  );
+
+  // The epoch's turns to come, above the live edge: all of them a page at a time, ours, or those a
+  // search or a leader's filter matches. Not under a jump or a slot's figures.
+  const futureMode = jumping
+    ? null
+    : plainList
+      ? oursOnly
+        ? "ours"
+        : "all"
+      : askFuture && matches.length > 0
+        ? "matches"
+        : null;
   const [futureTop, setFutureTop] = useState<number | null>(null);
   const aheadTop =
     futureMode === "all" && liveTurn !== null && lastTurn !== null ? raiseTop(futureTop, liveTurn, lastTurn) : null;
   const future = useMemo((): readonly number[] => {
     if (futureMode === null || liveTurn === null || !epoch) return NO_NUMBERS;
+    if (futureMode === "matches") return matches;
     if (futureMode === "ours") return ourFutureNumbers(epoch, liveTurn);
     return aheadTop === null ? NO_NUMBERS : futureNumbers(liveTurn, aheadTop);
-  }, [futureMode, liveTurn, epoch, aheadTop]);
-  const reachesEpochEnd = futureMode === "ours" || (aheadTop !== null && aheadTop === lastTurn);
+  }, [futureMode, liveTurn, epoch, aheadTop, matches]);
+  const reachesEpochEnd =
+    futureMode === "ours" || (futureMode === "matches" && matched?.next === null) || (aheadTop !== null && aheadTop === lastTurn);
+  const loadMatches = useCallback(
+    async (held: FutureMatches, ask: SearchAsk): Promise<boolean> => {
+      if (held.loading || held.next === null) return false;
+      if (Date.now() - futureFailedAt.current < RETRY_AFTER_MS) return false;
+      held.loading = true;
+      try {
+        const reply = await store.request("slot.future", {
+          ...scanParams(ask),
+          ...NO_RANGE,
+          ...held.window,
+          before: held.next,
+          slow: null,
+        });
+        if (reply === null || !Array.isArray(reply.turns)) {
+          held.next = null;
+          return false;
+        }
+        held.add(reply);
+        return true;
+      } catch {
+        futureFailedAt.current = Date.now();
+        return false;
+      } finally {
+        held.loading = false;
+        setMatchedPages((was) => was + 1);
+      }
+    },
+    [store],
+  );
   const moreAhead = useCallback(() => {
+    if (futureMode === "matches") {
+      if (matched) void loadMatches(matched, asked.ask);
+      return;
+    }
     if (aheadTop === null || lastTurn === null || aheadTop >= lastTurn) return;
     setFutureTop(Math.min(lastTurn, aheadTop + FUTURE_PAGE));
-  }, [aheadTop, lastTurn]);
+  }, [futureMode, matched, loadMatches, asked.ask, aheadTop, lastTurn]);
   // Built when first drawn and kept while their leaders answer the same.
   const futureTurns = useMemo(() => new Map<number, Turn>(), [leaderOf, identity, leaderRevision, epochKey]);
   const futureTurnOf = useCallback(
@@ -574,6 +638,13 @@ export function SchedulePage({
     // `foundPages` stands for the results, which change in place.
   }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, nameConds, filterActive, slotMatches, byIdentity, delinquentVotes]);
   const nowShown = nowTurn !== null && pastShown[0] === nowTurn;
+  // With only turns to come matching, the list opens on the nearest of them rather than the empty
+  // space under the edge. Not moved as turns pass, as a new item here would scroll the reader.
+  const nothingPast = pastShown.length === 0 && found !== null && !found.loading;
+  const openOnMatch = useMemo(
+    () => (nothingPast ? (matches[Math.max(0, matches.length - NEAREST_MATCHES)] ?? null) : null),
+    [matched, nothingPast],
+  );
   const shown = useMemo(
     (): readonly number[] =>
       futureMode === null || liveTurn === null
@@ -678,15 +749,56 @@ export function SchedulePage({
   const estimatedNanos = store.get("summary", "estimated_slot_duration_nanos");
   const nextLeader = store.get("summary", "next_leader_slot");
 
+  // Read afresh for each settled search and epoch, and swapped in once its first page lands so the
+  // list holds still while typing.
+  const settled = asked.ask === ask;
+  const askedKey = JSON.stringify(asked.ask);
+  const hasLiveTurn = liveTurn !== null;
+  useEffect(() => {
+    if (!askFuture) {
+      setMatched(null);
+      return;
+    }
+    if (!settled || liveTurn === null || !epoch) return;
+    const window = futureWindow(asked.ask.range, epoch.end_slot, completedSlot, estimatedNanos, Date.now());
+    if (!window) {
+      setMatched(null);
+      return;
+    }
+    let current = true;
+    const fresh = new FutureMatches((liveTurn + 1) * SLOTS_PER_TURN, window);
+    void loadMatches(fresh, asked.ask).then(() => {
+      if (current) setMatched(fresh);
+    });
+    return () => {
+      current = false;
+    };
+    // The live turn and estimates at the time of asking; turns already passed are dropped as drawn.
+  }, [askFuture, settled, askedKey, epoch?.epoch, hasLiveTurn, loadMatches]);
+  // Keeps a page ahead as the live turn eats into what was read.
+  useEffect(() => {
+    if (matched && matched.next !== null && matches.length < FUTURE_PAGE / 2) void loadMatches(matched, asked.ask);
+    // The live turn retries a page that failed.
+  }, [matched, matches.length, liveTurn, loadMatches, asked.ask]);
+
   const renderTurn = (number: number): ReactElement | null => {
     if (number === EDGE_KEY) {
       return (
         <LiveEdge
           ours={futureMode === "ours"}
-          toCome={futureMode === "ours" ? future.length : lastTurn === null || liveTurn === null ? 0 : lastTurn - liveTurn}
+          matching={futureMode === "matches"}
+          toCome={
+            futureMode === "matches"
+              ? future.length + (matched?.rest ?? 0)
+              : futureMode === "ours"
+                ? future.length
+                : lastTurn === null || liveTurn === null
+                  ? 0
+                  : lastTurn - liveTurn
+          }
           ourToCome={ourToCome}
           epoch={epoch?.epoch ?? null}
-          nextLeader={nextLeader}
+          nextLeader={futureMode === "matches" ? (future.at(-1) ?? 0) * SLOTS_PER_TURN : nextLeader}
           completed={completedSlot}
           slotNanos={estimatedNanos}
         />
@@ -704,7 +816,7 @@ export function SchedulePage({
       toCome && completedSlot !== undefined && estimatedNanos
         ? aboutClock(expectedAt(first, completedSlot, now, estimatedNanos), now)
         : null;
-    const peer = turn.leader ? byIdentity.get(turn.leader) : undefined;
+    const peer = turn.leader ? (byIdentity.get(turn.leader) ?? (toCome ? matched?.peers.get(turn.leader) : undefined)) : undefined;
     const lastVote = turn.leader ? delinquentVotes.get(turn.leader) : undefined;
     const leader = sourceOf(number) === "index" ? leaderFacts(peer, lastVote !== undefined) : "matched";
     const tip = live.at(-1)?.slot;
@@ -725,7 +837,7 @@ export function SchedulePage({
         future={toCome}
         expected={expected}
         landed={landedSlot !== null && turnNumberOf(landedSlot) === turnNumberOf(first) ? landedSlot : null}
-        marks={filterActive ? turn.slots.map((slot) => slotMatches(slot, leader)) : null}
+        marks={filterActive && !toCome ? turn.slots.map((slot) => slotMatches(slot, leader)) : null}
         delinquent={delinquent}
         whyKeys={whyKeys}
       />
@@ -768,7 +880,7 @@ export function SchedulePage({
       .filter((peer) => peer.name && peer.stake > 0)
       .sort((a, b) => b.stake - a.stake)
       .map((peer) => peer.name ?? "");
-    return { fields, only: offered, clients, countries: choices?.countries ?? [], names };
+    return { fields, only: offered, clients, countries: choices?.countries ?? [], versions: choices?.versions ?? [], names };
   }, [fields, offered, choices, clientSlots, peers]);
   // A search set elsewhere, by a view or the address, replaces what the box holds.
   useEffect(() => {
@@ -812,8 +924,10 @@ export function SchedulePage({
           group = ONLY_COLUMNS[filter.only];
           break;
         case "range":
-          next.since = clampEntry(filter.since, held, newestSlot, epoch, now).text;
-          next.until = clampEntry(filter.until, held, newestSlot, epoch, now).text;
+          next.since = clampEntry(filter.since, held, newestSlot, epoch, now, true).text;
+          next.until = endsNextDay(filter.since, filter.until, now)
+            ? filter.until
+            : clampEntry(filter.until, held, newestSlot, epoch, now, true).text;
           break;
         case "at": {
           const clamped = clampEntry(filter.text, held, newestSlot, epoch, now);
@@ -882,7 +996,7 @@ export function SchedulePage({
     onFilter({ query: "", since: "", until: "", where: [], from: "", only: [] });
   };
 
-  const rangeText = since && until ? `From ${since} to ${until}` : since ? `From ${since} to now` : until ? `Up to ${until}` : "";
+  const rangeText = since && until ? `From ${since} to ${until}` : since ? `From ${since} on` : until ? `Up to ${until}` : "";
   const pills: Pill[] = [
     ...(jump ? [{ kind: "plain", key: "at", label: `At ${jumpText(jump)}`, onRemove: backToLive } as const] : []),
     ...(rangeText
@@ -1069,16 +1183,16 @@ export function SchedulePage({
         )}
         {/* Mounted afresh for each jump, so each lands at its turn. */}
         <VirtualList
-          key={asked.jump ? JSON.stringify(asked.jump) : `live:${futureMode ?? "none"}:${returns}`}
+          key={asked.jump ? JSON.stringify(asked.jump) : `live:${futureMode ?? "none"}:${returns}:${futureMode === "matches" ? askedKey : ""}`}
           keys={shown}
           sizeClass={sizeClass}
           fallback={TURN_HEIGHT_GUESS}
           render={renderTurn}
           scroller={list}
           onNearEnd={nearEnd}
-          onNearStart={jumping ? nearStart : futureMode === "all" ? moreAhead : undefined}
+          onNearStart={jumping ? nearStart : futureMode === "all" || futureMode === "matches" ? moreAhead : undefined}
           follow={!jumping && futureMode === null}
-          reveal={jumping ? landingTurn : futureMode !== null ? EDGE_KEY : undefined}
+          reveal={jumping ? landingTurn : futureMode !== null ? (openOnMatch ?? EDGE_KEY) : undefined}
           revealGap={jumping ? REVEAL_GAP : 0}
           marker={futureMode !== null ? EDGE_KEY : undefined}
           onMarker={setEdge}
@@ -1089,7 +1203,7 @@ export function SchedulePage({
             {searching ? "Every match the validator keeps." : "As far back as the validator keeps."}
           </div>
         )}
-        {futureMode !== null && (
+        {futureMode !== null && openOnMatch === null && (
           <ScrollTop scroller={list} hold={false} below shown={edge === "below"} label="Back to live" onPress={toLive} />
         )}
       </div>
@@ -1324,6 +1438,7 @@ const EXPECTED_TITLE = "When the turn should start, at the measured slot time.";
 /** Between the turns to come and the live one: how many are left, and when ours is next. */
 function LiveEdge({
   ours,
+  matching,
   toCome,
   ourToCome,
   epoch,
@@ -1333,6 +1448,8 @@ function LiveEdge({
 }: {
   /** Listing our turns alone. */
   ours: boolean;
+  /** Listing the turns a filter matches; `nextLeader` is then the next of those. */
+  matching: boolean;
   toCome: number;
   ourToCome: number;
   epoch: number | null;
@@ -1349,23 +1466,25 @@ function LiveEdge({
     <div className="schedule-edge">
       <b>
         <span aria-hidden="true">▲</span>{" "}
-        {ours
-          ? `${count(ourToCome)} of our turns to come`
-          : toCome === 0
-            ? `Last turn of epoch ${epoch ?? ""}`.trim()
-            : `${count(toCome)} turns to come`}
+        {matching
+          ? `${count(toCome)} matching ${toCome === 1 ? "turn" : "turns"} to come`
+          : ours
+            ? `${count(ourToCome)} of our turns to come`
+            : toCome === 0
+              ? `Last turn of epoch ${epoch ?? ""}`.trim()
+              : `${count(toCome)} turns to come`}
       </b>
       {nextLeader === null ? (
         <span className="schedule-edge-dim">none of our turns left this epoch</span>
       ) : nextLeader !== undefined && until !== null ? (
         <>
           <span className="schedule-edge-next">
-            our next <span className="schedule-edge-wide">at slot {count(nextLeader)}, </span>
+            {matching ? "next" : "our next"} <span className="schedule-edge-wide">at slot {count(nextLeader)}, </span>
             {aboutClock(now + until, now)}
           </span>
           <span className="schedule-edge-dim">
             {until === 0 ? "now" : `in ${duration(until, 2)}`}
-            {!ours && <span className="schedule-edge-wide"> · {count(ourToCome)} of our turns to come</span>}
+            {!ours && !matching && <span className="schedule-edge-wide"> · {count(ourToCome)} of our turns to come</span>}
           </span>
         </>
       ) : null}

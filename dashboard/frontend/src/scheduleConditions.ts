@@ -3,7 +3,7 @@
  *  matches the same in `search.rs`. */
 
 import type { ScheduleColumns } from "./layout";
-import { parseJump, type Jump } from "./scheduleFilters";
+import { isBareTime, parseJump, type Jump } from "./scheduleFilters";
 import { timelineOf } from "./timeline";
 import { jitoShare } from "./tips";
 import type { EpochInfo, SlotEntry, TipRates } from "./types";
@@ -12,6 +12,7 @@ export type Field =
   | "leader"
   | "name"
   | "client"
+  | "version"
   | "country"
   | "stake"
   | "voted"
@@ -53,6 +54,7 @@ export const FIELDS: Record<Field, FieldInfo> = {
   leader: { label: "Leader", unit: "", list: true, group: "status", leader: true },
   name: { label: "Validator", unit: "", list: true, group: "status", leader: true },
   client: { label: "Client", unit: "", list: true, group: "status", leader: true },
+  version: { label: "Version", unit: "", list: true, group: "status", leader: true },
   country: { label: "Country", unit: "", list: true, group: "status", leader: true },
   stake: { label: "Stake", unit: "SOL", list: false, group: "status", leader: true },
   voted: { label: "Voted", unit: "", list: true, group: "status", leader: false },
@@ -85,6 +87,8 @@ const VOTED: readonly (readonly [value: string, label: string])[] = [
 ];
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
+
+const DAY_MILLIS = 86_400_000;
 
 /** Whether a condition is complete enough to ask for. */
 export function ready(condition: Condition): boolean {
@@ -208,6 +212,7 @@ export function toServer(condition: Condition, rates: TipRates | null | undefine
 /** What the page knows of a live turn's leader, from the peer table. */
 export interface LeaderFacts {
   client: string | null;
+  version: string | null;
   country: string | null;
   stake: number;
   delinquent: boolean;
@@ -264,6 +269,7 @@ function figure(
     case "leader":
     case "name":
     case "client":
+    case "version":
     case "country":
     case "voted":
       return null;
@@ -278,6 +284,15 @@ export function nameHolds(condition: Condition, name: string | null | undefined,
     return wanted !== "" && parts.some((part) => part.includes(wanted));
   });
   return condition.op === "is_not" ? !named : named;
+}
+
+/** Whether a version is named whole or by its start at a dot or dash: `4.4` holds `4.4.0`. */
+function versionNamed(condition: Condition, version: string): boolean {
+  return condition.values.some((value) => {
+    if (!version.startsWith(value)) return false;
+    const rest = version.slice(value.length);
+    return rest === "" || rest.startsWith(".") || rest.startsWith("-");
+  });
 }
 
 /** On the page, as the validator matches it. With no leader facts, a leader condition is taken as
@@ -301,9 +316,11 @@ export function conditionHolds(
           ? facts && (facts.delinquent ? "delinquent" : "voting")
           : condition.field === "client"
             ? facts?.client
-            : facts?.country;
+            : condition.field === "version"
+              ? facts?.version
+              : facts?.country;
     if (value == null) return false;
-    const named = condition.values.includes(value);
+    const named = condition.field === "version" ? versionNamed(condition, value) : condition.values.includes(value);
     return condition.op === "is_not" ? !named : named;
   }
   const value = figure(condition.field, entry, facts, rates);
@@ -350,13 +367,19 @@ function bound(jump: Jump | null, end: "from" | "to", epoch: EpochInfo | undefin
   return end === "from" ? { from_slot: first } : { to_slot: last };
 }
 
+/** A time with no date ending before the range's start is the next day, so `14:00..16:00` at 15:00
+ *  ends today. */
+export function endsNextDay(since: string, until: string, now: number): boolean {
+  const from = parseJump(since, now);
+  const to = parseJump(until, now);
+  return from?.kind === "time" && to?.kind === "time" && to.millis < from.millis && isBareTime(until);
+}
+
 /** The range's two ends as typed, each a slot, a time or an epoch; empty or unreadable is open. */
 export function rangeBounds(since: string, until: string, epoch: EpochInfo | undefined, now: number): RangeBounds {
-  return {
-    ...NO_RANGE,
-    ...bound(parseJump(since, now), "from", epoch),
-    ...bound(parseJump(until, now), "to", epoch),
-  };
+  const to = parseJump(until, now);
+  const end = to?.kind === "time" && endsNextDay(since, until, now) ? { ...to, millis: to.millis + DAY_MILLIS } : to;
+  return { ...NO_RANGE, ...bound(parseJump(since, now), "from", epoch), ...bound(end, "to", epoch) };
 }
 
 export function hasRange(range: RangeBounds): boolean {

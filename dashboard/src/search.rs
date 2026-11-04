@@ -1,6 +1,7 @@
 //! Turns in the held history that match a leader's name or key, a slot number, this validator, or
 //! conditions on their slots and leaders, answered a page at a time for the schedule page's search,
-//! and the same matches summed up, overall and by client.
+//! and the same matches summed up, overall and by client. Turns to come are matched on what is
+//! known before they happen.
 
 use {
     crate::{
@@ -29,6 +30,9 @@ const SLOTS_PER_TURN: u64 = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
 
 /// A page of turns with their lead-in rows stays under half the message ceiling; a test holds it.
 pub const MAX_SEARCH_TURNS: usize = 128;
+
+/// Turn numbers and their leaders stay well under the message ceiling; a test holds it.
+pub const MAX_FUTURE_TURNS: usize = 256;
 
 /// Longer than any name, and it bounds the cost of each comparison.
 const MAX_QUERY_CHARS: usize = 64;
@@ -71,6 +75,8 @@ pub enum Only {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeaderTraits {
     pub client: Option<String>,
+    pub version: Option<String>,
+    pub ip: Option<String>,
     pub country: Option<&'static str>,
     /// In lamports.
     pub stake: u64,
@@ -92,6 +98,8 @@ pub enum Field {
     /// Part of the leader's name or identity key, any case.
     Name,
     Client,
+    /// A version, or its start at a dot: `4.4` holds `4.4.0`.
+    Version,
     Country,
     Stake,
     Voted,
@@ -253,6 +261,12 @@ impl<'a> EpochLeaders<'a> {
             ours,
             traits,
         }
+    }
+
+    /// The identity leading the turn; `None` outside this epoch.
+    fn key_at(&self, slot: Slot) -> Option<&'a str> {
+        let index = usize::from(leader_index(self.epoch, slot)?);
+        self.epoch.leaders.get(index).map(String::as_str)
     }
 
     /// The turn's leader: whether it matches by name or key, whether it is ours, and its traits;
@@ -439,14 +453,29 @@ fn holds(
     row: &PackedSlot,
     leader: Option<LeaderAt<'_>>,
 ) -> bool {
-    let traits = leader.and_then(|leader| leader.traits);
+    if let Some(held) = leader_holds(condition, leader) {
+        return held;
+    }
     match condition.field {
+        Field::Voted => listed(condition, voted(row)),
+        field => figure(field, history, slot, row, leader)
+            .is_some_and(|figure| compared(condition, figure)),
+    }
+}
+
+/// Whether a turn's leader meets a condition on the leader; `None` for a condition on a slot.
+fn leader_holds(condition: &Condition, leader: Option<LeaderAt<'_>>) -> Option<bool> {
+    let traits = leader.and_then(|leader| leader.traits);
+    Some(match condition.field {
         Field::Client => listed(
             condition,
             traits.and_then(|traits| traits.client.as_deref()),
         ),
+        Field::Version => version_listed(
+            condition,
+            traits.and_then(|traits| traits.version.as_deref()),
+        ),
         Field::Country => listed(condition, traits.and_then(|traits| traits.country)),
-        Field::Voted => listed(condition, voted(row)),
         // Every name condition, matched once per leader.
         Field::Name => leader.is_some_and(|leader| leader.names_held),
         Field::Leader => listed(
@@ -459,17 +488,49 @@ fn holds(
                 }
             }),
         ),
-        field => figure(field, history, slot, row, leader).is_some_and(|figure| {
-            let value = condition.value;
-            match condition.op {
-                Op::Gt => figure > value,
-                Op::Ge => figure >= value,
-                Op::Lt => figure < value,
-                Op::Le => figure <= value,
-                Op::Eq => (figure - value).abs() < f64::EPSILON,
-                Op::Is | Op::IsNot => false,
-            }
-        }),
+        Field::Stake => traits.is_some_and(|traits| compared(condition, traits.stake as f64)),
+        Field::Voted
+        | Field::LeftOut
+        | Field::Transactions
+        | Field::BaseFee
+        | Field::Priority
+        | Field::Tips
+        | Field::Duration
+        | Field::Shreds
+        | Field::Repaired
+        | Field::Received
+        | Field::Replay
+        | Field::Compute
+        | Field::BlockFill => return None,
+    })
+}
+
+fn compared(condition: &Condition, figure: f64) -> bool {
+    let value = condition.value;
+    match condition.op {
+        Op::Gt => figure > value,
+        Op::Ge => figure >= value,
+        Op::Lt => figure < value,
+        Op::Le => figure <= value,
+        Op::Eq => (figure - value).abs() < f64::EPSILON,
+        Op::Is | Op::IsNot => false,
+    }
+}
+
+/// `is` and `is_not` against versions, each naming one whole or its start at a dot or dash.
+fn version_listed(condition: &Condition, version: Option<&str>) -> bool {
+    let Some(version) = version else {
+        return false;
+    };
+    let named = condition.values.iter().any(|listed| {
+        version
+            .strip_prefix(listed.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.') || rest.starts_with('-'))
+    });
+    match condition.op {
+        Op::Is => named,
+        Op::IsNot => !named,
+        _ => false,
     }
 }
 
@@ -512,9 +573,6 @@ fn figure(
     let block = row.flags & HAS_BLOCK != 0;
     let shreds = row.flags & HAS_SHREDS != 0;
     let whole = match field {
-        Field::Stake => leader
-            .and_then(|leader| leader.traits)
-            .map(|traits| traits.stake),
         Field::LeftOut => matches!(row.flags & REWARD_MASK, REWARD_PAID | REWARD_UNPAID)
             .then_some(u64::from(row.left_out)),
         Field::Transactions => block.then_some(u64::from(row.non_votes)),
@@ -533,7 +591,13 @@ fn figure(
                 .filter(|limit| *limit > 0)?;
             return block.then(|| f64::from(row.compute) / limit as f64 * 100.0);
         }
-        Field::Leader | Field::Name | Field::Client | Field::Country | Field::Voted => None,
+        Field::Leader
+        | Field::Name
+        | Field::Client
+        | Field::Version
+        | Field::Country
+        | Field::Stake
+        | Field::Voted => None,
     };
     whole.map(|value| value as f64)
 }
@@ -760,6 +824,103 @@ pub fn search(
     }
 }
 
+/// A leader of turns to come, for drawing them.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct FutureLeader {
+    pub identity: String,
+    pub client: Option<String>,
+    pub version: Option<String>,
+    pub ip: Option<String>,
+    pub country: Option<&'static str>,
+    pub stake: u64,
+}
+
+/// A page of the turns to come that match, oldest first.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct FutureReply {
+    /// Turn numbers: a turn's first slot over the slots in a turn.
+    pub turns: Vec<u64>,
+    /// Each leader of those turns once.
+    pub leaders: Vec<FutureLeader>,
+    /// Where the next page starts; `None` once the schedule is read to its end.
+    pub next: Option<Slot>,
+    /// Matches after this page.
+    pub rest: u64,
+}
+
+/// The turns to come from `before` on that a search would list, a page at a time. Only what is
+/// known of a turn before it happens is matched, so a filter on a slot's figures matches none. Time
+/// bounds are ignored: a turn to come has no clock, and the page sends them as slots.
+pub fn future(
+    history: &RwLock<SlotHistory>,
+    info: &RwLock<ValidatorInfoCache>,
+    leaders: &RwLock<LeaderMap>,
+    epochs: &[EpochInfo],
+    params: &SearchParams,
+) -> FutureReply {
+    let knowable = params.only.is_empty()
+        && params
+            .conditions
+            .iter()
+            .all(|condition| leader_holds(condition, None).is_some());
+    if !knowable {
+        return FutureReply::default();
+    }
+    let Ok(map) = leaders.read() else {
+        return FutureReply::default();
+    };
+    let Some(Prepared { wanted, .. }) = prepare(history, info, &map, epochs, params) else {
+        return FutureReply::default();
+    };
+    drop(map);
+    let limit = params
+        .limit
+        .unwrap_or(MAX_FUTURE_TURNS)
+        .clamp(1, MAX_FUTURE_TURNS);
+    let last = epochs.iter().map(|epoch| epoch.end_slot).max().unwrap_or(0);
+    let last = params.to_slot.map_or(last, |to| to.min(last));
+
+    let mut reply = FutureReply::default();
+    let mut seen = BTreeSet::new();
+    let mut text = String::new();
+    let mut turn = params.before.div_ceil(SLOTS_PER_TURN);
+    loop {
+        let start = turn.saturating_mul(SLOTS_PER_TURN);
+        if start > last {
+            return reply;
+        }
+        let end = start.saturating_add(SLOTS_PER_TURN.saturating_sub(1));
+        let leader = wanted.leader(start);
+        let matches = params.from_slot.is_none_or(|from| end >= from)
+            && wanted.turn_matches(start, end, leader, &mut text)
+            && params
+                .conditions
+                .iter()
+                .all(|condition| leader_holds(condition, leader) == Some(true));
+        if matches {
+            if reply.turns.len() < limit {
+                reply.turns.push(turn);
+                let key = wanted.leaders.iter().find_map(|held| held.key_at(start));
+                if let Some(key) = key.filter(|key| seen.insert(*key)) {
+                    let traits = leader.and_then(|leader| leader.traits);
+                    reply.leaders.push(FutureLeader {
+                        identity: key.to_string(),
+                        client: traits.and_then(|traits| traits.client.clone()),
+                        version: traits.and_then(|traits| traits.version.clone()),
+                        ip: traits.and_then(|traits| traits.ip.clone()),
+                        country: traits.and_then(|traits| traits.country),
+                        stake: traits.map_or(0, |traits| traits.stake),
+                    });
+                }
+            } else {
+                reply.next.get_or_insert(start);
+                reply.rest = reply.rest.saturating_add(1);
+            }
+        }
+        turn = turn.saturating_add(1);
+    }
+}
+
 /// A mean built a slot at a time.
 #[derive(Debug, Default, Clone, Copy)]
 struct Mean {
@@ -864,11 +1025,13 @@ pub struct DelinquentLeader {
     pub last_vote: Option<Slot>,
 }
 
-/// What the page offers in its client and country lists: those among staked nodes.
+/// What the page offers in its client, country and version lists: those among staked nodes.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct Choices {
     pub clients: Vec<String>,
     pub countries: Vec<&'static str>,
+    /// Highest first.
+    pub versions: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
@@ -926,9 +1089,14 @@ pub fn summarize(
             .collect();
         let countries: BTreeSet<&'static str> =
             map.values().filter_map(|traits| traits.country).collect();
+        let versions: BTreeSet<&str> = map
+            .values()
+            .filter_map(|traits| traits.version.as_deref())
+            .collect();
         Choices {
             clients: clients.into_iter().map(str::to_string).collect(),
             countries: countries.into_iter().collect(),
+            versions: versions.into_iter().rev().map(str::to_string).collect(),
         }
     };
     let mut delinquent: Vec<DelinquentLeader> = map
@@ -1112,6 +1280,8 @@ mod tests {
             other,
             LeaderTraits {
                 client: Some("AgaveBam".into()),
+                version: Some("4.4.1".into()),
+                ip: Some("192.0.2.1".into()),
                 country: Some("DE"),
                 stake: 5_000,
                 delinquent: true,
@@ -1695,6 +1865,171 @@ mod tests {
         );
         assert_eq!(reply.turns.len(), MAX_SEARCH_TURNS);
         let encoded = proto::encode_with_id("slot", "search", Some(1), &reply);
+        assert!(
+            encoded.len() < proto::MAX_MESSAGE / 2,
+            "a full page is {} bytes against a {} byte ceiling",
+            encoded.len(),
+            proto::MAX_MESSAGE
+        );
+    }
+
+    fn future_of(conditions: Vec<Condition>, before: Slot) -> FutureReply {
+        let (epochs, map) = two_leaders();
+        future(
+            &RwLock::new(SlotHistory::new(4_096)),
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                conditions,
+                ..params("", false, before, Some(4))
+            },
+        )
+    }
+
+    #[test]
+    fn test_turns_to_come_match_on_their_leader_with_no_history_held() {
+        let reply = future_of(
+            vec![condition(Field::Client, Op::Is, 0.0, &["AgaveBam"])],
+            START,
+        );
+        let first = START / SLOTS_PER_TURN;
+        assert_eq!(
+            reply.turns,
+            [first + 1, first + 3, first + 5, first + 7],
+            "the second leader's turns"
+        );
+        assert_eq!(reply.leaders.len(), 1, "each leader once");
+        let leader = &reply.leaders[0];
+        assert_eq!(leader.version.as_deref(), Some("4.4.1"));
+        assert_eq!(leader.ip.as_deref(), Some("192.0.2.1"));
+        assert_eq!(leader.country, Some("DE"));
+        assert_eq!(leader.stake, 5_000);
+    }
+
+    #[test]
+    fn test_a_filter_on_a_slots_figures_matches_no_turn_to_come() {
+        let leader = condition(Field::Country, Op::Is, 0.0, &["DE"]);
+        let figure = condition(Field::Duration, Op::Gt, 400.0, &[]);
+        assert_eq!(
+            future_of(vec![leader, figure], START),
+            FutureReply::default()
+        );
+        let (epochs, map) = two_leaders();
+        let reply = future(
+            &RwLock::new(SlotHistory::new(4_096)),
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                only: vec![Only::Skipped],
+                ..params("", false, START, None)
+            },
+        );
+        assert_eq!(reply, FutureReply::default());
+    }
+
+    #[test]
+    fn test_turns_to_come_are_read_a_page_at_a_time() {
+        let stake = || condition(Field::Stake, Op::Gt, 0.0, &[]);
+        let page = future_of(vec![stake()], START);
+        // Half of the epoch's thousand turns, four on this page.
+        assert_eq!(page.rest, 496);
+        let next = page.next.expect("more to come");
+        let later = future_of(vec![stake()], next);
+        assert_eq!(later.rest, 492);
+        assert!(later.turns[0] > page.turns[3], "carries on from the page");
+        assert_eq!(later.turns[0].saturating_mul(SLOTS_PER_TURN), next);
+    }
+
+    #[test]
+    fn test_turns_to_come_start_at_the_next_whole_turn_and_keep_to_the_range() {
+        let (epochs, map) = two_leaders();
+        let first = START / SLOTS_PER_TURN;
+        let reply = future(
+            &RwLock::new(SlotHistory::new(4_096)),
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                from_slot: Some(START + 8),
+                to_slot: Some(START + 15),
+                ..params("", false, START + 1, None)
+            },
+        );
+        assert_eq!(reply.turns, [first + 2, first + 3]);
+        assert_eq!(reply.next, None);
+        assert_eq!(reply.rest, 0);
+    }
+
+    #[test]
+    fn test_turns_to_come_match_ours_and_words() {
+        let (epochs, map) = two_leaders();
+        let first = START / SLOTS_PER_TURN;
+        let read = |query: &str, ours: bool| {
+            future(
+                &RwLock::new(SlotHistory::new(4_096)),
+                &RwLock::default(),
+                &map,
+                &epochs,
+                &params(query, ours, START, Some(2)),
+            )
+            .turns
+        };
+        assert_eq!(read("", true), [first, first + 2]);
+        // Digits read as part of a slot number.
+        assert_eq!(read("1009", false), [first + 2]);
+        assert!(read("nobody", false).is_empty());
+    }
+
+    #[test]
+    fn test_a_version_is_named_whole_or_by_its_start_at_a_dot() {
+        let holds = |op: Op, values: &[&str], version: Option<&str>| {
+            version_listed(&condition(Field::Version, op, 0.0, values), version)
+        };
+        assert!(holds(Op::Is, &["4.4.1"], Some("4.4.1")));
+        assert!(holds(Op::Is, &["4.4"], Some("4.4.1")));
+        assert!(holds(Op::Is, &["4.4.0"], Some("4.4.0-rc.1")));
+        assert!(holds(Op::Is, &["3", "4"], Some("4.4.1")));
+        assert!(!holds(Op::Is, &["4.4"], Some("4.40.1")));
+        assert!(!holds(Op::Is, &["4.4"], None));
+        assert!(holds(Op::IsNot, &["4.3"], Some("4.4.1")));
+        assert!(!holds(Op::IsNot, &["4.4"], Some("4.4.1")));
+        assert!(!holds(Op::IsNot, &["4.4"], None));
+    }
+
+    #[test]
+    fn test_a_full_page_of_turns_to_come_fits_the_message_ceiling() {
+        let keys: Vec<String> = (0..MAX_FUTURE_TURNS)
+            .map(|_| Pubkey::new_unique().to_string())
+            .collect();
+        let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+        let epochs = [epoch(&refs)];
+        let map: LeaderMap = keys
+            .iter()
+            .map(|key| {
+                let traits = LeaderTraits {
+                    client: Some("HarmonicFiredancer".repeat(4)),
+                    version: Some("255.255.255-rc.255".into()),
+                    ip: Some("2001:db8:ffff:ffff:ffff:ffff:ffff:ffff".into()),
+                    country: Some("DE"),
+                    stake: u64::MAX,
+                    delinquent: false,
+                    last_vote: None,
+                };
+                (Pubkey::from_str(key).unwrap(), traits)
+            })
+            .collect();
+        let reply = future(
+            &RwLock::new(SlotHistory::new(4_096)),
+            &RwLock::default(),
+            &RwLock::new(map),
+            &epochs,
+            &params("", false, START, None),
+        );
+        assert_eq!(reply.turns.len(), MAX_FUTURE_TURNS);
+        assert_eq!(reply.leaders.len(), MAX_FUTURE_TURNS);
+        let encoded = proto::encode_with_id("slot", "future", Some(1), &reply);
         assert!(
             encoded.len() < proto::MAX_MESSAGE / 2,
             "a full page is {} bytes against a {} byte ceiling",

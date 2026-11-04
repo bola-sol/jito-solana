@@ -124,7 +124,22 @@ describe("jumpStart", () => {
   });
 });
 
+describe("a date with no year", () => {
+  const now = new Date(2026, 10, 4, 15, 0).getTime();
+
+  it("is this year up to a week ahead, and last year beyond", () => {
+    expect(parseJump("Nov 5 08:00", now)).toEqual({ kind: "time", millis: new Date(2026, 10, 5, 8, 0).getTime() });
+    expect(parseJump("Nov 20 08:00", now)).toEqual({ kind: "time", millis: new Date(2025, 10, 20, 8, 0).getTime() });
+  });
+});
+
 describe("clampEntry", () => {
+  it("leaves a range's end still to come, and moves a jump's", () => {
+    const at = new Date(2026, 10, 2, 12, 0).getTime();
+    expect(clampEntry("5000", null, 4000, undefined, at, true)).toEqual({ text: "5000", moved: null });
+    expect(clampEntry("5000", null, 4000, undefined, at)).toEqual({ text: "", moved: "newer" });
+  });
+
   const held = { slot: 1_000, millis: new Date(2026, 10, 1, 10, 10).getTime() };
   const now = new Date(2026, 10, 2, 12, 0).getTime();
 

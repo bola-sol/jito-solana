@@ -10,7 +10,7 @@ use {
             DEFLATE_PROTOCOL, Frame, Message, Publisher, Request, coalesce, encode_json_with_id,
             encode_with_id,
         },
-        search::{SearchParams, search, summarize},
+        search::{SearchParams, future, search, summarize},
         validator_info::ValidatorInfoCache,
     },
     soketto::{
@@ -756,11 +756,12 @@ struct SlotRangeParams {
     count: usize,
 }
 
-/// The two requests that scan the history: a page of turns, or the matches summed up.
+/// The requests that scan: a page of turns, the matches summed up, or a page of the turns to come.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scan {
     Search,
     Summary,
+    Future,
 }
 
 impl Scan {
@@ -768,6 +769,7 @@ impl Scan {
         match self {
             Self::Search => "search",
             Self::Summary => "summary",
+            Self::Future => "future",
         }
     }
 }
@@ -779,6 +781,7 @@ fn search_request(payload: &[u8]) -> Option<(Scan, Option<u64>, Option<SearchPar
     let scan = match (request.topic.as_str(), request.key.as_str()) {
         ("slot", "search") => Scan::Search,
         ("slot", "summary") => Scan::Summary,
+        ("slot", "future") => Scan::Future,
         _ => return None,
     };
     Some((
@@ -833,6 +836,12 @@ async fn answer_search(
                 key,
                 id,
                 &summarize(&history, &info, leaders, &epochs, &params),
+            ),
+            Scan::Future => encode_with_id(
+                "slot",
+                key,
+                id,
+                &future(&history, &info, leaders, &epochs, &params),
             ),
         })
     })
@@ -1732,6 +1741,26 @@ mod tests {
             reply.contains(r#""id":8"#) && reply.contains("error"),
             "{reply}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_a_page_of_turns_to_come_is_answered_with_its_id() {
+        let (scan, id, params) =
+            search_request(br#"{"topic":"slot","key":"future","id":13,"params":{"before":64}}"#)
+                .expect("turns to come");
+        assert_eq!(scan, Scan::Future);
+        let reply = answer_search(
+            scan,
+            id,
+            params,
+            &empty_history(),
+            &no_info_shared(),
+            &no_epochs_shared(),
+            &no_replies_shared(),
+        )
+        .await;
+        assert!(reply.contains(r#""id":13"#), "{reply}");
+        assert!(reply.contains(r#""turns":[]"#), "{reply}");
     }
 
     #[tokio::test]

@@ -35,6 +35,7 @@ export const KEYS: readonly Key[] = [
   { name: "leftout", kind: "number", field: "left_out", group: "slot", op: ">", example: "0", what: "votes left out of the certificate" },
   { name: "name", kind: "list", field: "name", group: "leader", op: ":", example: 'Helius,"Coinbase 05"', what: "part of a validator's name or key" },
   { name: "client", kind: "list", field: "client", group: "leader", op: ":", example: "Agave,JitoLabs", what: "any of these clients" },
+  { name: "version", kind: "list", field: "version", group: "leader", op: ":", example: "4.4", what: "these client versions, whole or by their start" },
   { name: "geo", kind: "list", field: "country", group: "leader", op: ":", example: "DE,NL", what: "any of these countries" },
   { name: "stake", kind: "number", field: "stake", group: "leader", op: ">", example: "1000000", what: "leader's stake, SOL" },
   { name: "leader", kind: "list", field: "leader", group: "leader", op: ":", example: "delinquent", what: "not voting now, or voting" },
@@ -86,6 +87,8 @@ export interface Offered {
   /** Every leader client, by slots led this epoch where known; empty from a validator too old to say. */
   clients: readonly (readonly [client: string, slots: number])[];
   countries: readonly string[];
+  /** Highest first; empty from a validator too old to say. */
+  versions: readonly string[];
   /** Validator names to suggest, the most staked first. */
   names: readonly string[];
 }
@@ -139,6 +142,9 @@ function listValues(key: Key, typed: readonly string[], offered: Offered): strin
         if (!named) return `No leader runs a client named ${value}.`;
         break;
       }
+      case "version":
+        named = lower.replace(/^v/, "");
+        break;
       case "country":
         if (!/^[a-z]{2}$/.test(lower)) return `${value} is not a country code, e.g. geo:DE.`;
         named = lower.toUpperCase();
@@ -279,7 +285,7 @@ export function readSearch(text: string, offered: Offered, now: number): ReadSea
     }
     if (key.kind === "number") {
       if (start.not) {
-        errors.push(`Only name, client, geo, leader and voted take a leading "-".`);
+        errors.push(`Only name, client, version, geo, leader and voted take a leading "-".`);
         return;
       }
       const read = readNumber(key, start.op, value);
@@ -351,6 +357,8 @@ function valuesOf(key: Key, offered: Offered): (readonly [value: string, what: s
       return offered.names.map((named) => [named, ""]);
     case "client":
       return offered.clients.map(([client, slots]) => [client, slots > 0 ? `${slots.toLocaleString("en-US")} slots this epoch` : ""]);
+    case "version":
+      return offered.versions.map((version) => [version, ""]);
     case "country":
       return offered.countries.map((code) => [code, countryName(code)]);
     case "leader":

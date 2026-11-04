@@ -226,11 +226,22 @@ export interface ScheduleSummary {
   clients: ClientFigures[];
   /** The oldest slot the validator holds. */
   held_from: { slot: number; millis: number | null } | null;
-  /** The clients and countries among staked nodes. */
-  choices: { clients: string[]; countries: string[] };
+  /** The clients, countries and versions among staked nodes. */
+  choices: { clients: string[]; countries: string[]; versions: string[] };
   slow: (number | null)[] | null;
   /** Every staked node not voting now. */
   delinquent: { identity: string; last_vote: number | null }[];
+}
+
+/** A page of the turns to come that match, oldest first. */
+export interface FutureReply {
+  turns: number[];
+  /** Each leader of those turns once. */
+  leaders: Pick<Peer, "identity" | "client" | "version" | "ip" | "country" | "stake">[];
+  /** Where the next page starts. */
+  next: number | null;
+  /** Matches after this page. */
+  rest: number;
 }
 
 export interface TipRates {

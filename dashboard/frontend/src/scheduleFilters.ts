@@ -122,9 +122,16 @@ const ISO = new RegExp(String.raw`^(\d{4})-(\d{1,2})-(\d{1,2})[ T]${TIME}$`);
 const MONTH_DAY = new RegExp(String.raw`^([a-z]{3,})\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?,?\s+${TIME}$`);
 const DAY_MONTH = new RegExp(String.raw`^(\d{1,2})\s+([a-z]{3,})\.?(?:\s+(\d{4}))?,?\s+${TIME}$`);
 
+/** How far ahead a date with no year is still this year rather than last, past any epoch's end. */
+const DATE_AHEAD_MILLIS = 7 * 86_400_000;
+
+export function isBareTime(text: string): boolean {
+  return TIME_ONLY.test(text.trim());
+}
+
 /** A slot, a local time (`08:00`, `Nov 2 08:00`, `2 Nov 08:00`, `2026-11-02 08:00`) or an epoch
  *  (`epoch 1071`); null for anything else. A time with no date is the latest one not after `now`, and
- *  a date with no year likewise. */
+ *  a date with no year the latest not more than a week ahead. */
 export function parseJump(text: string, now: number): Jump | null {
   const typed = text.trim().toLowerCase();
   if (!typed) return null;
@@ -162,7 +169,7 @@ export function parseJump(text: string, now: number): Jump | null {
   }
   const millis = localTime(today.getFullYear(), month, Number(day), clock);
   if (millis === null) return null;
-  if (millis <= now) return { kind: "time", millis };
+  if (millis <= now + DATE_AHEAD_MILLIS) return { kind: "time", millis };
   const lastYear = localTime(today.getFullYear() - 1, month, Number(day), clock);
   return lastYear === null ? null : { kind: "time", millis: lastYear };
 }
@@ -221,18 +228,20 @@ function placeEntry(
   }
 }
 
-/** A finished entry, moved inside what is held. Unreadable text is left as typed. */
+/** A finished entry, moved inside what is held. Unreadable text is left as typed. With `ahead`, so is
+ *  an entry still to come, as a range can reach turns to come. */
 export function clampEntry(
   text: string,
   held: Held | null,
   newest: number | null,
   epoch: EpochInfo | undefined,
   now: number,
+  ahead = false,
 ): Clamped {
   const jump = parseJump(text, now);
   if (!jump) return { text, moved: null };
   const moved = placeEntry(jump, held, newest, epoch, now);
   if (moved === "older" && held) return { text: held.slot.toLocaleString("en-US"), moved };
-  if (moved === "newer") return { text: "", moved };
+  if (moved === "newer") return ahead ? { text, moved: null } : { text: "", moved };
   return { text, moved: null };
 }

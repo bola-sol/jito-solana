@@ -1,6 +1,6 @@
 
 import { bytes } from "./format";
-import type { DeviceLoad, FilesystemUsage, Host } from "./types";
+import type { DeviceLoad, DiskPartKey, FilesystemUsage, Host } from "./types";
 
 export type HostTone = "good" | "warn" | "bad" | "muted";
 
@@ -43,6 +43,53 @@ export function fullness(filesystem: FilesystemUsage): number {
   if (filesystem.total <= 0) return 0;
   const used = Math.max(0, filesystem.total - filesystem.available);
   return Math.min(1, used / filesystem.total);
+}
+
+export type DiskSegmentKey = DiskPartKey | "other" | "leftover" | "reserved";
+
+export interface DiskSegment {
+  key: DiskSegmentKey;
+  label: string;
+  bytes: number;
+}
+
+export interface DiskSplit {
+  used: number;
+  segments: DiskSegment[];
+  leftovers: string[];
+}
+
+const DISK_PART_LABELS: Record<DiskPartKey, string> = {
+  shreds: "shreds",
+  history: "transaction history",
+  metadata: "block metadata",
+  live: "live accounts",
+  fragmented: "fragmented",
+  full: "full archives",
+  incremental: "incremental archives",
+};
+
+/** Null until a part has reported or a leftover is seen; the row then draws one bar. */
+export function diskSplit(filesystem: FilesystemUsage): DiskSplit | null {
+  if (filesystem.parts.length === 0 && filesystem.leftovers.length === 0) return null;
+  const used = Math.min(filesystem.total, Math.max(0, filesystem.total - filesystem.available));
+  const reserved = Math.min(used, Math.max(0, filesystem.reserved));
+  // The parts report at their own moments, so their sum can briefly pass what is used.
+  let room = used - reserved;
+  const segments: DiskSegment[] = filesystem.parts.map((part) => {
+    const bytes = Math.min(room, Math.max(0, part.bytes));
+    room -= bytes;
+    return { key: part.key, label: DISK_PART_LABELS[part.key], bytes };
+  });
+  segments.push(
+    { key: filesystem.leftovers.length > 0 ? "leftover" : "other", label: "other", bytes: room },
+    { key: "reserved", label: "reserved for root", bytes: reserved },
+  );
+  return {
+    used,
+    segments: segments.filter((segment) => segment.bytes > 0),
+    leftovers: filesystem.leftovers,
+  };
 }
 
 export function fullnessTone(share: number): HostTone {

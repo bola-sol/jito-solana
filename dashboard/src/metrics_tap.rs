@@ -675,12 +675,41 @@ pub struct MemoryParts {
     pub blockstore: Option<u64>,
 }
 
+/// The blockstore's table files by what they hold. Excludes the write-ahead log and manifests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LedgerFiles {
+    pub shreds: u64,
+    pub history: u64,
+    pub metadata: u64,
+}
+
+impl LedgerFiles {
+    fn add(&mut self, column_family: &str, bytes: u64) {
+        let part = match column_family {
+            "data_shred" | "alt_data_shred" | "code_shred" => &mut self.shreds,
+            "transaction_status" | "address_signatures" | "transaction_memos" | "rewards" => {
+                &mut self.history
+            }
+            _ => &mut self.metadata,
+        };
+        *part = part.saturating_add(bytes);
+    }
+}
+
+/// Bytes written to the storage files, across every accounts path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountsFiles {
+    pub live: u64,
+    pub fragmented: u64,
+}
+
 #[derive(Debug, Default)]
 struct MemorySet {
     index_estimate: Option<u64>,
     write_cache: Option<u64>,
     read_cache: Option<u64>,
     blockstore: BTreeMap<String, u64>,
+    blockstore_files: BTreeMap<String, u64>,
 }
 
 counter_totals! {
@@ -1822,6 +1851,29 @@ impl MetricsTap {
         }
     }
 
+    /// `None` until a column family has reported.
+    pub fn ledger_files(&self) -> Option<LedgerFiles> {
+        let memory = self.memory.lock().ok()?;
+        (!memory.blockstore_files.is_empty()).then(|| {
+            let mut files = LedgerFiles::default();
+            for (column_family, bytes) in &memory.blockstore_files {
+                files.add(column_family, *bytes);
+            }
+            files
+        })
+    }
+
+    /// `None` until the storages have reported.
+    pub fn accounts_files(&self) -> Option<AccountsFiles> {
+        let levels = self.accounts.lock().ok()?.levels;
+        (levels.storage_bytes > 0).then_some(AccountsFiles {
+            live: levels.storage_alive_bytes,
+            fragmented: levels
+                .storage_bytes
+                .saturating_sub(levels.storage_alive_bytes),
+        })
+    }
+
     pub fn xdp(&self) -> Option<XdpConfig> {
         self.xdp.lock().ok().and_then(|held| held.clone())
     }
@@ -2063,6 +2115,14 @@ impl AddPoint for MemorySet {
                     Some(held) => *held = bytes,
                     None => {
                         self.blockstore.insert(cf.clone(), bytes);
+                    }
+                }
+                if let Some(bytes) = field("total_sst_files_size") {
+                    match self.blockstore_files.get_mut(cf.as_str()) {
+                        Some(held) => *held = bytes,
+                        None => {
+                            self.blockstore_files.insert(cf.clone(), bytes);
+                        }
                     }
                 }
             }
@@ -2465,6 +2525,56 @@ mod tests {
                 read_cache: Some(800),
                 blockstore: Some(500 + 250),
             }
+        );
+    }
+
+    #[test]
+    fn test_ledger_files_group_the_column_families_and_keep_each_latest_size() {
+        let tap = MetricsTap::default();
+        assert_eq!(tap.ledger_files(), None);
+
+        let column = |cf: &str, size: &str| {
+            let mut point = named(BLOCKSTORE_CFS, &[("total_sst_files_size", size)]);
+            point.add_tag(CF_NAME, cf);
+            point
+        };
+        tap.observe(&column("data_shred", "100i"));
+        tap.observe(&column("data_shred", "300i"));
+        tap.observe(&column("code_shred", "50i"));
+        tap.observe(&column("alt_data_shred", "5i"));
+        tap.observe(&column("transaction_status", "20i"));
+        tap.observe(&column("address_signatures", "7i"));
+        tap.observe(&column("meta", "9i"));
+        tap.observe(&column("root", "1i"));
+        // A property RocksDB could not read leaves the last size held.
+        tap.observe(&column("meta", "-1i"));
+
+        assert_eq!(
+            tap.ledger_files(),
+            Some(LedgerFiles {
+                shreds: 355,
+                history: 27,
+                metadata: 10,
+            })
+        );
+    }
+
+    #[test]
+    fn test_accounts_files_split_the_storages_into_live_and_fragmented() {
+        let tap = MetricsTap::default();
+        assert_eq!(tap.accounts_files(), None);
+
+        tap.observe(&named(
+            ACCOUNTS_STORES,
+            &[("total_bytes", "104i"), ("total_alive_bytes", "100i")],
+        ));
+
+        assert_eq!(
+            tap.accounts_files(),
+            Some(AccountsFiles {
+                live: 100,
+                fragmented: 4,
+            })
         );
     }
 

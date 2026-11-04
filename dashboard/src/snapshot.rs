@@ -148,6 +148,34 @@ pub fn read(config: &SnapshotConfig) -> Option<Snapshots> {
     })
 }
 
+/// Size of the archives on disk; staging files are not archives yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveBytes {
+    pub full: u64,
+    pub incremental: u64,
+}
+
+pub fn archive_bytes(config: &SnapshotConfig) -> Option<ArchiveBytes> {
+    if !config.should_generate_snapshots() {
+        return None;
+    }
+    Some(ArchiveBytes {
+        full: sizes(paths::full_snapshot_archives_iter(
+            &config.full_snapshot_archives_dir,
+        )),
+        incremental: sizes(paths::incremental_snapshot_archives_iter(
+            &config.incremental_snapshot_archives_dir,
+        )),
+    })
+}
+
+fn sizes<T: SnapshotArchiveInfoGetter>(archives: impl Iterator<Item = T>) -> u64 {
+    archives
+        .filter_map(|info| fs::metadata(info.path()).ok())
+        .map(|meta| meta.len())
+        .fold(0, u64::saturating_add)
+}
+
 fn archive(info: &impl SnapshotArchiveInfoGetter) -> Archive {
     Archive {
         slot: info.slot(),
@@ -389,6 +417,35 @@ mod tests {
 
     fn touch(dir: &TempDir, name: &str) {
         File::create(dir.path().join(name)).unwrap();
+    }
+
+    #[test]
+    fn test_archive_bytes_add_up_each_kind_and_skip_what_is_not_an_archive() {
+        let dir = TempDir::new().unwrap();
+        for (name, size) in [
+            (format!("snapshot-100-{HASH}.tar.zst"), 1_000),
+            (format!("snapshot-200-{HASH}.tar.zst"), 2_000),
+            (format!("incremental-snapshot-200-250-{HASH}.tar.zst"), 30),
+            ("tmp-snapshot-archive-300".to_owned(), 7),
+        ] {
+            File::create(dir.path().join(name))
+                .unwrap()
+                .set_len(size)
+                .unwrap();
+        }
+        assert_eq!(
+            archive_bytes(&config(&dir, SnapshotUsage::LoadAndGenerate)),
+            Some(ArchiveBytes {
+                full: 3_000,
+                incremental: 30,
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_node_that_generates_none_reads_no_archive_bytes() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(archive_bytes(&config(&dir, SnapshotUsage::LoadOnly)), None);
     }
 
     #[test]

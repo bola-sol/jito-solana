@@ -164,6 +164,8 @@ pub struct Filesystem {
     pub total: u64,
     /// Root's reserve is deliberately not counted.
     pub available: u64,
+    /// Free to root alone.
+    pub reserved: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -220,9 +222,13 @@ pub fn filesystem(path: &Path) -> io::Result<Filesystem> {
     // `fragment_size` rather than `block_size`: the block counts are in fragments, and on
     // filesystems where the two differ `block_size` overstates the size.
     let block = stat.fragment_size() as u64;
+    let available = stat.blocks_available() as u64;
     Ok(Filesystem {
         total: (stat.blocks() as u64).saturating_mul(block),
-        available: (stat.blocks_available() as u64).saturating_mul(block),
+        available: available.saturating_mul(block),
+        reserved: (stat.blocks_free() as u64)
+            .saturating_sub(available)
+            .saturating_mul(block),
     })
 }
 

@@ -5,6 +5,7 @@ import {
   cpuTone,
   deviceLabel,
   diskAlarm,
+  diskSplit,
   fullness,
   fullnessTone,
   loadTrend,
@@ -16,9 +17,22 @@ import {
   validatorSplit,
   waitTone,
 } from "./host";
-import type { DeviceLoad, Host } from "./types";
+import type { DeviceLoad, FilesystemUsage, Host } from "./types";
 
 const GB = 1024 ** 3;
+
+function filesystem(over: Partial<FilesystemUsage> = {}): FilesystemUsage {
+  return {
+    name: "ledger",
+    path: "/l",
+    total: 1000,
+    available: 470,
+    reserved: 0,
+    parts: [],
+    leftovers: [],
+    ...over,
+  };
+}
 
 function host(over: Partial<Host> = {}): Host {
   return {
@@ -172,11 +186,55 @@ describe("memoryUse", () => {
 
 describe("fullness", () => {
   it("is what is gone, not what is left", () => {
-    expect(fullness({ name: "ledger", path: "/l", total: 1000, available: 470 })).toBe(0.53);
+    expect(fullness(filesystem())).toBe(0.53);
   });
 
   it("is nought on a filesystem that reported no size", () => {
-    expect(fullness({ name: "x", path: "/x", total: 0, available: 0 })).toBe(0);
+    expect(fullness(filesystem({ total: 0, available: 0 }))).toBe(0);
+  });
+});
+
+describe("diskSplit", () => {
+  const shreds = { key: "shreds", bytes: 300 } as const;
+  const history = { key: "history", bytes: 100 } as const;
+
+  it("is nothing until a part has reported, so the row keeps its one bar", () => {
+    expect(diskSplit(filesystem({ reserved: 50 }))).toBeNull();
+  });
+
+  it("adds up to what is used, with the remainder as other", () => {
+    const split = diskSplit(filesystem({ reserved: 50, parts: [shreds, history] }));
+    expect(split?.used).toBe(530);
+    expect(split?.segments.map(({ key, bytes }) => [key, bytes])).toEqual([
+      ["shreds", 300],
+      ["history", 100],
+      ["other", 80],
+      ["reserved", 50],
+    ]);
+  });
+
+  it("caps parts that report past what is used, and never draws more than that", () => {
+    const split = diskSplit(filesystem({ reserved: 50, parts: [{ key: "shreds", bytes: 900 }, history] }));
+    expect(split?.segments.map(({ key, bytes }) => [key, bytes])).toEqual([
+      ["shreds", 480],
+      ["reserved", 50],
+    ]);
+  });
+
+  it("leaves out what holds nothing, such as history on a node that keeps none", () => {
+    const split = diskSplit(filesystem({ parts: [shreds, { key: "history", bytes: 0 }] }));
+    expect(split?.segments.map(({ key }) => key)).toEqual(["shreds", "other"]);
+  });
+
+  it("marks other where a leftover is seen, without taking its size out", () => {
+    const split = diskSplit(filesystem({ parts: [shreds], leftovers: ["run_to_be_deleted"] }));
+    expect(split?.segments).toContainEqual({ key: "leftover", label: "other", bytes: 230 });
+    expect(split?.leftovers).toEqual(["run_to_be_deleted"]);
+  });
+
+  it("shows a leftover even with no part to name", () => {
+    const split = diskSplit(filesystem({ leftovers: ["run_to_be_deleted"] }));
+    expect(split?.segments.map(({ key }) => key)).toEqual(["leftover"]);
   });
 });
 
@@ -256,7 +314,7 @@ describe("slowGovernor", () => {
 });
 
 describe("diskAlarm", () => {
-  const fs = (name: string, used: number) => ({ name, path: `/${name}`, total: 1000, available: 1000 - used });
+  const fs = (name: string, used: number) => filesystem({ name, path: `/${name}`, available: 1000 - used });
 
   it("is nothing while every filesystem is under four fifths", () => {
     expect(diskAlarm(host({ filesystems: [fs("ledger", 790), fs("accounts", 500)] }))).toBeNull();

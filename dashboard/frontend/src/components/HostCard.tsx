@@ -1,10 +1,11 @@
-import { useState, type ReactElement } from "react";
+import { Fragment, useState, type ReactElement } from "react";
 import { bytes, count, decimal, percent } from "../format";
 import {
   availableTone,
   busyTone,
   cpuTone,
   deviceLabel,
+  diskSplit,
   fullness,
   fullnessTone,
   loadTrend,
@@ -15,6 +16,7 @@ import {
   swapTone,
   validatorSplit,
   waitTone,
+  type DiskSplit,
   type ValidatorSplit,
 } from "../host";
 import { readThreadsCollapsed, writeThreadsCollapsed } from "../layout";
@@ -297,9 +299,42 @@ function ValidatorMemory({ split }: { split: ValidatorSplit }): ReactElement {
   );
 }
 
+/** Parts of the whole disk, so the bar ends where the percentage says. */
+function DiskBar({ name, total, split }: { name: string; total: number; split: DiskSplit }): ReactElement {
+  const list = (
+    <>
+      <span className="figure-panel-label">
+        {name}, {bytes(split.used)} used
+      </span>
+      {split.segments.map((segment) => (
+        <Fragment key={segment.key}>
+          <span className="memory-row">
+            <i className={`memory-key is-${segment.key}`} />
+            <span className="memory-name">{segment.label}</span>
+            <span className="memory-n">{bytes(segment.bytes)}</span>
+          </span>
+          {segment.key === "leftover" && (
+            <span className="disk-leftover">includes {split.leftovers.join(", ")}</span>
+          )}
+        </Fragment>
+      ))}
+    </>
+  );
+  return (
+    <Explain className="disk-split" text={list}>
+      <span className="host-track is-split" role="img" aria-label={`What fills ${name}`}>
+        {split.segments.map((segment) => (
+          <i key={segment.key} className={`is-${segment.key}`} style={{ width: share(segment.bytes, total) }} />
+        ))}
+      </span>
+    </Explain>
+  );
+}
+
 function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
-  const share = fullness(filesystem);
-  const tone = fullnessTone(share);
+  const full = fullness(filesystem);
+  const tone = fullnessTone(full);
+  const split = diskSplit(filesystem);
   return (
     <div className="host-capacity">
       {/* The name never truncates; the path does, and is carried whole as a title. */}
@@ -307,10 +342,14 @@ function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
         <b>{filesystem.name}</b>
         <s>{filesystem.path}</s>
       </span>
-      <span className="host-track">
-        <i className={`tone-fill-${tone}`} style={{ width: `${share * 100}%` }} />
-      </span>
-      <span className={`host-n tone-${tone}`}>{percent(share, 0)}</span>
+      {split ? (
+        <DiskBar name={filesystem.name} total={filesystem.total} split={split} />
+      ) : (
+        <span className="host-track">
+          <i className={`tone-fill-${tone}`} style={{ width: `${full * 100}%` }} />
+        </span>
+      )}
+      <span className={`host-n tone-${tone}`}>{percent(full, 0)}</span>
       <span className="host-free">{bytes(filesystem.available)} free</span>
     </div>
   );

@@ -8,27 +8,30 @@ use {
         context::{DashboardContext, StartProgress},
         host_stats::{self, CpuUse, HostSnapshot, ResidentKinds},
         metrics_tap::{
-            AccountsTotals, BundleTotals, ExecutedTotals, GOSSIP_ENTRY_TYPES, GossipEntryTotals,
-            GossipTotals, MemoryParts, MetricsTap, ProgramCacheTotals, QuicLevels, QuicTotals,
-            ReplaySlotTimes, SchedulerSource, SchedulerTotals, TapCounters, VerifyTotals,
-            WindowedCounters, XdpConfig,
+            AccountsFiles, AccountsTotals, BundleTotals, ExecutedTotals, GOSSIP_ENTRY_TYPES,
+            GossipEntryTotals, GossipTotals, LedgerFiles, MemoryParts, MetricsTap,
+            ProgramCacheTotals, QuicLevels, QuicTotals, ReplaySlotTimes, SchedulerSource,
+            SchedulerTotals, TapCounters, VerifyTotals, WindowedCounters, XdpConfig,
         },
         net_ifaces::{self, InterfaceKind, InterfaceReading},
         net_stats::{self, Counted, InterfaceCounters, NetCounters, NetReading},
         proto::{Debounced, Publisher, TOPIC_SUMMARY},
+        snapshot::{self, ArchiveBytes},
         thread_stats::{self, ThreadGroup, ThreadReading},
         udp_drops::{self, PortCounters, PortWindow},
     },
+    agave_snapshots::snapshot_config::SnapshotConfig,
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_core::validator::ValidatorStartProgress,
     solana_gossip::contact_info::{ContactInfo, Protocol},
+    solana_ledger::blockstore_options::BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
     solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         net::SocketAddr,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             Arc,
             atomic::{AtomicU64, Ordering},
@@ -223,6 +226,28 @@ pub struct FilesystemUsage {
     pub path: String,
     pub total: u64,
     pub available: u64,
+    pub reserved: u64,
+    pub parts: Vec<DiskPart>,
+    /// Directories named `*_to_be_deleted`, which only the thread that renamed them removes.
+    pub leftovers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct DiskPart {
+    pub key: DiskPartKey,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiskPartKey {
+    Shreds,
+    History,
+    Metadata,
+    Live,
+    Fragmented,
+    Full,
+    Incremental,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -474,13 +499,122 @@ struct HostPath {
     name: String,
     path: PathBuf,
     device: Option<String>,
+    filesystem: u64,
 }
 
 impl HostPath {
-    fn new(name: String, path: PathBuf) -> Self {
+    fn new(name: String, path: PathBuf, filesystem: u64) -> Self {
         let device = host_stats::device_for(&path).ok().flatten();
-        Self { name, path, device }
+        Self {
+            name,
+            path,
+            device,
+            filesystem,
+        }
     }
+}
+
+/// Which filesystem each part of a row's split lives on.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct DiskLayout {
+    ledger: Option<u64>,
+    /// `None` across several filesystems: the storage figures cover every accounts path.
+    accounts: Option<u64>,
+    /// Where a renamed accounts directory would sit.
+    account_parents: Vec<(u64, PathBuf)>,
+    full: Option<u64>,
+    incremental: Option<u64>,
+}
+
+fn resolve_disk_layout(ctx: &DashboardContext) -> DiskLayout {
+    let rocksdb = ctx
+        .blockstore
+        .ledger_path()
+        .join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL);
+    let mut account_ids = HashSet::new();
+    let mut account_parents = Vec::new();
+    for path in &ctx.account_paths {
+        let Ok(id) = host_stats::filesystem_id(path) else {
+            continue;
+        };
+        account_ids.insert(id);
+        if let Some(parent) = path.parent().map(Path::to_path_buf)
+            && !account_parents.iter().any(|(_, held)| *held == parent)
+        {
+            account_parents.push((id, parent));
+        }
+    }
+    let archives = |dir: fn(&SnapshotConfig) -> &PathBuf| {
+        let config = ctx.snapshot_config.as_ref()?;
+        host_stats::filesystem_id(dir(config)).ok()
+    };
+    DiskLayout {
+        ledger: host_stats::filesystem_id(&rocksdb).ok(),
+        accounts: match account_ids.len() {
+            1 => account_ids.into_iter().next(),
+            _ => None,
+        },
+        account_parents,
+        full: archives(|config| &config.full_snapshot_archives_dir),
+        incremental: archives(|config| &config.incremental_snapshot_archives_dir),
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct DiskReadings {
+    ledger: Option<LedgerFiles>,
+    accounts: Option<AccountsFiles>,
+    archives: Option<ArchiveBytes>,
+}
+
+/// In the order they are drawn.
+fn disk_parts(filesystem: u64, layout: &DiskLayout, readings: &DiskReadings) -> Vec<DiskPart> {
+    let part = |key, bytes| DiskPart { key, bytes };
+    let mut parts = Vec::new();
+    if layout.ledger == Some(filesystem)
+        && let Some(files) = readings.ledger
+    {
+        parts.push(part(DiskPartKey::Shreds, files.shreds));
+        parts.push(part(DiskPartKey::History, files.history));
+        parts.push(part(DiskPartKey::Metadata, files.metadata));
+    }
+    if layout.accounts == Some(filesystem)
+        && let Some(files) = readings.accounts
+    {
+        parts.push(part(DiskPartKey::Live, files.live));
+        parts.push(part(DiskPartKey::Fragmented, files.fragmented));
+    }
+    if let Some(archives) = readings.archives {
+        if layout.full == Some(filesystem) {
+            parts.push(part(DiskPartKey::Full, archives.full));
+        }
+        if layout.incremental == Some(filesystem) {
+            parts.push(part(DiskPartKey::Incremental, archives.incremental));
+        }
+    }
+    parts
+}
+
+const LEFTOVER_SUFFIX: &str = "_to_be_deleted";
+
+/// Each leftover directory and the filesystem it is on.
+fn read_leftovers(layout: &DiskLayout) -> Vec<(u64, String)> {
+    let mut leftovers = Vec::new();
+    for (filesystem, parent) in &layout.account_parents {
+        let Ok(entries) = std::fs::read_dir(parent) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(LEFTOVER_SUFFIX) {
+                leftovers.push((*filesystem, name.into_owned()));
+            }
+        }
+    }
+    leftovers.sort();
+    leftovers.dedup();
+    leftovers
 }
 
 fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
@@ -490,7 +624,7 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
     let ledger = ctx.blockstore.ledger_path().clone();
     if let Ok(id) = host_stats::filesystem_id(&ledger) {
         seen.insert(id);
-        paths.push(HostPath::new("ledger".to_owned(), ledger));
+        paths.push(HostPath::new("ledger".to_owned(), ledger, id));
     }
 
     let mut accounts = Vec::new();
@@ -499,18 +633,18 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
             continue;
         };
         if seen.insert(id) {
-            accounts.push(path.clone());
+            accounts.push((path.clone(), id));
         }
     }
     let numbered = accounts.len() > 1;
-    for (index, path) in accounts.into_iter().enumerate() {
+    for (index, (path, id)) in accounts.into_iter().enumerate() {
         let ordinal = index.saturating_add(1);
         let name = if numbered {
             format!("accounts {ordinal}")
         } else {
             "accounts".to_owned()
         };
-        paths.push(HostPath::new(name, path));
+        paths.push(HostPath::new(name, path, id));
     }
 
     if let Some(archives) = ctx
@@ -520,7 +654,7 @@ fn resolve_host_paths(ctx: &DashboardContext) -> Vec<HostPath> {
         && let Ok(id) = host_stats::filesystem_id(archives)
         && seen.insert(id)
     {
-        paths.push(HostPath::new("snapshots".to_owned(), archives.clone()));
+        paths.push(HostPath::new("snapshots".to_owned(), archives.clone(), id));
     }
 
     paths
@@ -1277,6 +1411,7 @@ struct HostMeter {
     last: Option<(HostSnapshot, Instant)>,
     unavailable: bool,
     paths: Option<Vec<HostPath>>,
+    layout: Option<DiskLayout>,
     resident: VecDeque<(Instant, u64)>,
     snapshot_device: Option<Option<String>>,
 }
@@ -1343,6 +1478,16 @@ impl HostMeter {
             .memory
             .swap_total
             .saturating_sub(current.memory.swap_free);
+        let layout = self.layout.get_or_insert_with(|| resolve_disk_layout(ctx));
+        let readings = DiskReadings {
+            ledger: tap.ledger_files(),
+            accounts: tap.accounts_files(),
+            archives: ctx
+                .snapshot_config
+                .as_ref()
+                .and_then(snapshot::archive_bytes),
+        };
+        let leftovers = read_leftovers(layout);
         let host = Host {
             cores: num_cpus(),
             load_one: current.load.one,
@@ -1377,6 +1522,13 @@ impl HostMeter {
                         path: path.path.to_string_lossy().into_owned(),
                         total: usage.total,
                         available: usage.available,
+                        reserved: usage.reserved,
+                        parts: disk_parts(path.filesystem, layout, &readings),
+                        leftovers: leftovers
+                            .iter()
+                            .filter(|(filesystem, _)| *filesystem == path.filesystem)
+                            .map(|(_, name)| name.clone())
+                            .collect(),
                     })
                 })
                 .collect(),
@@ -2222,6 +2374,124 @@ mod tests {
             },
             ..TapCounters::default()
         }
+    }
+
+    const LEDGER_DISK: u64 = 1;
+    const ACCOUNTS_DISK: u64 = 2;
+
+    fn disk_readings() -> DiskReadings {
+        DiskReadings {
+            ledger: Some(LedgerFiles {
+                shreds: 10,
+                history: 20,
+                metadata: 30,
+            }),
+            accounts: Some(AccountsFiles {
+                live: 40,
+                fragmented: 50,
+            }),
+            archives: Some(ArchiveBytes {
+                full: 60,
+                incremental: 70,
+            }),
+        }
+    }
+
+    fn disk_keys(parts: &[DiskPart]) -> Vec<DiskPartKey> {
+        parts.iter().map(|part| part.key).collect()
+    }
+
+    #[test]
+    fn test_disk_parts_land_on_the_filesystem_each_lives_on() {
+        let layout = DiskLayout {
+            ledger: Some(LEDGER_DISK),
+            accounts: Some(ACCOUNTS_DISK),
+            full: Some(LEDGER_DISK),
+            incremental: Some(ACCOUNTS_DISK),
+            ..DiskLayout::default()
+        };
+        let readings = disk_readings();
+        assert_eq!(
+            disk_keys(&disk_parts(LEDGER_DISK, &layout, &readings)),
+            [
+                DiskPartKey::Shreds,
+                DiskPartKey::History,
+                DiskPartKey::Metadata,
+                DiskPartKey::Full,
+            ]
+        );
+        assert_eq!(
+            disk_parts(ACCOUNTS_DISK, &layout, &readings),
+            [
+                DiskPart {
+                    key: DiskPartKey::Live,
+                    bytes: 40,
+                },
+                DiskPart {
+                    key: DiskPartKey::Fragmented,
+                    bytes: 50,
+                },
+                DiskPart {
+                    key: DiskPartKey::Incremental,
+                    bytes: 70,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_storage_figures_name_no_filesystem_across_several_accounts_paths() {
+        let layout = DiskLayout {
+            ledger: Some(LEDGER_DISK),
+            accounts: None,
+            ..DiskLayout::default()
+        };
+        assert_eq!(
+            disk_keys(&disk_parts(ACCOUNTS_DISK, &layout, &disk_readings())),
+            []
+        );
+    }
+
+    #[test]
+    fn test_a_part_not_yet_reported_is_left_out() {
+        let layout = DiskLayout {
+            ledger: Some(LEDGER_DISK),
+            accounts: Some(LEDGER_DISK),
+            full: Some(LEDGER_DISK),
+            incremental: Some(LEDGER_DISK),
+            ..DiskLayout::default()
+        };
+        assert_eq!(
+            disk_parts(LEDGER_DISK, &layout, &DiskReadings::default()),
+            []
+        );
+    }
+
+    #[test]
+    fn test_only_directories_named_for_deletion_are_leftovers() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for name in [
+            "run",
+            "snapshot",
+            "run_to_be_deleted",
+            "snapshot_to_be_deleted",
+        ] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let layout = DiskLayout {
+            account_parents: vec![
+                (ACCOUNTS_DISK, dir.path().to_path_buf()),
+                (ACCOUNTS_DISK, dir.path().join("gone")),
+            ],
+            ..DiskLayout::default()
+        };
+        assert_eq!(
+            read_leftovers(&layout),
+            [
+                (ACCOUNTS_DISK, "run_to_be_deleted".to_owned()),
+                (ACCOUNTS_DISK, "snapshot_to_be_deleted".to_owned()),
+            ]
+        );
     }
 
     #[test]

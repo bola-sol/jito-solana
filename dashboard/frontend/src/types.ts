@@ -978,6 +978,25 @@ export interface FilesystemUsage {
   path: string;
   total: number;
   available: number;
+  /** Free to root alone, and so counted as used. */
+  reserved: number;
+  parts: DiskPart[];
+  /** Directories named `*_to_be_deleted`; their size is not read. */
+  leftovers: string[];
+}
+
+export type DiskPartKey =
+  | "shreds"
+  | "history"
+  | "metadata"
+  | "live"
+  | "fragmented"
+  | "full"
+  | "incremental";
+
+export interface DiskPart {
+  key: DiskPartKey;
+  bytes: number;
 }
 
 export interface DeviceLoad {

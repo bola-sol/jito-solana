@@ -564,7 +564,7 @@ export function HandoffCard(): ReactElement {
             <Key />
             <div className="handoff-foot">
               Each gap runs from the previous block filling here to the next leader's first shred arriving here, so it
-              includes the leader's distance from us.
+              includes that shred's path from the leader through turbine.
             </div>
           </section>
           <div className="handoff-side">

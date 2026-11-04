@@ -4,6 +4,8 @@ import {
   busyTone,
   cpuTone,
   deviceLabel,
+  type DiskRows,
+  diskRows,
   diskAlarm,
   diskSplit,
   fullness,
@@ -301,6 +303,83 @@ describe("deviceLabel", () => {
 
   it("names both where two mounts share a disk", () => {
     expect(deviceLabel(device({ roles: ["ledger", "accounts"] }))).toBe("ledger and accounts");
+  });
+});
+
+describe("diskRows", () => {
+  const filesystem = (name: string): FilesystemUsage => ({
+    name,
+    path: `/mnt/${name}`,
+    total: 100,
+    available: 50,
+    reserved: 0,
+    parts: [],
+    leftovers: [],
+  });
+  const device = (name: string, ...roles: string[]): DeviceLoad => ({
+    device: name,
+    roles,
+    busy: 0,
+    wait_ms: null,
+    operations_per_second: 0,
+    read_per_second: 0,
+    write_per_second: 0,
+  });
+  const names = (rows: DiskRows): string[] => rows.filesystems.map((row) => row.filesystem.name);
+  const three = [filesystem("ledger"), filesystem("accounts"), filesystem("snapshots")];
+
+  it("puts each device on its filesystem's row, whatever order the devices arrive in", () => {
+    const rows = diskRows(three, [
+      device("nvme0n1", "accounts"),
+      device("nvme1n1", "snapshots"),
+      device("nvme2n1", "ledger"),
+    ]);
+    expect(names(rows)).toEqual(["ledger", "accounts", "snapshots"]);
+    expect(rows.filesystems.map((row) => row.gridRow)).toEqual(["3", "4", "5"]);
+    expect(rows.devices.map((row) => [row.device.device, row.gridRow, row.shared])).toEqual([
+      ["nvme0n1", "4 / span 1", false],
+      ["nvme1n1", "5 / span 1", false],
+      ["nvme2n1", "3 / span 1", false],
+    ]);
+    expect(rows.noteRow).toBe("6");
+  });
+
+  it("spans a disk over the filesystems it holds", () => {
+    const rows = diskRows(three, [
+      device("nvme0n1", "ledger", "accounts"),
+      device("nvme1n1", "snapshots"),
+    ]);
+    expect(rows.devices.map((row) => [row.gridRow, row.shared])).toEqual([
+      ["3 / span 2", true],
+      ["5 / span 1", false],
+    ]);
+  });
+
+  it("moves filesystems on one disk together so its row can span them", () => {
+    const rows = diskRows(three, [
+      device("nvme0n1", "ledger", "snapshots"),
+      device("nvme1n1", "accounts"),
+    ]);
+    expect(names(rows)).toEqual(["ledger", "snapshots", "accounts"]);
+    expect(rows.devices.map((row) => row.gridRow)).toEqual(["3 / span 2", "5 / span 1"]);
+  });
+
+  it("marks a filesystem with no block device", () => {
+    const rows = diskRows(three, [device("nvme0n1", "ledger"), device("nvme1n1", "accounts")]);
+    expect(rows.filesystems.map((row) => row.hasDevice)).toEqual([true, true, false]);
+    expect(rows.noteRow).toBe("6");
+  });
+
+  it("keeps a row for a device whose filesystem could not be read", () => {
+    const rows = diskRows(
+      [filesystem("ledger")],
+      [device("nvme0n1", "accounts"), device("nvme1n1", "ledger")],
+    );
+    expect(rows.devices.map((row) => [row.device.device, row.gridRow])).toEqual([
+      ["nvme0n1", "4 / span 1"],
+      ["nvme1n1", "3 / span 1"],
+    ]);
+    expect(rows.noteRow).toBe("5");
   });
 });
 

@@ -6020,7 +6020,7 @@ body {
 /* The last track holds "1023.99 GB free" in the mono figures. */
 .host-capacity {
   display: grid;
-  grid-template-columns: minmax(0, 15em) minmax(80px, 1fr) 3.4em 8.9em;
+  grid-template-columns: minmax(0, 15em) minmax(80px, 1fr) 3.4em 9.1em;
   align-items: center;
   gap: 9px 14px;
   font-size: 12px;
@@ -6156,10 +6156,11 @@ body {
   background: var(--bad);
 }
 
-/* A device is a duty cycle, not a container, so no bar, which would read as a full disk. */
+/* A device is a duty cycle, not a container, so no bar, which would read as a full disk. The last
+   tracks hold "1,234.56 ms" and "1023.99 MB, 1023.99 MB"; a figure past its track breaks the right edge. */
 .host-device {
   display: grid;
-  grid-template-columns: minmax(0, 15em) 5.4em 5.6em 5em 8.4em;
+  grid-template-columns: minmax(0, 15em) 5.4em 6.6em 5em 13.4em;
   align-items: baseline;
   gap: 5px 14px;
   font-size: 12px;
@@ -6168,14 +6169,94 @@ body {
 
 /* The smaller size goes on the cells, not the row: the template is in em, and shrinking the row
    shifted every header off its figures. */
-.host-device.is-head {
+.host-device.is-head,
+.host-capacity.is-head {
   color: var(--text-faint);
   padding-bottom: 1px;
 }
 
-.host-device.is-head > * {
+.host-device.is-head > *,
+.host-capacity.is-head > * {
   font-size: 11px;
   color: var(--text-dim);
+}
+
+.host-capacity.is-head,
+.host-no-device {
+  display: none;
+}
+
+/* Keeps the role beside a device's name on the smallest phones. */
+@media (max-width: 360px) {
+  .host-device {
+    column-gap: 6px;
+  }
+}
+
+/* Each filesystem level with its device. How hard worked's tracks add up to 505px. */
+@media (min-width: 1100px) {
+  .host-disks.is-paired {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 505px;
+    column-gap: 26px;
+  }
+
+  .is-paired > .host-group {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .is-paired > .host-capacity {
+    grid-column: 1;
+  }
+
+  .is-paired > .host-group.is-worked,
+  .is-paired > .host-device,
+  .is-paired > .host-no-device,
+  .is-paired > .host-snapshot {
+    grid-column: 2;
+  }
+
+  .is-paired > .is-head {
+    grid-row: 2;
+  }
+
+  .is-paired > .host-capacity.is-head {
+    display: grid;
+  }
+
+  .is-paired > .host-device {
+    grid-template-columns: minmax(0, 1fr) 5.4em 6.6em 5em 13.4em;
+    align-items: center;
+  }
+
+  /* The filesystem on the same line names the role. */
+  .is-paired .host-dev s {
+    display: none;
+  }
+
+  .is-paired > .host-no-device {
+    display: block;
+    align-self: center;
+    padding: 4px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+
+  /* One disk beside two filesystems: a rule in the gap joins them. */
+  .is-paired > .host-device.is-shared {
+    position: relative;
+  }
+
+  .is-paired > .host-device.is-shared::before {
+    content: "";
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    left: -13px;
+    border-left: 1px solid var(--border);
+  }
 }
 
 .host-dev {
@@ -6477,7 +6558,7 @@ body {
   }
 
   .host-device {
-    grid-template-columns: minmax(0, 1fr) 5.4em 5.6em;
+    grid-template-columns: minmax(0, 1fr) 5.4em 6.6em;
   }
 
   .host-device .is-io,

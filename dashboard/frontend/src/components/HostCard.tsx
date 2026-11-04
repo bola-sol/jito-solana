@@ -5,6 +5,7 @@ import {
   busyTone,
   cpuTone,
   deviceLabel,
+  diskRows,
   diskSplit,
   fullness,
   fullnessTone,
@@ -89,6 +90,8 @@ export function HostCard(): ReactElement | null {
       {writing && <>, writing a snapshot</>}
     </>
   );
+
+  const rows = diskRows(host.filesystems, host.devices);
 
   return (
     <Fold id="machine" title="Machine" summary={summary} rule={rule}>
@@ -214,50 +217,77 @@ export function HostCard(): ReactElement | null {
         )}
       </div>
 
-      {host.filesystems.length > 0 && (
-        <>
-          <div className="host-group">
-            <Explain text="How much of each filesystem is used. A full ledger partition halts the validator.">
-              <span>How full</span>
-            </Explain>
-            <em>statvfs</em>
-          </div>
-          {host.filesystems.map((filesystem) => (
-            <Capacity key={filesystem.path} filesystem={filesystem} />
-          ))}
-        </>
-      )}
-
-      {host.devices.length > 0 && (
-        <>
-          <div className="host-group">
-            <Explain text="Time busy is the share of the second with a request in flight. Wait is the mean time a request spent queued and serviced.">
-              <span>How hard worked</span>
-            </Explain>
-            <em>diskstats</em>
-          </div>
-          <div className="host-device is-head">
-            <span>device</span>
-            <span className="host-n">time busy</span>
-            <span className="host-n is-wait">wait</span>
-            <span className="host-n is-io">iops</span>
-            <span className="host-n is-tp">read and write</span>
-          </div>
-          {host.devices.map((device) => (
-            <Device
-              key={device.device}
-              device={device}
-              writing={writing !== null && device.device === host.snapshot_device}
-            />
-          ))}
-          {writing && <div className="host-sub host-snapshot tone-warn">{writing}</div>}
-          {!writing && snapshots?.last_written && (
-            <div className="host-sub host-snapshot host-faint">
-              {snapshotWritten(snapshots.last_written)}
+      <div
+        className={
+          host.filesystems.length > 0 && host.devices.length > 0
+            ? "host-disks is-paired"
+            : "host-disks"
+        }
+      >
+        {host.filesystems.length > 0 && (
+          <>
+            <div className="host-group">
+              <Explain text="How much of each filesystem is used. A full ledger partition halts the validator.">
+                <span>How full</span>
+              </Explain>
+              <em>statvfs</em>
             </div>
-          )}
-        </>
-      )}
+            <div className="host-capacity is-head">
+              <span>Filesystem</span>
+              <span>What fills it</span>
+              <span className="host-n">Used</span>
+              <span />
+            </div>
+            {rows.filesystems.map(({ filesystem, gridRow, hasDevice }) => (
+              <Fragment key={filesystem.path}>
+                <Capacity filesystem={filesystem} gridRow={gridRow} />
+                {!hasDevice && (
+                  <div className="host-no-device" style={{ gridRow }}>
+                    —
+                  </div>
+                )}
+              </Fragment>
+            ))}
+          </>
+        )}
+
+        {host.devices.length > 0 && (
+          <>
+            <div className="host-group is-worked">
+              <Explain text="Time busy is the share of the second with a request in flight. Wait is the mean time a request spent queued and serviced.">
+                <span>How hard worked</span>
+              </Explain>
+              <em>diskstats</em>
+            </div>
+            <div className="host-device is-head">
+              <span>Device</span>
+              <span className="host-n">Time busy</span>
+              <span className="host-n is-wait">Wait</span>
+              <span className="host-n is-io">IOPS</span>
+              <span className="host-n is-tp">Read and write</span>
+            </div>
+            {rows.devices.map(({ device, gridRow, shared }) => (
+              <Device
+                key={device.device}
+                device={device}
+                gridRow={gridRow}
+                shared={shared}
+                writing={writing !== null && device.device === host.snapshot_device}
+              />
+            ))}
+            {writing && (
+              <div className="host-sub host-snapshot tone-warn" style={{ gridRow: rows.noteRow }}>
+                {writing}
+              </div>
+            )}
+            {!writing && snapshots?.last_written && (
+              <div className="host-sub host-snapshot host-faint" style={{ gridRow: rows.noteRow }}>
+                {snapshotWritten(snapshots.last_written)}
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       <Threads samples={samples} />
       </div>
@@ -331,12 +361,12 @@ function DiskBar({ name, total, split }: { name: string; total: number; split: D
   );
 }
 
-function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
+function Capacity({ filesystem, gridRow }: { filesystem: FilesystemUsage; gridRow: string }) {
   const full = fullness(filesystem);
   const tone = fullnessTone(full);
   const split = diskSplit(filesystem);
   return (
-    <div className="host-capacity">
+    <div className="host-capacity" style={{ gridRow }}>
       {/* The name never truncates; the path does, and is carried whole as a title. */}
       <span className="host-mount" title={filesystem.path}>
         <b>{filesystem.name}</b>
@@ -356,9 +386,19 @@ function Capacity({ filesystem }: { filesystem: FilesystemUsage }) {
 }
 
 /** Its name is toned while a snapshot is being written to it. */
-function Device({ device, writing }: { device: DeviceLoad; writing: boolean }) {
+function Device({
+  device,
+  gridRow,
+  shared,
+  writing,
+}: {
+  device: DeviceLoad;
+  gridRow: string;
+  shared: boolean;
+  writing: boolean;
+}) {
   return (
-    <div className="host-device">
+    <div className={shared ? "host-device is-shared" : "host-device"} style={{ gridRow }}>
       <span className="host-dev">
         <b className={writing ? "tone-warn" : undefined}>{device.device}</b>
         <s>{deviceLabel(device)}</s>

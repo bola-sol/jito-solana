@@ -177,6 +177,54 @@ export function deviceLabel(device: DeviceLoad): string {
   return device.roles.join(" and ");
 }
 
+/** Below the panel titles and the column heads. */
+const FIRST_DISK_ROW = 3;
+
+export interface DiskRows {
+  filesystems: { filesystem: FilesystemUsage; gridRow: string; hasDevice: boolean }[];
+  devices: { device: DeviceLoad; gridRow: string; shared: boolean }[];
+  noteRow: string;
+}
+
+/** Grid rows that keep each filesystem level with its device; filesystems on one disk sit together. */
+export function diskRows(filesystems: FilesystemUsage[], devices: DeviceLoad[]): DiskRows {
+  const deviceOf = (filesystem: FilesystemUsage): DeviceLoad | undefined =>
+    devices.find((device) => device.roles.includes(filesystem.name));
+
+  const ordered: FilesystemUsage[] = [];
+  for (const filesystem of filesystems) {
+    if (ordered.includes(filesystem)) continue;
+    const device = deviceOf(filesystem);
+    ordered.push(
+      ...filesystems.filter((other) => other === filesystem || device?.roles.includes(other.name)),
+    );
+  }
+
+  // A device whose filesystem could not be read keeps a row of its own after the rest.
+  let next = FIRST_DISK_ROW + ordered.length;
+  const placed: DiskRows["devices"] = [];
+  for (const device of devices) {
+    const first = ordered.findIndex((filesystem) => device.roles.includes(filesystem.name));
+    const span = ordered.filter((filesystem) => device.roles.includes(filesystem.name)).length;
+    let row = FIRST_DISK_ROW + first;
+    if (first < 0) {
+      row = next;
+      next += 1;
+    }
+    placed.push({ device, gridRow: `${row} / span ${Math.max(span, 1)}`, shared: span > 1 });
+  }
+
+  return {
+    filesystems: ordered.map((filesystem, index) => ({
+      filesystem,
+      gridRow: String(FIRST_DISK_ROW + index),
+      hasDevice: deviceOf(filesystem) !== undefined,
+    })),
+    devices: placed,
+    noteRow: String(next),
+  };
+}
+
 export type MemoryPartKey = "rest" | "blockstore" | "read" | "write" | "files" | "shared";
 
 export interface MemorySegment {

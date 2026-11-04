@@ -1,5 +1,6 @@
 /** Saved schedule views: a name and the address they restore, kept in this browser. */
 
+import { addressOfHash } from "./route";
 import { readStored, writeStored } from "./storage";
 
 export const VIEWS_STORAGE_KEY = "agave-dashboard-schedule-views";
@@ -9,28 +10,26 @@ const MAX_VIEWS = 20;
 
 export interface SavedView {
   name: string;
-  /** The schedule's address, `#/schedule?…`. */
-  hash: string;
+  /** The schedule's address, `/schedule?…`. */
+  address: string;
   /** What the view filters, in a line. */
   summary: string;
 }
 
-function isView(value: unknown): value is SavedView {
-  const view = value as SavedView;
-  return (
-    typeof view === "object" &&
-    view !== null &&
-    typeof view.name === "string" &&
-    typeof view.hash === "string" &&
-    typeof view.summary === "string" &&
-    view.hash.startsWith("#/schedule")
-  );
+/** A stored view, one saved under a hash moved to its path; null if it is not a view. */
+export function asView(value: unknown): SavedView | null {
+  const view = value as (Partial<SavedView> & { hash?: unknown }) | null;
+  if (typeof view !== "object" || view === null) return null;
+  const { name, summary, address, hash } = view;
+  if (typeof name !== "string" || typeof summary !== "string") return null;
+  if (typeof hash === "string" && hash.startsWith("#/schedule")) return { name, address: addressOfHash(hash), summary };
+  return typeof address === "string" && address.startsWith("/schedule") ? { name, address, summary } : null;
 }
 
 export function readViews(): SavedView[] {
   try {
     const held: unknown = JSON.parse(readStored(VIEWS_STORAGE_KEY) ?? "[]");
-    return Array.isArray(held) ? held.filter(isView) : [];
+    return Array.isArray(held) ? held.flatMap((value) => asView(value) ?? []) : [];
   } catch {
     return [];
   }
@@ -61,6 +60,6 @@ export function writeStartView(name: string | null): void {
 }
 
 /** The start view's address, while a view of that name is still saved. */
-export function startHash(views: readonly SavedView[], start: string | null): string | null {
-  return start === null ? null : (views.find((view) => view.name === start)?.hash ?? null);
+export function startAddress(views: readonly SavedView[], start: string | null): string | null {
+  return start === null ? null : (views.find((view) => view.name === start)?.address ?? null);
 }

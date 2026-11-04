@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   conditionHolds,
+  conditionParams,
   decodeConditions,
   nameHolds,
   describeCondition,
-  encodeConditions,
   hasRange,
   inRange,
   nextOp,
   rangeBounds,
+  readConditionParams,
   toServer,
   type Condition,
 } from "./scheduleConditions";
@@ -55,11 +56,37 @@ const list = (field: Condition["field"], op: Condition["op"], values: string[]):
   values,
 });
 
-describe("encodeConditions", () => {
-  it("round-trips through the address, dropping incomplete rows", () => {
-    const conditions = [number("base_fee", "gt", 0.0025), list("client", "is", ["Agave Bam", "x|y"])];
-    expect(decodeConditions(encodeConditions(conditions))).toEqual(conditions);
-    expect(encodeConditions([{ field: "shreds", op: "gt", value: null, values: [] }])).toBe("");
+describe("readConditionParams", () => {
+  it("drops what it cannot read", () => {
+    const params = [
+      ["bogus", "over-1"],
+      ["constructor", "over-1"],
+      ["where", "over-1"],
+      ["shreds", "1"],
+      ["shreds", "over-x"],
+      ["shreds", "over-"],
+      ["shreds", "near-1"],
+      ["not-shreds", "over-1"],
+      ["country", ""],
+    ] as const;
+    expect(readConditionParams(params)).toEqual([]);
+  });
+
+  it("leaves out an incomplete condition when writing", () => {
+    expect(conditionParams([{ field: "shreds", op: "gt", value: null, values: [] }])).toEqual([]);
+    expect(conditionParams([number("shreds", "ge", 5), list("voted", "is", ["paid", "none"])])).toEqual([
+      "shreds=min-5",
+      "voted=paid,none",
+    ]);
+  });
+});
+
+describe("decodeConditions", () => {
+  it("reads the old form of the address", () => {
+    expect(decodeConditions("base_fee:gt:0.0025;client:is:Agave%20Bam|x%7Cy")).toEqual([
+      number("base_fee", "gt", 0.0025),
+      list("client", "is", ["Agave Bam", "x|y"]),
+    ]);
   });
 
   it("drops what it cannot read", () => {

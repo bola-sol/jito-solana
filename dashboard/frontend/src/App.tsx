@@ -16,7 +16,7 @@ import { ClusterPage } from "./components/ClusterPage";
 import { GossipStakeCard } from "./components/GossipStakeCard";
 import { MissesPanel } from "./components/MissesPanel";
 import { SlotStrip } from "./components/SlotStrip";
-import { HOME, useRoute, type Page } from "./route";
+import { HOME, plainClick, routeAddress, useRoute, type Page } from "./route";
 import { useStore } from "./useStore";
 import { pageTitle } from "./title";
 
@@ -129,10 +129,11 @@ function Nav({ page, onSelect }: { page: Page; onSelect: (page: Page) => void })
       {PAGES.map((entry) => (
         <a
           key={entry.page}
-          href={entry.page === "overview" ? "#" : `#/${entry.page}`}
+          href={routeAddress({ ...HOME, page: entry.page })}
           className={`nav-tab${page === entry.page ? " is-current" : ""}`}
           aria-current={page === entry.page ? "page" : undefined}
           onClick={(event) => {
+            if (!plainClick(event)) return;
             event.preventDefault();
             onSelect(entry.page);
           }}

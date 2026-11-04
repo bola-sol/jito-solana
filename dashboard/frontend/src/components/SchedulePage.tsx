@@ -63,7 +63,7 @@ import {
 import {
   readStartView,
   readViews,
-  startHash,
+  startAddress,
   withoutView,
   withView,
   writeStartView,
@@ -71,6 +71,7 @@ import {
   type SavedView,
 } from "../scheduleViews";
 import { setFoldsOpen, useFoldOpen } from "../folds";
+import { HOME, openAddress, routeAddress } from "../route";
 import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
 import type { ScheduleSummary } from "../types";
@@ -926,15 +927,12 @@ export function SchedulePage({
   };
   // Arriving with nothing asked, the schedule takes the start view; clearing filters later does not.
   useEffect(() => {
-    const hash = startHash(views, startView);
+    const address = startAddress(views, startView);
     const bare = !query && !oursOnly && !from && only.length === 0 && !since && !until && where.length === 0;
-    if (hash && bare) window.location.replace(`${window.location.pathname}${window.location.search}${hash}`);
+    if (address && bare) openAddress(address, true);
   }, []);
   // The view keeps the filters, not where a jump landed.
   const saveView = (name: string): void => {
-    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-    params.delete("from");
-    const search = params.toString();
     const parts = [
       query.trim() && `"${query.trim()}"`,
       oursOnly && "Ours",
@@ -945,7 +943,7 @@ export function SchedulePage({
     keepViews(
       withView(views, {
         name,
-        hash: search ? `#/schedule?${search}` : "#/schedule",
+        address: routeAddress({ ...HOME, page: "schedule", query, ours: oursOnly, only, since, until, where }),
         summary: parts.join(" · ") || "Everything",
       }),
     );
@@ -988,7 +986,7 @@ export function SchedulePage({
           onToggle={() => setViewsOpen((open) => !open)}
           onApply={(view) => {
             setViewsOpen(false);
-            window.location.hash = view.hash;
+            openAddress(view.address);
           }}
           start={startView}
           onStart={keepStart}

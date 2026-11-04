@@ -91,22 +91,51 @@ export function ready(condition: Condition): boolean {
   return FIELDS[condition.field].list ? condition.values.length > 0 : condition.value !== null;
 }
 
-/** In the address: `field:op:value`, or `field:op:a|b` for a list, joined by `;`. */
-export function encodeConditions(conditions: readonly Condition[]): string {
-  return conditions
-    .filter(ready)
-    .map((condition) =>
-      [
-        condition.field,
-        condition.op,
-        FIELDS[condition.field].list
-          ? condition.values.map(encodeURIComponent).join("|")
-          : String(condition.value),
-      ].join(":"),
-    )
-    .join(";");
+const OP_WORDS: Readonly<Partial<Record<Op, string>>> = { gt: "over", ge: "min", lt: "under", le: "max", eq: "is" };
+
+/** A value in the address, its spaces, colons and commas left readable. */
+export function encodeValue(text: string): string {
+  return encodeURIComponent(text).replace(/%20/g, "+").replace(/%3A/g, ":").replace(/%2C/g, ",");
 }
 
+export function decodeValue(text: string): string {
+  try {
+    return decodeURIComponent(text.replace(/\+/g, " "));
+  } catch {
+    return text;
+  }
+}
+
+/** In the address: `duration=over-400`, `country=DE,NL`, `not-client=Agave`. */
+export function conditionParams(conditions: readonly Condition[]): string[] {
+  return conditions.filter(ready).map((condition) => {
+    if (!FIELDS[condition.field].list) return `${condition.field}=${OP_WORDS[condition.op] ?? "is"}-${condition.value}`;
+    const values = condition.values.map((value) => encodeValue(value).replace(/,/g, "%2C")).join(",");
+    return `${condition.op === "is_not" ? "not-" : ""}${condition.field}=${values}`;
+  });
+}
+
+/** Conditions from the address's keys and undecoded values; anything else is left out. */
+export function readConditionParams(params: readonly (readonly [key: string, raw: string])[]): Condition[] {
+  const read: Condition[] = [];
+  for (const [key, raw] of params) {
+    const not = key.startsWith("not-");
+    const field = (not ? key.slice(4) : key) as Field;
+    if (!FIELD_ORDER.includes(field)) continue;
+    if (FIELDS[field].list) {
+      const values = raw.split(",").map(decodeValue).filter(Boolean);
+      if (values.length > 0) read.push({ field, op: not ? "is_not" : "is", value: null, values });
+      continue;
+    }
+    const [, word, number = ""] = /^([a-z]+)-(.+)$/.exec(decodeValue(raw)) ?? [];
+    const op = NUMBER_OPS.find((held) => OP_WORDS[held] === word);
+    const value = Number(number);
+    if (!not && op && number !== "" && Number.isFinite(value)) read.push({ field, op, value, values: [] });
+  }
+  return read;
+}
+
+/** The address's form until 2026-11: `field:op:value`, or `field:op:a|b` for a list, joined by `;`. */
 export function decodeConditions(text: string | null): Condition[] {
   const read: Condition[] = [];
   for (const part of (text ?? "").split(";")) {

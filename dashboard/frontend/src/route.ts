@@ -1,7 +1,15 @@
-/** The hash never reaches the server. */
+/** Pages are paths, which the server answers with the page, and filters named keys:
+ *  `/schedule?country=DE&duration=over-400`. */
 
-import { useCallback, useEffect, useState } from "react";
-import { decodeConditions, encodeConditions, type Condition } from "./scheduleConditions";
+import { useCallback, useLayoutEffect, useState, type MouseEvent } from "react";
+import {
+  conditionParams,
+  decodeConditions,
+  decodeValue,
+  encodeValue,
+  readConditionParams,
+  type Condition,
+} from "./scheduleConditions";
 import { readOnly, type Only } from "./scheduleFilters";
 
 export type Page = "overview" | "slots" | "schedule" | "gossip" | "cluster";
@@ -36,73 +44,124 @@ export const HOME: Route = {
   where: [],
 };
 
-export function readRoute(hash: string): Route {
-  const [path = "", search = ""] = hash.replace(/^#\/?/, "").split("?");
-  const [name, rest] = path.split("/");
+/** An address's query as keys and undecoded values, a bare key holding "". */
+function readParams(search: string): (readonly [key: string, raw: string])[] {
+  return search
+    .split("&")
+    .filter(Boolean)
+    .map((part) => {
+      const at = part.indexOf("=");
+      return at === -1 ? ([part, ""] as const) : ([part.slice(0, at), part.slice(at + 1)] as const);
+    });
+}
+
+/** A route from an address, its path and query. */
+export function readRoute(address: string): Route {
+  const at = address.indexOf("?");
+  const [path, search] = at === -1 ? [address, ""] : [address.slice(0, at), address.slice(at + 1)];
+  const [name, rest] = path.replace(/^\//, "").split("/");
   const page = PAGES.find((page) => page === name) ?? "overview";
-  const params = new URLSearchParams(search);
+  const params = readParams(search);
+  const raw = (key: string): string | null => params.find(([held]) => held === key)?.[1] ?? null;
+  const text = (key: string): string => decodeValue(raw(key) ?? "");
   return {
     page,
     slot: page === "slots" && rest !== undefined && /^\d+$/.test(rest) ? Number(rest) : null,
     // Only the pages with a search box keep one.
-    query: page === "overview" || page === "cluster" ? "" : (params.get("q") ?? ""),
-    ours: page === "schedule" && params.has("ours"),
-    from: page === "schedule" ? (params.get("from") ?? "") : "",
-    only: page === "schedule" ? readOnly(params.get("only")) : [],
-    since: page === "schedule" ? (params.get("since") ?? "") : "",
-    until: page === "schedule" ? (params.get("until") ?? "") : "",
-    where: page === "schedule" ? decodeConditions(params.get("where")) : [],
+    query: page === "overview" || page === "cluster" ? "" : text("q"),
+    ours: page === "schedule" && raw("ours") !== null,
+    from: page === "schedule" ? text("from") : "",
+    only: page === "schedule" ? readOnly(text("only")) : [],
+    since: page === "schedule" ? text("since") : "",
+    until: page === "schedule" ? text("until") : "",
+    where: page === "schedule" ? [...decodeConditions(text("where")), ...readConditionParams(params)] : [],
   };
 }
 
-export function routeHash(route: Route): string {
+/** The address an old `#/schedule?where=…` link or saved view now means. */
+export function addressOfHash(hash: string): string {
+  return routeAddress(readRoute(`/${hash.replace(/^#\/?/, "")}`));
+}
+
+export function routeAddress(route: Route): string {
   switch (route.page) {
     case "overview":
-      return "#";
+      return "/";
     case "slots":
-      return withSearch(route.slot === null ? "#/slots" : `#/slots/${route.slot}`, { q: route.query });
+      return withSearch(route.slot === null ? "/slots" : `/slots/${route.slot}`, { q: route.query });
     case "schedule":
-      return withSearch("#/schedule", {
-        q: route.query,
-        ours: route.ours,
-        from: route.from,
-        only: route.only.join(","),
-        since: route.since,
-        until: route.until,
-        where: encodeConditions(route.where),
-      });
+      return withSearch(
+        "/schedule",
+        {
+          q: route.query,
+          ours: route.ours,
+          from: route.from,
+          only: route.only.join(","),
+          since: route.since,
+          until: route.until,
+        },
+        conditionParams(route.where),
+      );
     case "gossip":
-      return withSearch("#/gossip", { q: route.query });
+      return withSearch("/gossip", { q: route.query });
     case "cluster":
-      return "#/cluster";
+      return "/cluster";
   }
 }
 
 /** Empty and false values are left out; true is written as a bare key. */
-function withSearch(path: string, values: Record<string, string | boolean>): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(values)) {
-    if (value === true) params.set(key, "");
-    else if (value) params.set(key, value);
-  }
-  const search = params.toString();
+function withSearch(path: string, values: Record<string, string | boolean>, more: readonly string[] = []): string {
+  const parts = Object.entries(values).flatMap(([key, value]) =>
+    value === true ? [key] : value ? [`${key}=${encodeValue(value)}`] : [],
+  );
+  const search = [...parts, ...more].join("&");
   return search ? `${path}?${search}` : path;
 }
 
-/** A page change is a history entry and anything else replaces it, so back steps between pages. */
-export function useRoute(): [Route, (next: Route, replace?: boolean) => void] {
-  const [route, setRoute] = useState<Route>(() => readRoute(window.location.hash));
+/** A click the browser should not handle itself: not one opening a new tab or window. */
+export function plainClick(event: MouseEvent): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
 
-  useEffect(() => {
-    const follow = () => setRoute(readRoute(window.location.hash));
+/** The address now held, an old hash link rewritten to its path. */
+function settle(): Route {
+  const { hash, pathname, search } = window.location;
+  if (!hash) return readRoute(`${pathname}${search}`);
+  const address = addressOfHash(hash);
+  window.history.replaceState(null, "", address);
+  return readRoute(address);
+}
+
+/** A page change is a history entry and anything else replaces it, so back steps between pages. */
+function write(address: string, replace: boolean): void {
+  const { hash, pathname, search } = window.location;
+  if (replace || address === `${pathname}${search}${hash}`) window.history.replaceState(null, "", address);
+  else window.history.pushState(null, "", address);
+}
+
+/** Goes to an address from outside the route's owner, as a link in the page does. */
+export function openAddress(address: string, replace = false): void {
+  write(address, replace);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+export function useRoute(): [Route, (next: Route, replace?: boolean) => void] {
+  const [route, setRoute] = useState<Route>(settle);
+
+  // Ahead of the pages' effects, one of which can open a saved view on arriving.
+  useLayoutEffect(() => {
+    const follow = () => setRoute(settle());
+    window.addEventListener("popstate", follow);
+    // An old link pasted over this page changes only the hash.
     window.addEventListener("hashchange", follow);
-    return () => window.removeEventListener("hashchange", follow);
+    return () => {
+      window.removeEventListener("popstate", follow);
+      window.removeEventListener("hashchange", follow);
+    };
   }, []);
 
   const go = useCallback((next: Route, replace = false) => {
-    const hash = routeHash(next);
-    if (replace) window.history.replaceState(null, "", hash);
-    else window.location.hash = hash;
+    write(routeAddress(next), replace);
     setRoute(next);
   }, []);
 

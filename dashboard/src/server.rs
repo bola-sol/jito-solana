@@ -1988,6 +1988,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_filtered_address_serves_the_page() {
+        let reply = request_with_hosts(
+            b"GET /schedule?country=DE&duration=over-400 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 200 OK"));
+        assert!(reply.contains("content-type: text/html"));
+    }
+
+    #[tokio::test]
+    async fn test_robots_is_served_as_text() {
+        if assets::ASSETS.is_empty() {
+            return;
+        }
+        let reply = request_with_hosts(
+            b"GET /robots.txt HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            vec!["localhost".to_string()],
+        )
+        .await;
+        assert!(reply.contains("content-type: text/plain"));
+        assert!(reply.contains("Disallow: /*?"));
+    }
+
+    #[tokio::test]
     async fn test_a_method_that_would_write_is_refused() {
         // Nothing here accepts input over HTTP, and a server that quietly
         // ignores a POST reads as one that took it.

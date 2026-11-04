@@ -7467,6 +7467,14 @@ body {
   color: var(--text);
 }
 
+/* Wide enough for 100.00%, so the counts above and below stay in line. */
+.schedule-clients-share {
+  display: inline-block;
+  min-width: 7ch;
+  margin-left: 1ch;
+  color: var(--text-faint);
+}
+
 .schedule-clients-note {
   margin-top: 4px;
   font-size: 11.5px;

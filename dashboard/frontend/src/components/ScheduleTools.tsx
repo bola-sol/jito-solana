@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
-import { count } from "../format";
+import { count, percent } from "../format";
 import { typedTime, type Held } from "../scheduleFilters";
 import { complete, suggest, type BrowseGroup, type BrowseRow, type Offered } from "../scheduleSyntax";
 import type { SavedView } from "../scheduleViews";
@@ -564,7 +564,10 @@ export function ClientTable({
               <tr key={row.client ?? ""}>
                 <td>{row.client ?? "Not in gossip"}</td>
                 <td>{count(row.slots)}</td>
-                <td>{count(row.skipped)}</td>
+                <td>
+                  {count(row.skipped)}
+                  <span className="schedule-clients-share">{percent(row.skipped / row.slots)}</span>
+                </td>
                 <td>{ms(row.duration_ms)}</td>
                 <td>{ms(row.replay_ms)}</td>
                 <td>{row.slots > 0 ? count(Math.round(row.transactions / row.slots)) : "—"}</td>

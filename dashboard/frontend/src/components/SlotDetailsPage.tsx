@@ -802,8 +802,10 @@ function BlockCompute({
         </div>
       </div>
       {cap && <CapacityBar cap={cap} />}
-      {block.execution && <ExecutionTime execution={block.execution} />}
-      {block.leading && <LeadingTime slot={block.slot} leading={block.leading} />}
+      <div className="sx-exec-pair">
+        {block.execution && <ExecutionTime execution={block.execution} />}
+        {block.leading && <LeadingTime slot={block.slot} leading={block.leading} />}
+      </div>
     </div>
   );
 }

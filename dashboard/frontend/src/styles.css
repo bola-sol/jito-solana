@@ -5294,10 +5294,24 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Execution time and Leading this slot: two across where both fit, one alone taking the row. */
+.sx-exec-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 470px), 1fr));
+  gap: 14px 28px;
+}
+
+.sx-exec-pair:empty {
+  display: none;
+}
+
+/* Subgrid, so a legend that wraps on one side keeps both sides' rows level. */
 .sx-exec {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+  row-gap: 12px;
+  min-width: 0;
 }
 
 .sx-exec-seg {

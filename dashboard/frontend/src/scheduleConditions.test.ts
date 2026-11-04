@@ -4,6 +4,9 @@ import {
   conditionParams,
   decodeConditions,
   endsNextDay,
+  gapHolds,
+  gapText,
+  parseGap,
   nameHolds,
   describeCondition,
   hasRange,
@@ -127,6 +130,44 @@ describe("rangeBounds with a bare time", () => {
   it("leaves dated ends and a range over midnight as read", () => {
     expect(rangeBounds("23:00", "01:00", undefined, now).to_millis).toBe(new Date(2026, 10, 4, 1, 0).getTime());
     expect(rangeBounds("Nov 5 08:00", "Nov 5 09:00", undefined, now).to_millis).toBe(new Date(2026, 10, 5, 9, 0).getTime());
+  });
+});
+
+describe("a gap condition", () => {
+  const gap = (op: "gt" | "eq", seconds: number) => number("gap", op, seconds);
+
+  it("reads a time, a bare number being minutes", () => {
+    expect(parseGap("30m")).toBe(1800);
+    expect(parseGap("2h")).toBe(7200);
+    expect(parseGap("90s")).toBe(90);
+    expect(parseGap("1h30m")).toBe(5400);
+    expect(parseGap("1.5h")).toBe(5400);
+    expect(parseGap("30")).toBe(1800);
+    expect(parseGap("")).toBeNull();
+    expect(parseGap("soon")).toBeNull();
+  });
+
+  it("shows and writes the time", () => {
+    expect(gapText(5400)).toBe("1h30m");
+    expect(gapText(0)).toBe("0s");
+    expect(describeCondition(gap("gt", 5400))).toBe("Gap > 1h 30m");
+    expect(conditionParams([gap("gt", 1800)])).toEqual(["gap=over-30m"]);
+    expect(readConditionParams([["gap", "over-30m"]])).toEqual([gap("gt", 1800)]);
+    expect(readConditionParams([["gap", "over-soon"]])).toEqual([]);
+  });
+
+  it("goes to the validator in whole turns of slots at the slot time", () => {
+    expect(toServer(gap("gt", 60), null, 400).value).toBe(152);
+    expect(toServer(gap("gt", 60), null, 200).value).toBe(300);
+    expect(toServer(gap("gt", 60), null).value).toBe(152);
+  });
+
+  it("holds against a turn's gap in slots, and is left to the turn by the slot test", () => {
+    expect(gapHolds(gap("gt", 60), 200, 400)).toBe(true);
+    expect(gapHolds(gap("gt", 60), 100, 400)).toBe(false);
+    expect(gapHolds(gap("eq", 60), 152, 400)).toBe(true);
+    expect(gapHolds(gap("gt", 60), null, 400)).toBe(false);
+    expect(conditionHolds(gap("gt", 60), entry(), null, null)).toBe(true);
   });
 });
 

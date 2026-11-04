@@ -242,6 +242,8 @@ export interface FutureReply {
   next: number | null;
   /** Matches after this page. */
   rest: number;
+  /** The validator name conditions choose, where they hold for exactly one this epoch. */
+  named: string | null;
 }
 
 export interface TipRates {

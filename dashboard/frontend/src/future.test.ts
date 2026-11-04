@@ -4,6 +4,10 @@ import {
   expectedAt,
   FUTURE_PAGE,
   futureNumbers,
+  gapOf,
+  leaderTurns,
+  nearestTurn,
+  turnGaps,
   lastTurnOf,
   ourFutureNumbers,
   raiseTop,
@@ -56,8 +60,8 @@ describe("FutureMatches", () => {
 
   it("holds pages in order and drops turns passed", () => {
     const held = new FutureMatches(40, { from_slot: null, to_slot: 99 });
-    held.add({ turns: [10, 12], leaders: [leader], next: 56, rest: 3 });
-    held.add({ turns: [14], leaders: [], next: null, rest: 0 });
+    held.add({ turns: [10, 12], leaders: [leader], next: 56, rest: 3, named: null });
+    held.add({ turns: [14], leaders: [], next: null, rest: 0, named: null });
     expect(held.numbers(9)).toEqual([14, 12, 10]);
     expect(held.numbers(12)).toEqual([14]);
     expect(held.next).toBeNull();
@@ -66,11 +70,36 @@ describe("FutureMatches", () => {
 
   it("keeps a leader's object across pages", () => {
     const held = new FutureMatches(40, { from_slot: null, to_slot: 99 });
-    held.add({ turns: [10], leaders: [leader], next: 44, rest: 1 });
+    held.add({ turns: [10], leaders: [leader], next: 44, rest: 1, named: "a" });
     const first = held.peers.get("a");
-    held.add({ turns: [11], leaders: [{ ...leader }], next: null, rest: 0 });
+    held.add({ turns: [11], leaders: [{ ...leader }], next: null, rest: 0, named: "a" });
     expect(held.peers.get("a")).toBe(first);
     expect(first).toEqual({ ...leader, name: null, icon: null });
+  });
+});
+
+describe("a validator's turns and gaps", () => {
+  // Turns of four slots: a at 0, 2 and 3; b at 1, 4 and 5; then 16 slots to the epoch's end.
+  const held: EpochInfo = { ...epoch, start_slot: 400, end_slot: 439, leaders: ["a", "b"], turns: [0, 1, 0, 0, 1, 1] };
+
+  it("runs a gap to the leader's next turn or the epoch's end", () => {
+    expect([...turnGaps(held)]).toEqual([4, 8, 0, 24, 0, 16]);
+    expect(gapOf(turnGaps(held), held, 101)).toBe(8);
+    expect(gapOf(turnGaps(held), held, 106)).toBeNull();
+    expect(gapOf(null, held, 101)).toBeNull();
+  });
+
+  it("lists a leader's turn numbers", () => {
+    expect(leaderTurns(held, "b")).toEqual([101, 104, 105]);
+    expect(leaderTurns(held, "nobody")).toEqual([]);
+  });
+
+  it("finds the nearest turn", () => {
+    expect(nearestTurn([10, 20, 30], 5)).toBe(0);
+    expect(nearestTurn([10, 20, 30], 14)).toBe(0);
+    expect(nearestTurn([10, 20, 30], 16)).toBe(1);
+    expect(nearestTurn([10, 20, 30], 99)).toBe(2);
+    expect(nearestTurn([], 5)).toBe(0);
   });
 });
 

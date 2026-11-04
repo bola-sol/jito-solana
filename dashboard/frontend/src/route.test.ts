@@ -80,6 +80,7 @@ describe("routeAddress", () => {
         where: [
           { field: "base_fee", op: "gt", value: 0.0025, values: [] },
           { field: "compute", op: "ge", value: 40_000_000, values: [] },
+          { field: "gap", op: "lt", value: 5400, values: [] },
           { field: "shreds", op: "le", value: 0, values: [] },
           { field: "client", op: "is", value: null, values: ["Agave Bam", "x|y"] },
           { field: "name", op: "is_not", value: null, values: ["Hamsa, Labs", "not-me", "a+b=c&d"] },

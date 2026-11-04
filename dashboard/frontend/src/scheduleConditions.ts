@@ -3,6 +3,7 @@
  *  matches the same in `search.rs`. */
 
 import type { ScheduleColumns } from "./layout";
+import { SLOTS_PER_TURN } from "./schedule";
 import { isBareTime, parseJump, type Jump } from "./scheduleFilters";
 import { timelineOf } from "./timeline";
 import { jitoShare } from "./tips";
@@ -15,6 +16,7 @@ export type Field =
   | "version"
   | "country"
   | "stake"
+  | "gap"
   | "voted"
   | "left_out"
   | "transactions"
@@ -31,7 +33,7 @@ export type Field =
 
 export type Op = "gt" | "ge" | "lt" | "le" | "eq" | "is" | "is_not";
 
-/** `value` is in the unit shown; `values` holds a list field's picks. */
+/** `value` is in the unit shown, a gap's in seconds; `values` holds a list field's picks. */
 export interface Condition {
   field: Field;
   op: Op;
@@ -57,6 +59,7 @@ export const FIELDS: Record<Field, FieldInfo> = {
   version: { label: "Version", unit: "", list: true, group: "status", leader: true },
   country: { label: "Country", unit: "", list: true, group: "status", leader: true },
   stake: { label: "Stake", unit: "SOL", list: false, group: "status", leader: true },
+  gap: { label: "Gap", unit: "", list: false, group: "status", leader: true },
   voted: { label: "Voted", unit: "", list: true, group: "status", leader: false },
   left_out: { label: "Left out", unit: "", list: false, group: "status", leader: false },
   transactions: { label: "Transactions", unit: "", list: false, group: "status", leader: false },
@@ -90,9 +93,33 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 
 const DAY_MILLIS = 86_400_000;
 
+/** Before the validator has said how long its slots take. */
+export const DEFAULT_SLOT_MILLIS = 400;
+
 /** Whether a condition is complete enough to ask for. */
 export function ready(condition: Condition): boolean {
   return FIELDS[condition.field].list ? condition.values.length > 0 : condition.value !== null;
+}
+
+/** Seconds from `30m`, `2h`, `90s` or `1h30m`; a bare number is minutes. */
+export function parseGap(text: string): number | null {
+  const bare = /^\d+(?:\.\d+)?$/.test(text);
+  if (bare) return Number(text) * 60;
+  const parts = /^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/i.exec(text);
+  if (!parts || text === "") return null;
+  return Number(parts[1] ?? 0) * 3600 + Number(parts[2] ?? 0) * 60 + Number(parts[3] ?? 0);
+}
+
+/** A gap as typed: `1h30m`, or with a separator as shown. */
+export function gapText(seconds: number, separator = ""): string {
+  const whole = Math.round(seconds);
+  const parts: [number, string][] = [
+    [Math.floor(whole / 3600), "h"],
+    [Math.floor((whole % 3600) / 60), "m"],
+    [whole % 60, "s"],
+  ];
+  const held = parts.filter(([part]) => part > 0).map(([part, unit]) => `${part}${unit}`);
+  return held.length > 0 ? held.join(separator) : "0s";
 }
 
 const OP_WORDS: Readonly<Partial<Record<Op, string>>> = { gt: "over", ge: "min", lt: "under", le: "max", eq: "is" };
@@ -113,7 +140,10 @@ export function decodeValue(text: string): string {
 /** In the address: `duration=over-400`, `country=DE,NL`, `not-client=Agave`. */
 export function conditionParams(conditions: readonly Condition[]): string[] {
   return conditions.filter(ready).map((condition) => {
-    if (!FIELDS[condition.field].list) return `${condition.field}=${OP_WORDS[condition.op] ?? "is"}-${condition.value}`;
+    if (!FIELDS[condition.field].list) {
+      const value = condition.field === "gap" ? gapText(condition.value ?? 0) : condition.value;
+      return `${condition.field}=${OP_WORDS[condition.op] ?? "is"}-${value}`;
+    }
     const values = condition.values.map((value) => encodeValue(value).replace(/,/g, "%2C")).join(",");
     return `${condition.op === "is_not" ? "not-" : ""}${condition.field}=${values}`;
   });
@@ -133,8 +163,8 @@ export function readConditionParams(params: readonly (readonly [key: string, raw
     }
     const [, word, number = ""] = /^([a-z]+)-(.+)$/.exec(decodeValue(raw)) ?? [];
     const op = NUMBER_OPS.find((held) => OP_WORDS[held] === word);
-    const value = Number(number);
-    if (!not && op && number !== "" && Number.isFinite(value)) read.push({ field, op, value, values: [] });
+    const value = field === "gap" ? parseGap(number) : Number(number);
+    if (!not && op && number !== "" && value !== null && Number.isFinite(value)) read.push({ field, op, value, values: [] });
   }
   return read;
 }
@@ -169,11 +199,13 @@ export interface ConditionParts {
 export function conditionParts(condition: Condition): ConditionParts {
   const info = FIELDS[condition.field];
   const value =
-    condition.field === "voted"
-      ? condition.values.map((held) => VOTED.find(([named]) => named === held)?.[1] ?? held).join(", ")
-      : info.list
-        ? condition.values.join(", ")
-        : (condition.value?.toLocaleString("en-US", { maximumFractionDigits: 6 }) ?? "");
+    condition.field === "gap"
+      ? gapText(condition.value ?? 0, " ")
+      : condition.field === "voted"
+        ? condition.values.map((held) => VOTED.find(([named]) => named === held)?.[1] ?? held).join(", ")
+        : info.list
+          ? condition.values.join(", ")
+          : (condition.value?.toLocaleString("en-US", { maximumFractionDigits: 6 }) ?? "");
   return { label: info.label, op: OP_LABELS[condition.op], value, unit: info.list ? "" : info.unit };
 }
 
@@ -196,10 +228,12 @@ export interface ServerCondition {
   values: readonly string[];
 }
 
-/** In the validator's units: lamports, and tips before jito's cut, which the page takes off. */
-export function toServer(condition: Condition, rates: TipRates | null | undefined): ServerCondition {
+/** In the validator's units: lamports, tips before jito's cut, which the page takes off, and a gap in
+ *  slots at the slot time given. */
+export function toServer(condition: Condition, rates: TipRates | null | undefined, slotMillis = DEFAULT_SLOT_MILLIS): ServerCondition {
   const value = condition.value ?? 0;
   let sent = value;
+  if (condition.field === "gap") sent = gapSlots(value, slotMillis);
   if (condition.field === "stake" || condition.field === "base_fee" || condition.field === "priority") {
     sent = value * LAMPORTS_PER_SOL;
   } else if (condition.field === "tips") {
@@ -271,6 +305,7 @@ function figure(
     case "client":
     case "version":
     case "country":
+    case "gap":
     case "voted":
       return null;
   }
@@ -296,8 +331,8 @@ function versionNamed(condition: Condition, version: string): boolean {
 }
 
 /** On the page, as the validator matches it. With no leader facts, a leader condition is taken as
- *  met: the validator already matched it for the turns it returned. A name is matched on the turn,
- *  by `nameHolds`. */
+ *  met: the validator already matched it for the turns it returned. A name and a gap are matched on
+ *  the turn, by `nameHolds` and `gapHolds`. */
 export function conditionHolds(
   condition: Condition,
   entry: SlotEntry | null | undefined,
@@ -306,7 +341,7 @@ export function conditionHolds(
 ): boolean {
   if (!entry) return false;
   const info = FIELDS[condition.field];
-  if ((info.leader && leader === "matched") || condition.field === "name") return true;
+  if ((info.leader && leader === "matched") || condition.field === "name" || condition.field === "gap") return true;
   const facts = leader === "matched" ? null : leader;
   if (info.list) {
     const value =
@@ -323,10 +358,12 @@ export function conditionHolds(
     const named = condition.field === "version" ? versionNamed(condition, value) : condition.values.includes(value);
     return condition.op === "is_not" ? !named : named;
   }
-  const value = figure(condition.field, entry, facts, rates);
-  const wanted = condition.value;
+  return compared(condition.op, figure(condition.field, entry, facts, rates), condition.value);
+}
+
+function compared(op: Op, value: number | null, wanted: number | null): boolean {
   if (value === null || wanted === null) return false;
-  switch (condition.op) {
+  switch (op) {
     case "gt":
       return value > wanted;
     case "ge":
@@ -340,6 +377,16 @@ export function conditionHolds(
     default:
       return false;
   }
+}
+
+/** A gap in slots, as the validator is sent it: to the nearest whole turn, so `=` can hold. */
+function gapSlots(seconds: number, slotMillis: number): number {
+  return Math.round((seconds * 1000) / slotMillis / SLOTS_PER_TURN) * SLOTS_PER_TURN;
+}
+
+/** Whether a turn with this gap in slots meets a gap condition; null where its gap is not known. */
+export function gapHolds(condition: Condition, slots: number | null, slotMillis: number): boolean {
+  return compared(condition.op, slots, gapSlots(condition.value ?? 0, slotMillis));
 }
 
 /** A range in the validator's terms, each end a slot or a time. */

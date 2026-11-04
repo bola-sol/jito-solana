@@ -95,6 +95,30 @@ describe("readSearch", () => {
   });
 });
 
+describe("gap", () => {
+  it("reads a time and says when it cannot", () => {
+    expect(readSearch("gap>30m", offered, now).filters).toEqual([
+      { kind: "condition", condition: { field: "gap", op: "gt", value: 1800, values: [] } },
+    ]);
+    expect(readSearch("gap>soon", offered, now).errors).toEqual(["gap needs a time, e.g. gap>30m."]);
+  });
+
+  it("offers the comparison and an example", () => {
+    expect(suggest("ga", offered).map((option) => [option.insert, option.ghost])).toEqual([
+      ["gap>", "30m"],
+      ["gap<", "30m"],
+    ]);
+    const row = browse(offered, null, null).find((held) => held.syntax === "gap>30m");
+    expect(row?.action).toEqual({ kind: "condition", condition: { field: "gap", op: "gt", value: 1800, values: [] } });
+  });
+
+  it("types back as it was read", () => {
+    const condition: Condition = { field: "gap", op: "ge", value: 5400, values: [] };
+    expect(valueText(condition)).toBe("1h30m");
+    expect(withValue(condition, "2h", offered)).toEqual({ ...condition, value: 7200 });
+  });
+});
+
 describe("version", () => {
   it("reads a version with or without its v, and negates with a dash", () => {
     expect(readSearch("version:v4.4,4.3.2 -version:4.4.0-rc.1", offered, now).filters).toEqual([

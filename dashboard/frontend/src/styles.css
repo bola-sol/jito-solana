@@ -7578,6 +7578,251 @@ body {
   }
 }
 
+/* One validator's turns to come, left to right, under a ruler of the epoch. */
+.schedule-strip {
+  min-width: 0;
+}
+
+.schedule-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.schedule-strip-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.schedule-strip-title b {
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.schedule-strip-position {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.schedule-strip-arrows {
+  display: flex;
+  flex: none;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.schedule-strip-arrow {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.schedule-strip-arrow svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.schedule-strip-arrow:hover:not(:disabled) {
+  border-color: var(--text-faint);
+  color: var(--text);
+}
+
+.schedule-strip-arrow:disabled {
+  color: var(--border);
+  cursor: default;
+}
+
+.schedule-strip-ruler {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.schedule-strip-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+/* A taller target than the bar. */
+.schedule-strip-track::before {
+  content: "";
+  position: absolute;
+  inset: -6px 0;
+}
+
+.schedule-strip-track svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.schedule-strip-track path {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.schedule-strip-track path.is-other {
+  stroke: var(--border);
+}
+
+.schedule-strip-track path.is-next {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.schedule-strip-view {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  pointer-events: none;
+}
+
+.schedule-strip-row {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.schedule-strip-row::-webkit-scrollbar {
+  display: none;
+}
+
+.schedule-strip-row.has-more {
+  mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+}
+
+.schedule-strip-tiles {
+  position: relative;
+  height: 81px;
+}
+
+.schedule-strip-tile {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  width: 170px;
+  height: 81px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+}
+
+.schedule-strip-tile.is-next {
+  border-color: var(--accent);
+  background: var(--panel-raised);
+}
+
+.schedule-strip-top,
+.schedule-strip-gap {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.schedule-strip-when {
+  color: var(--text);
+}
+
+.schedule-strip-count {
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+
+.is-next .schedule-strip-count,
+.schedule-strip-now {
+  color: var(--accent);
+}
+
+.schedule-strip-now i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+
+.schedule-strip-slot {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.schedule-strip-gap {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+}
+
+.schedule-strip-gap b {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+@media (max-width: 700px) {
+  .schedule-strip-tile {
+    width: 150px;
+  }
+
+  .schedule-strip-wide,
+  .schedule-strip-arrow.is-step {
+    display: none;
+  }
+
+  .schedule-strip-arrow {
+    width: 30px;
+    height: 26px;
+  }
+
+  .schedule-strip-ruler {
+    margin-bottom: 8px;
+  }
+}
+
 .schedule-group {
   display: grid;
   grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);

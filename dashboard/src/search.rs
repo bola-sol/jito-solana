@@ -102,6 +102,8 @@ pub enum Field {
     Version,
     Country,
     Stake,
+    /// Slots from the end of a turn to its leader's next turn, or to the epoch's end for its last.
+    Gap,
     Voted,
     LeftOut,
     Transactions,
@@ -203,6 +205,8 @@ struct EpochLeaders<'a> {
     names_held: Vec<bool>,
     ours: Option<u16>,
     traits: Vec<Option<LeaderTraits>>,
+    /// Each turn's gap in slots; empty where no gap condition is asked.
+    gaps: Vec<u64>,
 }
 
 /// A turn's leader as a search sees it.
@@ -212,6 +216,7 @@ struct LeaderAt<'a> {
     names_held: bool,
     ours: bool,
     traits: Option<&'a LeaderTraits>,
+    gap: Option<u64>,
     block_cost_limit: u64,
 }
 
@@ -222,6 +227,7 @@ impl<'a> EpochLeaders<'a> {
         map: &LeaderMap,
         needle: &str,
         names: &NameWants,
+        with_gaps: bool,
     ) -> Self {
         let traits = epoch
             .leaders
@@ -260,7 +266,23 @@ impl<'a> EpochLeaders<'a> {
             names_held,
             ours,
             traits,
+            gaps: if with_gaps {
+                turn_gaps(epoch)
+            } else {
+                Vec::new()
+            },
         }
+    }
+
+    /// The one leader the name conditions hold for, if there is exactly one.
+    fn only_named(&self) -> Option<&'a str> {
+        let mut held = self
+            .names_held
+            .iter()
+            .zip(&self.epoch.leaders)
+            .filter(|(held, _)| **held);
+        let (_, key) = held.next()?;
+        held.next().is_none().then_some(key.as_str())
     }
 
     /// The identity leading the turn; `None` outside this epoch.
@@ -282,19 +304,48 @@ impl<'a> EpochLeaders<'a> {
                 .unwrap_or(self.names_held.is_empty()),
             ours: self.ours.map(usize::from) == Some(index),
             traits: self.traits.get(index).and_then(Option::as_ref),
+            gap: turn_index(self.epoch, slot).and_then(|turn| self.gaps.get(turn).copied()),
             block_cost_limit: self.epoch.block_cost_limit,
         })
     }
 }
 
-fn leader_index(epoch: &EpochInfo, slot: Slot) -> Option<u16> {
+fn turn_index(epoch: &EpochInfo, slot: Slot) -> Option<usize> {
     if slot < epoch.start_slot || slot > epoch.end_slot {
         return None;
     }
     let turn = slot
         .checked_sub(epoch.start_slot)?
         .checked_div(SLOTS_PER_TURN)?;
-    epoch.turns.get(usize::try_from(turn).ok()?).copied()
+    usize::try_from(turn).ok()
+}
+
+fn leader_index(epoch: &EpochInfo, slot: Slot) -> Option<u16> {
+    epoch.turns.get(turn_index(epoch, slot)?).copied()
+}
+
+/// Each turn's gap in slots, read back from the epoch's end.
+fn turn_gaps(epoch: &EpochInfo) -> Vec<u64> {
+    let mut next = HashMap::new();
+    let mut gaps = vec![0; epoch.turns.len()];
+    for (at, leader) in epoch.turns.iter().enumerate().rev() {
+        let turn = u64::try_from(at).unwrap_or(u64::MAX);
+        let end = turn
+            .saturating_add(1)
+            .saturating_mul(SLOTS_PER_TURN)
+            .saturating_add(epoch.start_slot);
+        let next_start =
+            next.insert(*leader, turn)
+                .map_or(epoch.end_slot.saturating_add(1), |later: u64| {
+                    later
+                        .saturating_mul(SLOTS_PER_TURN)
+                        .saturating_add(epoch.start_slot)
+                });
+        if let Some(gap) = gaps.get_mut(at) {
+            *gap = next_start.saturating_sub(end);
+        }
+    }
+    gaps
 }
 
 /// When a row's block became full here, as the page reads it.
@@ -463,7 +514,8 @@ fn holds(
     }
 }
 
-/// Whether a turn's leader meets a condition on the leader; `None` for a condition on a slot.
+/// Whether a turn meets a condition known before it happens, on its leader or its gap; `None` for a
+/// condition on a slot.
 fn leader_holds(condition: &Condition, leader: Option<LeaderAt<'_>>) -> Option<bool> {
     let traits = leader.and_then(|leader| leader.traits);
     Some(match condition.field {
@@ -489,6 +541,9 @@ fn leader_holds(condition: &Condition, leader: Option<LeaderAt<'_>>) -> Option<b
             }),
         ),
         Field::Stake => traits.is_some_and(|traits| compared(condition, traits.stake as f64)),
+        Field::Gap => leader
+            .and_then(|leader| leader.gap)
+            .is_some_and(|gap| compared(condition, gap as f64)),
         Field::Voted
         | Field::LeftOut
         | Field::Transactions
@@ -597,6 +652,7 @@ fn figure(
         | Field::Version
         | Field::Country
         | Field::Stake
+        | Field::Gap
         | Field::Voted => None,
     };
     whole.map(|value| value as f64)
@@ -685,11 +741,15 @@ fn prepare<'a>(
             (condition.op != Op::IsNot, values)
         })
         .collect();
+    let with_gaps = params
+        .conditions
+        .iter()
+        .any(|condition| condition.field == Field::Gap);
     let leaders = {
         let info = info.read().ok()?;
         epochs
             .iter()
-            .map(|epoch| EpochLeaders::new(epoch, &info, map, &needle, &names))
+            .map(|epoch| EpochLeaders::new(epoch, &info, map, &needle, &names, with_gaps))
             .collect()
     };
     let capacity = u64::try_from(history.read().ok()?.capacity()).unwrap_or(u64::MAX);
@@ -846,6 +906,8 @@ pub struct FutureReply {
     pub next: Option<Slot>,
     /// Matches after this page.
     pub rest: u64,
+    /// The validator name conditions choose, where they hold for exactly one this epoch.
+    pub named: Option<String>,
 }
 
 /// The turns to come from `before` on that a search would list, a page at a time. Only what is
@@ -880,7 +942,27 @@ pub fn future(
     let last = epochs.iter().map(|epoch| epoch.end_slot).max().unwrap_or(0);
     let last = params.to_slot.map_or(last, |to| to.min(last));
 
-    let mut reply = FutureReply::default();
+    let chooses = params
+        .conditions
+        .iter()
+        .any(|condition| condition.field == Field::Name)
+        && params
+            .conditions
+            .iter()
+            .all(|condition| condition.field != Field::Name || condition.op == Op::Is);
+    let named = chooses
+        .then(|| {
+            wanted
+                .leaders
+                .iter()
+                .find(|held| held.key_at(params.before).is_some())?
+                .only_named()
+        })
+        .flatten();
+    let mut reply = FutureReply {
+        named: named.map(str::to_string),
+        ..FutureReply::default()
+    };
     let mut seen = BTreeSet::new();
     let mut text = String::new();
     let mut turn = params.before.div_ceil(SLOTS_PER_TURN);
@@ -2036,5 +2118,90 @@ mod tests {
             encoded.len(),
             proto::MAX_MESSAGE
         );
+    }
+
+    #[test]
+    fn test_a_turns_gap_runs_to_its_leaders_next_turn_or_the_epochs_end() {
+        let mut held = epoch(&["a", "b"]);
+        held.turns = vec![0, 1, 0, 0, 1, 1];
+        held.end_slot = START + 39;
+        // Turns of four slots: a at 0, 2 and 3; b at 1, 4 and 5; then 16 slots to the epoch's end.
+        assert_eq!(turn_gaps(&held), [4, 8, 0, 24, 0, 16]);
+    }
+
+    #[test]
+    fn test_a_gap_condition_keeps_the_turns_with_a_long_enough_gap() {
+        let (mut epochs, map) = two_leaders();
+        epochs[0].turns = vec![0, 1, 0, 0, 1, 1];
+        epochs[0].end_slot = START + 23;
+        let first = START / SLOTS_PER_TURN;
+        let reply = future(
+            &RwLock::new(SlotHistory::new(4_096)),
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                conditions: vec![condition(Field::Gap, Op::Ge, 8.0, &[])],
+                ..params("", false, START, None)
+            },
+        );
+        assert_eq!(reply.turns, [first + 1, first + 3], "gaps of 8 slots");
+        // Held turns answer the same condition.
+        let held = rows(START, START + 23, |_, _| {});
+        let found = search(
+            &held,
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                conditions: vec![condition(Field::Gap, Op::Ge, 4.0, &[])],
+                ..params("", false, START + 24, None)
+            },
+        );
+        assert_eq!(found.turns.len(), 3, "turns 0, 1 and 3");
+    }
+
+    #[test]
+    fn test_turns_to_come_name_the_one_validator_chosen() {
+        let (ours, other) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let epochs = [epoch(&[&ours.to_string(), &other.to_string()])];
+        let read = |conditions: Vec<Condition>| {
+            future(
+                &RwLock::new(SlotHistory::new(4_096)),
+                &named(&ours, "Lantern"),
+                &RwLock::default(),
+                &epochs,
+                &SearchParams {
+                    conditions,
+                    ..params("", false, START, Some(1))
+                },
+            )
+            .named
+        };
+        let name = |op: Op, value: &str| condition(Field::Name, op, 0.0, &[value]);
+        assert_eq!(read(vec![name(Op::Is, "lantern")]), Some(ours.to_string()));
+        assert_eq!(
+            read(vec![
+                name(Op::Is, "lantern"),
+                condition(Field::Gap, Op::Gt, 1e9, &[])
+            ]),
+            Some(ours.to_string()),
+            "still chosen when no turn matches"
+        );
+        assert_eq!(read(vec![name(Op::Is, "nobody")]), None);
+        assert_eq!(
+            read(vec![name(Op::IsNot, "lantern")]),
+            None,
+            "left out, not chosen"
+        );
+        assert_eq!(read(Vec::new()), None);
+        // Part of both keys: not one validator.
+        let (first, second) = (ours.to_string(), other.to_string());
+        let shared = first
+            .chars()
+            .find(|part| second.contains(*part))
+            .expect("two keys share a character")
+            .to_string();
+        assert_eq!(read(vec![name(Op::Is, &shared)]), None);
     }
 }

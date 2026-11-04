@@ -1,7 +1,7 @@
 /** The schedule's search box: plain words search leader names, keys and slots, and expressions such
  *  as `duration>240`, `client:Agave,JitoLabs` or `time:08:00..09:30` become filters. */
 
-import { FIELDS, type Condition, type Field, type Op } from "./scheduleConditions";
+import { FIELDS, gapText, parseGap, type Condition, type Field, type Op } from "./scheduleConditions";
 import { countryName } from "./format";
 import { ONLY_TITLES, parseJump, type Only } from "./scheduleFilters";
 
@@ -38,6 +38,7 @@ export const KEYS: readonly Key[] = [
   { name: "version", kind: "list", field: "version", group: "leader", op: ":", example: "4.4", what: "these client versions, whole or by their start" },
   { name: "geo", kind: "list", field: "country", group: "leader", op: ":", example: "DE,NL", what: "any of these countries" },
   { name: "stake", kind: "number", field: "stake", group: "leader", op: ">", example: "1000000", what: "leader's stake, SOL" },
+  { name: "gap", kind: "number", field: "gap", group: "leader", op: ">", example: "30m", what: "time until this leader's next turn" },
   { name: "leader", kind: "list", field: "leader", group: "leader", op: ":", example: "delinquent", what: "not voting now, or voting" },
   { name: "voted", kind: "list", field: "voted", group: "leader", op: ":", example: "out", what: "our vote in, out or none written" },
   { name: "is", kind: "is", field: null, group: "leader", op: ":", example: "slow", what: "the chips, typed" },
@@ -121,9 +122,18 @@ export function keyOffered(key: Key, offered: Offered): boolean {
   return key.kind !== "is" || offered.only.length > 0;
 }
 
-function readNumber(key: Key, op: string, text: string): Filter | string {
+/** A number key's value as typed, in the unit a condition holds it in; null if unreadable. */
+function typedNumber(key: Key, text: string): number | null {
+  if (key.field === "gap") return parseGap(text);
   const value = Number(text.replace(/[,_]/g, "").replace(UNITS, ""));
-  if (text === "" || !Number.isFinite(value)) return `${key.name} needs a number, e.g. ${key.name}${key.op}${key.example}.`;
+  return text === "" || !Number.isFinite(value) ? null : value;
+}
+
+function readNumber(key: Key, op: string, text: string): Filter | string {
+  const value = typedNumber(key, text);
+  if (value === null) {
+    return `${key.name} needs ${key.field === "gap" ? "a time" : "a number"}, e.g. ${key.name}${key.op}${key.example}.`;
+  }
   const compared = OPS[op];
   if (!compared || !key.field) return `${key.name} takes >, >=, <, <= or =.`;
   return { kind: "condition", condition: { field: key.field, op: compared, value, values: [] } };
@@ -387,7 +397,7 @@ const TYPED_OPS: Readonly<Partial<Record<Op, string>>> = { gt: ">", ge: ">=", lt
 
 /** A condition's value as typed in its pill: the number, or the list with quotes where a value holds a comma. */
 export function valueText(condition: Condition): string {
-  if (condition.value !== null) return String(condition.value);
+  if (condition.value !== null) return condition.field === "gap" ? gapText(condition.value) : String(condition.value);
   return condition.values
     .map((value) => (condition.field === "voted" ? (VOTED_TYPED[value] ?? value) : value))
     .map((value) => (value.includes(",") ? `"${value}"` : value))
@@ -445,7 +455,7 @@ export function browse(offered: Offered, slot: number | null, epoch: number | nu
     const syntax = exampleOf(key, slot, epoch);
     const op = OPS[key.op];
     if (key.kind === "number" && key.field && op) {
-      const condition = { field: key.field, op, value: Number(key.example), values: [] };
+      const condition = { field: key.field, op, value: typedNumber(key, key.example), values: [] };
       return { group: key.group, syntax, what: key.what, action: { kind: "condition", condition } };
     }
     // A list's values are offered once its name is in the box.

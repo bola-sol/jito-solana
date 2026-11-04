@@ -3,6 +3,9 @@ import { blockStamp, buildLabel, clockTime, count, duration, percent, shortKey, 
 import {
   aboutClock,
   EDGE_KEY,
+  gapOf,
+  leaderTurns,
+  turnGaps,
   EPOCH_END_KEY,
   expectedAt,
   FUTURE_PAGE,
@@ -49,10 +52,12 @@ import {
 import {
   conditionHolds,
   conditionParts,
+  DEFAULT_SLOT_MILLIS,
   describeCondition,
   endsNextDay,
   FIELD_ORDER,
   FIELDS,
+  gapHolds,
   hasRange,
   inRange,
   nameHolds,
@@ -90,6 +95,7 @@ import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
 import { SlotLink } from "./SlotLink";
+import { TurnStrip } from "./TurnStrip";
 import { VirtualList } from "./VirtualList";
 import type { EdgeSide } from "../virtual";
 
@@ -278,7 +284,15 @@ export function SchedulePage({
   // Matched on the turn's leader, which names the turn.
   const nameConds = useMemo(() => columnConds.filter((condition) => condition.field === "name"), [columnConds]);
   // `tipCut` stands for the rates, whose object is republished unchanged.
-  const serverWhere = useMemo(() => columnConds.map((condition) => toServer(condition, rates)), [columnConds, tipCut]);
+  // A gap goes as slots at this slot time, in steps so the search is not asked again for every reading.
+  const estimatedNanos = store.get("summary", "estimated_slot_duration_nanos");
+  const slotMillis = estimatedNanos ? Math.round(estimatedNanos / 1e7) * 10 || DEFAULT_SLOT_MILLIS : DEFAULT_SLOT_MILLIS;
+  const gapConds = useMemo(() => columnConds.filter((condition) => condition.field === "gap"), [columnConds]);
+  const askedSlotMillis = gapConds.length > 0 ? slotMillis : DEFAULT_SLOT_MILLIS;
+  const serverWhere = useMemo(
+    () => columnConds.map((condition) => toServer(condition, rates, askedSlotMillis)),
+    [columnConds, tipCut, askedSlotMillis],
+  );
   const epochKey = epoch ? `${epoch.epoch}:${epoch.start_slot}:${epoch.slots_in_epoch}` : "";
   const range = useMemo(() => rangeBounds(since, until, epoch, Date.now()), [since, until, epochKey]);
   const ranged = hasRange(range);
@@ -513,29 +527,59 @@ export function SchedulePage({
     // `matchedPages` stands for the numbers, which grow in place.
     [matched, matchedPages, liveTurn],
   );
+  // Tiles, when one validator is chosen: Ours or a name holding for exactly one, with nothing asked
+  // that a leader's filter could not answer. Other leader filters pass or fail the validator whole.
+  const stripReady =
+    !jumping &&
+    query.trim() === "" &&
+    (oursOnly || nameConds.length > 0) &&
+    conditions.length === 0 &&
+    columnConds.every((held) => FIELDS[held.field].leader);
+  const oursFor = plainList || matched !== null ? (identity ?? null) : null;
+  const stripFor = !stripReady ? null : oursOnly ? oursFor : (matched?.named ?? null);
+  const stripPasses = columnConds.every((held) => held.field === "name" || held.field === "gap") || matches.length > 0;
+  const stripOn = stripFor !== null && !!epoch && stripPasses;
+  const gaps = useMemo(
+    () => (epoch && (stripOn || gapConds.length > 0) ? turnGaps(epoch) : null),
+    [epochKey, stripOn, gapConds.length > 0],
+  );
+  const stripAll = useMemo(
+    () => (stripOn && epoch && stripFor !== null ? leaderTurns(epoch, stripFor) : NO_NUMBERS),
+    [stripOn, stripFor, epochKey],
+  );
+  const stripWindow = matched?.window ?? null;
+  const stripHeld = useMemo(
+    () =>
+      stripAll.filter(
+        (turn) =>
+          (stripWindow === null ||
+            (turn * SLOTS_PER_TURN <= stripWindow.to_slot && turn * SLOTS_PER_TURN + SLOTS_PER_TURN > (stripWindow.from_slot ?? 0))) &&
+          gapConds.every((held) => gapHolds(held, gapOf(gaps, epoch, turn), slotMillis)),
+      ),
+    [stripAll, stripWindow, gapConds, gaps, slotMillis],
+  );
+  const stripFrom = nowTurn ?? (liveTurn === null ? null : liveTurn + 1);
+  const stripTurns = useMemo(
+    () => (stripFrom === null ? stripHeld : stripHeld.filter((turn) => turn >= stripFrom)),
+    [stripHeld, stripFrom],
+  );
+  const stripOthers = useMemo(
+    () => (stripFrom === null ? stripAll : stripAll.filter((turn) => turn >= stripFrom)),
+    [stripAll, stripFrom],
+  );
 
-  // The epoch's turns to come, above the live edge: all of them a page at a time, ours, or those a
-  // search or a leader's filter matches. Not under a jump or a slot's figures.
-  const futureMode = jumping
-    ? null
-    : plainList
-      ? oursOnly
-        ? "ours"
-        : "all"
-      : askFuture && matches.length > 0
-        ? "matches"
-        : null;
+  // The epoch's turns to come, above the live edge: all of them a page at a time, or those a search or
+  // a leader's filter matches. Not under a jump, a slot's figures or one validator's tiles.
+  const futureMode = jumping || stripOn ? null : plainList ? (oursOnly ? null : "all") : askFuture && matches.length > 0 ? "matches" : null;
   const [futureTop, setFutureTop] = useState<number | null>(null);
   const aheadTop =
     futureMode === "all" && liveTurn !== null && lastTurn !== null ? raiseTop(futureTop, liveTurn, lastTurn) : null;
   const future = useMemo((): readonly number[] => {
     if (futureMode === null || liveTurn === null || !epoch) return NO_NUMBERS;
     if (futureMode === "matches") return matches;
-    if (futureMode === "ours") return ourFutureNumbers(epoch, liveTurn);
     return aheadTop === null ? NO_NUMBERS : futureNumbers(liveTurn, aheadTop);
   }, [futureMode, liveTurn, epoch, aheadTop, matches]);
-  const reachesEpochEnd =
-    futureMode === "ours" || (futureMode === "matches" && matched?.next === null) || (aheadTop !== null && aheadTop === lastTurn);
+  const reachesEpochEnd = (futureMode === "matches" && matched?.next === null) || (aheadTop !== null && aheadTop === lastTurn);
   const loadMatches = useCallback(
     async (held: FutureMatches, ask: SearchAsk): Promise<boolean> => {
       if (held.loading || held.next === null) return false;
@@ -588,8 +632,8 @@ export function SchedulePage({
     [futureTurns, liveTurn, leaderOf, identity],
   );
   const ourToCome = useMemo(
-    () => (futureMode === "ours" ? future.length : epoch && liveTurn !== null ? ourFutureNumbers(epoch, liveTurn).length : 0),
-    [futureMode, future, epoch, liveTurn],
+    () => (epoch && liveTurn !== null ? ourFutureNumbers(epoch, liveTurn).length : 0),
+    [epoch, liveTurn],
   );
   const [edge, setEdge] = useState<EdgeSide>("in");
 
@@ -617,6 +661,7 @@ export function SchedulePage({
           matchesQuery(turn, query) &&
           (!oursOnly || turn.mine) &&
           nameConds.every((condition) => nameHolds(condition, turn.leader_name, turn.leader)) &&
+          gapConds.every((condition) => gapHolds(condition, gapOf(gaps, epoch, number), slotMillis)) &&
           (!filterActive ||
             turn.slots.some((slot) =>
               slotMatches(
@@ -636,7 +681,7 @@ export function SchedulePage({
     if (top === undefined || !reachedLive) return around;
     return [...(filtered ? liveMatches() : newest).filter((number) => number > top), ...around];
     // `foundPages` stands for the results, which change in place.
-  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, nameConds, filterActive, slotMatches, byIdentity, delinquentVotes]);
+  }, [index, numbers, ahead, found, up, foundPages, leaderRevision, searching, jumping, reachedLive, filtered, query, oursOnly, nameConds, gapConds, gaps, slotMillis, filterActive, slotMatches, byIdentity, delinquentVotes]);
   const nowShown = nowTurn !== null && pastShown[0] === nowTurn;
   // With only turns to come matching, the list opens on the nearest of them rather than the empty
   // space under the edge. Not moved as turns pass, as a new item here would scroll the reader.
@@ -746,7 +791,6 @@ export function SchedulePage({
   );
 
   const completedSlot = store.get("summary", "completed_slot");
-  const estimatedNanos = store.get("summary", "estimated_slot_duration_nanos");
   const nextLeader = store.get("summary", "next_leader_slot");
 
   // Read afresh for each settled search and epoch, and swapped in once its first page lands so the
@@ -777,25 +821,16 @@ export function SchedulePage({
   }, [askFuture, settled, askedKey, epoch?.epoch, hasLiveTurn, loadMatches]);
   // Keeps a page ahead as the live turn eats into what was read.
   useEffect(() => {
-    if (matched && matched.next !== null && matches.length < FUTURE_PAGE / 2) void loadMatches(matched, asked.ask);
+    if (!stripOn && matched && matched.next !== null && matches.length < FUTURE_PAGE / 2) void loadMatches(matched, asked.ask);
     // The live turn retries a page that failed.
-  }, [matched, matches.length, liveTurn, loadMatches, asked.ask]);
+  }, [stripOn, matched, matches.length, liveTurn, loadMatches, asked.ask]);
 
   const renderTurn = (number: number): ReactElement | null => {
     if (number === EDGE_KEY) {
       return (
         <LiveEdge
-          ours={futureMode === "ours"}
           matching={futureMode === "matches"}
-          toCome={
-            futureMode === "matches"
-              ? future.length + (matched?.rest ?? 0)
-              : futureMode === "ours"
-                ? future.length
-                : lastTurn === null || liveTurn === null
-                  ? 0
-                  : lastTurn - liveTurn
-          }
+          toCome={futureMode === "matches" ? future.length + (matched?.rest ?? 0) : lastTurn === null || liveTurn === null ? 0 : lastTurn - liveTurn}
           ourToCome={ourToCome}
           epoch={epoch?.epoch ?? null}
           nextLeader={futureMode === "matches" ? (future.at(-1) ?? 0) * SLOTS_PER_TURN : nextLeader}
@@ -1146,6 +1181,24 @@ export function SchedulePage({
           {clientsOpen && <ClientTable summary={summary} rates={rates} />}
         </>
       )}
+      {stripOn && epoch && stripFor !== null && (
+        <TurnStrip
+          key={`${stripFor}:${epochKey}:${askedKey}`}
+          name={
+            oursOnly
+              ? null
+              : (byIdentity.get(stripFor)?.name ?? leaderOf((stripOthers[0] ?? 0) * SLOTS_PER_TURN, false).name ?? shortKey(stripFor, 6, 5))
+          }
+          filtered={stripHeld.length !== stripAll.length}
+          turns={stripTurns}
+          others={stripOthers}
+          gapSlots={(turn) => gapOf(gaps, epoch, turn)}
+          lastSlot={epoch.end_slot}
+          completed={completedSlot}
+          slotNanos={estimatedNanos}
+          producing={producing}
+        />
+      )}
       {/* Shown only where the table is too wide to fit, which the stylesheet decides. */}
       <div className="schedule-columns" ref={columnBar} role="group" aria-label="Which columns to show">
         {SCHEDULE_COLUMNS.map((group) => (
@@ -1437,7 +1490,6 @@ const EXPECTED_TITLE = "When the turn should start, at the measured slot time.";
 
 /** Between the turns to come and the live one: how many are left, and when ours is next. */
 function LiveEdge({
-  ours,
   matching,
   toCome,
   ourToCome,
@@ -1446,8 +1498,6 @@ function LiveEdge({
   completed,
   slotNanos,
 }: {
-  /** Listing our turns alone. */
-  ours: boolean;
   /** Listing the turns a filter matches; `nextLeader` is then the next of those. */
   matching: boolean;
   toCome: number;
@@ -1468,11 +1518,9 @@ function LiveEdge({
         <span aria-hidden="true">▲</span>{" "}
         {matching
           ? `${count(toCome)} matching ${toCome === 1 ? "turn" : "turns"} to come`
-          : ours
-            ? `${count(ourToCome)} of our turns to come`
-            : toCome === 0
-              ? `Last turn of epoch ${epoch ?? ""}`.trim()
-              : `${count(toCome)} turns to come`}
+          : toCome === 0
+            ? `Last turn of epoch ${epoch ?? ""}`.trim()
+            : `${count(toCome)} turns to come`}
       </b>
       {nextLeader === null ? (
         <span className="schedule-edge-dim">none of our turns left this epoch</span>
@@ -1484,7 +1532,7 @@ function LiveEdge({
           </span>
           <span className="schedule-edge-dim">
             {until === 0 ? "now" : `in ${duration(until, 2)}`}
-            {!ours && !matching && <span className="schedule-edge-wide"> · {count(ourToCome)} of our turns to come</span>}
+            {!matching && <span className="schedule-edge-wide"> · {count(ourToCome)} of our turns to come</span>}
           </span>
         </>
       ) : null}

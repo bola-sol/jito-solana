@@ -38,6 +38,39 @@ export function ourFutureNumbers(epoch: EpochInfo, live: number): number[] {
   return [...turns].sort((a, b) => b - a);
 }
 
+/** Each turn's gap in slots, by its place in the epoch: from its end to its leader's next turn, or to
+ *  the epoch's end for its last. */
+export function turnGaps(epoch: EpochInfo): Int32Array {
+  const gaps = new Int32Array(epoch.turns.length);
+  const next = new Map<number, number>();
+  for (let at = epoch.turns.length - 1; at >= 0; at--) {
+    const leader = epoch.turns[at] ?? -1;
+    const later = next.get(leader);
+    next.set(leader, at);
+    const end = epoch.start_slot + (at + 1) * SLOTS_PER_TURN;
+    gaps[at] = (later === undefined ? epoch.end_slot + 1 : epoch.start_slot + later * SLOTS_PER_TURN) - end;
+  }
+  return gaps;
+}
+
+/** A leader's turn numbers this epoch, oldest first. */
+export function leaderTurns(epoch: EpochInfo, identity: string): number[] {
+  const leader = epoch.leaders.indexOf(identity);
+  const first = Math.floor(epoch.start_slot / SLOTS_PER_TURN);
+  const turns: number[] = [];
+  if (leader === -1) return turns;
+  epoch.turns.forEach((held, at) => {
+    if (held === leader) turns.push(first + at);
+  });
+  return turns;
+}
+
+/** A turn's gap in slots; null outside the epoch. */
+export function gapOf(gaps: Int32Array | null, epoch: EpochInfo | undefined, turn: number): number | null {
+  if (!gaps || !epoch) return null;
+  return gaps[turn - Math.floor(epoch.start_slot / SLOTS_PER_TURN)] ?? null;
+}
+
 /** The slots turns to come can fill for a range, its times as the slots expected then and its end
  *  at most the epoch's; null where it holds none, or its times cannot be placed. */
 export function futureWindow(
@@ -65,6 +98,8 @@ export class FutureMatches {
   /** The leaders of those turns, whose objects stay while held so cards can compare them. */
   readonly peers = new Map<string, Peer>();
   rest = 0;
+  /** The validator name conditions choose, from the first page. */
+  named: string | null = null;
   loading = false;
 
   constructor(
@@ -80,6 +115,7 @@ export class FutureMatches {
     }
     this.rest = reply.rest;
     this.next = reply.next;
+    this.named = reply.named;
   }
 
   /** Turn numbers after `live` read so far, newest first. */
@@ -101,4 +137,18 @@ export function aboutClock(millis: number, now: number): string {
   const at = new Date(millis);
   const day = at.toDateString() === new Date(now).toDateString() ? "" : `${WEEKDAY.format(at)} `;
   return `≈ ${day}${MINUTE.format(at)}`;
+}
+
+/** The index in `turns`, oldest first, nearest a turn number. */
+export function nearestTurn(turns: readonly number[], turn: number): number {
+  let after = 0;
+  let high = turns.length;
+  while (after < high) {
+    const middle = (after + high) >> 1;
+    if ((turns[middle] ?? 0) < turn) after = middle + 1;
+    else high = middle;
+  }
+  if (after === 0) return 0;
+  if (after >= turns.length) return turns.length - 1;
+  return turn - (turns[after - 1] ?? 0) <= (turns[after] ?? 0) - turn ? after - 1 : after;
 }

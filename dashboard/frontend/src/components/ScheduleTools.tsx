@@ -1,15 +1,23 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode, type RefObject } from "react";
 import { count, percent } from "../format";
 import { typedTime, type Held } from "../scheduleFilters";
 import { complete, type SearchRow, type Suggestion } from "../scheduleSyntax";
 import type { SavedView } from "../scheduleViews";
+import {
+  DEFAULT_SUMMARY_SORT,
+  MIN_GROUP_SLOTS,
+  sortSummaryRows,
+  summaryColumns,
+  summaryRows,
+  type SummaryColumn,
+  type SummaryGroup,
+  type SummaryRow,
+  type SummarySort,
+} from "../summaryTable";
 import { jitoShare } from "../tips";
 import type { ScanFigures, ScheduleSummary, TipRates } from "../types";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
-
-/** Clients with fewer slots than this are left out of the table, their means being noise. */
-const MIN_CLIENT_SLOTS = 8;
 
 /** Where the validator's history starts, in a line. */
 export function heldText(held: Held): string {
@@ -474,8 +482,8 @@ export function ViewsMenu({
   );
 }
 
-function ms(value: number | null): string {
-  return value === null ? "—" : `${Math.round(value)} ms`;
+function ms(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${Math.round(value)} ms`;
 }
 
 function solMean(lamports: number | null): string {
@@ -504,22 +512,45 @@ function FeeMeans({ figures, rates }: { figures: ScanFigures; rates: TipRates | 
   );
 }
 
+function GroupButton({
+  group,
+  shown,
+  onPick,
+}: {
+  group: SummaryGroup;
+  shown: SummaryGroup | null;
+  onPick: (group: SummaryGroup) => void;
+}): ReactElement {
+  const open = shown === group;
+  return (
+    <button
+      type="button"
+      className={`schedule-by-client${shown !== null && !open ? " is-other" : ""}`}
+      aria-expanded={open}
+      onClick={() => onPick(group)}
+    >
+      By {group} {open ? "▴" : "▾"}
+    </button>
+  );
+}
+
 /** The matches summed up: this epoch's slots when nothing is filtered. */
 export function SummaryLine({
   summary,
   filtered,
   since,
   rates,
-  open,
-  onToggle,
+  shown,
+  onPick,
 }: {
   summary: ScheduleSummary;
   filtered: boolean;
   /** When the held history starts within this epoch, for an epoch not yet held whole. */
   since: number | null;
   rates: TipRates | null | undefined;
-  open: boolean;
-  onToggle: () => void;
+  /** The table open, if any. */
+  shown: SummaryGroup | null;
+  onPick: (group: SummaryGroup) => void;
 }): ReactElement {
   const { figures } = summary;
   return (
@@ -535,65 +566,149 @@ export function SummaryLine({
         <b>{count(figures.transactions)}</b> transactions
       </span>
       <FeeMeans figures={figures} rates={rates} />
-      <button type="button" className="schedule-by-client" aria-expanded={open} onClick={onToggle}>
-        By client {open ? "▴" : "▾"}
-      </button>
+      <span className="schedule-by">
+        <GroupButton group="client" shown={shown} onPick={onPick} />
+        {summary.countries && <GroupButton group="country" shown={shown} onPick={onPick} />}
+      </span>
     </div>
   );
 }
 
-/** The same figures for each leader client, per slot. */
-export function ClientTable({
+const COLUMN_HEADS: Record<Exclude<SummaryColumn, "name">, { label: string; title?: string }> = {
+  slots: { label: "Slots" },
+  validators: { label: "Validators", title: "Different leaders among these slots." },
+  skipped: { label: "Skipped" },
+  duration: { label: "Duration" },
+  first_slot: {
+    label: "First slot",
+    title: "Each turn's first block, from the previous leader's last block full to this one full.",
+  },
+  rest_of_turn: { label: "Rest of turn", title: "Each turn's other three blocks, from the block before full to this one full." },
+  replay: { label: "Replay", title: "Block full to replay finished, leaving out blocks from before catching up after a restart." },
+  transactions: { label: "Txs / slot" },
+  compute: { label: "Compute" },
+  base_fee: { label: "Base" },
+  priority_fee: { label: "Priority" },
+  tips: { label: "Tips" },
+};
+
+function summaryCell(column: SummaryColumn, row: SummaryRow, rates: TipRates | null | undefined): ReactNode {
+  switch (column) {
+    case "name":
+      return row.name;
+    case "slots":
+      return count(row.slots);
+    case "validators":
+      return row.validators === undefined ? "—" : count(row.validators);
+    case "skipped":
+      return (
+        <>
+          {count(row.skipped)}
+          <span className="schedule-clients-share">{percent(row.skipped / row.slots)}</span>
+        </>
+      );
+    case "duration":
+      return ms(row.duration_ms);
+    case "first_slot":
+      return ms(row.first_slot_ms);
+    case "rest_of_turn":
+      return ms(row.rest_of_turn_ms);
+    case "replay":
+      return ms(row.replay_ms);
+    case "transactions":
+      return row.slots > 0 ? count(Math.round(row.transactions / row.slots)) : "—";
+    case "compute":
+      return units(row.compute);
+    case "base_fee":
+      return solMean(row.base_fee);
+    case "priority_fee":
+      return solMean(row.priority_fee);
+    case "tips":
+      return tipsMean(row.tips, rates);
+  }
+}
+
+function SortHead({
+  column,
+  label,
+  title,
+  sort,
+  onSort,
+}: {
+  column: SummaryColumn;
+  label: string;
+  title?: string;
+  sort: SummarySort;
+  onSort: (column: SummaryColumn) => void;
+}): ReactElement {
+  const sorted = sort.column === column;
+  return (
+    <th aria-sort={sorted ? (sort.descending ? "descending" : "ascending") : "none"}>
+      <button type="button" className={`schedule-clients-sort${sorted ? " is-sorted" : ""}`} title={title} onClick={() => onSort(column)}>
+        <span className="schedule-clients-arrow" aria-hidden="true">
+          {sort.descending ? "▾" : "▴"}
+        </span>
+        <span className="schedule-clients-head">{label}</span>
+      </button>
+    </th>
+  );
+}
+
+/** The same figures for each leader client or country, per slot. */
+export function SummaryTable({
   summary,
   rates,
+  group,
+  sort,
+  onSort,
 }: {
   summary: ScheduleSummary;
   rates: TipRates | null | undefined;
+  group: SummaryGroup;
+  sort: SummarySort;
+  onSort: (column: SummaryColumn) => void;
 }): ReactElement {
-  const rows = summary.clients.filter((client) => client.slots >= MIN_CLIENT_SLOTS);
+  const columns = summaryColumns(group, Boolean(rates));
+  const active = columns.includes(sort.column) ? sort : DEFAULT_SUMMARY_SORT;
+  const rows = useMemo(() => sortSummaryRows(summaryRows(summary, group), active), [summary, group, active]);
+  const byCountry = group === "country";
   return (
-    <div className="schedule-clients">
+    <div className={`schedule-clients${byCountry ? " is-country" : ""}`}>
       <div className="schedule-clients-scroll">
         <table>
+          <colgroup>
+            {columns.map((column) => (
+              <col key={column} className={`schedule-clients-col-${column}`} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
-              <th>Client</th>
-              <th>Slots</th>
-              <th>Skipped</th>
-              <th>Duration</th>
-              <th title="Block full to replay finished, leaving out blocks from before catching up after a restart.">
-                Replay
-              </th>
-              <th>Txs / slot</th>
-              <th>Compute</th>
-              <th>Base</th>
-              <th>Priority</th>
-              {rates && <th>Tips</th>}
+              {columns.map((column) =>
+                column === "name" ? (
+                  <SortHead key={column} column={column} label={byCountry ? "Country" : "Client"} sort={active} onSort={onSort} />
+                ) : (
+                  <SortHead key={column} column={column} {...COLUMN_HEADS[column]} sort={active} onSort={onSort} />
+                ),
+              )}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.client ?? ""}>
-                <td>{row.client ?? "Not in gossip"}</td>
-                <td>{count(row.slots)}</td>
-                <td>
-                  {count(row.skipped)}
-                  <span className="schedule-clients-share">{percent(row.skipped / row.slots)}</span>
-                </td>
-                <td>{ms(row.duration_ms)}</td>
-                <td>{ms(row.replay_ms)}</td>
-                <td>{row.slots > 0 ? count(Math.round(row.transactions / row.slots)) : "—"}</td>
-                <td>{units(row.compute)}</td>
-                <td>{solMean(row.base_fee)}</td>
-                <td>{solMean(row.priority_fee)}</td>
-                {rates && <td>{tipsMean(row.tips, rates)}</td>}
+              <tr key={row.name}>
+                {columns.map((column) => (
+                  <td key={column} className={column === "validators" ? "is-faint" : undefined} title={column === "name" ? row.name : undefined}>
+                    {summaryCell(column, row, rates)}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <div className="schedule-clients-note">
-        Means per slot, by the client each leader runs now. Clients with fewer than {MIN_CLIENT_SLOTS} slots are left out.
+        {byCountry
+          ? `Means per slot, by the country each leader is in now. Countries with fewer than ${MIN_GROUP_SLOTS} slots are left out.`
+          : `Means per slot, by the client each leader runs now. Clients with fewer than ${MIN_GROUP_SLOTS} slots are left out.`}
       </div>
     </div>
   );

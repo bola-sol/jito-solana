@@ -208,6 +208,10 @@ export interface ScanFigures {
   skipped: number;
   transactions: number;
   duration_ms: number | null;
+  /** Duration of the first slot of each turn. */
+  first_slot_ms?: number | null;
+  /** Duration of each turn's other slots. */
+  rest_of_turn_ms?: number | null;
   replay_ms: number | null;
   base_fee: number | null;
   priority_fee: number | null;
@@ -218,12 +222,23 @@ export interface ScanFigures {
 export interface ClientFigures extends ScanFigures {
   /** Null for leaders gossip names no client for. */
   client: string | null;
+  /** The leaders these slots came from. */
+  validators?: number;
+}
+
+export interface CountryFigures extends ScanFigures {
+  /** Null for leaders with no country known. */
+  country: string | null;
+  /** The leaders these slots came from. */
+  validators?: number;
 }
 
 export interface ScheduleSummary {
   turns: number;
   figures: ScanFigures;
   clients: ClientFigures[];
+  /** Absent from a validator older than the page. */
+  countries?: CountryFigures[];
   /** The oldest slot the validator holds. */
   held_from: { slot: number; millis: number | null } | null;
   /** The clients, countries and versions among staked nodes and scheduled leaders. */

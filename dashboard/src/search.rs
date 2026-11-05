@@ -19,7 +19,7 @@ use {
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     std::{
-        collections::{BTreeSet, HashMap},
+        collections::{BTreeSet, HashMap, HashSet},
         fmt::Write,
         str::FromStr,
         sync::RwLock,
@@ -213,6 +213,7 @@ struct EpochLeaders<'a> {
 /// A turn's leader as a search sees it.
 #[derive(Clone, Copy)]
 struct LeaderAt<'a> {
+    key: Option<&'a str>,
     named: bool,
     names_held: bool,
     ours: bool,
@@ -297,6 +298,7 @@ impl<'a> EpochLeaders<'a> {
     fn at(&self, slot: Slot) -> Option<LeaderAt<'_>> {
         let index = usize::from(leader_index(self.epoch, slot)?);
         Some(LeaderAt {
+            key: self.epoch.leaders.get(index).map(String::as_str),
             named: self.named.get(index).copied().unwrap_or(false),
             names_held: self
                 .names_held
@@ -1030,6 +1032,8 @@ struct Sums {
     skipped: u64,
     transactions: u64,
     duration: Mean,
+    first_slot: Mean,
+    rest_of_turn: Mean,
     replay: Mean,
     base_fee: Mean,
     priority_fee: Mean,
@@ -1047,7 +1051,13 @@ impl Sums {
         if block {
             self.transactions = self.transactions.saturating_add(u64::from(row.non_votes));
         }
-        self.duration.add(duration_millis(history, slot));
+        let duration = duration_millis(history, slot);
+        self.duration.add(duration);
+        if place(slot) == 0 {
+            self.first_slot.add(duration);
+        } else {
+            self.rest_of_turn.add(duration);
+        }
         // A span from catching up measures the backlog, not replay.
         self.replay
             .add(replay_millis(row).filter(|_| slot >= history.live_from()));
@@ -1065,6 +1075,8 @@ impl Sums {
             skipped: self.skipped,
             transactions: self.transactions,
             duration_ms: self.duration.get(),
+            first_slot_ms: self.first_slot.get(),
+            rest_of_turn_ms: self.rest_of_turn.get(),
             replay_ms: self.replay.get(),
             base_fee: self.base_fee.get(),
             priority_fee: self.priority_fee.get(),
@@ -1082,6 +1094,10 @@ pub struct Figures {
     pub skipped: u64,
     pub transactions: u64,
     pub duration_ms: Option<f64>,
+    /// Duration of the first slot of each turn.
+    pub first_slot_ms: Option<f64>,
+    /// Duration of each turn's other slots.
+    pub rest_of_turn_ms: Option<f64>,
     pub replay_ms: Option<f64>,
     pub base_fee: Option<f64>,
     pub priority_fee: Option<f64>,
@@ -1093,8 +1109,27 @@ pub struct Figures {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ClientFigures {
     pub client: Option<String>,
+    /// The leaders these slots came from.
+    pub validators: usize,
     #[serde(flatten)]
     pub figures: Figures,
+}
+
+/// One country's share of the matches; `None` for leaders with no country known.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CountryFigures {
+    pub country: Option<&'static str>,
+    /// The leaders these slots came from.
+    pub validators: usize,
+    #[serde(flatten)]
+    pub figures: Figures,
+}
+
+/// The matching slots of one client or country.
+#[derive(Default)]
+struct Group<'a> {
+    sums: Sums,
+    leaders: HashSet<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1127,6 +1162,8 @@ pub struct SummaryReply {
     pub figures: Figures,
     /// Most slots first.
     pub clients: Vec<ClientFigures>,
+    /// Most slots first.
+    pub countries: Vec<CountryFigures>,
     /// The oldest slot held, so the page can say how far back it reaches.
     pub held_from: Option<HeldFrom>,
     pub choices: Choices,
@@ -1177,7 +1214,7 @@ fn summary_floor(params: &SearchParams, epochs: &[EpochInfo], floor: Slot) -> Sl
         .map_or(floor, |epoch| floor.max(epoch.start_slot))
 }
 
-/// Every turn below `before` that a search would list, summed up overall and by client. With
+/// Every turn below `before` that a search would list, summed up overall, by client and by country. With
 /// nothing asked, that is the newest turn's epoch.
 pub fn summarize(
     history: &RwLock<SlotHistory>,
@@ -1228,7 +1265,8 @@ pub fn summarize(
 
     let stop_at = summary_floor(params, epochs, floor);
     let mut overall = Sums::default();
-    let mut by_client: HashMap<Option<String>, Sums> = HashMap::new();
+    let mut by_client: HashMap<Option<&str>, Group> = HashMap::new();
+    let mut by_country: HashMap<Option<&'static str>, Group> = HashMap::new();
     let mut turns = 0u64;
     let mut text = String::new();
     let mut turn = params.before.checked_div(SLOTS_PER_TURN).unwrap_or(0);
@@ -1258,9 +1296,13 @@ pub fn summarize(
             if !wanted.turn_matches(first, end, leader, &mut text) {
                 continue;
             }
-            let client = leader
-                .and_then(|leader| leader.traits)
-                .and_then(|traits| traits.client.clone());
+            let traits = leader.and_then(|leader| leader.traits);
+            let client = by_client
+                .entry(traits.and_then(|traits| traits.client.as_deref()))
+                .or_default();
+            let country = by_country
+                .entry(traits.and_then(|traits| traits.country))
+                .or_default();
             let mut matched = false;
             for slot in first..=end {
                 let Some(row) = history.get(slot) else {
@@ -1271,22 +1313,26 @@ pub fn summarize(
                 }
                 matched = true;
                 overall.add(&history, slot, row);
-                by_client
-                    .entry(client.clone())
-                    .or_default()
-                    .add(&history, slot, row);
+                client.sums.add(&history, slot, row);
+                country.sums.add(&history, slot, row);
             }
             if matched {
                 turns = turns.saturating_add(1);
+                if let Some(key) = leader.and_then(|leader| leader.key) {
+                    client.leaders.insert(key);
+                    country.leaders.insert(key);
+                }
             }
         }
     }
 
     let mut clients: Vec<ClientFigures> = by_client
         .into_iter()
-        .map(|(client, sums)| ClientFigures {
-            client,
-            figures: sums.figures(),
+        .filter(|(_, group)| group.sums.slots > 0)
+        .map(|(client, group)| ClientFigures {
+            client: client.map(str::to_string),
+            validators: group.leaders.len(),
+            figures: group.sums.figures(),
         })
         .collect();
     clients.sort_by(|a, b| {
@@ -1295,10 +1341,26 @@ pub fn summarize(
             .cmp(&a.figures.slots)
             .then_with(|| a.client.cmp(&b.client))
     });
+    let mut countries: Vec<CountryFigures> = by_country
+        .into_iter()
+        .filter(|(_, group)| group.sums.slots > 0)
+        .map(|(country, group)| CountryFigures {
+            country,
+            validators: group.leaders.len(),
+            figures: group.sums.figures(),
+        })
+        .collect();
+    countries.sort_by(|a, b| {
+        b.figures
+            .slots
+            .cmp(&a.figures.slots)
+            .then_with(|| a.country.cmp(&b.country))
+    });
     SummaryReply {
         turns,
         figures: overall.figures(),
         clients,
+        countries,
         held_from: held_from(history, floor, params.before),
         choices,
         slow,
@@ -1915,6 +1977,85 @@ mod tests {
         assert_eq!(reply.choices.countries, vec!["DE"]);
         assert_eq!(reply.delinquent.len(), 1);
         assert_eq!(reply.delinquent[0].last_vote, Some(7));
+    }
+
+    #[test]
+    fn test_a_summary_groups_by_country_and_counts_each_leader_once() {
+        let held = rows(START, START + 23, |_, _| {});
+        let (epochs, map) = two_leaders();
+        let reply = summarize(
+            &held,
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &params("", false, START + 24, None),
+        );
+        assert_eq!(reply.countries.len(), 2);
+        let germany = reply
+            .countries
+            .iter()
+            .find(|row| row.country == Some("DE"))
+            .expect("the second leader's country");
+        assert_eq!((germany.figures.slots, germany.validators), (12, 1));
+        let unknown = reply
+            .countries
+            .iter()
+            .find(|row| row.country.is_none())
+            .expect("a leader with no traits has its own row");
+        assert_eq!((unknown.figures.slots, unknown.validators), (12, 1));
+        let agave = reply
+            .clients
+            .iter()
+            .find(|row| row.client.as_deref() == Some("AgaveBam"))
+            .expect("the second leader's client");
+        assert_eq!(agave.validators, 1);
+    }
+
+    #[test]
+    fn test_a_summary_leaves_out_groups_with_no_matching_slot() {
+        let held = rows(START, START + 7, |slot, row| {
+            row.non_votes = if slot < START + 4 { 50 } else { 500 };
+        });
+        let (epochs, map) = two_leaders();
+        let reply = summarize(
+            &held,
+            &RwLock::default(),
+            &map,
+            &epochs,
+            &SearchParams {
+                conditions: vec![condition(Field::Transactions, Op::Lt, 100.0, &[])],
+                ..params("", false, START + 8, None)
+            },
+        );
+        assert_eq!(reply.clients.len(), 1);
+        assert_eq!(reply.countries.len(), 1);
+        assert_eq!(reply.countries[0].country, None);
+        assert_eq!(reply.countries[0].figures.slots, 4);
+    }
+
+    #[test]
+    fn test_a_summary_splits_duration_by_place_in_the_turn() {
+        let held = rows(START, START + 7, |slot, row| {
+            row.flags |= HAS_CLOCK | HAS_SHREDS;
+            let after = slot - START;
+            row.time_millis = if after < 4 {
+                1_000 + 200 * after
+            } else {
+                1_950 + 200 * (after - 4)
+            };
+            row.full_millis = 100;
+        });
+        let reply = summarize(
+            &held,
+            &RwLock::default(),
+            &RwLock::default(),
+            &[epoch(&["a"])],
+            &params("", false, START + 8, None),
+        );
+        // The first slot held has no earlier block to measure from.
+        assert_eq!(reply.figures.first_slot_ms, Some(350.0));
+        assert_eq!(reply.figures.rest_of_turn_ms, Some(200.0));
+        assert_eq!(reply.countries[0].figures.first_slot_ms, Some(350.0));
     }
 
     #[test]

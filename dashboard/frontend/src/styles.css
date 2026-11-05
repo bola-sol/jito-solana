@@ -7509,21 +7509,83 @@ body {
   color: var(--accent);
 }
 
+.schedule-by-client.is-other {
+  color: var(--text-dim);
+}
+
+.schedule-by {
+  display: inline-flex;
+  flex: none;
+  gap: 12px;
+}
+
 .schedule-clients-scroll {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 5px;
 }
 
+/* A half row showing says the list goes on. */
+.schedule-clients.is-country .schedule-clients-scroll {
+  max-height: 390px;
+  overflow: auto;
+}
+
+/* Fixed widths, so no sort or new figure moves a column. The first four hold their places in both views. */
 .schedule-clients table {
   width: 100%;
-  border-collapse: collapse;
+  min-width: 942px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+.schedule-clients.is-country table {
+  min-width: 1026px;
+}
+
+.schedule-clients-col-name {
+  width: 146px;
+}
+
+.schedule-clients-col-slots {
+  width: 70px;
+}
+
+.schedule-clients-col-validators {
+  width: 78px;
+}
+
+.schedule-clients-col-skipped {
+  width: 116px;
+}
+
+/* Its head is the widest; wider screens share the width evenly. */
+@media (max-width: 1180px) {
+  .schedule-clients-col-rest_of_turn {
+    width: 84px;
+  }
+}
+
+@media (min-width: 1300px) {
+  .schedule-clients-col-name {
+    width: 200px;
+  }
+}
+
+@media (max-width: 700px) {
+  .schedule-clients.is-country .schedule-clients-scroll {
+    max-height: 265px;
+  }
+}
+
 .schedule-clients th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   padding: 7px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
@@ -7531,6 +7593,48 @@ body {
   font-weight: 500;
   color: var(--text-dim);
   text-align: right;
+}
+
+/* The arrow's space is always held, so sorting moves no label. */
+.schedule-clients-sort {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.schedule-clients th:first-child .schedule-clients-sort {
+  flex-direction: row-reverse;
+}
+
+.schedule-clients-arrow {
+  flex: none;
+  width: 8px;
+  visibility: hidden;
+  color: var(--accent);
+  text-align: center;
+}
+
+.schedule-clients-sort.is-sorted {
+  color: var(--text);
+}
+
+.schedule-clients-sort.is-sorted .schedule-clients-arrow {
+  visibility: visible;
+}
+
+.schedule-clients-sort:hover .schedule-clients-head {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .schedule-clients td {
@@ -7554,9 +7658,19 @@ body {
   text-align: left;
 }
 
+.schedule-clients th:first-child {
+  z-index: 2;
+}
+
 .schedule-clients td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--bg);
   color: var(--text);
+}
+
+.schedule-clients td.is-faint {
+  color: var(--text-faint);
 }
 
 /* Wide enough for 100.00%, so the counts above and below stay in line. */

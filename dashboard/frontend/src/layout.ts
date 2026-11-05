@@ -1,4 +1,5 @@
 import { readStored, writeStored } from "./storage";
+import type { SummaryGroup } from "./summaryTable";
 
 /** Null where the viewer has never chosen, so the card defaults by width. */
 export const THREADS_STORAGE_KEY = "agave-dashboard-threads";
@@ -69,6 +70,17 @@ export function readFoldOpen(id: string): boolean {
 export function writeFoldOpen(id: string, open: boolean): void {
   const rest = readOpened().filter((held) => held !== id);
   writeStored(OPENED_STORAGE_KEY, (open ? [...rest, id] : rest).join(","));
+}
+
+/** Whether the schedule's summary table groups by client or by country. */
+export const SUMMARY_GROUP_STORAGE_KEY = "agave-dashboard-schedule-group";
+
+export function readSummaryGroup(): SummaryGroup {
+  return readStored(SUMMARY_GROUP_STORAGE_KEY) === "country" ? "country" : "client";
+}
+
+export function writeSummaryGroup(group: SummaryGroup): void {
+  writeStored(SUMMARY_GROUP_STORAGE_KEY, group);
 }
 
 export type ScheduleColumns = "status" | "fees" | "timing" | "load";

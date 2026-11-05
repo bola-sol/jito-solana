@@ -35,7 +35,14 @@ import type { Store } from "../store";
 import { Stripes } from "../stripes";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
-import { readScheduleColumns, SCHEDULE_COLUMNS, writeScheduleColumns, type ScheduleColumns } from "../layout";
+import {
+  readScheduleColumns,
+  readSummaryGroup,
+  SCHEDULE_COLUMNS,
+  writeScheduleColumns,
+  writeSummaryGroup,
+  type ScheduleColumns,
+} from "../layout";
 import {
   describeOnly,
   jumpStart,
@@ -85,7 +92,8 @@ import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
 import type { ScheduleSummary } from "../types";
 import { browse, BROWSE_TITLES, readSearch, suggest, valueText, withValue, type BrowseRow, type Offered } from "../scheduleSyntax";
-import { ClientTable, heldText, ShareTools, SummaryLine, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
+import { heldText, ShareTools, SummaryLine, SummaryTable, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
+import { DEFAULT_SUMMARY_SORT, nextSummarySort, type SummaryGroup, type SummarySort } from "../summaryTable";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
@@ -120,7 +128,7 @@ const SUMMARY_EVERY_MS = 30_000;
 /** Turns to come in view when a list opens with no others matching. */
 const NEAREST_MATCHES = 3;
 
-/** By client is closed until opened and then remembered. */
+/** The summary table is closed until opened and then remembered. */
 const CLIENTS_FOLD = "schedule-by-client";
 
 /** What both history scans are asked, apart from where they start. */
@@ -1100,6 +1108,21 @@ export function SchedulePage({
   };
 
   const clientsOpen = useFoldOpen(CLIENTS_FOLD);
+  const [pickedGroup, setPickedGroup] = useState(readSummaryGroup);
+  const [summarySorts, setSummarySorts] = useState<Record<SummaryGroup, SummarySort>>({
+    client: DEFAULT_SUMMARY_SORT,
+    country: DEFAULT_SUMMARY_SORT,
+  });
+  const shownGroup: SummaryGroup = pickedGroup === "country" && summary?.countries ? "country" : "client";
+  const pickGroup = (group: SummaryGroup): void => {
+    if (clientsOpen && group === shownGroup) {
+      setFoldsOpen([CLIENTS_FOLD], false);
+      return;
+    }
+    setPickedGroup(group);
+    writeSummaryGroup(group);
+    setFoldsOpen([CLIENTS_FOLD], true);
+  };
 
   const reading = searching ? (found?.loading ?? false) : loading;
   const finished = searching ? found?.next === null : exhausted;
@@ -1179,10 +1202,20 @@ export function SchedulePage({
             filtered={summaryFiltered}
             since={heldSince}
             rates={rates}
-            open={clientsOpen}
-            onToggle={() => setFoldsOpen([CLIENTS_FOLD], !clientsOpen)}
+            shown={clientsOpen ? shownGroup : null}
+            onPick={pickGroup}
           />
-          {clientsOpen && <ClientTable summary={summary} rates={rates} />}
+          {clientsOpen && (
+            <SummaryTable
+              summary={summary}
+              rates={rates}
+              group={shownGroup}
+              sort={summarySorts[shownGroup]}
+              onSort={(column) =>
+                setSummarySorts((held) => ({ ...held, [shownGroup]: nextSummarySort(held[shownGroup], column) }))
+              }
+            />
+          )}
         </>
       )}
       {stripOn && epoch && stripFor !== null && (

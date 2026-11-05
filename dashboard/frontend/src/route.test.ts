@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { addressOfHash, HOME, plainClick, readRoute, routeAddress, type Route } from "./route";
+import { addressOfHash, HOME, plainClick, readRoute, routeAddress, slotAddress, type Route } from "./route";
+
+describe("slotAddress", () => {
+  it("lands the schedule on the slot, in plain digits", () => {
+    expect(slotAddress(465584886)).toBe("/schedule?from=465584886");
+    expect(readRoute(slotAddress(465584886))).toEqual({ ...HOME, page: "schedule", from: "465584886" });
+  });
+});
 
 describe("readRoute", () => {
   it("reads a page out of the path", () => {

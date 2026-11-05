@@ -102,6 +102,7 @@ import { delinquentTitle } from "../misses";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
+import { SlotActions } from "./SlotActions";
 import { SlotLink } from "./SlotLink";
 import { TurnStrip } from "./TurnStrip";
 import { VirtualList } from "./VirtualList";
@@ -1676,6 +1677,7 @@ function SlotRow({
       <span className="schedule-slot" title={unheld ? "Not read yet, or older than the validator keeps." : undefined}>
         {entry?.mine ? <SlotLink slot={slot.slot} /> : count(slot.slot)}
         {!unheld && <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />}
+        {!unheld && <SlotActions slot={slot.slot} held={entry !== null} />}
       </span>
       {alpenglow ? (
         <VoteMark reward={entry?.reward ?? null} />

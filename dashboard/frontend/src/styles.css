@@ -8276,6 +8276,106 @@ body {
   text-decoration-color: currentColor;
 }
 
+@media (hover: hover) {
+  .schedule-row:hover:where(:not(.schedule-head)) {
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+  }
+}
+
+/* Above the next cell, whose empty left side the icons reach into. */
+.slot-actions {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+}
+
+.slot-actions-pair,
+.slot-actions-one {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.slot-actions-one {
+  display: none;
+}
+
+.slot-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.slot-action:hover {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+}
+
+.slot-action.is-done {
+  color: var(--good);
+}
+
+.slot-actions-pair .slot-action:not(.is-done) {
+  opacity: 0;
+}
+
+.schedule-row:hover .slot-actions-pair .slot-action,
+.schedule-row:focus-within .slot-actions-pair .slot-action {
+  opacity: 1;
+}
+
+/* Nothing hovers on a touch screen. */
+@media (hover: none) {
+  .slot-actions-pair .slot-action:not(.is-done) {
+    color: var(--text-faint);
+    opacity: 0.75;
+  }
+}
+
+.slot-actions-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 130px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.14);
+  font-size: 12.5px;
+}
+
+.slot-actions-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.slot-actions-menu button:hover,
+.slot-actions-menu button:focus-visible {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
 .vote-marks {
   display: inline-flex;
   justify-content: flex-end;
@@ -8300,6 +8400,7 @@ body {
 }
 
 .schedule-level {
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 2px;
@@ -9020,6 +9121,43 @@ body {
 @container schedule (max-width: 300px) {
   .schedule.columns-load .schedule-fill {
     display: none;
+  }
+}
+
+/* No room for two icons beside the number, and too small to tell apart by touch. */
+@container schedule (max-width: 500px) {
+  .slot-actions-pair {
+    display: none;
+  }
+
+  .slot-actions-one {
+    display: inline-flex;
+  }
+
+  .slot-actions-one .slot-action:not(.is-done) {
+    color: var(--text-faint);
+    opacity: 0.75;
+  }
+
+  /* A wider target than the icon, taking no room from the row. */
+  .slot-actions-one .slot-action {
+    position: relative;
+  }
+
+  .slot-actions-one .slot-action::after {
+    content: "";
+    position: absolute;
+    inset: -2px -8px;
+  }
+}
+
+@container schedule (max-width: 300px) {
+  .schedule-row .schedule-slot {
+    gap: 2px;
+  }
+
+  .slot-action {
+    width: 14px;
   }
 }
 

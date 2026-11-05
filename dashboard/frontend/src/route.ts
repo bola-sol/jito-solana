@@ -109,6 +109,11 @@ export function routeAddress(route: Route): string {
   }
 }
 
+/** The schedule landed on a slot. */
+export function slotAddress(slot: number): string {
+  return routeAddress({ ...HOME, page: "schedule", from: String(slot) });
+}
+
 /** Empty and false values are left out; true is written as a bare key. */
 function withSearch(path: string, values: Record<string, string | boolean>, more: readonly string[] = []): string {
   const parts = Object.entries(values).flatMap(([key, value]) =>

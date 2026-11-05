@@ -9,23 +9,13 @@ export function Copyable({
   label?: ReactNode;
   className?: string;
 }): ReactElement {
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1200);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-
-  const copy = async () => {
-    if (await writeToClipboard(text)) setCopied(true);
-  };
+  const [copied, copy] = useCopied();
 
   return (
     <button
       type="button"
       className={`copyable${copied ? " copied" : ""}${className ? ` ${className}` : ""}`}
-      onClick={copy}
+      onClick={() => void copy(text)}
       // Named explicitly because the value is hidden while the confirmation
       // shows, which would otherwise leave the button briefly nameless.
       aria-label={text}
@@ -37,6 +27,23 @@ export function Copyable({
       </span>
     </button>
   );
+}
+
+/** Copies text, and says so for a moment. */
+export function useCopied(): [copied: boolean, copy: (text: string) => Promise<void>] {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const copy = async (text: string): Promise<void> => {
+    if (await writeToClipboard(text)) setCopied(true);
+  };
+
+  return [copied, copy];
 }
 
 /** `navigator.clipboard` needs a secure context; fall back to the

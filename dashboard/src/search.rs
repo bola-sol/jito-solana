@@ -70,8 +70,8 @@ pub enum Only {
     NoTips,
 }
 
-/// What gossip and the bank say of a staked node, for conditions on a turn's leader. Current, not
-/// as of the turn.
+/// What gossip and the bank say of a staked node or scheduled leader, for conditions on a turn's
+/// leader. Current, not as of the turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeaderTraits {
     pub client: Option<String>,
@@ -86,7 +86,8 @@ pub struct LeaderTraits {
     pub last_vote: Option<Slot>,
 }
 
-/// Every staked node's traits, written by the collector.
+/// The traits of every staked node and of every held epoch's leaders in gossip, written by the
+/// collector.
 pub type LeaderMap = HashMap<Pubkey, LeaderTraits>;
 
 /// A column a condition reads: the leader's, or the slot's.
@@ -1109,7 +1110,8 @@ pub struct DelinquentLeader {
     pub last_vote: Option<Slot>,
 }
 
-/// What the page offers in its client, country and version lists: those among staked nodes.
+/// What the page offers in its client, country and version lists: those among staked nodes and
+/// scheduled leaders.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct Choices {
     pub clients: Vec<String>,

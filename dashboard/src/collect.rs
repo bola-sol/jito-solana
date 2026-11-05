@@ -111,7 +111,8 @@ pub struct Replies {
     /// The Cluster page's charts, gathered only while someone is asking.
     pub cluster_charts: RwLock<Arc<str>>,
     pub cluster_charts_wanted: AtomicU64,
-    /// Every staked node's client, country and stake, for the schedule's leader conditions.
+    /// The client, country and stake of staked nodes and scheduled leaders, for the schedule's leader
+    /// conditions.
     pub leader_traits: RwLock<LeaderMap>,
 }
 
@@ -1362,8 +1363,8 @@ impl Collector {
         leaders
     }
 
-    /// Every staked node's client, country and stake, which the schedule's leader conditions and
-    /// its by-client summary read.
+    /// The client, country and stake of every staked node and of every held epoch's leaders, which
+    /// the schedule's leader conditions and its by-client summary read.
     fn collect_leader_traits(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let mut map = LeaderMap::new();
         // The oldest last vote among a validator's staked accounts, `None` where one never voted.
@@ -1386,8 +1387,19 @@ impl Collector {
                 traits.delinquent = is_delinquent(last_vote, tip);
             }
         }
+        // A leader can lose its stake after the schedule that names it was fixed.
+        let scheduled: HashSet<Pubkey> = self
+            .epochs
+            .read()
+            .unwrap()
+            .iter()
+            .flat_map(|epoch| &epoch.leaders)
+            .filter_map(|key| key.parse().ok())
+            .collect();
         for (contact_info, _) in peers {
-            if let Some(traits) = map.get_mut(contact_info.pubkey()) {
+            let identity = contact_info.pubkey();
+            if map.contains_key(identity) || scheduled.contains(identity) {
+                let traits = map.entry(*identity).or_default();
                 traits.client = Some(contact_info.version().client().to_string());
                 traits.version = Some(contact_info.version().to_string());
                 traits.ip = contact_info.gossip().map(|addr| addr.ip().to_string());
@@ -3410,6 +3422,50 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&version_shares(&staked, &with_unstaked)).unwrap(),
             serde_json::to_string(&version_shares(&staked, &staked_only)).unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_a_scheduled_leader_with_no_stake_keeps_what_gossip_says() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+        let (scheduled, silent, bystander) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let socket = SocketAddr::from(([8, 8, 8, 8], 8000));
+        for key in [scheduled, bystander] {
+            harness
+                .ctx
+                .cluster_info
+                .insert_info(ContactInfo::new_with_socketaddr(&key, &socket));
+        }
+        harness
+            .epochs
+            .write()
+            .unwrap()
+            .last_mut()
+            .unwrap()
+            .leaders
+            .extend([scheduled.to_string(), silent.to_string()]);
+
+        let peers = harness.ctx.cluster_info.all_peers();
+        collector.collect_leader_traits(&harness.working_bank(), &peers);
+
+        let map = collector.replies.leader_traits.read().unwrap();
+        let traits = map.get(&scheduled).unwrap();
+        assert!(traits.client.is_some());
+        assert!(traits.version.is_some());
+        assert_eq!(traits.ip.as_deref(), Some("8.8.8.8"));
+        assert_eq!(traits.country, geoip::country(socket.ip()));
+        assert_eq!(traits.stake, 0);
+        assert!(!traits.delinquent);
+        assert!(!map.contains_key(&silent), "not in gossip");
+        assert!(
+            !map.contains_key(&bystander),
+            "neither staked nor scheduled"
         );
     }
 

@@ -165,7 +165,7 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | --- | --- |
 | `slot.range` | Up to 4,096 rows of the slot history, which holds 432,000 slots |
 | `slot.search` | Up to 128 leader turns that match a name, key or slot number, our own turns, a slot condition (skipped, slow for its place in the turn, our vote left out, few transactions, no tips), conditions on any column or on the leader (any of several names or keys, client, country, stake, voting now), and a range, from a slot or a time, down or up. One search at a time, on a blocking thread. |
-| `slot.summary` | The same matches summed up over everything held (this epoch when nothing is asked): turns, slots, skipped, transactions, means of duration, replay (without the slots from before catching up after a start), fees, tips and compute, the same per leader client, the oldest slot held, and the clients and countries among staked nodes, and the staked nodes not voting now. Shares the search's one-at-a-time blocking thread. |
+| `slot.summary` | The same matches summed up over everything held (this epoch when nothing is asked): turns, slots, skipped, transactions, means of duration, replay (without the slots from before catching up after a start), fees, tips and compute, the same per leader client, the oldest slot held, and the clients and countries among staked nodes and scheduled leaders, and the staked nodes not voting now. Shares the search's one-at-a-time blocking thread. |
 | `epoch.query` | An epoch's slots, leader turns, our leader slots and cost limits |
 | `summary.displays` | Validator names and icons |
 | `summary.misses`, `summary.written` | Our unrewarded votes, and how often our certificates left out each validator |

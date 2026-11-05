@@ -283,6 +283,13 @@ pub struct Peer {
     pub icon: Option<String>,
 }
 
+/// Where the cluster reaches this node, shown in the header.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+struct GossipAddress {
+    ip: String,
+    country: Option<&'static str>,
+}
+
 #[derive(Default)]
 struct Heard {
     version: Option<String>,
@@ -422,6 +429,7 @@ pub struct SkipRate {
 #[derive(Default)]
 struct Debounces {
     client: Debounced<String>,
+    gossip_address: Debounced<Option<GossipAddress>>,
     identity_key: Debounced<String>,
     identity_name: Debounced<Option<String>>,
     identity_icon: Debounced<Option<String>>,
@@ -660,7 +668,7 @@ impl Collector {
         let version = solana_version::Version::this_build();
         self.publisher
             .publish(TOPIC_SUMMARY, "version", &version.as_semver_string());
-        self.collect_client();
+        self.collect_contact();
         self.publisher.publish(
             TOPIC_SUMMARY,
             "commit_hash",
@@ -807,7 +815,7 @@ impl Collector {
             // One snapshot for both walks below: it clones the whole table under
             // the gossip lock.
             let peers = self.ctx.cluster_info.all_peers();
-            self.collect_client();
+            self.collect_contact();
             let votes = self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
@@ -870,19 +878,27 @@ impl Collector {
         }
     }
 
-    /// The client this node gossips, which the version does not carry. From gossip rather than the
-    /// build: jito's validator gossips `AgaveBam` while on BAM and `JitoLabs` otherwise.
-    fn collect_client(&mut self) {
-        let client = self
-            .ctx
-            .cluster_info
-            .my_contact_info()
-            .version()
-            .client()
-            .to_string();
-        self.debounces
-            .client
-            .publish(&self.publisher, TOPIC_SUMMARY, "client", client);
+    /// The client this node gossips, which the version does not carry, and its gossip address. The
+    /// client comes from gossip rather than the build: jito's validator gossips `AgaveBam` while on
+    /// BAM and `JitoLabs` otherwise.
+    fn collect_contact(&mut self) {
+        let contact = self.ctx.cluster_info.my_contact_info();
+        self.debounces.client.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "client",
+            contact.version().client().to_string(),
+        );
+        let address = contact.gossip().map(|addr| GossipAddress {
+            ip: addr.ip().to_string(),
+            country: geoip::country(addr.ip()),
+        });
+        self.debounces.gossip_address.publish(
+            &self.publisher,
+            TOPIC_SUMMARY,
+            "gossip_address",
+            address,
+        );
     }
 
     fn report_tip_residual(&mut self) {
@@ -3324,6 +3340,27 @@ mod tests {
             !version.contains(&client),
             "{version} already names the client, so publishing it apart is dead weight"
         );
+    }
+
+    #[test]
+    fn test_the_node_reports_its_gossip_address() {
+        let harness = fixture();
+        harness.collector().publish_static();
+        let ip = harness
+            .ctx
+            .cluster_info
+            .my_contact_info()
+            .gossip()
+            .unwrap()
+            .ip();
+
+        let published = harness.published_key("summary", "gossip_address").unwrap();
+        let expected = serde_json::to_string(&GossipAddress {
+            ip: ip.to_string(),
+            country: geoip::country(ip),
+        })
+        .unwrap();
+        assert!(published.contains(&expected), "{published}");
     }
 
     fn staked(entries: &[(u8, u64)]) -> HashMap<Pubkey, u64> {

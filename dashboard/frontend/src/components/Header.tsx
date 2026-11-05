@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type ReactElement } from "react";
-import { blockStamp, buildLabel, count, duration, LAMPORTS_PER_SOL, percent, shortKey, sol, solCompact } from "../format";
+import { blockStamp, buildLabel, count, countryName, duration, LAMPORTS_PER_SOL, percent, shortKey, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { toggleLogosHidden, useLogosHidden } from "../logo";
 import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type VoteRunway } from "../voteCost";
@@ -79,6 +79,7 @@ export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): Reac
               shred {shredVersion}
             </Explain>
           )}
+          <Address />
         </span>
         <span className="who-right">
           <Connection state={connection} lagMs={feedLag} />
@@ -171,6 +172,38 @@ export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): Reac
         {nav}
       </div>
     </header>
+  );
+}
+
+/** Our country, with the address behind it to copy; "IP" where no country is known. */
+function Address() {
+  const address = useStore().get("summary", "gossip_address");
+  if (!address) return null;
+  const { ip, country } = address;
+  return (
+    <Explain
+      interactive
+      className="figure-detail"
+      text={
+        <>
+          <span className="figure-panel-label">
+            Gossip address{country && `, ${countryName(country)}`}
+          </span>
+          <Copyable
+            text={ip}
+            className="who-address"
+            label={
+              <>
+                {ip}
+                <span className="who-address-copy">copy</span>
+              </>
+            }
+          />
+        </>
+      }
+    >
+      {country ?? "IP"}
+    </Explain>
   );
 }
 

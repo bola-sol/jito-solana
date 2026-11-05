@@ -135,7 +135,7 @@ The collector polls every 200 ms and holds the bank forks read lock only to clon
 
 | Call | Feeds |
 | --- | --- |
-| `ClusterInfo::all_peers`, `my_shred_version`, `my_contact_info`, `id` | Cluster versions. Each peer's client, version and address. Our identity, shred version and ports, which match the socket ingest rows to `/proc/net/udp`. When we last heard each validator: "no gossip" after five minutes. |
+| `ClusterInfo::all_peers`, `my_shred_version`, `my_contact_info`, `id` | Cluster versions. Each peer's client, version and address. Our identity, shred version and ports, which match the socket ingest rows to `/proc/net/udp`. Our gossip address and its country in the header. When we last heard each validator: "no gossip" after five minutes. |
 | `ClusterInfo::all_peers`, with each contact's `rpc`, `outset` and local timestamp, and `gossip.crds` read with `get` for each peer's `SnapshotHashes` and `LowestSlot` | The Gossip page's peers table: RPC port, last heard, start time, snapshot lag behind our root, and ledger depth. Read every five seconds, only while a page asks. |
 | `ClusterInfo::all_peers`, with each contact's `rpc`, and `socket_addr_space` | The RPC node count: peers other than us with an RPC address in our address space |
 | `ClusterInfo::all_peers` and `my_contact_info`, each contact's `gossip` address, with `Bank::vote_accounts` (alpenglow only) | The country of each staked vote account's node and of ours, looked up in the country table every five seconds: the finalization share's median among validators in our country |

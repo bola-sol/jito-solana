@@ -188,6 +188,16 @@ body {
   gap: 4px 14px;
 }
 
+.who-address {
+  font-family: var(--mono);
+}
+
+.who-address-copy {
+  margin-left: 10px;
+  font-family: var(--sans);
+  color: var(--text-faint);
+}
+
 /* The buttons sit close as one group, so a long name keeps more of its width. */
 .who-right {
   flex: none;
@@ -237,6 +247,24 @@ body {
   }
 }
 
+/* The meta fits beside the name and the controls. */
+@container header (width < 592px) {
+  .who {
+    column-gap: 10px;
+  }
+
+  .who-meta {
+    column-gap: 10px;
+  }
+}
+
+@container header (534px <= width < 560px) {
+  .who-meta {
+    column-gap: 8px;
+    font-size: 12px;
+  }
+}
+
 @container header (width < 534px) {
   .who {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -254,6 +282,14 @@ body {
 
   .who .verdict-hero {
     margin-top: 4px;
+  }
+}
+
+/* The meta holds one line on the narrowest phones. */
+@container header (width < 292px) {
+  .who-meta {
+    column-gap: 8px;
+    font-size: 12px;
   }
 }
 

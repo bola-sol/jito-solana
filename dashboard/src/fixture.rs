@@ -368,6 +368,7 @@ mod tests {
             "version",
             "cluster",
             "shred_version",
+            "gossip_address",
             "identity_key",
             "vote_key",
             "root_slot",

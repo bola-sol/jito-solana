@@ -1386,6 +1386,8 @@ export interface Published {
     client: string;
     cluster: string;
     shred_version: number;
+    /** Null while this node gossips no address. */
+    gossip_address: { ip: string; country: string | null } | null;
     identity_key: string;
     identity_name: string | null;
     identity_icon: string | null;

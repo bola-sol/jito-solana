@@ -192,6 +192,18 @@ mod tests {
         assert!(codes.iter().all(|code| code.len() == 2));
     }
 
+    #[test]
+    fn test_every_embedded_country_has_a_continent() {
+        let table = decode(PACKED).unwrap();
+        let missing: Vec<&str> = table
+            .codes
+            .iter()
+            .map(String::as_str)
+            .filter(|code| continent(code).is_none())
+            .collect();
+        assert!(missing.is_empty(), "no continent for {missing:?}");
+    }
+
     fn pack(codes: &[&str], rows: &[(u32, u8)]) -> Vec<u8> {
         let mut raw = MAGIC.to_vec();
         raw.push(codes.len() as u8);

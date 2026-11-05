@@ -7536,6 +7536,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.schedule-summary-hold {
+  visibility: hidden;
+}
+
 .schedule-summary b {
   font-weight: 600;
   color: var(--text);

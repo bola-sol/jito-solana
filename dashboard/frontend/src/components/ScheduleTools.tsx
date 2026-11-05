@@ -574,6 +574,44 @@ export function SummaryLine({
   );
 }
 
+const TYPICAL_SUMMARY: ScheduleSummary = {
+  turns: 20_000,
+  figures: {
+    slots: 80_000,
+    skipped: 0,
+    transactions: 20_000_000,
+    duration_ms: 200,
+    replay_ms: 8,
+    base_fee: 2_000_000,
+    priority_fee: 7_000_000,
+    tips: 4_000_000,
+    compute: 20_000_000,
+  },
+  clients: [],
+  countries: [],
+  held_from: null,
+  choices: { clients: [], countries: [], versions: [] },
+  slow: null,
+  delinquent: [],
+};
+
+function noPick(): void {}
+
+/** The line unseen with typical figures, wrapping as the real one will, so the list holds still when that arrives. */
+export function SummaryHold({
+  filtered,
+  rates,
+}: {
+  filtered: boolean;
+  rates: TipRates | null | undefined;
+}): ReactElement {
+  return (
+    <div className="schedule-summary-hold" aria-hidden="true">
+      <SummaryLine summary={TYPICAL_SUMMARY} filtered={filtered} since={null} rates={rates} shown={null} onPick={noPick} />
+    </div>
+  );
+}
+
 const COLUMN_HEADS: Record<Exclude<SummaryColumn, "name">, { label: string; title?: string }> = {
   slots: { label: "Slots" },
   validators: { label: "Validators", title: "Different leaders among these slots." },

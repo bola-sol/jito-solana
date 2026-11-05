@@ -92,7 +92,7 @@ import type { ScanParams } from "../store";
 import { FoundTurns, TurnIndex, turnNumberOf, type SearchAsk } from "../turnIndex";
 import type { ScheduleSummary } from "../types";
 import { browse, BROWSE_TITLES, readSearch, suggest, valueText, withValue, type BrowseRow, type Offered } from "../scheduleSyntax";
-import { heldText, ShareTools, SummaryLine, SummaryTable, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
+import { heldText, ShareTools, SummaryHold, SummaryLine, SummaryTable, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
 import { DEFAULT_SUMMARY_SORT, nextSummarySort, type SummaryGroup, type SummarySort } from "../summaryTable";
 import type { Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
@@ -370,13 +370,19 @@ export function SchedulePage({
   }, [index, exhausted, store, epoch]);
 
   // What the validator is asked, once typing pauses; the live window is matched here as typed.
-  const ask = useMemo(
+  const freshAsk = useMemo(
     (): SearchAsk => ({ query: query.trim(), ours: oursOnly, only: conditions, where: serverWhere, range }),
     [query, oursOnly, conditions, serverWhere, range],
   );
+  // One object per value: a new one starts the search over, and the memos above run again as data arrives.
+  const freshKey = JSON.stringify(freshAsk);
+  const ask = useMemo(() => freshAsk, [freshKey]);
   const [asked, setAsked] = useState({ ask, jump });
   useEffect(() => {
-    const timer = setTimeout(() => setAsked({ ask, jump }), SEARCH_PAUSE_MS);
+    const timer = setTimeout(
+      () => setAsked((was) => (was.ask === ask && was.jump === jump ? was : { ask, jump })),
+      SEARCH_PAUSE_MS,
+    );
     return () => clearTimeout(timer);
   }, [ask, jump]);
 
@@ -419,9 +425,9 @@ export function SchedulePage({
   );
 
   // A new search starts below the live window's first turn, or where a jump lands, and reads down a
-  // page at a time.
+  // page at a time. Only once the epoch and our identity are known: either arriving starts it over.
   useEffect(() => {
-    if ((!asksAnything(asked.ask) && !asked.jump) || liveStartTurn === null) {
+    if ((!asksAnything(asked.ask) && !asked.jump) || liveStartTurn === null || !epoch || !identity) {
       setFound(null);
       return;
     }
@@ -1196,6 +1202,7 @@ export function SchedulePage({
           {conditions.length > 0 && <span>{describeOnly(conditions, slow)}</span>}
         </div>
       )}
+      {!summary && <SummaryHold filtered={summaryFiltered} rates={rates} />}
       {summary && (
         <>
           <SummaryLine
@@ -1271,6 +1278,10 @@ export function SchedulePage({
         />
         {shown.length === 0 && !reading && (searching ? found !== null : true) && (
           <div className="list-empty">{live.length === 0 ? "waiting for slots…" : "nothing matches that"}</div>
+        )}
+        {/* The landing turn's place until there are turns above it to fill it, so it never moves. */}
+        {jumping && landingTurn !== null && shown[0] === landingTurn && (
+          <div style={{ flex: "none", height: REVEAL_GAP }} />
         )}
         {/* Mounted afresh for each jump, so each lands at its turn. */}
         <VirtualList

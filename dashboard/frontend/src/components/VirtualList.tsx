@@ -74,6 +74,12 @@ export function VirtualList({
   });
   const [revision, setRevision] = useState(0);
   const [viewport, setViewport] = useState<Viewport>({ top: 0, height: 0 });
+  const readViewport = useCallback(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const { scrollTop: top, clientHeight: height } = element;
+    setViewport((was) => (was.top === top && was.height === height ? was : { top, height }));
+  }, [scroller]);
 
   // Measurements arrive in bursts; one recount per frame covers them.
   const pending = useRef<number | null>(null);
@@ -123,7 +129,7 @@ export function VirtualList({
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        setViewport({ top: element.scrollTop, height: element.clientHeight });
+        readViewport();
       });
     };
     const resized = new ResizeObserver(() => {
@@ -149,7 +155,7 @@ export function VirtualList({
       resized.disconnect();
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [scroller, bump, observer]);
+  }, [scroller, bump, observer, readViewport]);
 
   const estimate = useCallback(
     (key: number) => {
@@ -190,21 +196,29 @@ export function VirtualList({
   const revealed = useRef<number | null>(null);
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (!element || reveal === undefined || reveal === null || revealed.current === reveal) return;
-    const index = keys.indexOf(reveal);
+    if (!element || reveal === undefined) return;
+    const index = reveal === null ? -1 : keys.indexOf(reveal);
     const offset = offsets[index];
-    if (index < 0 || offset === undefined) return;
+    // Let go once it is gone, so a list read again lands again.
+    if (reveal === null || index < 0 || offset === undefined) {
+      revealed.current = null;
+      return;
+    }
+    if (revealed.current === reveal) return;
     revealed.current = reveal;
-    element.scrollTop = start + offset - revealGap;
+    // Read afresh here and below: what sits above the list may have changed in this very commit.
+    element.scrollTop = (container.current?.offsetTop ?? 0) + offset - revealGap;
     // The place meant, not the one reached: a list still too short to scroll that far is taken there
     // as it grows.
     anchor.current = { key: reveal, place: revealGap };
     settled.current = element.scrollTop;
+    readViewport();
   });
 
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
+    const start = container.current?.offsetTop ?? 0;
     const held = anchor.current;
     const current = element.scrollTop;
     // The browser cutting the scroll short as the list shrank is not the reader moving.
@@ -215,7 +229,11 @@ export function VirtualList({
     if (held && moved !== null && offset !== undefined) {
       // What the reader scrolled is kept; what arrived or grew above is taken back out.
       const target = start + offset - held.place + moved;
-      if (Math.abs(current - target) >= 0.5) element.scrollTop = target;
+      if (Math.abs(current - target) >= 0.5) {
+        element.scrollTop = target;
+        // Before the paint, or it shows the items drawn for the old place.
+        readViewport();
+      }
     }
     if (!held || moved !== 0 || offset === undefined) {
       const markerPlace = start + (offsets[markerAt] ?? 0) - element.scrollTop;

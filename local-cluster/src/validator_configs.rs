@@ -86,6 +86,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         votor_peer_overrides: config.votor_peer_overrides.clone(),
         repair_handler_type: config.repair_handler_type.clone(),
         snapshot_packager_niceness_adj: config.snapshot_packager_niceness_adj,
+        gossip_ready_sender: config.gossip_ready_sender.clone(),
         relayer_config: config.relayer_config.clone(),
         block_engine_config: config.block_engine_config.clone(),
         shred_receiver_addresses: config.shred_receiver_addresses.clone(),

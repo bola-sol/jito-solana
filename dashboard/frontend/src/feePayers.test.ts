@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { alertCounts, alertText, failedRatio, ratioLabel, shareLabel } from "./feePayers";
+import {
+  alertCounts,
+  alertText,
+  failedRatio,
+  feeShare,
+  feesPaid,
+  ratioLabel,
+  resultLabel,
+  shareLabel,
+} from "./feePayers";
 import type { FeePayerRow, FeePayerSummary } from "./types";
 
 function row(over: Partial<FeePayerRow> = {}): FeePayerRow {
@@ -16,6 +25,29 @@ function row(over: Partial<FeePayerRow> = {}): FeePayerRow {
     ...over,
   };
 }
+
+describe("a block's top fees", () => {
+  it("shares one decimal under a tenth and none above", () => {
+    expect(feeShare(1_005_000, 6_286_340)).toBe("16%");
+    expect(feeShare(398_000, 6_286_340)).toBe("6.3%");
+    expect(feeShare(0, 6_286_340)).toBe("0.0%");
+  });
+
+  it("has no share of a block that collected nothing", () => {
+    expect(feeShare(0, 0)).toBe("—");
+  });
+
+  it("adds what the rows paid", () => {
+    expect(feesPaid([{ paid: 5 }, { paid: 7 }])).toBe(12);
+    expect(feesPaid([])).toBe(0);
+  });
+
+  it("names a transaction's result, or its absence", () => {
+    expect(resultLabel(true)).toBe("failed");
+    expect(resultLabel(false)).toBe("ok");
+    expect(resultLabel(null)).toBe("—");
+  });
+});
 
 describe("fee payers", () => {
   it("compares our failure rate with the rate elsewhere", () => {

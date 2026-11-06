@@ -1122,11 +1122,38 @@ export interface FiguresPage {
 }
 
 /** Everything drawn for a span of our slots once opened. */
+/** In lamports. */
+export interface TopFeePayer {
+  payer: string;
+  transactions: number;
+  failed: number;
+  priority: number;
+  paid: number;
+}
+
+/** In lamports; `failed` is null where the status cache held no result. */
+export interface TopFeeTransaction {
+  signature: string;
+  payer: string;
+  failed: boolean | null;
+  priority: number;
+  paid: number;
+}
+
+export interface BlockFees {
+  slot: number;
+  payer_count: number;
+  payers: TopFeePayer[];
+  transactions: TopFeeTransaction[];
+}
+
 export interface ProducedDetail {
   blocks: ProducedBlock[];
   turns: LeaderTurn[];
   waterfalls: SlotWaterfall[];
   costs: CostDetail[];
+  /** Sent only when one slot is asked for. */
+  fees: BlockFees | null;
 }
 
 export interface IngestSummary {

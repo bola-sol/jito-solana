@@ -3375,7 +3375,7 @@ body {
 .produced-detail {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   padding: 14px 12px 14px;
 }
 
@@ -5200,7 +5200,7 @@ body {
 .sx-lead {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .sx-head {
@@ -5218,7 +5218,7 @@ body {
 
 .sx-cu-value {
   font-family: var(--mono);
-  font-size: 32px;
+  font-size: 22px;
   font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1.05;
@@ -5347,8 +5347,22 @@ body {
   display: grid;
   grid-row: span 4;
   grid-template-rows: subgrid;
-  row-gap: 12px;
+  row-gap: 8px;
   min-width: 0;
+}
+
+/* The figure and its note on one line, close under the section's label. */
+.sx-exec .sx-cu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin-top: -6px;
+}
+
+.sx-exec .sx-cu-value,
+.sx-exec .sx-cu-of {
+  margin-top: 0;
 }
 
 .sx-exec-seg {
@@ -5444,6 +5458,93 @@ body {
   font-weight: 500;
 }
 
+/* The same rule as .sx-exec-pair, so both pairs go across at the same width. */
+.sx-tops {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 470px), 1fr));
+  gap: 14px 28px;
+}
+
+.sx-top {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.sx-top-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.sx-top-sum {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sx-top-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(5, max-content);
+  column-gap: 14px;
+  font-size: 13px;
+}
+
+.sx-top-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+}
+
+.sx-top-row:last-child {
+  padding-bottom: 0;
+}
+
+.sx-top-names {
+  border-top: 0;
+  color: var(--text-faint);
+}
+
+.sx-top-names > * {
+  font-size: 12px;
+}
+
+.sx-top-names > :not(:first-child) {
+  text-align: right;
+}
+
+.sx-top-names > .sx-top-who {
+  text-align: left;
+}
+
+.sx-top-key {
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.sx-top-who {
+  font-size: 12px;
+}
+
+.sx-top-num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sx-top-dim {
+  color: var(--text-dim);
+}
+
 .sx-sched {
   display: flex;
   flex-direction: column;
@@ -5455,7 +5556,7 @@ body {
   gap: 14px;
   flex-wrap: wrap;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
 .sx-strip-label {
@@ -5697,11 +5798,24 @@ body {
   padding-top: 12px;
 }
 
-@media (max-width: 700px) {
-  .sx-cu-value {
-    font-size: 26px;
+/* Value and label on one line. Side by side, Leading's four would wrap and cost what this saves. */
+@media (min-width: 701px) {
+  .produced-detail > .sx-keep .sx-stat {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
   }
+}
 
+@media (min-width: 701px) and (max-width: 1041px) {
+  .sx-exec .sx-keep .sx-stat {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 700px) {
   .sx-head {
     flex-direction: column;
     align-items: stretch;
@@ -5717,8 +5831,8 @@ body {
   /* Narrow padding, so the longest label still fits a quarter of a 360px row. */
   .sx-stat {
     background: var(--panel-raised);
-    padding: 9px 8px;
-    gap: 4px;
+    padding: 5px 8px;
+    gap: 2px;
   }
 
   /* A fee value is wider than a third of the row, so fees go two across. Tips, bundles and the
@@ -5741,8 +5855,23 @@ body {
   }
 
   .sx-legend {
-    flex-direction: column;
-    gap: 4px;
+    gap: 3px 12px;
+  }
+
+  .sx-top-table {
+    column-gap: 10px;
+  }
+
+  .sx-top-table.is-payers {
+    grid-template-columns: minmax(0, 1fr) repeat(3, max-content);
+  }
+
+  .sx-top-table.is-transactions {
+    grid-template-columns: minmax(0, 1fr) repeat(2, max-content);
+  }
+
+  .sx-top-row > .sx-top-wide {
+    display: none;
   }
 
   .sx-acct-row {
@@ -9586,11 +9715,6 @@ body {
 .sx-cert-figures .is-out,
 .sx-cert-figures .is-out b {
   color: var(--warn);
-}
-
-.sx-cert-note {
-  font-size: 12px;
-  color: var(--text-faint);
 }
 
 .sx-cert .misses-out-list {

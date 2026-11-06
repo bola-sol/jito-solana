@@ -201,6 +201,14 @@ export function heldShortLabel(held: number, counts: LeaderSlotCounts | undefine
   return `${count(held)} of ${count(counts.produced)} blocks seen since the restart`;
 }
 
+export function certificateExplain(certificate: BlockCertificate): string {
+  const against =
+    certificate.usual === null
+      ? "what the epoch's certificates usually pay"
+      : `the epoch's usual certificate, which pays ${count(certificate.usual)} of ${count(certificate.ranks)}`;
+  return `The reward certificate this block wrote, for the slot eight back, against ${against}.`;
+}
+
 export function certificateVerdict(certificate: BlockCertificate): { text: string; warn: boolean } {
   const out = certificate.left_out.length;
   if (out === 0) return { text: "in line with the cluster", warn: false };

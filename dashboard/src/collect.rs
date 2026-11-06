@@ -139,7 +139,12 @@ impl Replies {
 impl Replies {
     /// The blocks, turns, waterfalls and costs in `first..=last`, clamped as the store clamps.
     pub fn produced_detail(&self, first: Slot, last: Slot) -> Option<ProducedDetail> {
-        let (blocks, turns) = self.produced.read().ok()?.detail(first, last);
+        let (blocks, turns, fees) = {
+            let produced = self.produced.read().ok()?;
+            let (blocks, turns) = produced.detail(first, last);
+            let fees = (first == last).then(|| produced.fees(first)).flatten();
+            (blocks, turns, fees)
+        };
         // A turn's drawer sums the waterfalls of every slot in it.
         let from = turns.first().map_or(first, |turn| turn.first.min(first));
         let to = turns
@@ -169,6 +174,7 @@ impl Replies {
             blocks,
             turns,
             costs,
+            fees,
         })
     }
 }
@@ -1658,7 +1664,13 @@ impl Collector {
             }
         }
         let blockstore = &self.ctx.blockstore;
-        self.fee_payers.read(blockstore);
+        let fees = self.fee_payers.read(blockstore);
+        if !fees.is_empty() {
+            let mut produced = self.replies.produced.write().unwrap();
+            for block in fees {
+                produced.set_fees(block);
+            }
+        }
         self.fee_payers
             .settle(root, root_bank.epoch(), |slot| blockstore.is_root(slot));
         let retimed = self.retime(&became_full, &mut changed);

@@ -105,7 +105,8 @@ leader's close time, which reads the last two FEC sets of each newly rooted bloc
 out of the blockstore, at most 64 slots a tick, with or without a seat. Each
 frozen block's entries are also read back for their fee payers, with a status
 cache lookup for each transaction of ours and for each of a followed payer's
-elsewhere: about 1.6 ms a mainnet block on one core.
+elsewhere: about 1.6 ms a mainnet block on one core. For our own blocks the same
+read keeps the five fee payers and the five transactions that paid the most.
 
 The one-off read that maps identities to names runs once, when the collector
 attaches. It asks the secondary index which accounts the config program owns and

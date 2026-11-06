@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blockSummary,
+  certificateExplain,
   certificateVerdict,
   earnedOf,
   epochTotals,
@@ -53,6 +54,20 @@ function certificate(over: Partial<BlockCertificate> = {}): BlockCertificate {
     ...over,
   };
 }
+
+describe("certificateExplain", () => {
+  it("names what the epoch's usual certificate pays", () => {
+    expect(certificateExplain(certificate())).toBe(
+      "The reward certificate this block wrote, for the slot eight back, against the epoch's usual certificate, which pays 103 of 112.",
+    );
+  });
+
+  it("says less before there is a usual to name", () => {
+    expect(certificateExplain(certificate({ usual: null }))).toBe(
+      "The reward certificate this block wrote, for the slot eight back, against what the epoch's certificates usually pay.",
+    );
+  });
+});
 
 describe("certificateVerdict", () => {
   it("is in line when nobody certificates usually pay was left out", () => {

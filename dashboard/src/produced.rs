@@ -202,6 +202,38 @@ pub struct CostDetail {
     pub recurrence: Option<Recurrence>,
 }
 
+/// A fee payer among those who paid the most in a block, in lamports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TopFeePayer {
+    #[serde(serialize_with = "base58")]
+    pub payer: Pubkey,
+    pub transactions: u64,
+    pub failed: u64,
+    pub priority: u64,
+    pub paid: u64,
+}
+
+/// A transaction among those that paid the most in a block, in lamports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TopFeeTransaction {
+    pub signature: String,
+    #[serde(serialize_with = "base58")]
+    pub payer: Pubkey,
+    /// Absent where the status cache held no result.
+    pub failed: Option<bool>,
+    pub priority: u64,
+    pub paid: u64,
+}
+
+/// Who paid the most in one of our blocks, over its non-vote transactions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BlockFees {
+    pub slot: Slot,
+    pub payer_count: u64,
+    pub payers: Vec<TopFeePayer>,
+    pub transactions: Vec<TopFeeTransaction>,
+}
+
 /// Everything the page draws for a span of our slots once opened.
 #[derive(Debug, Serialize)]
 pub struct ProducedDetail {
@@ -209,6 +241,8 @@ pub struct ProducedDetail {
     pub turns: Vec<LeaderTurn>,
     pub waterfalls: Vec<SlotWaterfall>,
     pub costs: Vec<CostDetail>,
+    /// Sent only when one slot is asked for; a turn's drawer doesn't draw them.
+    pub fees: Option<BlockFees>,
 }
 
 /// Our blocks and leader turns for the current epoch, and the previous one for a while after the
@@ -220,6 +254,8 @@ pub struct ProducedStore {
     turns: BTreeMap<Slot, LeaderTurn>,
     /// Blocks added or filled in since `take_changed`.
     changed: BTreeSet<Slot>,
+    /// Apart from the blocks, so they stay out of the list and the live feed.
+    fees: BTreeMap<Slot, BlockFees>,
     floor: Slot,
 }
 
@@ -272,9 +308,22 @@ impl ProducedStore {
         self.changed.insert(block.slot);
         self.blocks.insert(block.slot, block);
         while self.blocks.len() > MAX_HELD_BLOCKS {
-            self.blocks.pop_first();
+            if let Some((slot, _)) = self.blocks.pop_first() {
+                self.fees.remove(&slot);
+            }
         }
         true
+    }
+
+    /// Ignored for a block not held.
+    pub fn set_fees(&mut self, fees: BlockFees) {
+        if self.contains(fees.slot) {
+            self.fees.insert(fees.slot, fees);
+        }
+    }
+
+    pub fn fees(&self, slot: Slot) -> Option<BlockFees> {
+        self.fees.get(&slot).cloned()
     }
 
     /// Drops what is older than `floor`, and refuses it from then on.
@@ -286,6 +335,7 @@ impl ProducedStore {
         self.blocks = self.blocks.split_off(&floor);
         self.turns = self.turns.split_off(&floor);
         self.changed = self.changed.split_off(&floor);
+        self.fees = self.fees.split_off(&floor);
     }
 
     pub fn fill_bundles(&mut self, landed: impl Fn(Slot) -> Option<Bundles>) -> bool {
@@ -694,6 +744,46 @@ mod tests {
                 crate::proto::encode("summary", "produced_blocks", &ring.recent_refs(count)).text(),
             );
         }
+    }
+
+    #[test]
+    fn test_fees_are_held_with_their_block_and_named_in_base58() {
+        let payer = Pubkey::new_unique();
+        let fees = |slot| BlockFees {
+            slot,
+            payer_count: 1,
+            payers: vec![TopFeePayer {
+                payer,
+                transactions: 1,
+                failed: 0,
+                priority: 5,
+                paid: 5_005,
+            }],
+            transactions: vec![TopFeeTransaction {
+                signature: "sig".to_owned(),
+                payer,
+                failed: None,
+                priority: 5,
+                paid: 5_005,
+            }],
+        };
+        let mut ring = ProducedStore::default();
+        ring.insert(block(10));
+        ring.insert(block(20));
+        ring.set_fees(fees(10));
+        ring.set_fees(fees(20));
+        ring.set_fees(fees(30));
+        assert_eq!(ring.fees(10), Some(fees(10)));
+        assert_eq!(ring.fees(30), None, "not a block we hold");
+
+        let json = serde_json::to_value(fees(10)).unwrap();
+        assert_eq!(json["payers"][0]["payer"], payer.to_string());
+        assert_eq!(json["transactions"][0]["payer"], payer.to_string());
+        assert!(json["transactions"][0]["failed"].is_null());
+
+        ring.hold_from(11);
+        assert_eq!(ring.fees(10), None);
+        assert_eq!(ring.fees(20), Some(fees(20)));
     }
 
     #[test]

@@ -2,7 +2,10 @@
 //! blocks, for this epoch and the last.
 
 use {
-    crate::versions::is_simple_vote,
+    crate::{
+        produced::{BlockFees, TopFeePayer, TopFeeTransaction},
+        versions::is_simple_vote,
+    },
     agave_feature_set::FeatureSet,
     serde::Serialize,
     solana_clock::{Epoch, Slot},
@@ -12,6 +15,7 @@ use {
     solana_message::VersionedMessage,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction::versioned::VersionedTransaction,
     std::{
@@ -42,6 +46,8 @@ const WAIT_SLOTS: u64 = 64;
 
 const TOP_PAYERS: usize = 10;
 const MAX_ALERTS: usize = 20;
+/// Payers and transactions listed for each of our blocks.
+const TOP_IN_BLOCK: usize = 5;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Tally {
@@ -156,8 +162,10 @@ impl FeePayers {
         }
     }
 
-    /// Reads each held block once the blockstore has all of it, and lets its bank go.
-    pub(super) fn read(&mut self, blockstore: &Blockstore) {
+    /// Reads each held block once the blockstore has all of it, and lets its bank go. Returns what
+    /// our own blocks paid.
+    pub(super) fn read(&mut self, blockstore: &Blockstore) -> Vec<BlockFees> {
+        let mut fees = Vec::new();
         let full: Vec<Slot> = self
             .waiting
             .keys()
@@ -172,14 +180,16 @@ impl FeePayers {
                 continue;
             };
             let followed = self.epochs.get(&bank.epoch());
-            let tally = tally_block(&bank, &entries, ours, |payer| {
+            let (tally, paid) = tally_block(&bank, &entries, ours, |payer| {
                 followed.is_some_and(|epoch| epoch.payers.contains_key(payer))
             });
             self.unsettled.insert(slot, tally);
+            fees.extend(paid);
         }
         while self.unsettled.len() > MAX_UNSETTLED {
             self.unsettled.pop_first();
         }
+        fees
     }
 
     /// Counts the read blocks at or under the root that were rooted, and drops the rest, which
@@ -318,19 +328,112 @@ fn alert(ours: &Tally, away: &Tally) -> Option<Alert> {
     }
 }
 
+#[derive(Debug, Default)]
+struct PayerFees {
+    transactions: u64,
+    failed: u64,
+    priority: u64,
+    paid: u64,
+}
+
+#[derive(Debug)]
+struct PaidTransaction<'a> {
+    transaction: &'a VersionedTransaction,
+    payer: Pubkey,
+    failed: Option<bool>,
+    priority: u64,
+    paid: u64,
+}
+
+/// What one of our blocks' non-vote transactions paid, as they are read.
+#[derive(Debug, Default)]
+struct BlockPaid<'a> {
+    payers: HashMap<Pubkey, PayerFees>,
+    transactions: Vec<PaidTransaction<'a>>,
+}
+
+impl<'a> BlockPaid<'a> {
+    fn note(
+        &mut self,
+        transaction: &'a VersionedTransaction,
+        payer: Pubkey,
+        failed: Option<bool>,
+        priority: u64,
+        base: u64,
+    ) {
+        let paid = base.saturating_add(priority);
+        let fees = self.payers.entry(payer).or_default();
+        fees.transactions = fees.transactions.saturating_add(1);
+        fees.failed = fees
+            .failed
+            .saturating_add(u64::from(failed.unwrap_or(false)));
+        fees.priority = fees.priority.saturating_add(priority);
+        fees.paid = fees.paid.saturating_add(paid);
+        self.transactions.push(PaidTransaction {
+            transaction,
+            payer,
+            failed,
+            priority,
+            paid,
+        });
+    }
+
+    fn top(mut self, slot: Slot) -> BlockFees {
+        let payer_count = u64::try_from(self.payers.len()).unwrap_or(u64::MAX);
+        let mut payers: Vec<(Pubkey, PayerFees)> = self.payers.into_iter().collect();
+        payers.sort_unstable_by_key(|(_, fees)| Reverse(fees.paid));
+        payers.truncate(TOP_IN_BLOCK);
+        self.transactions
+            .sort_unstable_by_key(|row| Reverse(row.paid));
+        self.transactions.truncate(TOP_IN_BLOCK);
+        BlockFees {
+            slot,
+            payer_count,
+            payers: payers
+                .into_iter()
+                .map(|(payer, fees)| TopFeePayer {
+                    payer,
+                    transactions: fees.transactions,
+                    failed: fees.failed,
+                    priority: fees.priority,
+                    paid: fees.paid,
+                })
+                .collect(),
+            transactions: self
+                .transactions
+                .into_iter()
+                .map(|row| TopFeeTransaction {
+                    signature: row
+                        .transaction
+                        .signatures
+                        .first()
+                        .map_or_else(String::new, ToString::to_string),
+                    payer: row.payer,
+                    failed: row.failed,
+                    priority: row.priority,
+                    paid: row.paid,
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Every non-vote transaction of our block, or only the followed payers' in another's. A result
-/// not found in the status cache leaves the transaction out.
+/// not found in the status cache leaves the transaction out of the tally, though not out of what
+/// the block paid.
 fn tally_block(
     bank: &Bank,
     entries: &[Entry],
     ours: bool,
     followed: impl Fn(&Pubkey) -> bool,
-) -> BlockTally {
+) -> (BlockTally, Option<BlockFees>) {
     let mut tally = BlockTally {
         epoch: bank.epoch(),
         ours,
         ..BlockTally::default()
     };
+    let mut paid = BlockPaid::default();
+    let lamports_per_signature = bank.get_lamports_per_signature();
     for transaction in entries.iter().flat_map(|entry| &entry.transactions) {
         if is_simple_vote(transaction) {
             continue;
@@ -341,20 +444,50 @@ fn tally_block(
         if !ours && !followed(payer) {
             continue;
         }
-        let Some(failed) = failed_in(bank, transaction) else {
-            continue;
-        };
-        let fee = if ours && failed {
-            priority_fee(transaction, &bank.feature_set)
+        let result = failed_in(bank, transaction);
+        let priority = if ours {
+            let priority = priority_fee(transaction, &bank.feature_set);
+            let base = base_fee(transaction, lamports_per_signature);
+            paid.note(transaction, *payer, result, priority, base);
+            priority
         } else {
             0
         };
-        tally.payers.entry(*payer).or_default().note(failed, fee);
+        let Some(failed) = result else {
+            continue;
+        };
+        tally
+            .payers
+            .entry(*payer)
+            .or_default()
+            .note(failed, priority);
         if ours {
-            tally.total.note(failed, fee);
+            tally.total.note(failed, priority);
         }
     }
-    tally
+    (tally, ours.then(|| paid.top(bank.slot())))
+}
+
+/// Charged for each of the transaction's signatures and each a precompile verifies, whose count
+/// leads its instruction data.
+fn base_fee(transaction: &VersionedTransaction, lamports_per_signature: u64) -> u64 {
+    let message = &transaction.message;
+    let keys = message.static_account_keys();
+    let signatures = u64::try_from(transaction.signatures.len()).unwrap_or(u64::MAX);
+    message
+        .instructions()
+        .iter()
+        .filter(|instruction| {
+            keys.get(usize::from(instruction.program_id_index))
+                .is_some_and(|program| {
+                    ed25519_program::check_id(program)
+                        || secp256k1_program::check_id(program)
+                        || secp256r1_program::check_id(program)
+                })
+        })
+        .map(|instruction| u64::from(instruction.data.first().copied().unwrap_or(0)))
+        .fold(signatures, u64::saturating_add)
+        .saturating_mul(lamports_per_signature)
 }
 
 /// By message hash, which the cache holds for all but durable nonce transactions; those are found
@@ -395,7 +528,9 @@ mod tests {
         super::*,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_keypair::Keypair,
+        solana_message::{compiled_instruction::CompiledInstruction, legacy},
         solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        solana_signature::Signature,
         solana_signer::Signer,
         solana_system_interface::instruction::transfer,
         solana_transaction::Transaction,
@@ -576,20 +711,93 @@ mod tests {
                 .collect(),
         }];
 
-        let ours = tally_block(&bank, &entries, true, |_| false);
+        let (ours, fees) = tally_block(&bank, &entries, true, |_| false);
         // 2,000,000 micro-lamports per unit over a 10,000 unit limit.
         assert_eq!(ours.total, tally(2, 1, 20_000));
         assert_eq!(ours.payers[&mint_keypair.pubkey()], tally(2, 1, 20_000));
 
-        let away = tally_block(&bank, &entries, false, |payer| {
+        let per_signature = bank.get_lamports_per_signature();
+        let fees = fees.expect("our block's fees");
+        assert_eq!(fees.slot, bank.slot());
+        // The unprocessed transaction has no result, yet is counted as paid.
+        assert_eq!(fees.transactions.len(), 3);
+        assert_eq!(fees.payer_count, 2);
+        let top = &fees.payers[0];
+        assert_eq!(top.payer, mint_keypair.pubkey());
+        assert_eq!((top.transactions, top.failed), (2, 1));
+        assert_eq!(top.priority, 40_000);
+        assert_eq!(
+            top.paid,
+            per_signature.saturating_mul(2).saturating_add(40_000)
+        );
+        let results: Vec<Option<bool>> = fees.transactions.iter().map(|row| row.failed).collect();
+        assert!(results.contains(&Some(false)) && results.contains(&Some(true)));
+        assert_eq!(results[2], None);
+        assert_eq!(fees.transactions[0].priority, 20_000);
+        assert_eq!(
+            fees.transactions[0].signature.len(),
+            entries[0].transactions[0].signatures[0].to_string().len()
+        );
+
+        let (away, no_fees) = tally_block(&bank, &entries, false, |payer| {
             *payer == mint_keypair.pubkey()
         });
         assert_eq!(away.total, Tally::default());
         assert_eq!(away.payers[&mint_keypair.pubkey()], tally(2, 1, 0));
+        assert!(no_fees.is_none());
         assert!(
             tally_block(&bank, &entries, false, |_| false)
+                .0
                 .payers
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn lists_a_blocks_five_highest_payers_and_transactions() {
+        let transaction = VersionedTransaction::default();
+        let mut paid = BlockPaid::default();
+        let payers: Vec<Pubkey> = (0..7).map(|_| Pubkey::new_unique()).collect();
+        for (fee, payer) in (1u64..).zip(&payers) {
+            paid.note(&transaction, *payer, Some(false), fee, 0);
+        }
+        // Many small payments outrank the larger single ones, by payer but not by transaction.
+        for _ in 0..30 {
+            paid.note(&transaction, payers[0], Some(true), 1, 0);
+        }
+        let fees = paid.top(9);
+        assert_eq!(fees.slot, 9);
+        assert_eq!(fees.payer_count, 7);
+        assert_eq!(fees.payers.len(), TOP_IN_BLOCK);
+        assert_eq!(fees.payers[0].payer, payers[0]);
+        assert_eq!(fees.payers[0].paid, 31);
+        assert_eq!(fees.payers[0].failed, 30);
+        assert_eq!(fees.transactions.len(), TOP_IN_BLOCK);
+        let highest: Vec<u64> = fees.transactions.iter().map(|row| row.paid).collect();
+        assert_eq!(highest, [7, 6, 5, 4, 3]);
+        assert_eq!(fees.transactions[0].payer, payers[6]);
+    }
+
+    #[test]
+    fn charges_each_signature_a_precompile_verifies() {
+        let with_program = |program: Pubkey, data: Vec<u8>| VersionedTransaction {
+            signatures: vec![Signature::default(); 2],
+            message: VersionedMessage::Legacy(legacy::Message {
+                account_keys: vec![Pubkey::new_unique(), Pubkey::new_unique(), program],
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 2,
+                    accounts: vec![],
+                    data,
+                }],
+                ..legacy::Message::default()
+            }),
+        };
+        let fee = |program, data| base_fee(&with_program(program, data), 5_000);
+        assert_eq!(fee(ed25519_program::id(), vec![3, 9]), 25_000);
+        assert_eq!(fee(secp256k1_program::id(), vec![1]), 15_000);
+        assert_eq!(fee(secp256r1_program::id(), vec![2]), 20_000);
+        assert_eq!(fee(ed25519_program::id(), vec![]), 10_000);
+        // The first byte of any other program's data counts for nothing.
+        assert_eq!(fee(Pubkey::new_unique(), vec![200]), 10_000);
     }
 }

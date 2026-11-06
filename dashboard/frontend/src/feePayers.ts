@@ -32,6 +32,22 @@ export function priorityLabel(lamports: number): string {
   return `${sol(lamports, 4)} SOL`;
 }
 
+export function feesPaid(rows: readonly { paid: number }[]): number {
+  return rows.reduce((sum, row) => sum + row.paid, 0);
+}
+
+/** A share of the block's fees: one decimal under a tenth, whole above. */
+export function feeShare(paid: number, total: number): string {
+  if (total <= 0) return "—";
+  const share = paid / total;
+  return percent(share, share < 0.1 ? 1 : 0);
+}
+
+export function resultLabel(failed: boolean | null): string {
+  if (failed === null) return "—";
+  return failed ? "failed" : "ok";
+}
+
 /** The newest epoch's alerts. */
 export function alertCounts(summary: FeePayerSummary): { escalated: number; flagged: number } {
   const newest = summary.epochs[0]?.epoch;

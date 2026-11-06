@@ -423,6 +423,7 @@ body {
 }
 
 .copyable-flash {
+  user-select: none;
   position: absolute;
   left: 0;
   top: 0;
@@ -8269,17 +8270,6 @@ body {
   color: var(--ours);
 }
 
-.slot-link {
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
-  text-underline-offset: 2px;
-}
-
-.slot-link:hover {
-  text-decoration-color: currentColor;
-}
-
 @media (hover: hover) {
   .schedule-row:hover:where(:not(.schedule-head)) {
     border-radius: 3px;
@@ -8293,16 +8283,18 @@ body {
   z-index: 1;
   display: inline-flex;
   flex: none;
-}
-
-.slot-actions-pair,
-.slot-actions-one {
-  display: inline-flex;
   gap: 1px;
 }
 
-.slot-actions-one {
-  display: none;
+.schedule-slot .copyable {
+  flex: none;
+  cursor: copy;
+}
+
+.schedule-slot .copyable:hover {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
 
 .slot-action {
@@ -8320,64 +8312,40 @@ body {
   cursor: pointer;
 }
 
-.slot-action:hover {
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-  color: var(--text);
-}
-
 .slot-action.is-done {
   color: var(--good);
 }
 
-.slot-actions-pair .slot-action:not(.is-done) {
+.slot-action:not(.is-done):not(.slot-open) {
   opacity: 0;
 }
 
-.schedule-row:hover .slot-actions-pair .slot-action,
-.schedule-row:focus-within .slot-actions-pair .slot-action {
+/* Always shown: the only way from our slot to its details. */
+.slot-open {
+  color: inherit;
+}
+
+.schedule-row:focus-within .slot-action {
   opacity: 1;
+}
+
+@media (hover: hover) {
+  .slot-action:hover {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text);
+  }
+
+  .schedule-row:hover .slot-action {
+    opacity: 1;
+  }
 }
 
 /* Nothing hovers on a touch screen. */
 @media (hover: none) {
-  .slot-actions-pair .slot-action:not(.is-done) {
+  .slot-action:not(.is-done):not(.slot-open) {
     color: var(--text-faint);
     opacity: 0.75;
   }
-}
-
-.slot-actions-menu {
-  position: fixed;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  min-width: 130px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 0.14);
-  font-size: 12.5px;
-}
-
-.slot-actions-menu button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 3px;
-  background: none;
-  font: inherit;
-  color: var(--text);
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.slot-actions-menu button:hover,
-.slot-actions-menu button:focus-visible {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 .vote-marks {
@@ -9146,30 +9114,48 @@ body {
   }
 }
 
-/* No room for two icons beside the number, and too small to tell apart by touch. */
 @container schedule (max-width: 500px) {
-  .slot-actions-pair {
-    display: none;
-  }
-
-  .slot-actions-one {
-    display: inline-flex;
-  }
-
-  .slot-actions-one .slot-action:not(.is-done) {
+  .slot-action:not(.is-done):not(.slot-open) {
     color: var(--text-faint);
     opacity: 0.75;
   }
 
-  /* A wider target than the icon, taking no room from the row. */
-  .slot-actions-one .slot-action {
+  .slot-action {
     position: relative;
+    width: 14px;
   }
 
-  .slot-actions-one .slot-action::after {
+  /* Wider targets than the icons, taking no room from the row. */
+  .slot-action::after {
     content: "";
     position: absolute;
     inset: -2px -8px;
+  }
+
+  .slot-action:has(+ .slot-open)::after {
+    right: 0;
+  }
+
+  .slot-action + .slot-open::after {
+    left: 0;
+  }
+}
+
+/* Keeps the arrow off the figure beside it. */
+@container schedule (max-width: 330px) {
+  .schedule-row .schedule-slot {
+    gap: 3px;
+  }
+}
+
+/* No room for two icons: the slot page has the address to share. */
+@container schedule (max-width: 311px) {
+  .slot-action:has(+ .slot-open) {
+    display: none;
+  }
+
+  .slot-action + .slot-open::after {
+    left: -8px;
   }
 }
 
@@ -9179,7 +9165,11 @@ body {
   }
 
   .slot-action {
-    width: 14px;
+    width: 13px;
+  }
+
+  .slot-open svg {
+    width: 10px;
   }
 }
 

@@ -105,7 +105,6 @@ import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
 import { ScrollTop } from "./ScrollTop";
 import { SlotActions } from "./SlotActions";
-import { SlotLink } from "./SlotLink";
 import { TurnStrip } from "./TurnStrip";
 import { VirtualList } from "./VirtualList";
 import type { EdgeSide } from "../virtual";
@@ -1688,9 +1687,9 @@ function SlotRow({
       className={`schedule-row level-${level}${unheld ? " is-unheld" : ""}${now ? ` is-${now}` : ""}${landed ? " is-landed" : ""}${met?.length === 0 ? " is-miss" : ""}`}
     >
       <span className="schedule-slot" title={unheld ? "Not read yet, or older than the validator keeps." : undefined}>
-        {entry?.mine ? <SlotLink slot={slot.slot} /> : count(slot.slot)}
+        {unheld ? count(slot.slot) : <Copyable text={String(slot.slot)} label={count(slot.slot)} />}
         {!unheld && <span className={`schedule-level level-${level}`} title={level.replace(/_/g, " ")} />}
-        {!unheld && <SlotActions slot={slot.slot} held={entry !== null} />}
+        {!unheld && <SlotActions slot={slot.slot} held={entry !== null} mine={entry?.mine === true} />}
       </span>
       {alpenglow ? (
         <VoteMark reward={entry?.reward ?? null} />

@@ -195,7 +195,9 @@ leader client, `slot.future` for a page of the epoch's turns to come whose
 leader and slot match, all three answered off the async threads and one at a
 time, and
 `peers.gossip` for every node in gossip, which the server gathers only while it
-is being asked for, `handoff.bin` for the settled leaders whose median handoff
+is being asked for, `peers.leaders` for the client, version, address, country
+and stake of every staked node and scheduled leader, where `peers.all` holds
+only the leaders near the tip, `handoff.bin` for the settled leaders whose median handoff
 gap falls in a range, from the figures each ten-second handoff summary keeps,
 and `cluster.charts` for the Cluster page, gathered on the first ask and then
 every fifteen seconds only while it is being asked for.

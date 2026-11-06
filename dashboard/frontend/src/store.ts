@@ -13,6 +13,7 @@ import type {
   FiguresPage,
   GossipPeers,
   LeaderFigures,
+  LeaderRow,
   MissList,
   NetworkSample,
   Peer,
@@ -57,6 +58,7 @@ export interface Requests {
   "summary.misses": { params: Record<string, never>; reply: MissList };
   "summary.written": { params: Record<string, never>; reply: WrittenList };
   "peers.gossip": { params: Record<string, never>; reply: GossipPeers | null };
+  "peers.leaders": { params: Record<string, never>; reply: LeaderRow[] | null };
   "handoff.bin": { params: { from: number | null; to: number | null }; reply: LeaderFigures[] | null };
   "cluster.charts": { params: Record<string, never>; reply: ClusterCharts | null };
   "produced.figures": { params: { before?: number }; reply: FiguresPage | null };

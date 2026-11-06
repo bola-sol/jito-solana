@@ -103,6 +103,9 @@ export interface Peer {
   icon: string | null;
 }
 
+/** What a turn's card shows of its leader, whom the peer table may not hold. */
+export type LeaderRow = Pick<Peer, "identity" | "client" | "version" | "ip" | "country" | "stake">;
+
 export type GossipMessageKind = "push" | "pull_request" | "pull_response" | "ping" | "pong" | "prune";
 
 /** Rates over `window_seconds`, from gossip's own stats points; null while none arrive. */
@@ -252,7 +255,7 @@ export interface ScheduleSummary {
 export interface FutureReply {
   turns: number[];
   /** Each leader of those turns once. */
-  leaders: Pick<Peer, "identity" | "client" | "version" | "ip" | "country" | "stake">[];
+  leaders: LeaderRow[];
   /** Where the next page starts. */
   next: number | null;
   /** Matches after this page. */

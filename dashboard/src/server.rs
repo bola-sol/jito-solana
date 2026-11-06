@@ -10,7 +10,7 @@ use {
             DEFLATE_PROTOCOL, Frame, Message, Publisher, Request, coalesce, encode_json_with_id,
             encode_with_id,
         },
-        search::{SearchParams, future, search, summarize},
+        search::{SearchParams, future, leader_rows, search, summarize},
         validator_info::ValidatorInfoCache,
     },
     soketto::{
@@ -897,6 +897,17 @@ fn respond(
             };
             Some(encode_json_with_id("peers", "gossip", id, &json))
         }
+        ("peers", "leaders") => {
+            let Ok(leaders) = replies.leader_traits.read() else {
+                return Some(encode_with_id("peers", "leaders", id, &()));
+            };
+            Some(encode_with_id(
+                "peers",
+                "leaders",
+                id,
+                &leader_rows(&leaders),
+            ))
+        }
         ("cluster", "charts") => {
             let Some(json) = replies.ask_cluster_charts(timestamp()) else {
                 return Some(encode_with_id("cluster", "charts", id, &()));
@@ -996,9 +1007,13 @@ fn respond(
 mod tests {
     use {
         super::*,
-        crate::proto::{DEFLATE_FROM, TOPIC_SLOT},
+        crate::{
+            proto::{DEFLATE_FROM, TOPIC_SLOT},
+            search::LeaderTraits,
+        },
         flate2::read::{GzDecoder, ZlibDecoder},
         soketto::handshake::{Client, ServerResponse},
+        solana_pubkey::Pubkey,
         std::io::Read,
     };
 
@@ -1835,6 +1850,43 @@ mod tests {
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"
         );
+    }
+
+    #[test]
+    fn test_every_leader_is_answered_with_what_a_turn_shows() {
+        let replies = no_replies();
+        let identity = Pubkey::new_unique();
+        replies.leader_traits.write().unwrap().insert(
+            identity,
+            LeaderTraits {
+                client: Some("Agave".to_string()),
+                version: Some("4.4.1".to_string()),
+                ip: Some("8.8.8.8".to_string()),
+                country: Some("US"),
+                stake: 7,
+                delinquent: false,
+                last_vote: None,
+            },
+        );
+        let reply = respond(
+            br#"{"topic":"peers","key":"leaders","id":14}"#,
+            &empty(),
+            &no_info(),
+            &no_epochs(),
+            &replies,
+        )
+        .unwrap();
+        assert!(reply.contains(r#""id":14"#), "{reply}");
+        assert!(reply.contains(&identity.to_string()), "{reply}");
+        for field in [
+            r#""client":"Agave""#,
+            r#""version":"4.4.1""#,
+            r#""ip":"8.8.8.8""#,
+            r#""country":"US""#,
+            r#""stake":7"#,
+        ] {
+            assert!(reply.contains(field), "{field} in {reply}");
+        }
     }
 
     #[test]

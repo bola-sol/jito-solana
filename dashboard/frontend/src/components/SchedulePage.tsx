@@ -34,6 +34,7 @@ import {
 } from "../schedule";
 import type { SlotRange } from "../slotHistory";
 import type { Store } from "../store";
+import { mergeLeaders } from "../leaderTable";
 import { Stripes } from "../stripes";
 import { timelineOf } from "../timeline";
 import { jitoShare } from "../tips";
@@ -96,7 +97,7 @@ import type { ScheduleSummary } from "../types";
 import { browse, BROWSE_TITLES, readSearch, suggest, valueText, withValue, type BrowseRow, type Offered } from "../scheduleSyntax";
 import { heldText, ShareTools, SummaryHold, SummaryLine, SummaryTable, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
 import { DEFAULT_SUMMARY_SORT, nextSummarySort, type SummaryGroup, type SummarySort } from "../summaryTable";
-import type { Peer, Reward, SlotEntry, TipRates } from "../types";
+import type { LeaderRow, Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import { useMedia } from "../useMedia";
@@ -117,6 +118,10 @@ const TURN_HEIGHT_GUESS = 108;
 
 /** How long a failed fetch waits before scrolling may ask again. */
 const RETRY_AFTER_MS = 5000;
+
+const LEADER_ROWS_EVERY_MS = 60_000;
+const LEADER_ROWS_RETRY_MS = 5000;
+const NO_ROWS: readonly LeaderRow[] = [];
 
 /** A search is sent once typing pauses this long. */
 const SEARCH_PAUSE_MS = 250;
@@ -200,31 +205,46 @@ function fetchSpan(store: Store, first: number, count: number): Promise<SlotRang
   return store.request("slot.range", { first_slot: first, count });
 }
 
-function samePeer(a: Peer, b: Peer): boolean {
-  return (
-    a.stake === b.stake &&
-    a.version === b.version &&
-    a.client === b.client &&
-    a.ip === b.ip &&
-    a.country === b.country &&
-    a.name === b.name &&
-    a.icon === b.icon
-  );
+/** The validator's list of every leader, asked for while the page is open and again on each new socket. */
+function useLeaderRows(): readonly LeaderRow[] {
+  const store = useStore();
+  const [rows, setRows] = useState<readonly LeaderRow[]>(NO_ROWS);
+  const open = store.getConnection() === "open";
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      store.request("peers.leaders", {}).then(
+        (got) => {
+          if (!live) return;
+          // Empty until the collector's first reading.
+          const filled = got !== null && got.length > 0;
+          if (filled) setRows(got);
+          timer = setTimeout(load, filled ? LEADER_ROWS_EVERY_MS : LEADER_ROWS_RETRY_MS);
+        },
+        () => {
+          if (live) timer = setTimeout(load, LEADER_ROWS_RETRY_MS);
+        },
+      );
+    };
+    load();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [store, open]);
+  return rows;
 }
 
-/** The peer table by identity, a peer keeping its object while unchanged, so a republished table
+/** Each leader by identity, a leader keeping its object while unchanged, so a republished table
  *  redraws only the cards whose leader changed. */
-function useStablePeers(peers: Peer[] | undefined): Map<string, Peer> {
+function useStablePeers(rows: readonly LeaderRow[], peers: Peer[] | undefined): Map<string, Peer> {
   const held = useRef(new Map<string, Peer>());
   return useMemo(() => {
-    const next = new Map<string, Peer>();
-    for (const peer of peers ?? []) {
-      const was = held.current.get(peer.identity);
-      next.set(peer.identity, was && samePeer(was, peer) ? was : peer);
-    }
-    held.current = next;
-    return next;
-  }, [peers]);
+    held.current = mergeLeaders(held.current, rows, peers ?? []);
+    return held.current;
+  }, [rows, peers]);
 }
 
 export interface ScheduleFilter {
@@ -653,7 +673,8 @@ export function SchedulePage({
   );
   const [edge, setEdge] = useState<EdgeSide>("in");
 
-  const byIdentity = useStablePeers(peers);
+  const leaderRows = useLeaderRows();
+  const byIdentity = useStablePeers(leaderRows, peers);
 
   // A slot meets the chips, the column conditions and the range; a turn the validator returned has
   // already met its leader's conditions.

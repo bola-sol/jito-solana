@@ -897,9 +897,9 @@ pub fn search(
     }
 }
 
-/// A leader of turns to come, for drawing them.
+/// What a turn's card shows of its leader.
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
-pub struct FutureLeader {
+pub struct LeaderRow {
     pub identity: String,
     pub client: Option<String>,
     pub version: Option<String>,
@@ -908,13 +908,34 @@ pub struct FutureLeader {
     pub stake: u64,
 }
 
+impl LeaderRow {
+    fn new(identity: String, traits: Option<&LeaderTraits>) -> Self {
+        Self {
+            identity,
+            client: traits.and_then(|traits| traits.client.clone()),
+            version: traits.and_then(|traits| traits.version.clone()),
+            ip: traits.and_then(|traits| traits.ip.clone()),
+            country: traits.and_then(|traits| traits.country),
+            stake: traits.map_or(0, |traits| traits.stake),
+        }
+    }
+}
+
+/// Every staked node and scheduled leader in gossip. The peer table holds only those near the tip.
+pub fn leader_rows(leaders: &LeaderMap) -> Vec<LeaderRow> {
+    leaders
+        .iter()
+        .map(|(identity, traits)| LeaderRow::new(identity.to_string(), Some(traits)))
+        .collect()
+}
+
 /// A page of the turns to come that match, oldest first.
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct FutureReply {
     /// Turn numbers: a turn's first slot over the slots in a turn.
     pub turns: Vec<u64>,
     /// Each leader of those turns once.
-    pub leaders: Vec<FutureLeader>,
+    pub leaders: Vec<LeaderRow>,
     /// Where the next page starts; `None` once the schedule is read to its end.
     pub next: Option<Slot>,
     /// Matches after this page.
@@ -998,14 +1019,7 @@ pub fn future(
                 let key = wanted.leaders.iter().find_map(|held| held.key_at(start));
                 if let Some(key) = key.filter(|key| seen.insert(*key)) {
                     let traits = leader.and_then(|leader| leader.traits);
-                    reply.leaders.push(FutureLeader {
-                        identity: key.to_string(),
-                        client: traits.and_then(|traits| traits.client.clone()),
-                        version: traits.and_then(|traits| traits.version.clone()),
-                        ip: traits.and_then(|traits| traits.ip.clone()),
-                        country: traits.and_then(|traits| traits.country),
-                        stake: traits.map_or(0, |traits| traits.stake),
-                    });
+                    reply.leaders.push(LeaderRow::new(key.to_string(), traits));
                 }
             } else {
                 reply.next.get_or_insert(start);
@@ -2395,6 +2409,34 @@ mod tests {
         assert!(
             encoded.len() < proto::MAX_MESSAGE / 2,
             "a full page is {} bytes against a {} byte ceiling",
+            encoded.len(),
+            proto::MAX_MESSAGE
+        );
+    }
+
+    #[test]
+    fn test_every_leader_is_listed_within_the_message_ceiling() {
+        // More than twice mainnet's staked nodes, each with the longest figures.
+        let map: LeaderMap = (0..2_000)
+            .map(|_| {
+                let traits = LeaderTraits {
+                    client: Some("JitoLabs".to_string()),
+                    version: Some("4.4.1-jito.123".to_string()),
+                    ip: Some("255.255.255.255".to_string()),
+                    country: Some("US"),
+                    stake: u64::MAX,
+                    delinquent: false,
+                    last_vote: None,
+                };
+                (Pubkey::new_unique(), traits)
+            })
+            .collect();
+        let rows = leader_rows(&map);
+        assert_eq!(rows.len(), 2_000);
+        let encoded = proto::encode_with_id("peers", "leaders", Some(1), &rows);
+        assert!(
+            encoded.len() < proto::MAX_MESSAGE / 2,
+            "every leader is {} bytes against a {} byte ceiling",
             encoded.len(),
             proto::MAX_MESSAGE
         );

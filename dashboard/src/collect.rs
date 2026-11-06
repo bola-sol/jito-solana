@@ -1380,7 +1380,7 @@ impl Collector {
     }
 
     /// The client, country and stake of every staked node and of every held epoch's leaders, which
-    /// the schedule's leader conditions and its by-client summary read.
+    /// the schedule's leader conditions, its by-client summary and its turn cards read.
     fn collect_leader_traits(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
         let mut map = LeaderMap::new();
         // The oldest last vote among a validator's staked accounts, `None` where one never voted.

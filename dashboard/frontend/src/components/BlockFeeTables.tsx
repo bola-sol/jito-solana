@@ -5,11 +5,20 @@ import type { BlockFees, TopFeePayer, TopFeeTransaction } from "../types";
 import { Copyable } from "./Copyable";
 import { Explain } from "./primitives";
 
-/** Who paid the most in one of our blocks: two across where both fit. */
-export function BlockFeeTables({ fees, total }: { fees: BlockFees; total: number }): ReactElement | null {
+/** Who paid the most in one of our blocks: two across where both fit. While `pending`, the
+ *  figures are hidden and hold their place. */
+export function BlockFeeTables({
+  fees,
+  total,
+  pending = false,
+}: {
+  fees: BlockFees;
+  total: number;
+  pending?: boolean;
+}): ReactElement | null {
   if (fees.transactions.length === 0) return null;
   return (
-    <div className="sx-tops">
+    <div className={`sx-tops${pending ? " is-pending" : ""}`} aria-busy={pending}>
       <div className="sx-top">
         <div className="sx-top-head">
           <div className="sx-eyebrow">

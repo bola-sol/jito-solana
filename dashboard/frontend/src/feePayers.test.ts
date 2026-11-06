@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  PENDING_FEES,
   alertCounts,
   alertText,
   failedRatio,
@@ -35,6 +36,11 @@ describe("a block's top fees", () => {
 
   it("has no share of a block that collected nothing", () => {
     expect(feeShare(0, 0)).toBe("—");
+  });
+
+  it("holds room for five rows of each, with keys that don't repeat", () => {
+    expect(new Set(PENDING_FEES.payers.map((row) => row.payer)).size).toBe(5);
+    expect(new Set(PENDING_FEES.transactions.map((row) => row.signature)).size).toBe(5);
   });
 
   it("adds what the rows paid", () => {

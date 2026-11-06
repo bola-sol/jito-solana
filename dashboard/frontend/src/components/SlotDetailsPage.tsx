@@ -18,6 +18,7 @@ import {
   type SortDir,
   type SortKey,
 } from "../produced";
+import { PENDING_FEES } from "../feePayers";
 import { epochOf } from "../schedule";
 import { jitoShare, ourShare } from "../tips";
 import type {
@@ -608,7 +609,11 @@ function BlockDrawer({ slot, epoch, rates }: { slot: number; epoch: number | nul
     <div className="produced-detail">
       <BlockCompute block={block} cost={cost} rates={rates} />
       {cost && <BlockAccount block={block} cost={cost} recurrence={asked?.recurrence ?? null} />}
-      {detail?.fees && <BlockFeeTables fees={detail.fees} total={block.total_fees} />}
+      {detail === undefined ? (
+        <BlockFeeTables fees={PENDING_FEES} total={block.total_fees} pending />
+      ) : (
+        detail?.fees && <BlockFeeTables fees={detail.fees} total={block.total_fees} />
+      )}
       {waterfall && <BlockScheduler waterfall={waterfall} />}
       {cost && <BlockFigures cost={cost} />}
       {block.certificate && <BlockCertificateStrip certificate={block.certificate} />}

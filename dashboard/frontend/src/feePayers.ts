@@ -1,5 +1,5 @@
 import { count, percent, sol } from "./format";
-import type { FeePayerRow, FeePayerSummary } from "./types";
+import type { BlockFees, FeePayerRow, FeePayerSummary } from "./types";
 
 /** The server's rule, for the wording and the ratio's colour. */
 export const MIN_AWAY_TRANSACTIONS = 100;
@@ -31,6 +31,28 @@ export function ratioLabel(row: FeePayerRow): string {
 export function priorityLabel(lamports: number): string {
   return `${sol(lamports, 4)} SOL`;
 }
+
+const TOP_IN_BLOCK = 5;
+
+/** Full rows as wide as usual ones, drawn hidden to hold the tables' size until the reply comes. */
+export const PENDING_FEES: BlockFees = {
+  slot: 0,
+  payer_count: 0,
+  payers: Array.from({ length: TOP_IN_BLOCK }, (_, row) => ({
+    payer: `${row}`.repeat(9),
+    transactions: 10,
+    failed: 10,
+    priority: 0,
+    paid: 0,
+  })),
+  transactions: Array.from({ length: TOP_IN_BLOCK }, (_, row) => ({
+    signature: `${row}`.repeat(9),
+    payer: `${row}`.repeat(9),
+    failed: true,
+    priority: 0,
+    paid: 0,
+  })),
+};
 
 export function feesPaid(rows: readonly { paid: number }[]): number {
   return rows.reduce((sum, row) => sum + row.paid, 0);

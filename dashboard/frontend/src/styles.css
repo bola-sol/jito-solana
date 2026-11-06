@@ -5472,6 +5472,11 @@ body {
   min-width: 0;
 }
 
+.sx-tops.is-pending .sx-top-sum,
+.sx-tops.is-pending .sx-top-row:not(.sx-top-names) > * {
+  visibility: hidden;
+}
+
 .sx-top-head {
   display: flex;
   justify-content: space-between;

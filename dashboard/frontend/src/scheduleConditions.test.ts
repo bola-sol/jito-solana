@@ -227,6 +227,20 @@ describe("conditionHolds", () => {
     expect(conditionHolds(number("shreds", "gt", 600), entry(), null, null)).toBe(false);
   });
 
+  it("reads failed as a count and as a share of the block", () => {
+    const failing = entry({ block: { ...entry().block!, failed_transactions: 125 } });
+    expect(conditionHolds(number("failed", "gt", 100), failing, null, null)).toBe(true);
+    expect(conditionHolds(number("failed", "gt", 125), failing, null, null)).toBe(false);
+    expect(conditionHolds(number("failed_share", "eq", 25), failing, null, null)).toBe(true);
+    expect(conditionHolds(number("failed_share", "gt", 25), failing, null, null)).toBe(false);
+  });
+
+  it("leaves failed unmatched without a block, and the share without transactions", () => {
+    expect(conditionHolds(number("failed", "ge", 0), entry({ block: null }), null, null)).toBe(false);
+    const empty = entry({ block: { ...entry().block!, non_vote_transactions: 0 } });
+    expect(conditionHolds(number("failed_share", "ge", 0), empty, null, null)).toBe(false);
+  });
+
   it("matches lists, and leaves a figure not measured unmatched either way", () => {
     expect(conditionHolds(list("voted", "is", ["unpaid"]), entry(), null, null)).toBe(true);
     expect(conditionHolds(list("country", "is", ["NL", "DE"]), entry(), facts, null)).toBe(true);

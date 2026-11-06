@@ -203,6 +203,30 @@ describe("valueText and withValue", () => {
   });
 });
 
+describe("failed", () => {
+  const read = (text: string) => readSearch(text, offered, 0);
+
+  it("reads a number as a count and a percentage as a share", () => {
+    expect(read("failed>100").filters).toEqual([{ kind: "condition", condition: { field: "failed", op: "gt", value: 100, values: [] } }]);
+    expect(read("failed>=50%").filters).toEqual([{ kind: "condition", condition: { field: "failed_share", op: "ge", value: 50, values: [] } }]);
+  });
+
+  it("names the word typed when a value can't be read", () => {
+    expect(read("failed>many%").errors).toEqual(["failed needs a number, e.g. failed>100."]);
+  });
+
+  it("moves a pill between a count and a share as its value is edited", () => {
+    const count: Condition = { field: "failed", op: "gt", value: 100, values: [] };
+    expect(withValue(count, "50%", offered)).toEqual({ ...count, field: "failed_share", value: 50 });
+    const share: Condition = { field: "failed_share", op: "gt", value: 50, values: [] };
+    expect(withValue(share, "60", offered)).toEqual({ ...share, value: 60 });
+  });
+
+  it("suggests the word once", () => {
+    expect(suggest("fail", offered).map((row) => row.insert)).toEqual(["failed>", "failed<"]);
+  });
+});
+
 describe("browse", () => {
   it("offers the chips first, then every key with an action", () => {
     const rows = browse(offered, 460_022_000, 1077);
@@ -213,6 +237,8 @@ describe("browse", () => {
     const find = (syntax: string) => rows.find((row) => row.syntax === syntax)?.action;
     expect(find("is:slow")).toEqual({ kind: "only", only: "slow" });
     expect(find("txs<100")).toEqual({ kind: "condition", condition: { field: "transactions", op: "lt", value: 100, values: [] } });
+    expect(find("failed>100")).toEqual({ kind: "condition", condition: { field: "failed", op: "gt", value: 100, values: [] } });
+    expect(find("failed>50%")).toEqual({ kind: "condition", condition: { field: "failed_share", op: "gt", value: 50, values: [] } });
     expect(find("client:")).toEqual({ kind: "type", text: "client:", from: 7 });
     expect(find("time:08:00..09:30")).toEqual({ kind: "type", text: "time:08:00..09:30", from: 5 });
     expect(find("epoch:1077")).toEqual({ kind: "type", text: "epoch:1077", from: 6 });

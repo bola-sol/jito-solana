@@ -16,7 +16,7 @@ export const REWARD_MASK = 0b11 << REWARD_SHIFT;
 const REWARDS: (Reward | null)[] = [null, "paid", "unpaid", "no_certificate"];
 
 /** One slot as the validator sends it, positional: level, flags, votes, non-votes, compute, fees,
- *  priority fees, tips, time, replay, shreds, repaired, full, replayed, left out, recovered. */
+ *  priority fees, tips, time, replay, shreds, repaired, full, replayed, left out, recovered, failed. */
 export type WireRow = [
   level: number,
   flags: number,
@@ -34,6 +34,7 @@ export type WireRow = [
   replayedMillis: number,
   leftOut: number,
   recovered: number,
+  failed: number,
 ];
 
 export interface SlotRange {
@@ -81,6 +82,7 @@ export function entryFromRow(
     replayedMillis,
     leftOut,
     recovered,
+    failed,
   ] = row;
   const leader = leaderAt(epoch, slot);
   const timed = (flags & HAS_CLOCK) !== 0;
@@ -95,9 +97,9 @@ export function entryFromRow(
         : {
             transactions: votes + nonVotes,
             non_vote_transactions: nonVotes,
+            failed_transactions: failed,
             // Not carried by the packed row. Nought here means "not
-            // measured", and no schedule row reads them.
-            failed_transactions: 0,
+            // measured", and no schedule row reads it.
             entries: 0,
             block_cost: compute,
             block_cost_limit: epoch?.block_cost_limit ?? 0,

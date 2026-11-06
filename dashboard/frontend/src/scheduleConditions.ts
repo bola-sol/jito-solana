@@ -20,6 +20,8 @@ export type Field =
   | "voted"
   | "left_out"
   | "transactions"
+  | "failed"
+  | "failed_share"
   | "base_fee"
   | "priority"
   | "tips"
@@ -63,6 +65,8 @@ export const FIELDS: Record<Field, FieldInfo> = {
   voted: { label: "Voted", unit: "", list: true, group: "status", leader: false },
   left_out: { label: "Left out", unit: "", list: false, group: "status", leader: false },
   transactions: { label: "Transactions", unit: "", list: false, group: "status", leader: false },
+  failed: { label: "Failed", unit: "", list: false, group: "status", leader: false },
+  failed_share: { label: "Failed", unit: "%", list: false, group: "status", leader: false },
   base_fee: { label: "Base fee", unit: "SOL", list: false, group: "fees", leader: false },
   priority: { label: "Priority", unit: "SOL", list: false, group: "fees", leader: false },
   tips: { label: "Tips", unit: "SOL", list: false, group: "fees", leader: false },
@@ -281,6 +285,12 @@ function figure(
       return entry.left_out;
     case "transactions":
       return block ? block.non_vote_transactions : null;
+    case "failed":
+      return block ? block.failed_transactions : null;
+    case "failed_share":
+      return block && block.non_vote_transactions > 0
+        ? (block.failed_transactions / block.non_vote_transactions) * 100
+        : null;
     case "base_fee":
       return block ? (block.total_fees - block.priority_fees) / LAMPORTS_PER_SOL : null;
     case "priority":

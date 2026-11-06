@@ -18,11 +18,15 @@ export interface Key {
   op: string;
   example: string;
   what: string;
+  /** How the list writes it where that isn't its own name, which also keeps it out of suggestions. */
+  shown?: string;
 }
 
 export const KEYS: readonly Key[] = [
   { name: "duration", kind: "number", field: "duration", group: "slot", op: ">", example: "240", what: "slot duration, ms" },
   { name: "txs", kind: "number", field: "transactions", group: "slot", op: "<", example: "100", what: "transactions" },
+  { name: "failed", kind: "number", field: "failed", group: "slot", op: ">", example: "100", what: "failed transactions" },
+  { name: "failedshare", kind: "number", field: "failed_share", group: "slot", op: ">", example: "50", what: "share of transactions failed", shown: "failed>50%" },
   { name: "basefee", kind: "number", field: "base_fee", group: "slot", op: ">", example: "0.0025", what: "base fee, SOL" },
   { name: "priority", kind: "number", field: "priority", group: "slot", op: ">", example: "0.01", what: "priority fee, SOL" },
   { name: "tips", kind: "number", field: "tips", group: "slot", op: ">", example: "0.001", what: "tips, SOL" },
@@ -129,11 +133,13 @@ function typedNumber(key: Key, text: string): number | null {
   return text === "" || !Number.isFinite(value) ? null : value;
 }
 
-function readNumber(key: Key, op: string, text: string): Filter | string {
-  const value = typedNumber(key, text);
+function readNumber(typed: Key, op: string, text: string): Filter | string {
+  const value = typedNumber(typed, text);
   if (value === null) {
-    return `${key.name} needs ${key.field === "gap" ? "a time" : "a number"}, e.g. ${key.name}${key.op}${key.example}.`;
+    return `${typed.name} needs ${typed.field === "gap" ? "a time" : "a number"}, e.g. ${typed.name}${typed.op}${typed.example}.`;
   }
+  // The same word with a percent sign reads as a share.
+  const key = (typed.name === "failed" && text.endsWith("%") && keyNamed("failedshare")) || typed;
   const compared = OPS[op];
   if (!compared || !key.field) return `${key.name} takes >, >=, <, <= or =.`;
   return { kind: "condition", condition: { field: key.field, op: compared, value, values: [] } };
@@ -329,7 +335,7 @@ export function suggest(before: string, offered: Offered): Suggestion[] {
     const [, not = "", typed = ""] = bare;
     const lower = typed.toLowerCase();
     return KEYS.filter(
-      (key) => key.name.startsWith(lower) && keyOffered(key, offered) && (!not || key.kind === "list"),
+      (key) => !key.shown && key.name.startsWith(lower) && keyOffered(key, offered) && (!not || key.kind === "list"),
     )
       .flatMap((key): Suggestion[] => {
         const unit = key.field ? FIELDS[key.field].unit : "";
@@ -459,7 +465,7 @@ function exampleOf(key: Key, slot: number | null, epoch: number | null): string 
   if (key.kind === "range" && key.name === "slot") return `slot:${slot ?? 0}..`;
   if (key.kind === "epoch") return `epoch:${epoch ?? 0}`;
   if (key.kind === "at") return `at:${slot ?? "08:00"}`;
-  return `${key.name}${key.op}${key.example}`;
+  return key.shown ?? `${key.name}${key.op}${key.example}`;
 }
 
 /** Every expression the box takes, offered when nothing is typed: the chips first, each one row. */

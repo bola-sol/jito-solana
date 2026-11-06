@@ -9004,6 +9004,24 @@ body {
   color: var(--warn);
 }
 
+/* Failed held in a slot of its own, so the totals line up whatever it holds. */
+.schedule-row > .sc-txs {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tx-failed {
+  min-width: 6ch;
+  padding-left: 1ch;
+  text-align: right;
+  color: color-mix(in srgb, var(--bad) 72%, var(--text-dim));
+}
+
+.tx-failed.is-met,
+.sc-txs.is-all-failed .tx-total {
+  color: var(--bad);
+}
+
 /* ---- schedule, one group of columns at a time ---- */
 
 /* Named, so the table can switch to one group of columns wherever it stops fitting. */
@@ -9079,7 +9097,7 @@ body {
   }
 
   .schedule.columns-status .schedule-slots.has-certificate .schedule-row {
-    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.4fr) minmax(0, 1.25fr) minmax(0, 0.6fr);
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.4fr) minmax(0, 0.65fr) minmax(0, 1.2fr);
   }
 
   /* The slot wider than its share elsewhere: three short figures beside it leave it short at 320px. */

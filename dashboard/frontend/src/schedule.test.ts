@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   followingRun,
   certificateAt,
+  certificateNarrow,
   certificateText,
   certificateTitle,
   emptyTurn,
   epochOf,
+  failedShown,
   leaderSlotsLeft,
   matchesQuery,
   producingSlot,
@@ -231,6 +233,31 @@ describe("the certificate column", () => {
     expect(certificateText(null)).toEqual(["—", "unknown"]);
     expect(certificateText(undefined)).toEqual(["—", "unknown"]);
     expect(certificateTitle(7)).toContain("left out 7");
+  });
+
+  it("shortens only a certificate that left someone out", () => {
+    expect(certificateNarrow(1_204)).toBe("out 1,204");
+    expect(certificateNarrow(0)).toBe("all");
+    expect(certificateNarrow("none")).toBe("none");
+    expect(certificateNarrow(null)).toBe("—");
+  });
+});
+
+describe("failedShown", () => {
+  const block = (non_vote_transactions: number, failed_transactions: number) => ({ non_vote_transactions, failed_transactions });
+
+  it("gives the figure beside a total some of which failed", () => {
+    expect(failedShown(block(318, 114))).toEqual({ failed: 114, all: false });
+  });
+
+  it("gives none where nothing failed", () => {
+    expect(failedShown(block(318, 0))).toEqual({ failed: null, all: false });
+    expect(failedShown(block(0, 0))).toEqual({ failed: null, all: false });
+  });
+
+  it("marks a block all of which failed, with no figure beside it", () => {
+    expect(failedShown(block(12, 12))).toEqual({ failed: null, all: true });
+    expect(failedShown(block(3, 5))).toEqual({ failed: null, all: true });
   });
 });
 

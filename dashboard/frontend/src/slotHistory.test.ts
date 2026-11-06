@@ -51,6 +51,7 @@ function row(over: Partial<Record<number, number>> = {}): WireRow {
     393,
     0,
     9,
+    41,
   ];
   return base.map((value, index) => over[index] ?? value) as WireRow;
 }

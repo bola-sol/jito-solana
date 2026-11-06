@@ -18,7 +18,9 @@ import {
 } from "../future";
 import {
   certificateAt,
+  certificateNarrow,
   certificateText,
+  failedShown,
   certificateTitle,
   emptyTurn,
   matchesQuery,
@@ -1424,7 +1426,7 @@ function SlotHeadings({ alpenglow }: { alpenglow: boolean }) {
           <Heading wide="Certificate" narrow="Cert" />
         </span>
       )}
-      <span className="sc-status">
+      <span className="sc-status" title="Transactions in the block, those that failed in brackets.">
         {alpenglow ? <Heading wide="Transactions" narrow="Txns" /> : "Non-votes"}
       </span>
       <span className="sc-fees">
@@ -1696,9 +1698,11 @@ function SlotRow({
         <span className="sc-status">{votes === null ? "—" : count(votes)}</span>
       )}
       {alpenglow && <CertificateCell certificate={certificate} />}
-      <span className={`sc-status${toned("few_transactions", "transactions")}`}>
-        {block ? count(block.non_vote_transactions) : "—"}
-      </span>
+      <TransactionsCell
+        block={block}
+        toned={toned("few_transactions", "transactions")}
+        failedMet={toned("failed", "failed_share") !== ""}
+      />
       <span className={`sc-fees${toned("base_fee")}`}>{block ? sol(block.total_fees - block.priority_fees, 4) : "—"}</span>
       <span className={`sc-fees${toned("priority")}`}>{block ? sol(block.priority_fees, 4) : "—"}</span>
       <span className={`sc-fees sc-tips${toned("no_tips", "tips")}`}>
@@ -1733,9 +1737,30 @@ const MARKS: Record<Reward, [glyph: string, tone: string]> = {
 
 function CertificateCell({ certificate }: { certificate: Certificate }) {
   const [text, tone] = certificateText(certificate);
+  const narrow = certificateNarrow(certificate);
   return (
     <span className={`schedule-cert sc-status is-${tone}`} title={certificateTitle(certificate)}>
-      {text}
+      {narrow === text ? text : <Heading wide={text} narrow={narrow} />}
+    </span>
+  );
+}
+
+function TransactionsCell({
+  block,
+  toned,
+  failedMet,
+}: {
+  block: SlotEntry["block"];
+  toned: string;
+  failedMet: boolean;
+}) {
+  const { failed, all } = block ? failedShown(block) : { failed: null, all: false };
+  return (
+    <span className={`sc-status sc-txs${toned}${all ? " is-all-failed" : ""}`}>
+      <span className="tx-total">{block ? count(block.non_vote_transactions) : "—"}</span>
+      <span className={`tx-failed${failedMet ? " is-met" : ""}`}>
+        {failed !== null && `(${count(failed)})`}
+      </span>
     </span>
   );
 }

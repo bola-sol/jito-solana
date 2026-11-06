@@ -41,8 +41,8 @@ pub struct PackedSlot {
 pub const MAX_RANGE_SLOTS: usize = 4096;
 
 /// One slot on the wire, a JSON array: level, flags, votes, non-votes, compute, fees, priority
-/// fees, tips, time, replay, shreds, repaired, full, replayed, left out, recovered. The frontend
-/// mirrors it.
+/// fees, tips, time, replay, shreds, repaired, full, replayed, left out, recovered, failed. The
+/// frontend mirrors it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireRow(
     pub u8,
@@ -61,6 +61,7 @@ pub struct WireRow(
     pub u32,
     pub u16,
     pub u16,
+    pub u32,
 );
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -153,6 +154,7 @@ impl SlotHistory {
                         row.replayed_millis,
                         row.left_out,
                         row.recovered,
+                        row.failed,
                     )
                 })
             })
@@ -416,7 +418,11 @@ mod tests {
     fn test_range_column_order() {
         // The one place the wire order is pinned.
         let mut history = SlotHistory::new(64);
-        history.record(&with_block(10, 9_500, 8_752));
+        let mut block = with_block(10, 9_500, 8_752);
+        if let Some(detail) = block.block.as_mut() {
+            detail.failed_transactions = 37;
+        }
+        history.record(&block);
         history.record_time(10, 1_756_000_000_123);
 
         let WireRow(
@@ -436,12 +442,14 @@ mod tests {
             replayed,
             left_out,
             recovered,
+            failed,
         ) = history.range(10, 1).rows[0].expect("recorded");
         assert_eq!(level, SlotLevel::Rooted as u8);
         assert_eq!(flags, HAS_BLOCK | HAS_CLOCK);
         assert_eq!(left_out, 0);
         assert_eq!(votes, 748);
         assert_eq!(non_votes, 8_752);
+        assert_eq!(failed, 37);
         assert_eq!(compute, 41_827_311);
         assert_eq!(fees, 104_600_000);
         assert_eq!(priority, 0);
@@ -534,6 +542,7 @@ mod tests {
         for slot in 0..MAX_RANGE_SLOTS as Slot {
             let mut big = with_block(slot, 99_999, 99_999);
             if let Some(block) = big.block.as_mut() {
+                block.failed_transactions = 9_999;
                 block.block_cost = u64::from(u32::MAX);
                 block.total_fees = 9_999_999_999_999;
                 block.priority_fees = 9_999_999_999_999;

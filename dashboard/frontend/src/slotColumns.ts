@@ -1,8 +1,8 @@
 import { entryFromRow, fullAtOf, type WireRow } from "./slotHistory";
 import type { EpochInfo, SlotEntry } from "./types";
 
-/** Unsigned columns per slot: votes, non-votes, compute, replay, shreds, repaired, full, replayed. */
-const SMALL = 8;
+/** Unsigned columns per slot: votes, non-votes, compute, replay, shreds, repaired, full, replayed, failed. */
+const SMALL = 9;
 /** Columns that can pass 2^32: fees, priority fees, tips, time. */
 const LARGE = 4;
 
@@ -37,11 +37,11 @@ class Span {
     rows.forEach((row, index) => {
       if (row === null) return;
       // Wire order: level, flags, votes, non-votes, compute, fees, priority, tips, time, replay,
-      // shreds, repaired, full, replayed, left out, recovered.
+      // shreds, repaired, full, replayed, left out, recovered, failed.
       this.present[index] = 1;
       this.level[index] = row[0];
       this.flags[index] = row[1];
-      this.small.set([row[2], row[3], row[4], row[9], row[10], row[11], row[12], row[13]], index * SMALL);
+      this.small.set([row[2], row[3], row[4], row[9], row[10], row[11], row[12], row[13], row[16]], index * SMALL);
       this.large.set([row[5], row[6], row[7], row[8]], index * LARGE);
       this.leftOut[index] = row[14];
       this.recovered[index] = row[15];
@@ -74,6 +74,7 @@ class Span {
       small[7] ?? 0,
       this.leftOut[index] ?? 0,
       this.recovered[index] ?? 0,
+      small[8] ?? 0,
     ];
   }
 }

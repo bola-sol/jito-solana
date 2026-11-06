@@ -108,6 +108,9 @@ pub enum Field {
     Voted,
     LeftOut,
     Transactions,
+    Failed,
+    /// Failed as a percentage of the block's transactions.
+    FailedShare,
     BaseFee,
     Priority,
     Tips,
@@ -550,6 +553,8 @@ fn leader_holds(condition: &Condition, leader: Option<LeaderAt<'_>>) -> Option<b
         Field::Voted
         | Field::LeftOut
         | Field::Transactions
+        | Field::Failed
+        | Field::FailedShare
         | Field::BaseFee
         | Field::Priority
         | Field::Tips
@@ -634,6 +639,11 @@ fn figure(
         Field::LeftOut => matches!(row.flags & REWARD_MASK, REWARD_PAID | REWARD_UNPAID)
             .then_some(u64::from(row.left_out)),
         Field::Transactions => block.then_some(u64::from(row.non_votes)),
+        Field::Failed => block.then_some(u64::from(row.failed)),
+        Field::FailedShare => {
+            return (block && row.non_votes > 0)
+                .then(|| f64::from(row.failed) / f64::from(row.non_votes) * 100.0);
+        }
         Field::BaseFee => block.then(|| row.fees.saturating_sub(row.priority_fees)),
         Field::Priority => block.then_some(row.priority_fees),
         Field::Tips => (row.flags & HAS_TIPS != 0).then_some(row.tips),
@@ -1785,6 +1795,46 @@ mod tests {
         );
         assert_eq!(starts(&past), Vec::<Slot>::new());
         assert_eq!(past.next, None, "nothing above the newest held");
+    }
+
+    #[test]
+    fn test_failed_conditions_read_the_count_and_the_share() {
+        let held = rows(START, START + 15, |slot, row| {
+            match slot.saturating_sub(START) {
+                9 => {
+                    row.non_votes = 1_000;
+                    row.failed = 200;
+                }
+                13 => {
+                    row.non_votes = 100;
+                    row.failed = 60;
+                }
+                _ => {}
+            }
+        });
+        let (epochs, map) = two_leaders();
+        let found = |conditions: Vec<Condition>| {
+            starts(&search(
+                &held,
+                &RwLock::default(),
+                &map,
+                &epochs,
+                &SearchParams {
+                    conditions,
+                    ..params("", false, START + 16, None)
+                },
+            ))
+        };
+        assert_eq!(
+            found(vec![condition(Field::Failed, Op::Gt, 100.0, &[])]),
+            vec![START + 8],
+            "the larger count, in the larger block"
+        );
+        assert_eq!(
+            found(vec![condition(Field::FailedShare, Op::Ge, 50.0, &[])]),
+            vec![START + 12],
+            "the larger share, in the smaller block"
+        );
     }
 
     #[test]

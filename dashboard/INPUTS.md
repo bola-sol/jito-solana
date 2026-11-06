@@ -92,7 +92,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | --- | --- |
 | `slot`, `parent_slot` | The key for each slot. Counts are the difference from the parent's totals. |
 | `transaction_count`, `non_vote_transaction_count_since_restart` | Transactions and votes per block. The Cluster page's Transactions, per run of 20 slots. |
-| `transaction_error_count`, `transaction_entries_count` | Failed transactions and entries per block. Failed transactions for TPS, summed along the working fork, and the Cluster page's failed transactions. |
+| `transaction_error_count`, `transaction_entries_count` | Failed transactions and entries per block. Failed transactions for TPS, summed along the working fork, the Cluster page's failed transactions, and the failed figure and filter on the schedule. |
 | `read_cost_tracker`: block cost, block limit, account limit | Compute per block, against its limits. The Cluster page's CU Used. |
 | `get_collector_fee_details`: total and priority fees | Base and priority fees per block. With the tips, what the block earned us. |
 | `get_balance` of the eight tip accounts | Tips per block, as the difference from the parent (jito only) |

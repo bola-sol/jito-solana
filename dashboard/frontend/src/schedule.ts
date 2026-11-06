@@ -1,6 +1,6 @@
 
 import { count } from "./format";
-import type { EpochInfo, Reward, SlotEntry } from "./types";
+import type { BlockDetail, EpochInfo, Reward, SlotEntry } from "./types";
 
 /** Eight in a row is two turns, drawn as two cards. */
 export const SLOTS_PER_TURN = 4;
@@ -194,10 +194,26 @@ export function certificateText(certificate: Certificate): [text: string, tone: 
   return [`left out ${count(certificate)}`, "out"];
 }
 
+/** The certificate's text where the column is narrow. */
+export function certificateNarrow(certificate: Certificate): string {
+  return typeof certificate === "number" && certificate > 0 ? `out ${count(certificate)}` : certificateText(certificate)[0];
+}
+
 export function certificateTitle(certificate: Certificate): string {
   if (certificate === undefined) return "The slot this certificate rewards is not held.";
   if (certificate === null) return "The certificate written in this slot has not been read yet.";
   if (certificate === "none") return "No certificate: no rooted block in this slot carried one.";
   if (certificate === 0) return "The certificate written in this slot paid everyone certificates usually pay.";
   return `The certificate written in this slot left out ${count(certificate)} of the validators certificates usually pay.`;
+}
+
+/** A block's failed figure beside its total: none where nothing failed, or where everything did,
+ *  which the total shows alone. */
+export function failedShown(block: Pick<BlockDetail, "non_vote_transactions" | "failed_transactions">): {
+  failed: number | null;
+  all: boolean;
+} {
+  const failed = block.failed_transactions;
+  const all = block.non_vote_transactions > 0 && failed >= block.non_vote_transactions;
+  return { failed: failed > 0 && !all ? failed : null, all };
 }

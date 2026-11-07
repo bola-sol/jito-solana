@@ -1893,7 +1893,7 @@ impl MetricsTap {
         let first = timings.partition_point(|timing| timing.at_millis < from);
         for timing in timings
             .range(first..)
-            .take_while(|timing| timing.at_millis <= to)
+            .take_while(|timing| timing.at_millis < to)
         {
             sum.times.add(&timing.times);
             sum.longest_batch = sum.longest_batch.max(timing.longest_batch);
@@ -3143,13 +3143,18 @@ mod tests {
         tap.remember_worker_timing(&worker_point("0", &fields), 999);
         tap.remember_worker_timing(&worker_point("0", &fields), 1_000);
         tap.remember_worker_timing(&worker_point("1", &[("load_execute_us_max", "70i")]), 1_300);
-        tap.remember_worker_timing(&worker_point("0", &fields), 1_401);
+        tap.remember_worker_timing(&worker_point("0", &fields), 1_400);
         let sum = tap.worker_time(1_000, 1_400).unwrap();
         assert_eq!(sum.workers, 2);
         assert_eq!(sum.times.load_execute, 100);
         assert_eq!(sum.times.record, 10);
         assert_eq!(sum.times.commit, 5);
         assert_eq!(sum.longest_batch, 70);
+        assert_eq!(
+            tap.worker_time(1_400, 1_500).unwrap().times.load_execute,
+            100,
+            "a report on the boundary goes to the window it opens"
+        );
         assert_eq!(
             tap.worker_time(2_000, 3_000),
             None,

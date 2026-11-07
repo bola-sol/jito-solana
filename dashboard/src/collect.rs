@@ -1810,7 +1810,21 @@ impl Collector {
                 self.execution_pending.insert(slot);
                 continue;
             }
-            let workers = self.metrics_tap.worker_time(start, settled);
+            let mine = |slot: Option<Slot>| {
+                slot.and_then(|slot| self.slots.get(slot))
+                    .is_some_and(|entry| entry.mine)
+            };
+            let next = slot.saturating_add(1);
+            let next_start = mine(Some(next))
+                .then(|| self.first_shred_time(next))
+                .flatten();
+            let (from, to) =
+                execution_window(start, mine(slot.checked_sub(1)), next_start, settled);
+            if now < to {
+                self.execution_pending.insert(slot);
+                continue;
+            }
+            let workers = self.metrics_tap.worker_time(from, to);
             let votes = self.metrics_tap.vote_time(slot);
             let Some(execution) = build_execution(workers, votes, full_millis) else {
                 continue;
@@ -2703,6 +2717,24 @@ impl From<BundleLanding> for Bundles {
     }
 }
 
+/// The span of worker reports that are a block's own, end excluded. A report closes the time it
+/// covers, so inside a turn each goes to the block holding its middle.
+fn execution_window(
+    start: u64,
+    follows_ours: bool,
+    next_start: Option<u64>,
+    settled: u64,
+) -> (u64, u64) {
+    let middle = WORKER_REPORT_MILLIS / 2;
+    let from = if follows_ours {
+        start.saturating_add(middle)
+    } else {
+        start
+    };
+    let to = next_start.map_or(settled, |next| next.saturating_add(middle));
+    (from, to)
+}
+
 fn build_execution(
     workers: Option<WorkerSum>,
     votes: Option<StageTimes>,
@@ -3141,6 +3173,16 @@ mod tests {
         assert!(credits.contains(r#""cluster_median":null"#), "{credits}");
         let admission = harness.published_key("summary", "admission").unwrap();
         assert!(admission.contains(r#""value":null"#), "{admission}");
+    }
+
+    #[test]
+    fn test_blocks_in_a_turn_share_their_boundaries_and_the_last_keeps_its_tail() {
+        let first = execution_window(1_000, false, Some(1_150), 1_190);
+        let second = execution_window(1_150, true, Some(1_350), 1_390);
+        let last = execution_window(1_350, true, None, 1_590);
+        assert_eq!(first, (1_000, 1_160));
+        assert_eq!(second, (1_160, 1_360));
+        assert_eq!(last, (1_360, 1_590));
     }
 
     #[test]

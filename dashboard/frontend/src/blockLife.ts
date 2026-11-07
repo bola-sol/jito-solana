@@ -23,6 +23,8 @@ export interface LifeTick {
   minor: boolean;
   /** Before the close; left out where the track is narrowest. */
   before: boolean;
+  /** An odd hundred; left out where even the hundreds crowd. */
+  odd: boolean;
 }
 
 /** Where a time from the leader's close sits on the track, as a percentage. */
@@ -85,7 +87,7 @@ export function lifeMarks(median: BlockLifeStages): number[] {
 export function lifeTicks(): LifeTick[] {
   const ticks: LifeTick[] = [];
   for (let ms = LIFE_FROM_MS; ms <= LIFE_FROM_MS + LIFE_SPAN_MS - 10; ms += 50) {
-    ticks.push({ left: lifeAt(ms), label: ms === 0 ? "closed" : String(ms), minor: ms % 100 !== 0, before: ms < 0 });
+    ticks.push({ left: lifeAt(ms), label: ms === 0 ? "closed" : String(ms), minor: ms % 100 !== 0, before: ms < 0, odd: Math.abs(ms) % 200 === 100 });
   }
   return ticks;
 }

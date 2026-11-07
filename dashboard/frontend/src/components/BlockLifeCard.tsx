@@ -78,7 +78,7 @@ function Axis() {
         {TICKS.map((tick) => (
           <span
             key={tick.label}
-            className={[tick.minor && "is-minor", tick.before && "is-before"].filter(Boolean).join(" ") || undefined}
+            className={[tick.minor && "is-minor", tick.before && "is-before", tick.odd && "is-odd"].filter(Boolean).join(" ") || undefined}
             style={{ left: `${tick.left}%` }}
           >
             {tick.label}

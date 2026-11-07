@@ -4440,6 +4440,7 @@ body {
 }
 
 .life-ticks {
+  container: life-ticks / inline-size;
   position: relative;
   height: 16px;
 }
@@ -4451,6 +4452,25 @@ body {
 
 .life-ticks span:first-child {
   transform: none;
+}
+
+/* Thinned by the scale's own width; "-200" sits flush left, so it meets its neighbour first. */
+@container life-ticks (width < 560px) {
+  .life-ticks .is-minor {
+    display: none;
+  }
+}
+
+@container life-ticks (width < 280px) {
+  .life-ticks span:first-child {
+    display: none;
+  }
+}
+
+@container life-ticks (width < 220px) {
+  .life-ticks .is-odd {
+    display: none;
+  }
 }
 
 .life-track {
@@ -4572,8 +4592,7 @@ body {
     border-top: 0;
   }
 
-  .life-grid > .life-note:empty,
-  .life-ticks .is-minor {
+  .life-grid > .life-note:empty {
     display: none;
   }
 }
@@ -4596,7 +4615,6 @@ body {
   .life-grid > .life-gap,
   .life-grid > .life-replayed,
   .life-row > .life-replayed,
-  .life-ticks .is-minor,
   .life-ticks span:first-child {
     display: none;
   }

@@ -98,6 +98,7 @@ describe("lifeTicks", () => {
       "300",
     ]);
     expect(ticks.filter((tick) => tick.before).map((tick) => tick.label)).toEqual(["-200", "-150", "-100", "-50"]);
+    expect(ticks.filter((tick) => tick.odd).map((tick) => tick.label)).toEqual(["-100", "100", "300"]);
   });
 });
 

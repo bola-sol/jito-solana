@@ -10,7 +10,7 @@
   --border: #2c3a1b;
   --text: #e8ebdf;
   --text-dim: #a4ae8f;
-  --text-faint: #6f7a5c;
+  --text-faint: #7d886a;
 
   --accent: #c9d4ae;
   /* This validator's own slots and rows: the brightest tone on the page. */
@@ -18,7 +18,7 @@
   --good: #8fc37a;
   /* Terracotta rather than amber, which sat too near the apricot below. */
   --warn: #d9773f;
-  --bad: #e05d5d;
+  --bad: #e06767;
 
   /* Anza's illustration colours, for marks that are categories: a level, a
      series, a direction. Shares of a whole stay on the ramp below. */
@@ -55,6 +55,17 @@
   --level-finalized: var(--good);
   --level-skipped: var(--bad);
 
+  /* Shared or reserved space, told from "other" by texture rather than a second shade. */
+  --hatch: repeating-linear-gradient(135deg, var(--text-faint) 0 1.5px, transparent 1.5px 4px);
+
+  /* The TPU path's losses, in the order they are ranked. */
+  --loss-1: var(--apricot);
+  --loss-2: var(--lavender);
+  --loss-3: var(--sky);
+  --loss-4: var(--part-4);
+  --loss-5: var(--text-faint);
+  --loss-6: var(--hatch);
+
   --sans: system-ui, "Segoe UI", -apple-system, sans-serif;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
@@ -71,13 +82,13 @@
   --border: #cfd6bf;
   --text: #1e2a12;
   --text-dim: #55603f;
-  --text-faint: #8a937a;
+  --text-faint: #697259;
 
-  --accent: #55742f;
+  --accent: #506a2a;
   --ours: #1e2a12;
-  --good: #3e7a2a;
-  --warn: #b25a1e;
-  --bad: #b83a3a;
+  --good: #386e24;
+  --warn: #984d1e;
+  --bad: #b03636;
   --sky: #3f89b5;
   --lavender: #7d64c0;
   --apricot: #d0862b;
@@ -480,7 +491,7 @@ body {
   display: block;
   margin-bottom: 3px;
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 /* A figure's text and tile parts; the queries below choose. */
@@ -3707,8 +3718,14 @@ body {
 .produced > .fee-fold {
   margin: 0;
   padding: 5px 6px;
-  border-top: 0;
+  border-radius: 0;
   border-bottom: 1px solid var(--border);
+  background: none;
+}
+
+.produced > .fee-fold.is-open .fold-head {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .fee-fold .fold-head {
@@ -4127,35 +4144,32 @@ body {
   background: var(--path-6);
 }
 
-/* Order, not colour, keys a legend row to its segment: six steps of one hue clearing 3:1 on the
-   panel are too close to tell apart. */
-
 .path-seg.is-through {
   background: var(--good);
 }
 
 .path-seg.is-1 {
-  background: var(--path-1);
+  background: var(--loss-1);
 }
 
 .path-seg.is-2 {
-  background: var(--path-2);
+  background: var(--loss-2);
 }
 
 .path-seg.is-3 {
-  background: var(--path-3);
+  background: var(--loss-3);
 }
 
 .path-seg.is-4 {
-  background: var(--path-4);
+  background: var(--loss-4);
 }
 
 .path-seg.is-5 {
-  background: var(--path-5);
+  background: var(--loss-5);
 }
 
 .path-seg.is-6 {
-  background: var(--path-6);
+  background: var(--loss-6);
 }
 
 .path-legend {
@@ -4186,27 +4200,27 @@ body {
 }
 
 .path-swatch.is-1 {
-  background: var(--path-1);
+  background: var(--loss-1);
 }
 
 .path-swatch.is-2 {
-  background: var(--path-2);
+  background: var(--loss-2);
 }
 
 .path-swatch.is-3 {
-  background: var(--path-3);
+  background: var(--loss-3);
 }
 
 .path-swatch.is-4 {
-  background: var(--path-4);
+  background: var(--loss-4);
 }
 
 .path-swatch.is-5 {
-  background: var(--path-5);
+  background: var(--loss-5);
 }
 
 .path-swatch.is-6 {
-  background: var(--path-6);
+  background: var(--loss-6);
 }
 
 /* A reason behind one of the rows above rather than beside it, so it has no
@@ -4276,19 +4290,30 @@ body {
 
 /* ---- the quieter QUIC ports ---- */
 
+/* A drawer: a bordered bar closed; open, the box holds its body under a raised cap. */
 .path-port {
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.path-port:has(> .path-port-open) {
+  background: var(--bg);
 }
 
 .path-port-head {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
-  align-items: baseline;
+  align-items: center;
   gap: 0 14px;
-  padding: 8px 6px;
+  padding: 8px 8px 8px 12px;
   border-radius: 5px;
   cursor: pointer;
+}
+
+.path-port:has(> .path-port-open) > .path-port-head {
+  border-radius: 5px 5px 0 0;
+  background: var(--panel-raised);
 }
 
 .path-port-head:hover {
@@ -4309,16 +4334,21 @@ body {
 }
 
 .path-port-fold {
-  width: 20px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 50%;
   background: none;
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 15px;
-  line-height: 1;
+  color: var(--text-dim);
   cursor: pointer;
+}
+
+.cache-head:hover .cache-fold,
+.path-port-head:hover .path-port-fold {
+  color: var(--text);
 }
 
 .path-port-fold:focus-visible {
@@ -4329,7 +4359,7 @@ body {
 .path-port-open {
   display: flex;
   flex-direction: column;
-  padding-bottom: 4px;
+  padding: 8px 13px 4px;
 }
 
 /* ---- block life ---- */
@@ -4390,7 +4420,23 @@ body {
 .life-grid > .life-axis {
   padding: 0;
   border-top: 0;
-  color: var(--text-faint);
+  color: var(--text);
+}
+
+/* The scale row is grid cells, so its raised band is drawn behind the grid's first row. */
+.life-grid:has(> .life-axis) {
+  position: relative;
+  isolation: isolate;
+}
+
+.life-grid:has(> .life-axis)::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -5px -6px auto;
+  height: 27px;
+  border-radius: 5px;
+  background: var(--panel-raised);
 }
 
 .life-ticks {
@@ -5186,7 +5232,7 @@ body {
 .replay-bar i {
   display: block;
   height: 100%;
-  background: var(--part-6);
+  background: var(--text-faint);
   /* A phase worth a fraction of a percent still leaves a mark; the legend prints the share. */
   min-width: 2px;
 }
@@ -5223,7 +5269,7 @@ body {
   width: 9px;
   height: 9px;
   border-radius: 2px;
-  background: var(--part-6);
+  background: var(--text-faint);
 }
 
 .replay-bar i.is-1,
@@ -6063,6 +6109,18 @@ body {
   gap: 14px 26px;
 }
 
+/* Below this Memory's figure wraps once the rule's padding is taken. */
+@media (min-width: 900px) {
+  .host-top {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .host-top > .host-figure + .host-figure {
+    padding-left: 26px;
+    border-left: 1px solid var(--border);
+  }
+}
+
 .host-label {
   color: var(--text-dim);
   font-size: 12px;
@@ -6118,12 +6176,30 @@ body {
   height: 100%;
 }
 
-.host-memory .is-used {
-  background: var(--flow);
+.host-memory .is-used,
+.host-memory .is-busy {
+  background: var(--sky);
 }
 
+.host-memory .is-iowait {
+  background: var(--apricot);
+}
+
+.host-memory .is-load {
+  background: var(--lavender);
+}
+
+.host-memory .is-load.is-over {
+  background: var(--warn);
+}
+
+/* Quiet, since on a large machine the page cache fills most of the bar. */
 .host-memory .is-cache {
-  background: var(--path-5);
+  background: color-mix(in srgb, var(--lavender) 50%, transparent);
+}
+
+:root[data-theme="light"] .host-memory .is-cache {
+  background: color-mix(in srgb, var(--lavender) 32%, transparent);
 }
 
 .host-memory .is-validator {
@@ -6203,12 +6279,12 @@ body {
 
 .memory-split-bar .is-files,
 .memory-key.is-files {
-  background: var(--part-6);
+  background: var(--text-faint);
 }
 
 .memory-split-bar .is-shared,
 .memory-key.is-shared {
-  background: var(--path-4);
+  background: var(--hatch);
 }
 
 .memory-split .explain-bubble {
@@ -6246,11 +6322,7 @@ body {
 
 .memory-row.is-depth-2 .memory-name {
   padding-left: 24px;
-  color: var(--text-faint);
-}
-
-.memory-row.is-depth-2 .memory-n {
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .host-group {
@@ -6371,7 +6443,7 @@ body {
 
 .disk-split .host-track .is-other,
 .memory-key.is-other {
-  background: var(--path-3);
+  background: var(--text-faint);
 }
 
 .disk-split .host-track .is-leftover,
@@ -6381,7 +6453,7 @@ body {
 
 .disk-split .host-track .is-reserved,
 .memory-key.is-reserved {
-  background: var(--path-4);
+  background: var(--hatch);
 }
 
 .disk-split .explain-bubble {
@@ -6425,15 +6497,19 @@ body {
 /* The smaller size goes on the cells, not the row: the template is in em, and shrinking the row
    shifted every header off its figures. */
 .host-device.is-head,
-.host-capacity.is-head {
-  color: var(--text-faint);
-  padding-bottom: 1px;
+.host-capacity.is-head,
+.host-thread.is-head {
+  margin: 0 -6px 2px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  background: var(--panel-raised);
 }
 
 .host-device.is-head > *,
-.host-capacity.is-head > * {
+.host-capacity.is-head > *,
+.host-thread.is-head > * {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--text);
 }
 
 .host-capacity.is-head,
@@ -6538,33 +6614,22 @@ body {
   color: var(--text-dim);
 }
 
-/* Borrows the caches card's fold; this is only the rule above it that the other host groups carry
-   on their headings. */
+/* Borrows the caches card's drawer. */
 .host-threads {
   margin-top: 16px;
-  padding-top: 9px;
-  border-top: 1px solid var(--border);
 }
 
 .host-thread {
   display: grid;
-  /* The bars are capped: uncapped they ran to the card's edge with fifteen
-     pixel bars, while the device rows above end well short of it. */
-  grid-template-columns: minmax(0, 13em) 3.6em 7em minmax(120px, 440px) 4.4em 5.6em;
+  grid-template-columns: minmax(0, 13em) 3.6em 7em minmax(120px, 1fr) 4.4em 5.6em;
   align-items: center;
   gap: 5px 14px;
   font-size: 12px;
   padding: 4px 0;
 }
 
-.host-thread.is-head {
-  color: var(--text-faint);
-  padding-bottom: 1px;
-}
-
-.host-thread.is-head > * {
-  font-size: 11px;
-  color: var(--text-dim);
+.host-thread:not(.is-head) + .host-thread {
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 .host-thread.is-head .is-spark {
@@ -6587,7 +6652,12 @@ body {
 }
 
 .host-spark rect {
-  fill: var(--path-3);
+  fill: var(--sky);
+}
+
+/* Seconds at the one-pixel floor recede, so the seconds with work stand out. */
+.host-spark rect.is-floor {
+  fill: var(--border);
 }
 
 .host-spark rect.is-low {
@@ -6604,7 +6674,7 @@ body {
 
   .host-thread.is-head {
     grid-template-areas: "name now wait";
-    padding: 4px 0 0;
+    padding: 5px 6px;
   }
 
   .host-thread .is-count,
@@ -6645,26 +6715,35 @@ body {
   flex-direction: column;
 }
 
+/* A drawer, as an open block is on the slot page: a bordered bar closed; open, the box holds its
+   body under a raised cap. */
 .cache-group {
-  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 
 .cache-group:first-child {
-  border-top: 0;
-  margin-top: -4px;
+  margin-top: 0;
 }
 
-/* The slot page's hover treatment, raising the row only; not kept while open, since both sections
-   start open. */
+.cache-group:has(> .cache-open) {
+  background: var(--bg);
+}
+
 .cache-head {
   display: grid;
   grid-template-columns: minmax(9.4em, auto) auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0 18px;
-  padding: 9px 6px;
-  margin: 2px 0;
+  padding: 8px 8px 8px 12px;
   border-radius: 5px;
   cursor: pointer;
+}
+
+.cache-group:has(> .cache-open) > .cache-head {
+  border-radius: 5px 5px 0 0;
+  background: var(--panel-raised);
 }
 
 .cache-head:hover {
@@ -6718,17 +6797,18 @@ body {
 }
 
 .cache-fold {
-  width: 20px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 50%;
   background: none;
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 15px;
-  line-height: 1;
+  color: var(--text-dim);
   cursor: pointer;
 }
+
 
 .cache-fold:focus-visible {
   outline: 1px solid var(--accent);
@@ -6739,7 +6819,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 4px 6px 16px;
+  padding: 12px 13px 14px;
 }
 
 /* auto-fill, capped at four, so the on-disk pair's columns line up with the four reads above. */
@@ -6852,6 +6932,15 @@ body {
 
   .cache-fold {
     grid-area: 1 / 3 / 3 / 4;
+  }
+
+  /* A drawer's own inset would cut the thread names short. */
+  .cache-open {
+    padding: 10px 8px 12px;
+  }
+
+  .path-port-open {
+    padding: 8px 8px 4px;
   }
 }
 
@@ -7120,10 +7209,11 @@ body {
 
 /* ---- folding sections ---- */
 
+/* A card like the panels above it; .main's gap spaces them. */
 .fold {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  padding: 14px 16px 16px;
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 
 .fold-head {
@@ -7182,16 +7272,33 @@ body {
   outline-offset: 2px;
 }
 
+/* Open, the head is ruled off from the body. */
+.fold.is-open .fold-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
 .fold-body {
   margin-top: 14px;
 }
 
-/* Closed, the top rule becomes a 2px strip of the bar inside; the padding takes the border's pixel,
-   so the fold keeps its height. */
+/* A sub-fold's toggle: points down closed and up open. */
+.fold-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+
+[aria-expanded="true"] > .fold-chevron {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+/* Closed, the card's top edge is a 2px strip of the bar inside. */
 .fold.has-rule {
   position: relative;
-  padding-top: 13px;
-  border-top: 0;
+  padding-top: 16px;
 }
 
 .fold-rule {
@@ -7202,6 +7309,8 @@ body {
   display: flex;
   gap: 1px;
   height: 2px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  overflow: hidden;
 }
 
 .fold-rule-seg {
@@ -7223,10 +7332,9 @@ body {
   background: var(--accent);
 }
 
-/* No data yet: the plain 1px rule, at the top of the strip's box. */
+/* No data yet: no strip. */
 .fold-rule.is-empty {
-  box-sizing: border-box;
-  border-top: 1px solid var(--border);
+  display: none;
 }
 
 /* ---- schedule ---- */

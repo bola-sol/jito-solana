@@ -27,7 +27,7 @@ const PARTS: { part: LifePart; label: string }[] = [
 
 /** Shared by the track, the legend and the closed fold's strip. */
 const COLOR: Record<LifePart, string> = {
-  building: "color-mix(in srgb, var(--apricot) 35%, transparent)",
+  building: "color-mix(in srgb, var(--text-faint) 45%, transparent)",
   reaching: "var(--apricot)",
   replay: "var(--lavender)",
   vote: "var(--part-4)",

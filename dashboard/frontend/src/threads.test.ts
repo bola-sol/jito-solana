@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barLow, busiest, onCpuTone, pinnedLabel, POH_LOW, threadRows } from "./threads";
+import { barClass, barLow, busiest, onCpuTone, pinnedLabel, POH_LOW, threadRows } from "./threads";
 import type { ThreadGroup, ThreadsSample } from "./types";
 
 function group(name: string, over: Partial<ThreadGroup> = {}): ThreadGroup {
@@ -109,5 +109,12 @@ describe("tones", () => {
     expect(barLow(poh({}), 0.71)).toBe(true);
     expect(barLow(poh({}), 0.95)).toBe(false);
     expect(barLow(pool({}), 0.1)).toBe(false);
+  });
+
+  it("fades a bar at the floor unless PoH lost its core that second", () => {
+    expect(barClass(pool({}), 0.01, 1)).toBe("is-floor");
+    expect(barClass(pool({}), 0.5, 8)).toBeUndefined();
+    expect(barClass(poh({}), 0.01, 1)).toBe("is-low");
+    expect(barClass(poh({}), 0.95, 15)).toBeUndefined();
   });
 });

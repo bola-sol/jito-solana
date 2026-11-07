@@ -66,3 +66,9 @@ export function pinnedLabel(cores: string | null): string {
 export function barLow(row: ThreadRow, share: number): boolean {
   return row.poh && share < POH_LOW;
 }
+
+/** A bar's class: toned where PoH lost its core, faded at the one-pixel floor. */
+export function barClass(row: ThreadRow, share: number, height: number): "is-low" | "is-floor" | undefined {
+  if (barLow(row, share)) return "is-low";
+  return height === 1 ? "is-floor" : undefined;
+}

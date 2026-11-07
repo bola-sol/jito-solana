@@ -128,7 +128,7 @@ function Group({
             onFold();
           }}
         >
-          {open ? "−" : "+"}
+          <i className="fold-chevron" aria-hidden="true" />
         </button>
       </div>
       {open && <div className="cache-open">{children}</div>}

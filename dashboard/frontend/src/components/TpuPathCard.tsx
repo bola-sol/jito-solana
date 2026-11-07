@@ -148,7 +148,7 @@ function ruleOf(section: PathSection | null): FoldRule | null {
     { value: section.through.count, color: "var(--good)" },
     ...section.losses.map((loss, index) => ({
       value: loss.count,
-      color: `var(--path-${Math.min(index + 1, LOSSES_SHOWN)})`,
+      color: `var(--loss-${Math.min(index + 1, LOSSES_SHOWN)})`,
     })),
   ];
   // Where the parts fall short of the total, the open bar's track shows.
@@ -430,7 +430,7 @@ function OtherPort({
             onFold();
           }}
         >
-          {open ? "−" : "+"}
+          <i className="fold-chevron" aria-hidden="true" />
         </button>
       </div>
       {open && (

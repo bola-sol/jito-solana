@@ -23,7 +23,7 @@ import {
 import { readThreadsCollapsed, writeThreadsCollapsed } from "../layout";
 import { useNarrow } from "../narrow";
 import {
-  barLow,
+  barClass,
   busiest,
   onCpuTone,
   pinnedLabel,
@@ -112,6 +112,12 @@ export function HostCard(): ReactElement | null {
           <div className="host-value">
             {decimal(host.load_one, 2)} <small>of {count(host.cores)} cores</small>
           </div>
+          <div className="host-memory" aria-hidden="true">
+            <i
+              className={host.cores > 0 && host.load_one > host.cores ? "is-load is-over" : "is-load"}
+              style={{ width: share(host.load_one, host.cores) }}
+            />
+          </div>
           <div className="host-sub">
             5m {decimal(host.load_five, 1)}, 15m {decimal(host.load_fifteen, 1)},{" "}
             <span className={`host-trend is-${trend}`}>{trend}</span>
@@ -127,7 +133,7 @@ export function HostCard(): ReactElement | null {
         {host.cpu && (
           <div className="host-figure">
             <div className="host-label">
-              <Explain text="Share of the last second all cores spent working. Iowait is the lighter part of the bar.">
+              <Explain text="Share of the last second all cores spent working, iowait in orange.">
                 CPU busy
               </Explain>
             </div>
@@ -135,8 +141,8 @@ export function HostCard(): ReactElement | null {
               {percent(host.cpu.busy, 0)} <small>of {count(host.cores)} cores</small>
             </div>
             <div className="host-memory" aria-hidden="true">
-              <i className="is-used" style={{ width: share(host.cpu.busy, 1) }} />
-              <i className="is-cache" style={{ width: share(host.cpu.iowait, 1) }} />
+              <i className="is-busy" style={{ width: share(host.cpu.busy, 1) }} />
+              <i className="is-iowait" style={{ width: share(host.cpu.iowait, 1) }} />
             </div>
             <div className="host-sub">
               user {percent(host.cpu.user, 0)}, system {percent(host.cpu.system, 0)},{" "}
@@ -464,25 +470,25 @@ function Threads({ samples }: { samples: ThreadsSample[] }) {
             toggle();
           }}
         >
-          {collapsed ? "+" : "−"}
+          <i className="fold-chevron" aria-hidden="true" />
         </button>
       </div>
       {!collapsed && (
         <div className="cache-open">
           <div>
             <div className="host-thread is-head">
-              <span>thread</span>
-              <span className="host-n is-count">count</span>
+              <span>Thread</span>
+              <span className="host-n is-count">Count</span>
               <span
                 className="host-n is-cores"
                 title="Cores the kernel may schedule the thread on, where fewer than the machine has."
               >
-                pinned
+                Pinned
               </span>
-              <span className="is-spark">on cpu, each second</span>
-              <span className="host-n is-now">now</span>
+              <span className="is-spark">On CPU, each second</span>
+              <span className="host-n is-now">Now</span>
               <span className="host-n is-wait" title="Runnable but waiting for a core: the worst second of the minute.">
-                waiting
+                Waiting
               </span>
             </div>
             {rows.map((row) => (
@@ -554,7 +560,7 @@ function Spark({ row }: { row: ThreadRow }) {
             y={SPARK_HEIGHT - height}
             width={BAR_WIDTH}
             height={height}
-            className={barLow(row, share) ? "is-low" : undefined}
+            className={barClass(row, share, height)}
           />
         );
       })}

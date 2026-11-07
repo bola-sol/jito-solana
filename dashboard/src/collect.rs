@@ -53,6 +53,7 @@ mod cert_formation;
 mod certificates;
 mod cluster_charts;
 mod cluster_figures;
+mod earnings;
 mod fee_payers;
 mod finalization;
 mod gossip_peers;
@@ -66,6 +67,7 @@ use self::{
     cert_formation::{CertFormation, FinalizedPaths, FormationKey},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
     cluster_figures::ClusterFigures,
+    earnings::{EarningsWalk, EpochEarnings},
     fee_payers::{FeePayerSummary, FeePayers},
     finalization::{FinalizationShare, FinalizationTally},
     handoff::{HandoffNow, HandoffSummary, Handoffs},
@@ -472,6 +474,7 @@ struct Debounces {
     bls_key: Debounced<Option<bool>>,
     admission: Debounced<Option<Admission>>,
     vote_credits: Debounced<Option<VoteCredits>>,
+    epoch_earnings: Debounced<Option<EpochEarnings>>,
     vote_participation: Debounced<certs::Participation>,
     vote_cost: Debounced<VoteCost>,
     block_life: Debounced<Option<BlockLifeSummary>>,
@@ -507,6 +510,7 @@ pub struct Collector {
     epochs: Arc<RwLock<Vec<EpochInfo>>>,
     epoch_published: Option<(Epoch, Pubkey, bool)>,
     skip_rate: SkipRateWalk,
+    earnings: EarningsWalk,
     /// The epoch before the root's, whose blocks the slot page holds for a while.
     previous_slots: SkipRateWalk,
     finalization: FinalizationTally,
@@ -620,6 +624,7 @@ impl Collector {
             history,
             epochs,
             skip_rate: SkipRateWalk::default(),
+            earnings: EarningsWalk::default(),
             previous_slots: SkipRateWalk::default(),
             finalization: FinalizationTally::default(),
             block_lives: BlockLives::default(),
@@ -745,6 +750,7 @@ impl Collector {
         self.collect_slot_levels(&root_bank, &frozen);
         self.store_failed(&working_bank);
         self.collect_vote_certs(&root_bank);
+        self.collect_earnings(&root_bank);
         self.collect_finalized_paths(&root_bank);
         self.collect_turns(completed);
         // From the working bank: the root trails the tip by the thirty-two slots it

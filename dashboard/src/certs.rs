@@ -542,7 +542,7 @@ impl Tally {
     }
 }
 
-enum Block {
+pub(crate) enum Block {
     Footer(Box<BlockFooterV1>),
     Missing,
     Pending,
@@ -681,7 +681,7 @@ fn rank_of(bank: &Bank, vote_account: &Pubkey, slot: Slot) -> Option<(usize, usi
     Some((usize::from(*rank), map.len()))
 }
 
-fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
+pub(crate) fn read_block(blockstore: &Blockstore, slot: Slot, root: Slot) -> Block {
     if slot > root {
         return Block::Pending;
     }
@@ -767,7 +767,7 @@ fn build_mark(
 }
 
 /// `None` where the bitmap does not decode or uses the two-vector form.
-fn decode_paid(bitmap: &[u8], len: usize) -> Option<Vec<bool>> {
+pub(crate) fn decode_paid(bitmap: &[u8], len: usize) -> Option<Vec<bool>> {
     let Ok(Decoded::Base2(bits)) = decode(bitmap, len) else {
         return None;
     };

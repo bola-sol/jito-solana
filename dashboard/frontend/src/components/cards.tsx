@@ -1,13 +1,16 @@
-import type { CSSProperties, ReactElement } from "react";
-import { count, decimal, duration, percent, solCompact } from "../format";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
+import { count, decimal, duration, percent, sol, solCompact } from "../format";
 import { MATRIX_WINDOW_SECONDS, readoutMean, READOUT_SECONDS } from "../matrix";
 import { noSeatDetail } from "../admission";
 import { creditsShare, participationShare, shareText, standingText, withStanding } from "../credits";
 import { leaderLabel, lostNote, MISS_PLACES, missMarks, missTotal, placeExplain, turnMarks } from "../misses";
 import { leaderSlotsLeft } from "../schedule";
-import type { Admission, EpochInfo, VoteParticipation } from "../types";
+import { barParts, earningsTotal, kept } from "../earnings";
+import type { BarParts } from "../earnings";
+import type { Admission, EpochEarnings, EpochInfo, VoteParticipation } from "../types";
 import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
+import { useBalancesHidden } from "../balances";
 import { useNarrow } from "../narrow";
 import { useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
@@ -27,6 +30,7 @@ export function EpochCard({
   // Sent by the server, which measures the slot rate and holds the answer
   // still unless it really moves.
   const remainingNanos = store.get("summary", "epoch_remaining_nanos");
+  const balancesHidden = useBalancesHidden();
 
   if (!epoch) return <Card title="This epoch">{waiting}</Card>;
 
@@ -37,6 +41,8 @@ export function EpochCard({
   const left = leaderSlotsLeft(epoch.my_leader_slots, completed);
   const admission = store.get("summary", "admission");
   const seated = !admission || admission.seat;
+  const earnings = store.get("summary", "epoch_earnings");
+  const shown = seated && !balancesHidden && earnings?.epoch === epoch.epoch ? earnings : null;
 
   return (
     <Card title="This epoch" aside={count(epoch.epoch)} className="epoch-body">
@@ -55,9 +61,16 @@ export function EpochCard({
           <NoSeatStat admission={admission} />
         )}
       </div>
-      <EpochMeter fraction={progress} epoch={epoch} />
-      <div className="card-footnote">
-        slot {count(elapsed)} of {count(epoch.slots_in_epoch)}
+      {shown ? (
+        <EarningsBars earnings={shown} epoch={epoch} progress={progress} />
+      ) : (
+        <EpochMeter fraction={progress} epoch={epoch} />
+      )}
+      <div className={shown ? "card-footnote epoch-earn-foot" : "card-footnote"}>
+        <span>
+          slot {count(elapsed)} of {count(epoch.slots_in_epoch)}
+        </span>
+        {shown && <EarningsTotal earnings={shown} />}
       </div>
     </Card>
   );
@@ -181,28 +194,125 @@ function MissesSplit({ participation }: { participation: VoteParticipation }) {
   );
 }
 
-function EpochMeter({ fraction, epoch }: { fraction: number; epoch: EpochInfo }) {
+/** Our leader turns and unrewarded votes along the epoch, or nothing before alpenglow. */
+function useEpochMarks(epoch: EpochInfo): ReactNode[] | undefined {
   const participation = useStore().get("summary", "vote_participation");
   const alpenglow = useAlpenglow();
-  if (!alpenglow || !participation || participation.epoch !== epoch.epoch) {
-    return <Meter fraction={fraction} />;
-  }
+  if (!alpenglow || !participation || participation.epoch !== epoch.epoch) return undefined;
   const turns = turnMarks(epoch.my_leader_slots, epoch.start_slot, epoch.slots_in_epoch) ?? [];
   const misses = missMarks(participation.miss_bins);
-  if (turns.length === 0 && misses.length === 0) return <Meter fraction={fraction} />;
+  if (turns.length === 0 && misses.length === 0) return undefined;
+  return [
+    ...turns.map((at) => (
+      <i key={`turn-${at}`} className="meter-mark is-turn" style={{ left: `${at * 100}%` }} />
+    )),
+    ...misses.map(({ at, weight }) => (
+      <i
+        key={`miss-${at}`}
+        className="meter-mark is-miss"
+        style={{ left: `${at * 100}%`, opacity: 0.35 + weight * 0.6 }}
+      />
+    )),
+  ];
+}
+
+function EpochMeter({ fraction, epoch }: { fraction: number; epoch: EpochInfo }) {
+  return <Meter fraction={fraction}>{useEpochMarks(epoch)}</Meter>;
+}
+
+/** Voting accrues with the epoch, so its bar is the meter and carries the meter's marks. */
+function EarningsBars({
+  earnings,
+  epoch,
+  progress,
+}: {
+  earnings: EpochEarnings;
+  epoch: EpochInfo;
+  progress: number;
+}): ReactElement {
+  const marks = useEpochMarks(epoch);
+  const bps = earnings.commission_bps;
   return (
-    <Meter fraction={fraction}>
-      {turns.map((at) => (
-        <i key={at} className="meter-mark is-turn" style={{ left: `${at * 100}%` }} />
-      ))}
-      {misses.map(({ at, weight }) => (
-        <i
-          key={at}
-          className="meter-mark is-miss"
-          style={{ left: `${at * 100}%`, opacity: 0.35 + weight * 0.6 }}
-        />
-      ))}
-    </Meter>
+    <div className="epoch-earn">
+      <EarningsRow
+        label="voting"
+        kind="vote"
+        parts={barParts(earnings.voting, earnings.voting_lost, earnings.voting_max)}
+        value={kept(earnings.voting, bps)}
+        explain="Our share of what our votes earned this epoch; red is what missed votes would have paid."
+        progress={progress}
+      >
+        {marks}
+      </EarningsRow>
+      <EarningsRow
+        label="producer bonus"
+        kind="bonus"
+        parts={barParts(earnings.bonus, earnings.bonus_lost, earnings.bonus_max)}
+        value={kept(earnings.bonus, bps)}
+        explain="Our share of what our blocks earned for the votes they carried; red is votes left out and blocks skipped."
+      />
+    </div>
+  );
+}
+
+function EarningsRow({
+  label,
+  kind,
+  parts,
+  value,
+  explain,
+  progress,
+  children,
+}: {
+  label: string;
+  kind: "vote" | "bonus";
+  parts: BarParts;
+  value: number;
+  explain: string;
+  progress?: number;
+  children?: ReactNode;
+}): ReactElement {
+  return (
+    <div className="epoch-earn-row">
+      <span className="epoch-earn-name">
+        <i className={`epoch-earn-swatch is-${kind}`} />
+        <Explain text={explain}>{label}</Explain>
+      </span>
+      <span
+        className={children ? "epoch-earn-bar has-marks" : "epoch-earn-bar"}
+        role={progress === undefined ? undefined : "progressbar"}
+        aria-valuenow={progress === undefined ? undefined : Math.round(progress * 100)}
+      >
+        <i className={`is-${kind}`} style={{ width: `${parts.earned * 100}%` }} />
+        <i className="is-lost" style={{ width: `${parts.lost * 100}%` }} />
+        {children && (
+          <span className="meter-marks" aria-hidden="true">
+            {children}
+          </span>
+        )}
+      </span>
+      <span className="epoch-earn-value">{sol(value, 3)}</span>
+    </div>
+  );
+}
+
+function EarningsTotal({ earnings }: { earnings: EpochEarnings }): ReactElement {
+  const { kept: ours, rest } = earningsTotal(earnings);
+  const unread = earnings.unread;
+  return (
+    <Explain
+      text={
+        unread === 1
+          ? "One of our blocks is no longer in the ledger, so its bonus counts as voting."
+          : unread > 1
+            ? `${count(unread)} of our blocks are no longer in the ledger, so their bonus counts as voting.`
+            : "Our commission's share of this epoch's inflation reward, paid at the epoch's end."
+      }
+    >
+      <span>
+        <b>{ours}</b> {rest}
+      </span>
+    </Explain>
   );
 }
 

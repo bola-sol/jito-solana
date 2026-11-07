@@ -1284,6 +1284,20 @@ export interface VoteCredits {
   cluster_median: number | null;
 }
 
+/** Lamports before commission; the maxima are for the whole epoch. */
+export interface EpochEarnings {
+  epoch: number;
+  voting: number;
+  voting_lost: number;
+  voting_max: number;
+  bonus: number;
+  bonus_lost: number;
+  bonus_max: number;
+  commission_bps: number;
+  /** Our blocks the ledger no longer holds; their bonus counts as voting. */
+  unread: number;
+}
+
 export interface VoteParticipation {
   epoch: number;
   since_slot: number;
@@ -1483,6 +1497,7 @@ export interface Published {
     bls_key: boolean | null;
     admission: Admission | null;
     vote_credits: VoteCredits | null;
+    epoch_earnings: EpochEarnings | null;
     vote_participation: VoteParticipation | null;
     turbine: Turbine | null;
     gossip: Gossip | null;

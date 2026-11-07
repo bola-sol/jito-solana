@@ -1059,6 +1059,90 @@ body {
   background: var(--warn);
 }
 
+/* ---- this epoch's reward, in place of the meter ---- */
+
+/* One grid for both rows, so the bars start and end level. */
+.epoch-earn {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 9px 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.epoch-earn-row {
+  display: contents;
+}
+
+.epoch-earn-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.epoch-earn-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  flex: none;
+}
+
+.epoch-earn-value {
+  font-family: var(--mono);
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.epoch-earn-bar {
+  position: relative;
+  display: flex;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--panel-raised);
+}
+
+.epoch-earn-bar > i {
+  display: block;
+  height: 100%;
+}
+
+.epoch-earn-bar > i:first-child {
+  border-radius: 2px 0 0 2px;
+}
+
+.epoch-earn .is-vote {
+  background: var(--vote);
+}
+
+.epoch-earn .is-bonus {
+  background: var(--apricot);
+}
+
+.epoch-earn .is-lost {
+  background: var(--bad);
+}
+
+.epoch-earn-bar .meter-mark.is-turn {
+  top: -2px;
+  height: 10px;
+}
+
+.epoch-earn-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 14px;
+}
+
+.epoch-earn-foot b {
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
 /* ---- unrewarded votes by where they fell ---- */
 
 .misses {

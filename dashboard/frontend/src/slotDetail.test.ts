@@ -3,6 +3,7 @@ import {
   bundlesValue,
   capacity,
   executionView,
+  spanRatio,
   leadingView,
   schedulerView,
   shareOfGroup,
@@ -243,7 +244,6 @@ describe("executionView", () => {
       votes,
       window_millis: 402,
     });
-    expect(view.nonVote).toBe(630_800);
     expect(view.votes).toBe(25_900);
     expect(view.total).toBe(656_700);
     expect(view.segments.map((s) => s.key)).toEqual([
@@ -272,6 +272,12 @@ describe("executionView", () => {
     expect(view.votes).toBe(0);
     expect(view.segments.some((s) => s.key === "votes")).toBe(false);
     expect(view.segments.find((s) => s.key === "send")?.label).toBe("after commit");
+  });
+
+  it("puts the ratio beside its ceiling, and alone where no worker reported", () => {
+    expect(spanRatio(0.918, 8)).toBe("0.92× of 8");
+    expect(spanRatio(0.918, 0)).toBe("0.92×");
+    expect(spanRatio(null, 8)).toBe("—");
   });
 
   it("has no vote segment and no ratios where nothing reported them", () => {

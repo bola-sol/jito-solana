@@ -40,6 +40,7 @@ import {
   bundlesValue,
   capacity,
   executionView,
+  spanRatio,
   leadingView,
   schedulerView,
   shareOfGroup,
@@ -1060,16 +1061,13 @@ function ExecutionTime({ execution }: { execution: Execution }) {
         </span>
         <span className="sx-strip-right">
           <span>
-            {count(execution.workers)} workers, {count(execution.window_millis)} ms slot
+            {count(execution.workers)} workers, {count(execution.window_millis)} ms first to last shred
           </span>
         </span>
       </div>
       <div className="sx-cu">
         <div className="sx-cu-value">{micros(view.total)}</div>
-        <div className="sx-cu-of">
-          thread time, {micros(view.nonVote)} non-vote
-          {view.votes !== null && view.votes > 0 && ` and ${micros(view.votes)} votes`}
-        </div>
+        <div className="sx-cu-of">thread time</div>
       </div>
       <div className="sx-cap">
         <div className="sx-cap-bar" aria-hidden="true">
@@ -1096,12 +1094,9 @@ function ExecutionTime({ execution }: { execution: Execution }) {
         </div>
       </div>
       <div className="sx-keep">
-        <Stat
-          label="thread time over the slot"
-          value={view.perSlot === null ? "—" : `${view.perSlot.toFixed(2)}×`}
-        />
+        <Stat label="thread time over that span" value={spanRatio(view.perSlot, execution.workers)} />
         <Stat label="per worker" value={micros(view.perWorker)} />
-        <Stat label="longest batch" value={micros(execution.longest_batch)} />
+        <Stat label="longest load & execute" value={micros(execution.longest_batch)} />
       </div>
     </div>
   );

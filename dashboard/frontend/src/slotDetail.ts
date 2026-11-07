@@ -161,7 +161,6 @@ export interface ExecutionSegment {
 
 export interface ExecutionView {
   total: number;
-  nonVote: number;
   votes: number | null;
   segments: ExecutionSegment[];
   perSlot: number | null;
@@ -182,7 +181,7 @@ function stageTotal(times: StageTimes): number {
 /** What the committer does after each batch lands, timed upstream as
  *  `find_and_send_votes_us`. */
 const AFTER_COMMIT =
-  "After each commit the workers scan for votes, update the fee cache and send the transaction statuses.";
+  "After each commit, on nodes serving RPC or plugins, the workers update the fee cache and send the transaction statuses.";
 
 export function executionView(execution: Execution): ExecutionView {
   const w = execution.non_vote;
@@ -206,12 +205,18 @@ export function executionView(execution: Execution): ExecutionView {
   }));
   return {
     total,
-    nonVote,
     votes,
     segments,
     perSlot: execution.window_millis > 0 ? total / (execution.window_millis * 1000) : null,
     perWorker: execution.workers > 0 ? nonVote / execution.workers : null,
   };
+}
+
+/** The ratio beside its ceiling, every worker busy throughout. */
+export function spanRatio(perSlot: number | null, workers: number): string {
+  if (perSlot === null) return "—";
+  const ratio = `${perSlot.toFixed(2)}×`;
+  return workers > 0 ? `${ratio} of ${workers}` : ratio;
 }
 
 /** A start longer than this share of the bank's open time is marked. */

@@ -9837,10 +9837,18 @@ body {
   }
 }
 
-/* The slot a jump asked for, outlined for as long as the list is parked there. */
+/* The slot a jump asked for, in apricot since accent fills mark the live slot. Fills stop where red
+   and orange figures keep 4.5:1; dark adds an edge to make up the difference. */
 .schedule-row.is-landed {
   border-radius: 3px;
-  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--apricot) 14%, var(--bg));
+  box-shadow: inset 0 0 0 1px var(--apricot);
+  color: var(--text);
+}
+
+:root[data-theme="light"] .schedule-row.is-landed {
+  background: color-mix(in srgb, var(--apricot) 22%, var(--bg));
+  box-shadow: none;
 }
 
 /* Under filters, rows that miss are dimmed and the figure a row was kept for is toned. */

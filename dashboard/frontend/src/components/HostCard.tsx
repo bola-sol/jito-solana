@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactElement } from "react";
+import { Fragment, type ReactElement } from "react";
 import { bytes, count, decimal, percent } from "../format";
 import {
   availableTone,
@@ -20,8 +20,6 @@ import {
   type DiskSplit,
   type ValidatorSplit,
 } from "../host";
-import { readThreadsCollapsed, writeThreadsCollapsed } from "../layout";
-import { useNarrow } from "../narrow";
 import {
   barClass,
   busiest,
@@ -223,6 +221,7 @@ export function HostCard(): ReactElement | null {
         )}
       </div>
 
+      <div className="host-lower">
       <div
         className={
           host.filesystems.length > 0 && host.devices.length > 0
@@ -296,6 +295,7 @@ export function HostCard(): ReactElement | null {
       </div>
 
       <Threads samples={samples} />
+      </div>
       </div>
     </Fold>
   );
@@ -427,79 +427,37 @@ function share(part: number, whole: number): string {
 }
 
 function Threads({ samples }: { samples: ThreadsSample[] }) {
-  const narrow = useNarrow();
-  const [collapsed, setCollapsed] = useState<boolean>(() => readThreadsCollapsed() ?? narrow);
   const rows = threadRows(samples);
   const last = samples[samples.length - 1];
   if (!last || rows.length === 0) return null;
 
-  const top = busiest(rows);
-  const toggle = () => {
-    const next = !collapsed;
-    setCollapsed(next);
-    writeThreadsCollapsed(next);
-  };
-
   return (
-    <section className="cache-group host-threads">
-      <div className="cache-head" onClick={toggle}>
-        <span className="cache-name">Validator threads</span>
-        <span className="cache-rate">
-          <Explain text="The busiest thread's share of the last second on a core. Each row is a thread's minute of the same, a pool row the mean of its threads.">
-            {top ? percent(top.now, 0) : "—"}
-          </Explain>
-        </span>
-        <span className="cache-gloss">
-          {top && (
-            <i>
-              busiest {top.label}
-              {top.cores !== null && `, ${pinnedLabel(top.cores)}`}
-            </i>
-          )}
-          <i>{count(last.threads)} threads</i>
-          <i>last 60s</i>
-        </span>
-        <button
-          type="button"
-          className="cache-fold"
-          aria-expanded={!collapsed}
-          aria-label={`${collapsed ? "Unfold" : "Fold"} validator threads`}
-          onClick={(event) => {
-            // The row under it toggles too, and two toggles are none.
-            event.stopPropagation();
-            toggle();
-          }}
-        >
-          <i className="fold-chevron" aria-hidden="true" />
-        </button>
+    <section className="host-threads">
+      <div className="host-group">
+        <Explain text="Each row is a thread's minute on a core, a pool row the mean of its threads.">
+          <span>Validator threads</span>
+        </Explain>
+        <em>{count(last.threads)} threads, last 60s</em>
       </div>
-      {!collapsed && (
-        <div className="cache-open">
-          <div>
-            <div className="host-thread is-head">
-              <span>Thread</span>
-              <span className="host-n is-count">Count</span>
-              <span
-                className="host-n is-cores"
-                title="Cores the kernel may schedule the thread on, where fewer than the machine has."
-              >
-                Pinned
-              </span>
-              <span className="is-spark">On CPU, each second</span>
-              <span className="host-n is-now">Now</span>
-              <span className="host-n is-wait" title="Runnable but waiting for a core: the worst second of the minute.">
-                Waiting
-              </span>
-            </div>
-            {rows.map((row) => (
-              <ThreadLine key={row.other ? "other" : row.name} row={row} />
-            ))}
-            <div className="card-footnote">
-              Fewer cores than the machine has means the thread is pinned.
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="host-thread is-head">
+        <span>Thread</span>
+        <span className="host-n is-count">Count</span>
+        <span
+          className="host-n is-cores"
+          title="Cores the kernel may schedule the thread on, where fewer than the machine has."
+        >
+          Pinned
+        </span>
+        <span className="is-spark">On CPU, each second</span>
+        <span className="host-n is-now">Now</span>
+        <span className="host-n is-wait" title="Runnable but waiting for a core: the worst second of the minute.">
+          Waiting
+        </span>
+      </div>
+      {rows.map((row) => (
+        <ThreadLine key={row.other ? "other" : row.name} row={row} />
+      ))}
+      <div className="card-footnote">Fewer cores than the machine has means the thread is pinned.</div>
     </section>
   );
 }
@@ -517,8 +475,10 @@ function ThreadLine({ row }: { row: ThreadRow }) {
     >
       <span className="host-dev">
         <b>{row.label}</b>
-        {/* Shown only where their columns are not: a phone. */}
-        <span className="host-countline host-faint"> {count(row.count)}</span>
+        {/* Shown where their columns are not; a lone thread's 1 is left out. */}
+        {(row.count > 1 || row.other) && (
+          <span className="host-countline host-faint"> {count(row.count)}</span>
+        )}
         {row.cores !== null && (
           <span className="host-pinline host-pin">, {pinnedLabel(row.cores)}</span>
         )}

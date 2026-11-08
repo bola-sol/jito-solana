@@ -1,18 +1,6 @@
 import { readStored, writeStored } from "./storage";
 import type { SummaryGroup } from "./summaryTable";
 
-/** Null where the viewer has never chosen, so the card defaults by width. */
-export const THREADS_STORAGE_KEY = "agave-dashboard-threads";
-
-export function readThreadsCollapsed(): boolean | null {
-  const held = readStored(THREADS_STORAGE_KEY);
-  return held === null ? null : held === "collapsed";
-}
-
-export function writeThreadsCollapsed(collapsed: boolean): void {
-  writeStored(THREADS_STORAGE_KEY, collapsed ? "collapsed" : "expanded");
-}
-
 export const BALANCES_STORAGE_KEY = "agave-dashboard-balances";
 
 export function readBalancesHidden(): boolean {

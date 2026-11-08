@@ -6343,10 +6343,13 @@ body {
   color: var(--text-dim);
 }
 
+/* Each part whole; on the smallest phones the tag drops to its own line rather than break. */
 .host-group {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 10px;
+  gap: 2px 10px;
+  white-space: nowrap;
   font-size: 13px;
   color: var(--text);
   margin: 16px 0 7px;
@@ -6542,8 +6545,9 @@ body {
   }
 }
 
-/* Each filesystem level with its device. How hard worked's tracks add up to 505px. */
-@media (min-width: 1100px) {
+/* Each filesystem level with its device. How hard worked's tracks add up to 505px. From 1240px the
+   two stack beside the threads instead. */
+@media (min-width: 1100px) and (max-width: 1239px) {
   .host-disks.is-paired {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 505px;
@@ -6632,9 +6636,34 @@ body {
   color: var(--text-dim);
 }
 
-/* Borrows the caches card's drawer. */
-.host-threads {
-  margin-top: 16px;
+.host-lower {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Storage stacked on the left, threads on the right; a thread's count and pin move beside its name.
+   Below this a device's role no longer fits beside its name. */
+@media (min-width: 1240px) {
+  .host-lower:has(> .host-threads) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 26px;
+    align-items: start;
+  }
+
+  .host-lower .host-thread {
+    grid-template-columns: minmax(0, 15em) minmax(120px, 1fr) 4.4em 5.6em;
+  }
+
+  .host-lower .host-thread .is-count,
+  .host-lower .host-thread .is-cores {
+    display: none;
+  }
+
+  .host-lower .host-countline,
+  .host-lower .host-pinline {
+    display: inline;
+  }
 }
 
 .host-thread {

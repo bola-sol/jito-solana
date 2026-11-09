@@ -15,10 +15,8 @@ const SLOT_TIME_WINDOW_SLOTS: usize = 750;
 
 const SLOT_READOUT_SPAN_MS: u64 = 60_000;
 
-const CAUGHT_UP_SLOT_DISTANCE: u64 = 4;
-
-/// Samples the window must hold before the distance is believed: a validator just loaded from a
-/// snapshot sits at zero distance before replaying anything.
+/// Samples the window must hold before a level reading is believed: a validator just loaded from a
+/// snapshot has not trailed before replaying anything.
 const CAUGHT_UP_MIN_SAMPLES: usize = 64;
 
 /// Skipped past the transition, whose interval is part replay burst and part cluster.
@@ -125,12 +123,13 @@ impl SlotClock {
         millis.checked_mul(1_000_000)?.checked_div(slots)
     }
 
-    /// Never cleared: falling behind later is real.
-    pub(super) fn mark_caught_up(&mut self, highest_slot: Slot, completed: Slot) {
+    /// Never cleared: falling behind later is real. `trailing` is read against the cluster's tip,
+    /// since bank forks' highest slot is only ever a block past the last frozen one.
+    pub(super) fn mark_caught_up(&mut self, trailing: bool, completed: Slot) {
         if self.caught_up_at.is_some() {
             return;
         }
-        if highest_slot.saturating_sub(completed) > CAUGHT_UP_SLOT_DISTANCE {
+        if trailing {
             self.replayed_behind = true;
             return;
         }
@@ -443,7 +442,7 @@ mod tests {
         // A validator that has loaded a snapshot and received nothing sits at zero
         // distance without having caught up.
         let mut clock = clock_following(300_000_000, 4);
-        clock.mark_caught_up(300_000_000, 300_000_000);
+        clock.mark_caught_up(false, 300_000_000);
         assert_eq!(clock.caught_up_at, None);
         assert_eq!(clock.window.len(), 4, "nothing discarded");
     }
@@ -451,15 +450,15 @@ mod tests {
     #[test]
     fn test_the_marker_waits_for_replay_to_reach_the_tip() {
         let mut clock = clock_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
-        clock.mark_caught_up(300_001_000, 300_000_000);
+        clock.mark_caught_up(true, 300_000_000);
         assert_eq!(clock.caught_up_at, None);
     }
 
     #[test]
     fn test_catching_up_discards_everything_measured_while_behind() {
         let mut clock = clock_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
-        clock.mark_caught_up(300_001_000, 300_000_000);
-        clock.mark_caught_up(300_000_002, 300_000_000);
+        clock.mark_caught_up(true, 300_000_000);
+        clock.mark_caught_up(false, 300_000_000);
 
         assert_eq!(
             clock.caught_up_at,
@@ -474,7 +473,7 @@ mod tests {
     #[test]
     fn test_starting_level_keeps_the_samples_it_already_has() {
         let mut clock = clock_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
-        clock.mark_caught_up(300_000_000, 300_000_000);
+        clock.mark_caught_up(false, 300_000_000);
 
         assert!(clock.caught_up_at.is_some());
         assert_eq!(
@@ -487,11 +486,11 @@ mod tests {
     #[test]
     fn test_marker_is_set_once() {
         let mut clock = clock_following(300_000_000, CAUGHT_UP_MIN_SAMPLES as u64);
-        clock.mark_caught_up(300_000_000, 300_000_000);
+        clock.mark_caught_up(false, 300_000_000);
         let marked = clock.caught_up_at;
 
         clock.window = steady_window((300_001_000, 1_000), 200, 400);
-        clock.mark_caught_up(300_099_000, 300_001_000);
+        clock.mark_caught_up(true, 300_001_000);
 
         assert_eq!(clock.caught_up_at, marked, "the marker never moves");
         assert_eq!(

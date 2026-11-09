@@ -991,7 +991,8 @@ impl Collector {
             completed,
         );
         self.collect_slot_durations(root_bank, completed);
-        self.clock.mark_caught_up(highest_slot, completed);
+        self.clock
+            .mark_caught_up(self.trailed_cluster && !self.caught_cluster, completed);
         self.observe_slot_duration(root_bank, completed);
     }
 
@@ -1048,8 +1049,11 @@ impl Collector {
             // The minute's mean stays on first shreds: it is the same over a window, and needs no
             // block to fill.
             self.clock.record(slot, arrived);
-            self.clock
-                .record_in_epoch(schedule.get_epoch(slot), slot, arrived);
+            // A slot repaired while catching up arrived long after it was made.
+            if !self.trailed_cluster || self.caught_cluster {
+                self.clock
+                    .record_in_epoch(schedule.get_epoch(slot), slot, arrived);
+            }
             self.newest_arrival = self.newest_arrival.max(slot);
             let shreds = self.metrics_tap.shred_fill(slot).map(ShredArrival::from);
             let was_full = self.slots.get(slot).and_then(SlotEntry::full_at).is_some();

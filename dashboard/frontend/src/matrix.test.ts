@@ -148,6 +148,10 @@ describe("the grid's columns", () => {
     });
     expect(readoutMean([sample(10), sample(20), sample(0)], 2)?.total).toBe(10);
     expect(readoutMean([], 5)).toBeUndefined();
+    // Stamped in nanoseconds: 3e6 is millisecond 3.
+    const stamped = [1e6, 2e6, 3e6].map(sample);
+    expect(readoutMean(stamped, 5, 2)?.total).toBe(2.5e6);
+    expect(readoutMean(stamped, 5, 4)).toBeUndefined();
   });
 
   it("draws a merged column as the mean of its seconds, stamped as the newest", () => {

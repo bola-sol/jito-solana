@@ -83,8 +83,9 @@ export function columnsFor<T, C>(
   });
 }
 
-export function readoutMean(samples: TpsSample[], seconds = READOUT_SECONDS): Tps | undefined {
-  const recent = samples.slice(-seconds);
+/** The newest `seconds` samples stamped no earlier than `fromMillis`: none arrive in a catch-up. */
+export function readoutMean(samples: TpsSample[], seconds = READOUT_SECONDS, fromMillis = 0): Tps | undefined {
+  const recent = samples.filter((sample) => sample.timestamp_nanos / 1e6 >= fromMillis).slice(-seconds);
   if (recent.length === 0) return undefined;
   const mean = (of: (sample: TpsSample) => number): number =>
     recent.reduce((sum, sample) => sum + of(sample), 0) / recent.length;

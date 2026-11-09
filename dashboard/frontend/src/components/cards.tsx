@@ -12,7 +12,7 @@ import { STAKE_TICKS, stakeTicks } from "../stake";
 import { useAlpenglow } from "../consensus";
 import { useBalancesHidden } from "../balances";
 import { useNarrow } from "../narrow";
-import { useChartEdge, windowed } from "../useNow";
+import { RENDER_LAG_MS, useChartEdge, windowed } from "../useNow";
 import { useStore } from "../useStore";
 import { Card, Explain, Meter, Stat } from "./primitives";
 import { TpsMatrix } from "./TpsMatrix";
@@ -387,11 +387,11 @@ export function TransactionsCard(): ReactElement {
   const store = useStore();
   const alpenglow = useAlpenglow();
   const samples = store.getTps();
-  const tps = readoutMean(samples);
   const narrow = useNarrow();
   // Drawn behind live on the validator's clock, so the newest column is complete rather than
   // arriving mid-second. The peak is read from the same window the grid draws.
   const edge = useChartEdge();
+  const tps = readoutMean(samples, READOUT_SECONDS, edge + RENDER_LAG_MS - (READOUT_SECONDS + 1) * 1000);
   const visible = windowed(
     samples,
     edge,

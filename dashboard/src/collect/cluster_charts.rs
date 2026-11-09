@@ -2,7 +2,7 @@
 //! skips from the root bank's slot history, and the cluster's stake by client and by country.
 
 use {
-    super::{Collector, EpochInfo, Replies, cluster_figures::Spread, country_of, strip_prerelease},
+    super::{Collector, EpochInfo, Replies, country_of, strip_prerelease},
     crate::{
         geoip,
         history::{
@@ -55,8 +55,11 @@ const OUTLIER_CAP: f64 = 2.0;
 const MIN_PER_BIN: usize = 3;
 const MIN_READINGS: usize = 20;
 
-/// A leader is ranked from this many settled slots, as for the skip rate figure.
+/// A leader is ranked, and counts towards the spread, from this many settled slots.
 const LEADER_SLOTS: u32 = 20;
+
+/// Fewer leaders than these leave the per-leader spread out.
+const MIN_LEADERS: usize = 10;
 const SKIP_LEADERS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -107,6 +110,13 @@ pub struct Shares {
     pub floor: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Spread {
+    pub p05: f64,
+    pub p50: f64,
+    pub p95: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipChart {
     pub from_slot: Slot,
@@ -121,6 +131,8 @@ pub struct SkipChart {
     pub recent: Option<f64>,
     /// The previous epoch's percent, against which a young epoch is judged.
     pub previous: Option<f64>,
+    /// Percent of each leader's settled slots skipped, across the leaders.
+    pub per_leader: Option<Spread>,
     pub leaders: Vec<SkipLeader>,
 }
 
@@ -497,7 +509,7 @@ fn floor_below(lowest: f32) -> f64 {
 }
 
 /// Nearest rank over sorted values.
-fn at_percent(sorted: &[f32], percent: usize) -> Option<f32> {
+fn at_percent<T: Copy>(sorted: &[T], percent: usize) -> Option<T> {
     let index = sorted
         .len()
         .saturating_mul(percent)
@@ -622,6 +634,22 @@ pub(super) fn skip_chart(
         }
     }
     let percent = |part: u64, whole: u64| (whole > 0).then(|| part as f64 * 100.0 / whole as f64);
+    let mut rates: Vec<u32> = tallies
+        .iter()
+        .filter(|(slots, _)| *slots >= LEADER_SLOTS)
+        .filter_map(|(slots, skipped)| skipped.saturating_mul(10_000).checked_div(*slots))
+        .collect();
+    rates.sort_unstable();
+    let rate = |percent| at_percent(&rates, percent).map(|rate| f64::from(rate) / 100.0);
+    let per_leader = (rates.len() >= MIN_LEADERS)
+        .then(|| {
+            Some(Spread {
+                p05: rate(5)?,
+                p50: rate(50)?,
+                p95: rate(95)?,
+            })
+        })
+        .flatten();
     let mut ranked: Vec<LeaderSkips> = tallies
         .into_iter()
         .enumerate()
@@ -650,6 +678,7 @@ pub(super) fn skip_chart(
             slots,
             recent: percent(recent_skipped, recent_slots_held),
             previous,
+            per_leader,
             leaders: Vec::new(),
         },
         ranked,
@@ -1149,6 +1178,13 @@ mod tests {
         .unwrap();
         assert_eq!((chart.skipped, chart.slots), (400, 4_000));
         assert_eq!(chart.previous, Some(10.0));
+        let spread = chart.per_leader.unwrap();
+        assert_eq!((spread.p05, spread.p50, spread.p95), (0.0, 0.0, 100.0));
+        let ranks: Vec<u32> = (1..=100).collect();
+        assert_eq!(
+            [5, 50, 95].map(|percent| at_percent(&ranks, percent)),
+            [Some(6), Some(51), Some(96)]
+        );
         assert!(chart.shares.iter().all(|share| share.is_some()));
         assert_eq!(
             ranked,

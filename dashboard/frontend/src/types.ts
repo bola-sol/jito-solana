@@ -741,6 +741,8 @@ export interface SkipChart {
   recent: number | null;
   /** The previous epoch's percent. */
   previous: number | null;
+  /** Percent of each leader's settled slots skipped; null until enough leaders have them. */
+  per_leader: Spread | null;
   leaders: SkipLeader[];
 }
 
@@ -787,13 +789,6 @@ export interface ClusterCharts {
   skips: SkipChart | null;
   clients: ClientShare[];
   countries: StakeByCountry | null;
-}
-
-/** The root's epoch; null until enough leaders have settled slots. */
-export interface ClusterFigures {
-  epoch: number;
-  /** Percent of each leader's slots. */
-  skip_rate: Spread | null;
 }
 
 /** Quartiles of handoff gaps in milliseconds. */
@@ -1497,7 +1492,6 @@ export interface Published {
     cert_formation: CertFormation | null;
     handoff: HandoffSummary | null;
     handoff_now: HandoffNow | null;
-    cluster_figures: ClusterFigures | null;
     /** Null until a block of ours is rooted. */
     fee_payers: FeePayerSummary | null;
   };

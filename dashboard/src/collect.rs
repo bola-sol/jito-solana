@@ -52,7 +52,6 @@ mod block_life;
 mod cert_formation;
 mod certificates;
 mod cluster_charts;
-mod cluster_figures;
 mod earnings;
 mod fee_payers;
 mod finalization;
@@ -66,7 +65,6 @@ use self::{
     block_life::{BlockLifeSummary, BlockLives},
     cert_formation::{CertFormation, FinalizedPaths, FormationKey},
     certificates::{CertificateWalk, Contacts, GossipEntry, LastVotes},
-    cluster_figures::ClusterFigures,
     earnings::{EarningsWalk, EpochEarnings},
     fee_payers::{FeePayerSummary, FeePayers},
     finalization::{FinalizationShare, FinalizationTally},
@@ -83,8 +81,6 @@ pub use self::{
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
-/// An epoch's skip spread moves slowly, and each pass walks the epoch's slot history.
-const CLUSTER_FIGURES_EVERY: Duration = Duration::from_secs(30);
 /// Stakes and gossip versions move slowly; the schedule's leader conditions read them.
 const LEADER_TRAITS_EVERY: Duration = Duration::from_secs(10);
 
@@ -471,7 +467,6 @@ struct Debounces {
     cert_formation: Debounced<Option<CertFormation>>,
     handoff: Debounced<Option<HandoffSummary>>,
     handoff_now: Debounced<Option<HandoffNow>>,
-    cluster_figures: Debounced<Option<ClusterFigures>>,
     fee_payers: Debounced<Option<FeePayerSummary>>,
 }
 
@@ -528,7 +523,6 @@ pub struct Collector {
     /// False on a backup identity.
     voting: bool,
     last_slow_tick: Instant,
-    cluster_figures_at: Instant,
     leader_traits_at: Instant,
     /// Unix milliseconds the Cluster page's charts were last gathered.
     cluster_charts_made: u64,
@@ -643,7 +637,6 @@ impl Collector {
             // voting before then would flash the wrong status on startup.
             voting: false,
             last_slow_tick: now.checked_sub(SLOW_TICK).unwrap_or(now),
-            cluster_figures_at: now.checked_sub(CLUSTER_FIGURES_EVERY).unwrap_or(now),
             leader_traits_at: now.checked_sub(LEADER_TRAITS_EVERY).unwrap_or(now),
             cluster_charts_made: 0,
             caught_up_millis: None,
@@ -833,10 +826,6 @@ impl Collector {
             let votes = self.collect_peers(&working_bank, &peers);
             self.collect_health();
             self.collect_skip_rate(&root_bank);
-            if now.duration_since(self.cluster_figures_at) >= CLUSTER_FIGURES_EVERY {
-                self.cluster_figures_at = now;
-                self.collect_cluster_figures(&root_bank);
-            }
             if now.duration_since(self.leader_traits_at) >= LEADER_TRAITS_EVERY {
                 self.leader_traits_at = now;
                 self.collect_leader_traits(&working_bank, &peers);
@@ -2194,30 +2183,6 @@ impl Collector {
     }
 
     /// `None` means the schedule is not known yet, which is not an empty list.
-    /// The root's epoch, from its first slot; skips come from the root bank's slot history.
-    fn collect_cluster_figures(&mut self, root_bank: &Bank) {
-        let epoch = root_bank.epoch();
-        let Some(slot_history) = root_bank.get_slot_history() else {
-            return;
-        };
-        let epochs = self.epochs.read().unwrap();
-        let Some(info) = epochs
-            .iter()
-            .find(|info| info.epoch == epoch && !info.turns.is_empty())
-        else {
-            return;
-        };
-        let figures =
-            cluster_figures::figures(info, root_bank.slot(), |slot| slot_history.check(slot));
-        drop(epochs);
-        self.debounces.cluster_figures.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "cluster_figures",
-            Some(figures),
-        );
-    }
-
     fn leader_slots_in_epoch(&self, bank: &Bank, epoch: Epoch) -> Option<Vec<Slot>> {
         let epoch_schedule = bank.epoch_schedule();
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);

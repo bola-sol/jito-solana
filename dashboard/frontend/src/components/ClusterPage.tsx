@@ -21,6 +21,7 @@ import {
   niceTop,
   percentText,
   skipBaseline,
+  stallJudged,
   ticks,
   txNote,
   type TxView,
@@ -44,7 +45,6 @@ const GUTTER = 38;
 const TOP = 6;
 
 /** A stall is judged only on a feed this close to live. */
-const STALL_FEED_LAG_MS = 5_000;
 
 const clock = (millis: number) =>
   new Date(millis).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -168,7 +168,7 @@ function useClusterCharts(): ClusterCharts | null {
   return charts;
 }
 
-/** Seconds since the finalized slot last moved, judged only on a live, connected feed. */
+/** Seconds since the finalized slot last moved, judged only on a live feed from a validator in step. */
 function useFinalizedStall(): number | null {
   const store = useStore();
   const finalized = store.get("summary", "finalized_slot");
@@ -177,10 +177,12 @@ function useFinalizedStall(): number | null {
     setMovedAt(Date.now());
   }, [finalized]);
   const now = useNow(1_000);
-  const lag = store.getFeedLag();
-  if (finalized === undefined || store.getConnection() !== "open" || lag === null || lag > STALL_FEED_LAG_MS) {
-    return null;
-  }
+  const judged = stallJudged(
+    store.getConnection() === "open",
+    store.getFeedLag(),
+    store.get("summary", "behind_cluster"),
+  );
+  if (finalized === undefined || !judged) return null;
   return Math.max(0, (now - movedAt) / 1000);
 }
 

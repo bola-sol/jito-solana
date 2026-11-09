@@ -338,6 +338,35 @@ impl ProducedStore {
         self.fees = self.fees.split_off(&floor);
     }
 
+    /// Drops the blocks above `after` up to `root` that did not root, and recounts their turns.
+    /// Returns whether any went.
+    pub fn drop_unrooted(
+        &mut self,
+        after: Slot,
+        root: Slot,
+        is_root: impl Fn(Slot) -> bool,
+    ) -> bool {
+        if after >= root {
+            return false;
+        }
+        let gone: Vec<Slot> = self
+            .blocks
+            .range(after.saturating_add(1)..=root)
+            .map(|(slot, _)| *slot)
+            .filter(|slot| !is_root(*slot))
+            .collect();
+        for slot in &gone {
+            self.blocks.remove(slot);
+            self.fees.remove(slot);
+            if let Some((_, turn)) = self.turns.range_mut(..=*slot).next_back()
+                && turn.last >= *slot
+            {
+                turn.produced = self.blocks.range(turn.first..=turn.last).count() as u64;
+            }
+        }
+        !gone.is_empty()
+    }
+
     pub fn fill_bundles(&mut self, landed: impl Fn(Slot) -> Option<Bundles>) -> bool {
         let mut changed = false;
         for block in self.blocks.values_mut().rev().take(BUNDLE_REACH) {
@@ -848,6 +877,30 @@ mod tests {
             0,
             "the first epoch has none before it"
         );
+    }
+
+    #[test]
+    fn test_a_block_that_did_not_root_is_dropped_and_its_turn_recounted() {
+        let mut store = ProducedStore::default();
+        for slot in 100..104 {
+            assert!(store.insert(block(slot)));
+        }
+        store.set_fees(BlockFees {
+            slot: 102,
+            payer_count: 0,
+            payers: Vec::new(),
+            transactions: Vec::new(),
+        });
+        let mut ended = turn(100, 103);
+        ended.produced = store.produced_in(100, 103);
+        store.add_turn(ended);
+
+        assert!(!store.drop_unrooted(0, 101, |_| true));
+        assert!(store.drop_unrooted(101, 103, |slot| slot != 102));
+        assert!(!store.contains(102));
+        assert_eq!(store.fees(102), None);
+        assert_eq!(store.recent_turns(1)[0].produced, 3);
+        assert!(!store.drop_unrooted(103, 103, |_| false));
     }
 
     #[test]

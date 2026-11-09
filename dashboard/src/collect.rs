@@ -568,6 +568,8 @@ pub struct Collector {
     overview_unsent: bool,
     /// As `overview_unsent`, for the produced list.
     produced_unsent: bool,
+    /// The root the produced list was last checked against.
+    produced_settled_to: Slot,
     snapshots: SnapshotTracker,
     snapshots_read_at: Instant,
 }
@@ -670,6 +672,7 @@ impl Collector {
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
             overview_unsent: false,
             produced_unsent: false,
+            produced_settled_to: 0,
             snapshots: SnapshotTracker::default(),
             snapshots_read_at: now.checked_sub(SNAPSHOT_READ).unwrap_or(now),
         }
@@ -1679,6 +1682,13 @@ impl Collector {
         }
         self.fee_payers
             .settle(root, root_bank.epoch(), |slot| blockstore.is_root(slot));
+        // A block of ours the cluster skipped is not a produced block.
+        let dropped = self.replies.produced.write().unwrap().drop_unrooted(
+            self.produced_settled_to,
+            root,
+            |slot| blockstore.is_root(slot),
+        );
+        self.produced_settled_to = root;
         let retimed = self.retime(&became_full, &mut changed);
         // The next slot's first shred usually arrives before this block fills.
         for slot in &became_full {
@@ -1717,7 +1727,12 @@ impl Collector {
             .fill_leading(|slot| tap.leader_timing(slot));
         let read = self.fill_versions();
         let timed = self.fill_execution();
-        if captured || filled || led || read || timed || retimed {
+        if dropped {
+            // No message takes a block back, so the lists go whole.
+            self.produced_unsent = true;
+            self.publish_turns();
+        }
+        if captured || filled || led || read || timed || retimed || dropped {
             self.publish_produced();
         }
     }

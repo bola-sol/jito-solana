@@ -37,7 +37,7 @@ const MIN_COUNTRY_VALIDATORS: usize = 5;
 struct Minute {
     start_millis: u64,
     blocks: u32,
-    /// Per vote account: blocks whose certificate carried it, and blocks it was staked in.
+    /// Per vote account: blocks whose certificate carried it, and blocks it held a rank in.
     by_vote: HashMap<Pubkey, (u32, u32)>,
 }
 
@@ -50,7 +50,7 @@ pub(super) struct FinalizationTally {
 pub struct FinalizationShare {
     pub blocks: u32,
     pub validators: usize,
-    /// `None` when our vote account was not staked in the window.
+    /// `None` when our vote account held no rank in the window.
     pub ours: Option<f64>,
     pub median: Option<f64>,
     /// Share of the other validators ours is above.
@@ -203,10 +203,14 @@ impl Collector {
         if !bank.is_alpenglow() {
             return;
         }
+        // Only an account with a rank can be in a certificate.
+        let Some(ranks) = bank.get_rank_map(bank.slot()) else {
+            return;
+        };
         let votes: Vec<(Pubkey, Slot)> = bank
             .vote_accounts()
             .iter()
-            .filter(|(_, (stake, _))| *stake > 0)
+            .filter(|(vote, _)| ranks.get_rank_for_vote_pubkey(vote).is_some())
             .filter_map(|(vote, (_, account))| {
                 Some((*vote, account.vote_state_view().last_voted_slot()?))
             })

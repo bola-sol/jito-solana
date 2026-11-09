@@ -98,7 +98,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | `get_balance` of the eight tip accounts | Tips per block, as the difference from the parent (jito only) |
 | `last_blockhash` | The blockhash of our blocks on Slot details |
 | `get_program_accounts_modified_since_parent` for the config program | Validator names and icons that the block changed |
-| `vote_accounts`, each staked account's `last_voted_slot` (alpenglow only) | If the block's finalization certificate carried each validator's vote: a last vote within three slots of the newest. The Gossip page's finalization share and the peers table's Finalization column. |
+| `vote_accounts`, each ranked account's `last_voted_slot` (alpenglow only) | If the block's finalization certificate carried each validator's vote: a last vote within three slots of the newest. The Gossip page's finalization share and the peers table's Finalization column. |
 | `status_cache`, read with `get_status` by each transaction's message hash and recent blockhash against the bank's `ancestors`; `get_signature_status_slot` for those not found, which are durable nonce transactions | Whether each non-vote transaction failed, for Slot details' fee payers fold and each of our blocks' top fee tables: every transaction in our blocks, and in other leaders' blocks only those of payers seen in ours this epoch. The bank is held until the blockstore has the whole block, and a block counts once its slot is rooted. |
 | `epoch`, `feature_set` | The epoch a block's fee payers count in. The compute budget rules that turn a transaction's instructions into its priority fee; a v1 message states the fee itself. |
 

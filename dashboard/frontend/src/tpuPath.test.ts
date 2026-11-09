@@ -316,6 +316,16 @@ describe("executedSection", () => {
     expect(keys(section.detail)).toContain("exec_blockhash_old");
   });
 
+  it("keeps no room in the block out of the bar, being counted in the retries already", () => {
+    const section = executedSection(
+      stage({ attempted: 100, processed: 60, succeeded: 55, retryable: 30, cost_throttled: 25 }),
+      null,
+    );
+    const drawn = section.through.count + section.losses.reduce((sum, loss) => sum + loss.count, 0);
+    expect(drawn).toBe(100);
+    expect(section.detail.find((loss) => loss.key === "exec_cost_throttled")?.share).toBe(0.25);
+  });
+
   it("draws a load reason against the loads that failed, not everything attempted", () => {
     const section = executedSection(
       stage({

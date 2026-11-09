@@ -136,7 +136,12 @@ fn read_bonus(
     bank: &Bank,
     slot: Slot,
     inflation: &Inflation,
+    held_from: Slot,
 ) -> BlockRead {
+    // Under the ledger's first slot a block that is no root may only have been cleaned up.
+    if slot < held_from {
+        return BlockRead::Unread;
+    }
     let block = certs::read_block(blockstore, slot, bank.slot());
     let footer = match block {
         certs::Block::Pending => return BlockRead::Pending,
@@ -212,11 +217,13 @@ impl Collector {
         let root = bank.slot();
         let walk = &mut self.earnings;
         let mut read = 0usize;
+        let mut held_from = None;
         while let Some(slot) = walk.leader_slots.get(walk.next).copied() {
             if slot > root || read == BLOCKS_PER_TICK {
                 break;
             }
-            match read_bonus(&self.ctx.blockstore, bank, slot, &inflation) {
+            let held_from = *held_from.get_or_insert_with(|| self.ctx.blockstore.lowest_slot());
+            match read_bonus(&self.ctx.blockstore, bank, slot, &inflation, held_from) {
                 BlockRead::Pending => break,
                 BlockRead::Unread => walk.unread = walk.unread.saturating_add(1),
                 BlockRead::Counted { got, full } => {
@@ -309,6 +316,17 @@ mod tests {
             &agave_feature_set::alpenglow::id(),
         );
         assert_eq!(address, VOTE_REWARD_ACCOUNT);
+    }
+
+    #[test]
+    fn test_a_block_under_the_ledgers_first_slot_is_unread_not_skipped() {
+        let fixture = crate::fixture::fixture();
+        let bank = fixture.advance_to(20);
+        let inflation = read_inflation(&bytes(MAINNET), 1079).unwrap();
+        let read =
+            |held_from| read_bonus(&fixture.ctx.blockstore, &bank, 12, &inflation, held_from);
+        assert!(matches!(read(0), BlockRead::Counted { got: 0, .. }));
+        assert!(matches!(read(13), BlockRead::Unread));
     }
 
     #[test]

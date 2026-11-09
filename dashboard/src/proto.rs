@@ -10,7 +10,10 @@ use {
     std::{
         collections::BTreeMap,
         io::Write,
-        sync::{Arc, Mutex, OnceLock},
+        sync::{
+            Arc, Mutex, OnceLock,
+            atomic::{AtomicU64, Ordering},
+        },
         time::{Duration, Instant},
     },
     tokio::sync::broadcast,
@@ -265,6 +268,8 @@ pub struct Publisher {
     retained: Mutex<BTreeMap<(&'static str, &'static str), Message>>,
     sender: broadcast::Sender<Message>,
     traffic: Mutex<Traffic>,
+    /// Subscriptions ever made.
+    joined: AtomicU64,
 }
 
 impl Default for Publisher {
@@ -280,6 +285,7 @@ impl Publisher {
             retained: Mutex::new(BTreeMap::new()),
             sender,
             traffic: Mutex::new(Traffic::new()),
+            joined: AtomicU64::new(0),
         }
     }
 
@@ -360,7 +366,12 @@ impl Publisher {
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Message> {
+        self.joined.fetch_add(1, Ordering::Relaxed);
         self.sender.subscribe()
+    }
+
+    pub fn joined(&self) -> u64 {
+        self.joined.load(Ordering::Relaxed)
     }
 
     pub fn subscriber_count(&self) -> usize {

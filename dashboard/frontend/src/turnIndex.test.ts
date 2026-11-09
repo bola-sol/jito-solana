@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NO_LEADER, type LeaderRef } from "./schedule";
 import { HAS_CLOCK, HAS_SHREDS, type SlotRange, type WireRow } from "./slotHistory";
 import { NO_RANGE } from "./scheduleConditions";
-import { FoundTurns, liveFloor, TurnIndex, turnNumberOf, type SearchAsk } from "./turnIndex";
+import { FoundTurns, LIVE_KEPT, liveFloor, TurnIndex, turnNumberOf, type SearchAsk } from "./turnIndex";
 import type { SlotEntry } from "./types";
 
 function entry(slot: number, mine = false, level: SlotEntry["level"] = "finalized"): SlotEntry {
@@ -89,6 +89,15 @@ describe("TurnIndex", () => {
     held.mergeLive(run(204, 211));
     expect(held.entry(200)).toBeDefined();
     expect(held.numbers()).toEqual([52, 51, 50]);
+  });
+
+  it("starts again from the window once it holds hours of live slots", () => {
+    const held = index();
+    held.mergeLive(run(200, 200 + LIVE_KEPT));
+    expect(held.entry(200)).toBeDefined();
+    held.mergeLive(run(200 + LIVE_KEPT + 1, 200 + LIVE_KEPT + 8));
+    expect(held.entry(200)).toBeUndefined();
+    expect(held.entry(200 + LIVE_KEPT + 8)).toBeDefined();
   });
 
   it("gives a turn a new object only when one of its slots changes", () => {

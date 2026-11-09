@@ -51,7 +51,7 @@ use {
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::{ReadableAccount, WINCODE_CONFIG},
     solana_accounts_db::{
@@ -149,6 +149,7 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_utils,
         transaction_execution::TransactionStatusSender,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -334,6 +335,9 @@ pub struct ValidatorLogConfig {
     pub logrotate_flag: Arc<AtomicBool>,
 }
 
+/// Gossip and bank forks, as sent before the supermajority wait.
+pub type GossipReady = (Arc<ClusterInfo>, Arc<RwLock<BankForks>>);
+
 pub struct ValidatorConfig {
     /// Log messages go to `stderr` if `None`
     pub log_config: Option<ValidatorLogConfig>,
@@ -418,6 +422,9 @@ pub struct ValidatorConfig {
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
+    /// Handed gossip and bank forks before the supermajority wait, for a
+    /// reader that wants the wait's view of the cluster.
+    pub gossip_ready_sender: Option<Sender<GossipReady>>,
     // jito configuration
     pub relayer_config: Arc<ArcSwap<RelayerConfig>>,
     pub block_engine_config: Arc<ArcSwap<BlockEngineConfig>>,
@@ -516,6 +523,7 @@ impl ValidatorConfig {
             delay_leader_block_for_pending_fork: true,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
+            gossip_ready_sender: None,
             relayer_config: Arc::new(ArcSwap::from_pointee(RelayerConfig::default())),
             block_engine_config: Arc::new(ArcSwap::from_pointee(BlockEngineConfig::default())),
             shred_receiver_addresses: Arc::new(
@@ -763,6 +771,9 @@ pub struct Validator {
     /// Keep the event directory alive even when no admin RPC metadata or event
     /// producers retain a handle yet.
     _event_system: EventSystem,
+    pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    pub leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     geyser_plugin_service: Option<GeyserPluginService>,
     /// Held for the lifetime of the validator so the dispatch thread keeps
     /// running. `None` when no loaded plugin opted into contact info
@@ -1635,6 +1646,10 @@ impl Validator {
             )
         };
 
+        if let Some(sender) = &config.gossip_ready_sender {
+            let _ = sender.try_send((cluster_info.clone(), bank_forks.clone()));
+        }
+
         let waited_for_supermajority = wait_for_supermajority(
             config,
             Some(&mut process_blockstore),
@@ -1785,7 +1800,7 @@ impl Validator {
             config.vote_history_storage.clone(),
             &leader_schedule_cache,
             exit.clone(),
-            block_commitment_cache,
+            block_commitment_cache.clone(),
             config.turbine_mode.clone(),
             transaction_status_sender.clone(),
             entry_notification_sender.clone(),
@@ -1837,7 +1852,7 @@ impl Validator {
                 votor_server_sockets,
                 votor_client_socket,
                 votor_peer_overrides: config.votor_peer_overrides.clone(),
-                highest_finalized,
+                highest_finalized: highest_finalized.clone(),
             },
             reward_aggregates_sender,
             shredstream_receiver_address.clone(),
@@ -2017,6 +2032,9 @@ impl Validator {
             bank_forks,
             blockstore,
             _event_system: event_system,
+            block_commitment_cache,
+            leader_schedule_cache,
+            highest_finalized,
             geyser_plugin_service,
             _contact_info_notifier: contact_info_notifier,
             blockstore_metric_report_service,

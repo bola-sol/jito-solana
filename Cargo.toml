@@ -29,6 +29,7 @@ members = [
     "core",
     "cost-model",
     "cpu-utils",
+    "dashboard",
     "download-utils",
     "entry",
     "faucet",
@@ -217,6 +218,7 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.5.0-beta.0", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.5.0-beta.0", features = ["agave-unstable-api"] }
 agave-cpu-utils = { path = "cpu-utils", version = "=4.5.0-beta.0", features = ["agave-unstable-api"] }
+agave-dashboard = { path = "dashboard", version = "=4.5.0-beta.0", features = ["agave-unstable-api"] }
 agave-event-system = "0.3.1"
 agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=4.5.0-beta.0", features = ["agave-unstable-api"] }

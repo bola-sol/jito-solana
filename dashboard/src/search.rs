@@ -1003,7 +1003,12 @@ pub fn future(
     };
     let mut seen = BTreeSet::new();
     let mut text = String::new();
-    let mut turn = params.before.div_ceil(SLOTS_PER_TURN);
+    // Nothing to come lies below the held epochs, and the request names where the walk starts.
+    let first = epochs.iter().map(|epoch| epoch.start_slot).min();
+    let mut turn = params
+        .before
+        .max(first.unwrap_or(0))
+        .div_ceil(SLOTS_PER_TURN);
     loop {
         let start = turn.saturating_mul(SLOTS_PER_TURN);
         if start > last {
@@ -2346,6 +2351,13 @@ mod tests {
         assert_eq!(later.rest, 492);
         assert!(later.turns[0] > page.turns[3], "carries on from the page");
         assert_eq!(later.turns[0].saturating_mul(SLOTS_PER_TURN), next);
+    }
+
+    #[test]
+    fn test_turns_to_come_start_no_lower_than_the_held_epochs() {
+        let from_nought = future_of(Vec::new(), 0);
+        assert_eq!(from_nought.turns[0], START / SLOTS_PER_TURN);
+        assert_eq!(from_nought.rest, future_of(Vec::new(), START).rest);
     }
 
     #[test]

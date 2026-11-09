@@ -172,7 +172,7 @@ describe("slots", () => {
     store.apply(envelope("slot", "update", slot(5, "incomplete")));
     store.apply(envelope("slot", "update", slot(5, "finalized")));
     expect(store.getSlots()).toHaveLength(1);
-    expect(store.getSlot(5)?.level).toBe("finalized");
+    expect(store.getSlots()[0]?.level).toBe("finalized");
   });
 
   it("returns slots in order however they arrived", () => {

@@ -306,15 +306,6 @@ struct Heard {
     country: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct UpcomingSlot {
-    pub slot: Slot,
-    pub leader: String,
-    pub leader_name: Option<String>,
-    pub leader_icon: Option<String>,
-    pub mine: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EpochInfo {
     pub epoch: Epoch,
@@ -468,7 +459,6 @@ struct Debounces {
     epoch: Debounced<EpochInfo>,
     consensus: Debounced<Consensus>,
     epoch_remaining_nanos: Debounced<u64>,
-    upcoming: Debounced<Vec<UpcomingSlot>>,
     peers: Debounced<Vec<Peer>>,
     snapshots: Debounced<Option<Snapshots>>,
     bls_key: Debounced<Option<bool>>,
@@ -879,7 +869,7 @@ impl Collector {
             {
                 *held = leaders;
             }
-            let ahead = self.collect_upcoming(&root_bank, highest_slot);
+            let ahead = self.upcoming_leaders(&root_bank, highest_slot);
             self.collect_peer_table(&working_bank, ahead, &peers);
             self.collect_gossip_peers(&working_bank, root_bank.slot(), &peers, timestamp());
             self.report_tip_residual();
@@ -1375,36 +1365,13 @@ impl Collector {
         self.publish_turns();
     }
 
-    fn collect_upcoming(&mut self, root_bank: &Bank, highest_slot: Slot) -> HashSet<Pubkey> {
-        let me = self.ctx.identity();
-        let first = highest_slot.saturating_add(1);
-        let last = highest_slot.saturating_add(UPCOMING_SLOTS);
-
-        let mut upcoming = Vec::new();
-        let mut leaders = HashSet::new();
-        for slot in first..=last {
-            let Some(leader) = self
-                .ctx
-                .leader_schedule_cache
-                .slot_leader_at(slot, Some(root_bank))
-            else {
-                break;
-            };
-            let (leader_name, leader_icon) = self.peer_display(&leader.id);
-            leaders.insert(leader.id);
-            upcoming.push(UpcomingSlot {
-                slot,
-                leader: leader.id.to_string(),
-                leader_name,
-                leader_icon,
-                mine: leader.id == me,
-            });
-        }
-
-        self.debounces
-            .upcoming
-            .publish(&self.publisher, TOPIC_SLOT, "upcoming", upcoming);
-        leaders
+    /// The leaders of the next slots, as far as the schedule is known.
+    fn upcoming_leaders(&self, root_bank: &Bank, highest_slot: Slot) -> HashSet<Pubkey> {
+        let cache = &self.ctx.leader_schedule_cache;
+        (highest_slot.saturating_add(1)..=highest_slot.saturating_add(UPCOMING_SLOTS))
+            .map_while(|slot| cache.slot_leader_at(slot, Some(root_bank)))
+            .map(|leader| leader.id)
+            .collect()
     }
 
     /// The client, country and stake of every staked node and of every held epoch's leaders, which
@@ -3855,54 +3822,14 @@ mod tests {
         );
     }
 
-    fn upcoming_slots(harness: &crate::fixture::Fixture) -> Vec<u64> {
-        let published = harness
-            .published_key("slot", "upcoming")
-            .expect("upcoming is published");
-        let envelope: serde_json::Value = serde_json::from_str(&published).unwrap();
-        envelope["value"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|entry| entry["slot"].as_u64().unwrap())
-            .collect()
-    }
-
     #[test]
-    fn test_upcoming_starts_past_the_tip_and_runs_contiguously() {
-        let harness = fixture();
-        harness.advance_to(64);
-        let mut collector = harness.collector();
-        let root_bank = harness.bank_forks.read().unwrap().root_bank();
-
-        collector.collect_upcoming(&root_bank, 64);
-        let slots = upcoming_slots(&harness);
-
-        assert!(!slots.is_empty(), "the schedule for this epoch is known");
-        assert_eq!(slots[0], 65, "starts past the slot being worked on");
-        let contiguous: Vec<u64> = (0..slots.len() as u64)
-            .map(|index| index.saturating_add(65))
-            .collect();
-        assert_eq!(slots, contiguous, "no gaps");
-        assert!(
-            slots.len() as u64 <= UPCOMING_SLOTS,
-            "bounded at {UPCOMING_SLOTS}"
-        );
-    }
-
-    #[test]
-    fn test_upcoming_marks_our_own_slots() {
+    fn test_upcoming_leaders_hold_the_only_staked_leader() {
         let harness = fixture();
         harness.advance_to(8);
-        let mut collector = harness.collector();
+        let collector = harness.collector();
         let root_bank = harness.bank_forks.read().unwrap().root_bank();
-
-        collector.collect_upcoming(&root_bank, 8);
-        let published = harness.published_key("slot", "upcoming").unwrap();
-        assert!(
-            published.contains(r#""mine":true"#),
-            "the only staked leader should be marked as ours"
-        );
+        let leaders = collector.upcoming_leaders(&root_bank, 8);
+        assert_eq!(leaders, HashSet::from([harness.identity]));
     }
 
     #[test]

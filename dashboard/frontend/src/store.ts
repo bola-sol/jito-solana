@@ -335,10 +335,6 @@ export class Store {
     return this.sorted;
   }
 
-  getSlot(slot: number): SlotEntry | undefined {
-    return this.slots.get(slot);
-  }
-
   getTps(): TpsSample[] {
     return this.tps;
   }

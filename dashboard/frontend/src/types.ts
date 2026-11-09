@@ -195,16 +195,6 @@ export interface GossipPeers {
   last_vote?: (number | null)[];
 }
 
-/** Published on the slow tier; filter against the completed slot before rendering. */
-export interface UpcomingSlot {
-  slot: number;
-  leader: string;
-  leader_name: string | null;
-  leader_icon: string | null;
-  mine: boolean;
-}
-
-/** Absent without a tip payment program; `commission_bps` absent without the flag. */
 /** The schedule's matches summed up by the validator; fees in lamports, tips before jito's cut. */
 export interface ScanFigures {
   slots: number;
@@ -264,6 +254,7 @@ export interface FutureReply {
   named: string | null;
 }
 
+/** Absent without a tip payment program; `commission_bps` absent without the flag. */
 export interface TipRates {
   jito_cut_bps: number;
   commission_bps: number | null;
@@ -658,7 +649,6 @@ export interface CpuUse {
   steal: number;
 }
 
-/** How often blocks' finalization certificates carried each validator's vote, over ten minutes. */
 /** Milliseconds in each stage of a block's path on this node; null where it was not timed. */
 export interface BlockLifeStages {
   /** From the first shred to the leader closing the block. */
@@ -912,6 +902,7 @@ export interface CertFormation {
   second_round_slots: number | null;
 }
 
+/** How often blocks' finalization certificates carried each validator's vote, over ten minutes. */
 export interface FinalizationShare {
   blocks: number;
   validators: number;
@@ -1121,7 +1112,6 @@ export interface FiguresPage {
   next: number | null;
 }
 
-/** Everything drawn for a span of our slots once opened. */
 /** In lamports. */
 export interface TopFeePayer {
   payer: string;
@@ -1147,6 +1137,7 @@ export interface BlockFees {
   transactions: TopFeeTransaction[];
 }
 
+/** Everything drawn for a span of our slots once opened. */
 export interface ProducedDetail {
   blocks: ProducedBlock[];
   turns: LeaderTurn[];

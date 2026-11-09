@@ -80,11 +80,16 @@ the domain in the site block is the name to allow, and nothing else is needed.
   names the leaders that skipped most this epoch. All of it is public on chain
   or in gossip.
 - The machine card shows what is not on chain: the host's memory and the
-  validator's share of it, each disk's device name and fill, the absolute paths
-  of the ledger, accounts and snapshot directories (cut short on the card, in
-  full on hover), the network interface's driver and model and the kernel
-  version where XDP is on, the validator's thread names and the cores each is
-  pinned to, and when a snapshot is being written.
+  validator's share of it, its core count, load, CPU use, governor and swap,
+  each disk's device name and fill, the absolute paths of the ledger, accounts
+  and snapshot directories (cut short on the card, in full on hover) and the
+  names of leftover directories beside them, the XDP interface's driver and
+  model and the kernel version where XDP is on, the validator's thread names
+  and the cores each is pinned to, and when a snapshot is being written.
+- It lists by name every network interface but loopback that is up, routed or
+  carrying traffic, with its kind, state, MTU, route count, traffic, the bond
+  or bridge it belongs to and, for a tunnel, the interface carrying it. A VPN
+  or private link is therefore visible by name.
 
 ### What it costs the validator
 

@@ -26,6 +26,14 @@ export interface ClusterVerdict {
 }
 
 export const STALL_SECONDS = 10;
+export const STALL_FEED_LAG_MS = 5_000;
+/** Slots behind the cluster past which this validator's finalized slot says nothing of the cluster. */
+export const STALL_IN_STEP_SLOTS = 4;
+
+/** Whether a finalized slot standing still is the cluster's doing: it is this validator's own root. */
+export function stallJudged(open: boolean, feedLagMs: number | null, behind: number | null | undefined): boolean {
+  return open && feedLagMs !== null && feedLagMs <= STALL_FEED_LAG_MS && (behind ?? 0) <= STALL_IN_STEP_SLOTS;
+}
 export const SLOW_RATIO = 1.25;
 export const SKIP_RATIO = 3;
 export const SKIP_FLOOR = 2;

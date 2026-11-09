@@ -11,6 +11,7 @@ import {
   linePath,
   niceTop,
   skipBaseline,
+  stallJudged,
   ticks,
   txNote,
   type ClusterSignals,
@@ -40,6 +41,15 @@ describe("clusterVerdict", () => {
 
   it("waits ten seconds before calling a stall", () => {
     expect(clusterVerdict({ ...calm, stalledSeconds: 9 }).tone).toBe("good");
+  });
+
+  it("judges a stall only on a live feed from a validator in step with the cluster", () => {
+    expect(stallJudged(true, 200, 0)).toBe(true);
+    expect(stallJudged(true, 200, null)).toBe(true);
+    expect(stallJudged(true, 200, 40)).toBe(false);
+    expect(stallJudged(true, 6_000, 0)).toBe(false);
+    expect(stallJudged(true, null, 0)).toBe(false);
+    expect(stallJudged(false, 200, 0)).toBe(false);
   });
 
   it("flags slow slots at a quarter over the baseline", () => {

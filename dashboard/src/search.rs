@@ -690,7 +690,7 @@ fn range_side(params: &SearchParams, history: &SlotHistory, start: Slot) -> Side
     if params.from_millis.is_none() && params.to_millis.is_none() {
         return Side::Within;
     }
-    // A turn with no clock is taken as inside; its neighbours place the scan.
+    // A turn with nothing timed in or near it is taken as inside.
     match began_millis(history, start) {
         Some(began) if params.from_millis.is_some_and(|from| began < from) => Side::Below,
         Some(began) if params.to_millis.is_some_and(|to| began > to) => Side::Above,
@@ -698,14 +698,18 @@ fn range_side(params: &SearchParams, history: &SlotHistory, start: Slot) -> Side
     }
 }
 
-/// When the turn's first held slot with a clock began.
+/// When the turn's first held slot with a clock began; for a turn with none, when the last slot
+/// timed before it did.
 fn began_millis(history: &SlotHistory, start: Slot) -> Option<u64> {
-    (start..start.saturating_add(SLOTS_PER_TURN)).find_map(|slot| {
+    let clock = |slot: Slot| {
         history
             .get(slot)
             .filter(|row| row.flags & HAS_CLOCK != 0)
             .map(|row| row.time_millis)
-    })
+    };
+    (start..start.saturating_add(SLOTS_PER_TURN))
+        .find_map(clock)
+        .or_else(|| (1..=FULL_REACH).find_map(|back| clock(start.checked_sub(back)?)))
 }
 
 /// Holds the history's read lock a thousand turns at a time, so the collector's writes wait no
@@ -1991,6 +1995,32 @@ mod tests {
             },
         );
         assert_eq!(starts(&by_time), vec![START + 8, START + 4]);
+    }
+
+    #[test]
+    fn test_a_skipped_turn_with_no_clock_is_placed_by_the_slot_timed_before_it() {
+        let mut held = SlotHistory::new(4_096);
+        for slot in START..=START + 15 {
+            if (START + 8..START + 12).contains(&slot) {
+                held.record_test_row(slot, |row| {
+                    row.level = SlotLevel::Skipped as u8;
+                    row.flags = 0;
+                });
+            } else {
+                held.record_time(slot, slot);
+            }
+        }
+        let reply = search(
+            &RwLock::new(held),
+            &RwLock::default(),
+            &RwLock::default(),
+            &[epoch(&["a"])],
+            &SearchParams {
+                to_millis: Some(START + 5),
+                ..params("", false, START + 16, None)
+            },
+        );
+        assert_eq!(starts(&reply), vec![START + 4, START]);
     }
 
     #[test]

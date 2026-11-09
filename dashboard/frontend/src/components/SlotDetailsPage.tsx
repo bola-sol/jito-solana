@@ -939,7 +939,7 @@ function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
           ))}
         </div>
         <span className="sx-strip-right">
-          <span className={view.lost > 0 ? "tone-warn" : ""}>
+          <span className={dropped > 0 ? "tone-warn" : ""}>
             {count(dropped)} dropped, {count(held)} held back
           </span>
           <button
@@ -952,25 +952,25 @@ function BlockScheduler({ waterfall }: { waterfall: SlotWaterfall }) {
           </button>
         </span>
       </div>
-      {breakdown && <Breakdown view={view} />}
+      {breakdown && <Breakdown view={view} dropped={dropped} held={held} />}
     </div>
   );
 }
 
-function Breakdown({ view }: { view: SchedulerView }) {
+function Breakdown({ view, dropped, held }: { view: SchedulerView; dropped: number; held: number }) {
   return (
     <div className="sx-drawer">
       <div className="sx-verdict">
-        <i className={`sx-dot ${view.lost > 0 ? "is-lossy" : "is-clean"}`} aria-hidden="true" />
+        <i className={`sx-dot ${dropped > 0 ? "is-lossy" : "is-clean"}`} aria-hidden="true" />
         {view.worst === null ? (
           <span className="sx-verdict-text">
             Nothing was lost in this slot. All {count(view.counters)} counters at nought.
           </span>
         ) : (
           <span className="sx-verdict-text">
-            {count(view.lost)} transactions lost.{" "}
+            {count(dropped)} dropped, {count(held)} held back.{" "}
             <span className="sx-verdict-dim">
-              Worst counter: {view.worst.label} ({count(view.worst.count)}),{" "}
+              Largest counter: {view.worst.label} ({count(view.worst.count)}),{" "}
               {percent(view.worst.count / view.lost, 0)} of the total.
             </span>
           </span>

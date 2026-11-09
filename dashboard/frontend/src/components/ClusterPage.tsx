@@ -450,8 +450,6 @@ const LEADER_HEAD = 20;
 const leaderShare = (value: number) => (value === 0 ? "0" : value.toFixed(1));
 
 function SkipCard({ skips, through, fill }: { skips: SkipChart; through: number | null; fill?: boolean }) {
-  const store = useStore();
-  const figures = store.get("summary", "cluster_figures");
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box) ?? 360;
   const plot = Math.max(120, width - GUTTER);
@@ -471,7 +469,7 @@ function SkipCard({ skips, through, fill }: { skips: SkipChart; through: number 
   const y = (value: number) => height - (Math.min(value, top) / top) * height;
   const at =
     hover === null ? null : skips.from_millis + ((hover + 0.5) / bins) * (skips.to_millis - skips.from_millis);
-  const spread = figures?.skip_rate ?? null;
+  const spread = skips.per_leader ?? null;
   const hovered = hover === null ? null : (skips.shares[hover] ?? null);
   return (
     <section className="card cl-card cl-skip-card">

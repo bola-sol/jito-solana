@@ -380,28 +380,33 @@ function executedDetail(rows: WaterfallRow[]): { detail: PathLoss[]; zeros: numb
     explain:
       "One reason a transaction could not be loaded, as a share of those that failed to load.",
   })).filter((reason) => reason.count > 0);
-  // Counted inside the retries, so a reason behind that row and not a
-  // segment beside it.
-  const retried = pick(rows, "exec_retryable");
+  // Both are counted inside the segments already, so reasons behind them and not segments beside.
   const expired = pick(rows, "exec_expired_bank");
-  const zeros = LOAD_REASONS.length - loadReasons.length + (expired > 0 ? 0 : 1);
-  if (expired === 0) return { detail: loadReasons, zeros };
-  return {
-    detail: [
-      {
-        key: "exec_expired_bank",
-        label: "retried because the bank had gone",
-        count: expired,
-        share: shareOf(retried, expired),
-        warn: false,
-        explain:
-          "Of those sent back to retry, the ones handed back before running because " +
-          "their slot had ended.",
-      },
-      ...loadReasons,
-    ],
-    zeros,
-  };
+  const throttled = pick(rows, "exec_cost_throttled");
+  const counted: PathLoss[] = [
+    {
+      key: "exec_expired_bank",
+      label: "retried because the bank had gone",
+      count: expired,
+      share: shareOf(pick(rows, "exec_retryable"), expired),
+      warn: false,
+      explain:
+        "Of those sent back to retry, the ones handed back before running because " +
+        "their slot had ended.",
+    },
+    {
+      key: "exec_cost_throttled",
+      label: "no room in the block",
+      count: throttled,
+      share: shareOf(pick(rows, "exec_attempted"), throttled),
+      warn: false,
+      explain:
+        "Of those taken up, the ones the cost model left out for want of room, each also counted " +
+        "as sent back to retry or failed to load.",
+    },
+  ].filter((reason) => reason.count > 0);
+  const zeros = LOAD_REASONS.length - loadReasons.length + 2 - counted.length;
+  return { detail: [...counted, ...loadReasons], zeros };
 }
 
 export function executedSection(
@@ -426,19 +431,12 @@ export function executedSection(
       "Never executed because its accounts or blockhash could not be loaded. The reasons are behind the control below.",
     ],
     [
-      "exec_cost_throttled",
-      "no room in the block",
-      pick(rows, "exec_cost_throttled"),
-      true,
-      "Held back by the cost model because the block had no room left.",
-    ],
-    [
       "exec_retryable",
       "sent back to retry",
       pick(rows, "exec_retryable"),
       false,
-      "Handed back to be tried again: its accounts were locked by another transaction " +
-        "in flight, or its slot had ended. The second is behind the control below.",
+      "Handed back to be tried again: its accounts were locked by another transaction in flight, " +
+        "the block had no room, or its slot had ended. The last two are behind the control below.",
     ],
   ]);
 

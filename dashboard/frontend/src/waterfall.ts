@@ -320,7 +320,7 @@ export function executedRows(e: ExecutedStage): WaterfallRow[] {
     [
       "exec_cost_throttled",
       "no room in the block",
-      "loss",
+      "note",
       e.cost_throttled,
       "Held back by the cost model because the block had no capacity left.",
     ],

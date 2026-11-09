@@ -1123,8 +1123,8 @@ impl Throughput {
         let Some(previous) = self.last_counters.replace(current) else {
             return;
         };
-        // A fork switch or a restart makes the counters incomparable.
-        if current.slot <= previous.slot
+        // A fork switch or a restart makes the counters incomparable; the same bank's are not.
+        if current.slot < previous.slot
             || current.total < previous.total
             || current.errors < previous.errors
         {
@@ -3425,7 +3425,19 @@ mod tests {
     }
 
     #[test]
-    fn test_throughput_needs_two_samples_with_a_slot_between_them() {
+    fn test_a_second_with_no_new_bank_reports_a_rate_of_nought() {
+        let harness = fixture();
+        let mut meters = harness.meters();
+        harness.failed_total.store(0, Ordering::Relaxed);
+        meters.tick();
+        sleep(Duration::from_millis(20));
+        meters.tick();
+        let rate = harness.published_key("summary", "estimated_tps").unwrap();
+        assert!(rate.contains(r#""total":0.0"#), "{rate}");
+    }
+
+    #[test]
+    fn test_throughput_needs_two_samples() {
         let harness = fixture();
         let mut meters = harness.meters();
         harness.failed_total.store(0, Ordering::Relaxed);
@@ -3442,7 +3454,7 @@ mod tests {
 
         assert!(
             harness.published_key("summary", "estimated_tps").is_some(),
-            "two readings a slot apart should have produced a rate"
+            "two readings should have produced a rate"
         );
         assert!(
             harness.published_key("summary", "tps_history").is_some(),

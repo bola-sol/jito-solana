@@ -566,6 +566,8 @@ pub struct Collector {
     overview_retained_at: Instant,
     /// Dropped while nobody watched, so owed whole to the next viewer.
     overview_unsent: bool,
+    /// The publisher's subscriptions as of the last tick.
+    joined: u64,
     /// As `overview_unsent`, for the produced list.
     produced_unsent: bool,
     /// The root the produced list was last checked against.
@@ -671,6 +673,7 @@ impl Collector {
             overview_dirty: false,
             overview_retained_at: now.checked_sub(OVERVIEW_INTERVAL).unwrap_or(now),
             overview_unsent: false,
+            joined: 0,
             produced_unsent: false,
             produced_settled_to: 0,
             snapshots: SnapshotTracker::default(),
@@ -797,6 +800,12 @@ impl Collector {
         // Encoded on a timer rather than per change: live clients follow the updates above, and
         // only a connecting one reads this. Dropped while nobody watches and sent whole to the next
         // viewer, as is the produced list.
+        // The overview a viewer joining beside another was handed is up to a second behind the
+        // updates, and those sent before it subscribed never reach it.
+        let joined = self.publisher.joined();
+        if std::mem::replace(&mut self.joined, joined) != joined {
+            self.overview_unsent = true;
+        }
         if subscribers == 0 {
             if std::mem::take(&mut self.overview_dirty) {
                 self.publisher.forget(TOPIC_SLOT, "overview");
@@ -4289,6 +4298,27 @@ mod tests {
         let refreshed = harness.published_key("slot", "overview").unwrap();
         assert!(refreshed.contains(r#""slot":9"#), "{refreshed}");
         assert!(!collector.overview_dirty);
+    }
+
+    #[test]
+    fn test_a_viewer_joining_beside_another_is_sent_the_overview_whole() {
+        let harness = fixture();
+        let _first = harness.publisher.subscribe();
+        let mut collector = harness.collector();
+        harness.advance_to(8);
+        collector.tick();
+        harness.advance_to(9);
+        collector.tick();
+        let held = harness.published_key("slot", "overview").unwrap();
+        assert!(!held.contains(r#""slot":9"#), "encoded inside the interval");
+
+        let mut second = harness.publisher.subscribe();
+        collector.tick();
+        let sent = std::iter::from_fn(|| second.try_recv().ok())
+            .map(|message| message.to_string())
+            .find(|message| message.contains(r#""key":"overview""#))
+            .unwrap();
+        assert!(sent.contains(r#""slot":9"#), "{sent}");
     }
 
     #[test]

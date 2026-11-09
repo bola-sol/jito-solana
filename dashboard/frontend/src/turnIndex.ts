@@ -10,6 +10,9 @@ export type LeaderOf = (slot: number, mine: boolean) => LeaderRef;
 /** Built turns kept, many screens' worth; the rest are built from their slots when drawn. */
 const TURNS_KEPT = 1024;
 
+/** Live slots held before the index starts again from the window, some three hours of them. */
+export const LIVE_KEPT = 32_768;
+
 export function turnNumberOf(slot: number): number {
   return Math.floor(slot / SLOTS_PER_TURN);
 }
@@ -152,7 +155,7 @@ export class TurnIndex {
     const start = liveFloor(live);
     if (start === null) return false;
     // A window beginning past what is held, as after a reconnect, would leave a gap.
-    if (this.lowest === null || start > this.highest + 1) this.reset(start);
+    if (this.lowest === null || start > this.highest + 1 || this.live.size > LIVE_KEPT) this.reset(start);
     const floor = this.start ?? start;
     const known = new Set(this.liveTurns);
     const added: number[] = [];

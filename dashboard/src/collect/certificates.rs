@@ -196,6 +196,8 @@ pub(super) struct CertificateWalk {
     /// are dropped, since an unwalked slot looks like one before alpenglow.
     walk: Option<(Slot, Slot)>,
     tally: Option<certs::Tally>,
+    /// The identity the tally's leader slots were read for.
+    identity: Option<Pubkey>,
     /// The epoch and unix milliseconds of the last miss list built.
     listed: Option<(Epoch, u64)>,
 }
@@ -256,6 +258,7 @@ impl Collector {
                 tally.note_vote(slot, vote);
             }
         }
+        self.follow_identity(root_bank);
         for mark in marks {
             if mark.slot < floor {
                 continue;
@@ -534,6 +537,20 @@ impl Collector {
 
     /// An unknown leader schedule counts as no leader slots; it is known for every slot the root
     /// has passed.
+    /// A swapped identity leads other slots; certificates already tallied keep their writer.
+    fn follow_identity(&mut self, bank: &Bank) {
+        let me = self.ctx.identity();
+        if self.certificates.identity.replace(me) == Some(me) {
+            return;
+        }
+        if let Some(epoch) = self.certificates.tally.as_ref().map(certs::Tally::epoch) {
+            let slots = self.leader_slots_in_epoch(bank, epoch).unwrap_or_default();
+            if let Some(tally) = self.certificates.tally.as_mut() {
+                tally.set_leader_slots(slots);
+            }
+        }
+    }
+
     fn new_tally(&self, bank: &Bank, epoch: Epoch, since_slot: Slot) -> certs::Tally {
         let schedule = bank.epoch_schedule();
         certs::Tally::new(
@@ -609,6 +626,31 @@ mod tests {
         assert!(
             !is_quiet(Some(now + 1), now),
             "a timestamp ahead of the clock is heard"
+        );
+    }
+
+    #[test]
+    fn test_a_swapped_identity_rereads_the_tallys_leader_slots() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        let bank = harness.working_bank();
+        let epoch = bank.epoch();
+        collector.certificates.tally = Some(collector.new_tally(&bank, epoch, bank.slot()));
+        collector.follow_identity(&bank);
+        let leader_slots = |collector: &Collector| {
+            let tally = collector.certificates.tally.as_ref().unwrap();
+            tally.leader_slots().to_vec()
+        };
+        assert!(!leader_slots(&collector).is_empty());
+
+        harness
+            .ctx
+            .cluster_info
+            .set_keypair(Arc::new(solana_keypair::Keypair::new()));
+        collector.follow_identity(&bank);
+        assert!(
+            leader_slots(&collector).is_empty(),
+            "the new identity leads none"
         );
     }
 

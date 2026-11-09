@@ -234,6 +234,15 @@ impl Tally {
         self.epoch
     }
 
+    pub fn set_leader_slots(&mut self, leader_slots: Vec<Slot>) {
+        self.leader_slots = leader_slots;
+    }
+
+    #[cfg(test)]
+    pub fn leader_slots(&self) -> &[Slot] {
+        &self.leader_slots
+    }
+
     /// A slot with no certificate counts for nobody.
     pub fn add(&mut self, mark: &Mark, snapshots: &[Span], detail: Option<MissDetail>) {
         let paid_ranks = mark.paid.iter().filter(|paid| **paid).count();

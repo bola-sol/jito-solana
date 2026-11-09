@@ -173,14 +173,36 @@ pub struct ContinentShare {
 }
 
 /// Readings taken under the history lock, each with the unix milliseconds it belongs to.
+/// A run of [`RUN_SLOTS`] slots being read; slots are paired with their first shred's time.
+struct Run {
+    first: (Slot, u64),
+    last: (Slot, u64),
+    held: u64,
+    transactions: u64,
+    failed: u64,
+}
+
+impl Run {
+    /// The seconds [`RUN_SLOTS`] slots take at the pace from the run's first held slot to `end`.
+    fn seconds(&self, end: (Slot, u64)) -> Option<f64> {
+        let slots = end.0.checked_sub(self.first.0).filter(|slots| *slots > 0)?;
+        let millis = end
+            .1
+            .checked_sub(self.first.1)
+            .filter(|millis| *millis > 0)?;
+        Some(millis as f64 / slots as f64 * RUN_SLOTS as f64 / 1_000.0)
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct Readings {
     /// The first held row's time at or after the start asked for.
     pub(super) first_at: Option<u64>,
     cu: Vec<(u64, f32)>,
     slot_millis: Vec<(u64, f32)>,
-    /// Each run's first held time, its transactions and failed transactions.
-    runs: Vec<(u64, u64, u64)>,
+    /// Each run's first held time, the seconds its slots took, its transactions and failed
+    /// transactions.
+    runs: Vec<(u64, f64, u64, u64)>,
     notarized: Vec<(u64, f32)>,
     /// Each carried finalization certificate's time and whether it was the fast one.
     paths: Vec<(u64, bool)>,
@@ -196,8 +218,8 @@ pub(super) fn readings(
     let mut readings = Readings::default();
     let last = newest.min(epoch.end_slot);
     let mut previous_full: Option<(Slot, u64)> = None;
-    let mut run: Option<(u64, u64, u64, u64)> = None;
-    let mut run_index = None;
+    let mut run: Option<Run> = None;
+    let mut run_index: Option<u64> = None;
     for slot in epoch.start_slot..=last {
         let Some(row) = history.get(slot) else {
             continue;
@@ -235,20 +257,34 @@ pub(super) fn readings(
         }
         let index = slot.checked_div(RUN_SLOTS);
         if index != run_index {
-            if let Some((start, held, transactions, failed)) = run.take()
-                && held >= RUN_HELD
+            // Timed to the next run's start, which takes in the handoff into this one; a run
+            // before a gap is timed to its own last slot.
+            let adjacent = run_index.and_then(|held| held.checked_add(1)) == index;
+            if let Some(run) = run.take()
+                && run.held >= RUN_HELD
+                && let Some(seconds) = run.seconds(if adjacent { (slot, at) } else { run.last })
             {
-                readings.runs.push((start, transactions, failed));
+                readings
+                    .runs
+                    .push((run.first.1, seconds, run.transactions, run.failed));
             }
             run_index = index;
         }
-        let (_, held, transactions, failed) = run.get_or_insert((at, 0, 0, 0));
-        *held = held.saturating_add(1);
+        let run = run.get_or_insert(Run {
+            first: (slot, at),
+            last: (slot, at),
+            held: 0,
+            transactions: 0,
+            failed: 0,
+        });
+        run.last = (slot, at);
+        run.held = run.held.saturating_add(1);
         if row.flags & HAS_BLOCK != 0 {
-            *transactions = transactions
+            run.transactions = run
+                .transactions
                 .saturating_add(u64::from(row.votes))
                 .saturating_add(u64::from(row.non_votes));
-            *failed = failed.saturating_add(u64::from(row.failed));
+            run.failed = run.failed.saturating_add(u64::from(row.failed));
         }
     }
     readings
@@ -266,7 +302,7 @@ enum Axis {
 }
 
 impl Readings {
-    /// The window's median slot time, which turns a run's transactions into a rate.
+    /// The window's median slot time.
     pub(super) fn median_slot_millis(&self) -> Option<f64> {
         let mut millis: Vec<f32> = self.slot_millis.iter().map(|(_, millis)| *millis).collect();
         millis.sort_unstable_by(f32::total_cmp);
@@ -281,23 +317,17 @@ impl Readings {
         slot_millis: Option<f64>,
     ) -> ClusterCharts {
         let bins = Bins::new(from_millis, to_millis, slot_millis);
-        let run_seconds = slot_millis
-            .filter(|millis| *millis > 0.0)
-            .map(|millis| millis * RUN_SLOTS as f64 / 1_000.0);
-        let rates = |pick: fn(&(u64, u64, u64)) -> u64| -> Vec<(u64, f32)> {
-            let Some(seconds) = run_seconds else {
-                return Vec::new();
-            };
+        let rates = |pick: fn(&(u64, f64, u64, u64)) -> u64| -> Vec<(u64, f32)> {
             self.runs
                 .iter()
-                .map(|run| (run.0, (pick(run) as f64 / seconds) as f32))
+                .map(|run| (run.0, (pick(run) as f64 / run.1) as f32))
                 .collect()
         };
-        let tps = rates(|run| run.1);
-        let failed = rates(|run| run.2);
-        let succeeded = rates(|run| run.1.saturating_sub(run.2));
+        let tps = rates(|run| run.2);
+        let failed = rates(|run| run.3);
+        let succeeded = rates(|run| run.2.saturating_sub(run.3));
         let (all, failed_all) = self.runs.iter().fold((0u64, 0u64), |(all, failed), run| {
-            (all.saturating_add(run.1), failed.saturating_add(run.2))
+            (all.saturating_add(run.2), failed.saturating_add(run.3))
         });
         ClusterCharts {
             epoch,
@@ -1006,6 +1036,25 @@ mod tests {
         let charts =
             readings(&history, &epoch, epoch.end_slot, from).charts(7, from, to, Some(400.0));
         assert_eq!(charts.cu.unwrap().hist.iter().sum::<u32>(), 2_000);
+    }
+
+    #[test]
+    fn test_a_run_is_timed_on_its_own_slots_not_the_windows_median() {
+        let epoch = epoch();
+        let mut history = filled(&epoch);
+        // Each turn's first slot takes 700 ms: a run of five turns lasts 9.5 s, the median 400 ms.
+        for slot in epoch.start_slot..=epoch.end_slot {
+            history.record_test_row(slot, |row: &mut PackedSlot| {
+                let since = slot.saturating_sub(epoch.start_slot);
+                row.time_millis = since
+                    .saturating_mul(400)
+                    .saturating_add(since.div_ceil(4).saturating_mul(300));
+            });
+        }
+        let charts = readings(&history, &epoch, epoch.end_slot, 0).charts(7, 0, 2_000_000, None);
+        // Two thousand transactions in 9.5 s.
+        let tps = charts.tps.unwrap().spread.p50;
+        assert!((tps - 2_000.0 / 9.5).abs() < 0.01, "{tps}");
     }
 
     #[test]

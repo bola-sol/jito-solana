@@ -49,6 +49,9 @@ const SLOT_LISTS_SENT: usize = 500;
 
 const THREADS_HISTORY: usize = 60;
 
+/// The host and thread readings stop while nobody watches; one older than this spans such a gap.
+const WATCH_GAP: Duration = Duration::from_secs(5);
+
 const THREAD_ROWS: usize = 8;
 
 /// Every thread's name is read again this often; between, names carry over from the last reading.
@@ -1468,7 +1471,7 @@ impl HostMeter {
             return;
         };
         let interval_ms = now.duration_since(sampled_at).as_secs_f64() * 1000.0;
-        if interval_ms <= 0.0 {
+        if interval_ms <= 0.0 || now.duration_since(sampled_at) > WATCH_GAP {
             self.last = Some((current, now));
             return;
         }
@@ -1583,6 +1586,17 @@ impl ThreadMeter {
         }
 
         let now = Instant::now();
+        // Resumed, it would average the gap into one second beside a minute long gone.
+        if self
+            .last
+            .as_ref()
+            .is_some_and(|(_, at)| now.duration_since(*at) > WATCH_GAP)
+        {
+            self.last = None;
+            self.recent.clear();
+            self.history.clear();
+            publisher.publish(TOPIC_SUMMARY, "threads_history", &self.history);
+        }
         let threads = current.len();
         let groups = self.last.take().and_then(|(previous, sampled_at)| {
             let interval = now.duration_since(sampled_at).as_nanos() as u64;
@@ -3621,6 +3635,31 @@ mod tests {
                 .is_some(),
             "a viewer attached and the thread walk still did not run"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_a_thread_reading_from_before_a_gap_starts_the_minute_again() {
+        let harness = fixture();
+        let mut meter = ThreadMeter::default();
+        meter.tick(&harness.publisher);
+        sleep(Duration::from_millis(20));
+        meter.tick(&harness.publisher);
+        assert_eq!(meter.history.len(), 1);
+
+        let before_gap = Instant::now().checked_sub(WATCH_GAP * 2).unwrap();
+        meter.last.as_mut().unwrap().1 = before_gap;
+        meter.tick(&harness.publisher);
+        assert!(meter.history.is_empty() && meter.recent.is_empty());
+        assert!(
+            harness
+                .published_key("summary", "threads_history")
+                .unwrap()
+                .contains("[]")
+        );
+        sleep(Duration::from_millis(20));
+        meter.tick(&harness.publisher);
+        assert_eq!(meter.history.len(), 1);
     }
 
     #[cfg(target_os = "linux")]

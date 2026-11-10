@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElemen
 import { count, duration } from "../format";
 import { aboutClock, expectedAt, nearestTurn, timeUntil } from "../future";
 import { SLOTS_PER_TURN } from "../schedule";
-import { useMedia } from "../useMedia";
+import { useNarrow } from "../narrow";
 
 const TILE_WIDTH = 170;
 const TILE_WIDTH_PHONE = 150;
@@ -51,7 +51,7 @@ export function TurnStrip({
   slotNanos: number | undefined;
   producing: number | null;
 }): ReactElement {
-  const phone = useMedia("(max-width: 700px)");
+  const phone = useNarrow();
   const step = (phone ? TILE_WIDTH_PHONE : TILE_WIDTH) + TILE_GAP;
   const row = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLButtonElement>(null);

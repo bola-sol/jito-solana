@@ -100,7 +100,7 @@ import { DEFAULT_SUMMARY_SORT, nextSummarySort, type SummaryGroup, type SummaryS
 import type { LeaderRow, Peer, Reward, SlotEntry, TipRates } from "../types";
 import { useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
-import { useMedia } from "../useMedia";
+import { useNarrow } from "../narrow";
 import { delinquentTitle } from "../misses";
 import { Copyable } from "./Copyable";
 import { Logo } from "./Logo";
@@ -934,7 +934,7 @@ export function SchedulePage({
     if (on) showColumns(ONLY_COLUMNS[condition]);
   };
 
-  const phone = useMedia("(max-width: 700px)");
+  const phone = useNarrow();
   const newestSlot = live.at(-1)?.slot ?? null;
 
   // The box: its words are the name search, its expressions filters once added.

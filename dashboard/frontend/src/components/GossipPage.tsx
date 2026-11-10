@@ -53,7 +53,7 @@ import {
   type PeerRow,
 } from "../peerSyntax";
 import type { Gossip, GossipPeers } from "../types";
-import { useMedia } from "../useMedia";
+import { useNarrow } from "../narrow";
 import { useStore } from "../useStore";
 import { CertificatesSection } from "./CertificatesSection";
 import { CertFormationCard, type Pick } from "./CertFormationCard";
@@ -426,7 +426,7 @@ function PeersCard({
   }, [peers, picked, only, where, words, sort, now, slotMillis, arrivalKind]);
   const searched = picked !== null || only.length > 0 || where.length > 0 || words !== "";
 
-  const phone = useMedia("(max-width: 700px)");
+  const phone = useNarrow();
   const [editing, setEditing] = useState<string | null>(null);
   const [syntaxError, setSyntaxError] = useState<string | null>(null);
   const editPill = (key: string | null): void => {

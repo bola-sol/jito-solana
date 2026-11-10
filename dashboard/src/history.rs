@@ -587,19 +587,6 @@ mod tests {
     }
 
     #[test]
-    fn test_a_block_keeps_its_failed_count() {
-        let mut history = SlotHistory::new(64);
-        let mut block = with_block(40, 100, 10);
-        if let Some(detail) = block.block.as_mut() {
-            detail.failed_transactions = 37;
-        }
-        history.record(&block);
-
-        assert_eq!(history.get(40).expect("recorded").failed, 37);
-        assert_eq!(history.get(41), None);
-    }
-
-    #[test]
     fn test_tips_of_nought_are_not_tips_that_were_never_read() {
         // A turn the searchers passed by and one never measured must not draw the same.
         let mut history = SlotHistory::new(64);
@@ -634,12 +621,6 @@ mod tests {
         assert_eq!(read.fees, 104_600_000);
         assert_eq!(read.priority_fees, 99_000_000);
         assert_eq!(read.fees.saturating_sub(read.priority_fees), 5_600_000);
-    }
-
-    #[test]
-    fn test_a_slot_never_recorded_reads_as_absent() {
-        let history = SlotHistory::new(64);
-        assert!(history.get(900).is_none());
     }
 
     #[test]

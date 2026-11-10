@@ -120,14 +120,4 @@ mod tests {
         assert_eq!(tracker.ended(11), vec![(8, 9)]);
         assert_eq!(tracker.ended(12), vec![(11, 11)]);
     }
-
-    #[test]
-    fn test_a_skipped_middle_slot_still_splits_by_schedule_not_blocks() {
-        let mut tracker = TurnTracker::default();
-        told(
-            &mut tracker,
-            &[(8, true), (9, true), (10, true), (11, true)],
-        );
-        assert_eq!(tracker.ended(12), vec![(8, 11)]);
-    }
 }

@@ -294,32 +294,34 @@ function MoreFigures({ rows }: { rows: MoreRow[] }) {
   );
 }
 
+/** A row of a figure's panel; `sub` rows sit under the bold one above them. */
+function BootRow({ name, sub, children }: { name: string; sub?: boolean; children: ReactNode }) {
+  return (
+    <span className={sub ? "boot-row boot-sub" : "boot-row"}>
+      {sub ? <span>{name}</span> : <b>{name}</b>}
+      <span>{children}</span>
+    </span>
+  );
+}
+
 /** The admission ticket burned each epoch and the epochs the vote account's balance keeps a seat, with no
  *  income. */
 function Runway({ runway }: { runway: VoteRunway }) {
   return (
     <>
-      <span className="boot-row">
-        <b>VAT</b>
-        <span>{sol(runway.ticket, 4)} SOL an epoch</span>
-      </span>
+      <BootRow name="VAT">{sol(runway.ticket, 4)} SOL an epoch</BootRow>
       {runway.pending > 0 && (
-        <span className="boot-row boot-sub">
-          <span>held for delegators</span>
-          <span>{sol(runway.pending, 4)} SOL</span>
-        </span>
+        <BootRow sub name="held for delegators">
+          {sol(runway.pending, 4)} SOL
+        </BootRow>
       )}
       <span className="boot-rule" />
-      <span className="boot-row">
-        <b>Runway</b>
-        <span>
-          {count(runway.epochs)} {runway.epochs === 1 ? "epoch" : "epochs"}
-        </span>
-      </span>
-      <span className="boot-row boot-sub">
-        <span>seated through epoch</span>
-        <span>{count(runway.lastEpoch)}</span>
-      </span>
+      <BootRow name="Runway">
+        {count(runway.epochs)} {runway.epochs === 1 ? "epoch" : "epochs"}
+      </BootRow>
+      <BootRow sub name="seated through epoch">
+        {count(runway.lastEpoch)}
+      </BootRow>
     </>
   );
 }
@@ -389,28 +391,18 @@ function Figure({
 function Boot({ boot }: { boot: BootTimes }) {
   return (
     <>
-      <span className="boot-row">
-        <b>Started</b>
-        <span>{blockStamp(boot.startedMillis)}</span>
-      </span>
+      <BootRow name="Started">{blockStamp(boot.startedMillis)}</BootRow>
       <span className="boot-rule" />
-      <span className="boot-row">
-        <b>Startup</b>
-        <span>{duration(boot.startupMillis)}</span>
-      </span>
+      <BootRow name="Startup">{duration(boot.startupMillis)}</BootRow>
       {boot.phases.map((phase) => (
-        <span key={phase.label} className="boot-row boot-sub">
-          <span>{phase.label}</span>
-          <span>{duration(phase.millis)}</span>
-        </span>
+        <BootRow key={phase.label} sub name={phase.label}>
+          {duration(phase.millis)}
+        </BootRow>
       ))}
       {boot.catchUpMillis !== null && (
         <>
           <span className="boot-rule" />
-          <span className="boot-row">
-            <b>Caught up</b>
-            <span>{duration(boot.catchUpMillis)} after running</span>
-          </span>
+          <BootRow name="Caught up">{duration(boot.catchUpMillis)} after running</BootRow>
           <span className="boot-note">
             Counted to when replay drew level with the cluster, the moment behind cluster read nought.
           </span>

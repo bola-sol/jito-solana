@@ -1372,68 +1372,17 @@ mod tests {
     }
 
     async fn request_with_no_permits_left(request: &[u8]) -> String {
-        // These fixtures use `Host: x`, so the host policy is widened; the cap is under test.
-        let allowed_hosts = vec!["x".to_string()];
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
         let limits = Limits {
             connections: Arc::new(Semaphore::new(1)),
             websockets: Arc::new(Semaphore::new(1)),
         };
         let _held = limits.websockets.clone().try_acquire_owned().unwrap();
-
-        let publisher = Arc::new(Publisher::new());
-        let server = tokio::spawn({
-            let limits = limits.clone();
-            async move {
-                let (socket, _) = listener.accept().await.unwrap();
-                handle(
-                    socket,
-                    Handles {
-                        publisher,
-                        ..handles()
-                    },
-                    limits,
-                    &allowed_hosts,
-                )
-                .await
-            }
-        });
-
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        client.write_all(request).await.unwrap();
-        let mut reply = String::new();
-        client.read_to_string(&mut reply).await.unwrap();
-        server.await.unwrap().unwrap();
-        reply
+        // These fixtures use `Host: x`, so the host policy is widened; the cap is under test.
+        request_with(request, limits, vec!["x".to_string()]).await
     }
 
     async fn request_with_hosts(request: &[u8], allowed_hosts: Vec<String>) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let publisher = Arc::new(Publisher::new());
-        let limits = Limits::new();
-        let server = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            handle(
-                socket,
-                Handles {
-                    publisher,
-                    ..handles()
-                },
-                limits,
-                &allowed_hosts,
-            )
-            .await
-        });
-
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        client.write_all(request).await.unwrap();
-        let mut reply = String::new();
-        client.read_to_string(&mut reply).await.unwrap();
-        server.await.unwrap().unwrap();
-        reply
+        request_with(request, Limits::new(), allowed_hosts).await
     }
 
     #[tokio::test]
@@ -1490,40 +1439,12 @@ mod tests {
     }
 
     async fn request_with_no_connections_left(request: &[u8]) -> String {
-        let allowed_hosts = vec!["x".to_string()];
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
         let limits = Limits {
             connections: Arc::new(Semaphore::new(1)),
             websockets: Arc::new(Semaphore::new(MAX_WEBSOCKET_CLIENTS)),
         };
         let _held = limits.connections.clone().try_acquire_owned().unwrap();
-
-        let publisher = Arc::new(Publisher::new());
-        let server = tokio::spawn({
-            let limits = limits.clone();
-            async move {
-                let (socket, _) = listener.accept().await.unwrap();
-                handle(
-                    socket,
-                    Handles {
-                        publisher,
-                        ..handles()
-                    },
-                    limits,
-                    &allowed_hosts,
-                )
-                .await
-            }
-        });
-
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        client.write_all(request).await.unwrap();
-        let mut reply = String::new();
-        let _ = client.read_to_string(&mut reply).await;
-        server.await.unwrap().unwrap();
-        reply
+        request_with(request, limits, vec!["x".to_string()]).await
     }
 
     #[tokio::test]
@@ -1927,29 +1848,43 @@ mod tests {
         assert!(reply.starts_with("HTTP/1.1 405 Method Not Allowed"));
     }
 
-    async fn serve_one(
-        publisher: Arc<Publisher>,
-    ) -> (
+    type Served = (
         std::net::SocketAddr,
         tokio::task::JoinHandle<Result<(), ConnectionError>>,
-    ) {
+    );
+
+    async fn serve_one_with(
+        publisher: Arc<Publisher>,
+        limits: Limits,
+        allowed_hosts: Vec<String>,
+    ) -> Served {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            let allowed_hosts = vec!["x".to_string()];
             let (socket, _) = listener.accept().await.unwrap();
-            handle(
-                socket,
-                Handles {
-                    publisher,
-                    ..handles()
-                },
-                Limits::new(),
-                &allowed_hosts,
-            )
-            .await
+            let handles = Handles {
+                publisher,
+                ..handles()
+            };
+            handle(socket, handles, limits, &allowed_hosts).await
         });
         (addr, server)
+    }
+
+    async fn serve_one(publisher: Arc<Publisher>) -> Served {
+        serve_one_with(publisher, Limits::new(), vec!["x".to_string()]).await
+    }
+
+    /// The reply read to the end; a reset reads as an empty reply.
+    async fn request_with(request: &[u8], limits: Limits, allowed_hosts: Vec<String>) -> String {
+        let publisher = Arc::new(Publisher::new());
+        let (addr, server) = serve_one_with(publisher, limits, allowed_hosts).await;
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = String::new();
+        let _ = client.read_to_string(&mut reply).await;
+        server.await.unwrap().unwrap();
+        reply
     }
 
     async fn connect(addr: std::net::SocketAddr) -> Client<'static, Compat<TcpStream>> {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { leaderAt } from "./schedule";
 import {
-  entriesOf,
   HAS_BLOCK,
   HAS_CLOCK,
   HAS_REPLAY,
@@ -12,7 +11,15 @@ import {
   type SlotRange,
   type WireRow,
 } from "./slotHistory";
-import type { EpochInfo } from "./types";
+import { SlotColumns } from "./slotColumns";
+import type { EpochInfo, SlotEntry } from "./types";
+
+/** Each row decoded as the page decodes it; holes are dropped. */
+function entriesOf(range: SlotRange, epoch: EpochInfo | undefined, identity: string | undefined): SlotEntry[] {
+  const columns = new SlotColumns();
+  columns.add(range.first_slot, range.rows);
+  return range.rows.flatMap((row, at) => (row ? [columns.entry(range.first_slot + at, epoch, identity)!] : []));
+}
 
 const ALICE = "A1ice1111111111111111111111111111111111111";
 const BOB = "B0b22222222222222222222222222222222222222222";

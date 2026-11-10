@@ -79,7 +79,7 @@ class Span {
   }
 }
 
-/** Decodes a row as `entriesOf` would, its duration from the nearest earlier block to fill, and
+/** Decodes a row, its duration from the nearest earlier block to fill, and
  *  keeps the most recent entries so a drawn turn's rows keep their objects. */
 class Decoder {
   private decoded = new Map<number, SlotEntry>();
@@ -159,7 +159,7 @@ export class SlotColumns {
     return this.spanOf(slot)?.row(slot) ?? null;
   }
 
-  /** As `entriesOf` reads it, the duration measured from the nearest earlier block to fill. */
+  /** The duration is measured from the nearest earlier block to fill. */
   entry(slot: number, epoch: EpochInfo | undefined, identity: string | undefined): SlotEntry | undefined {
     return this.decoder.entry(slot, (at) => this.row(at), epoch, identity);
   }

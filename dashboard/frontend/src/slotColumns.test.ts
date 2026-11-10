@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { SlotColumns } from "./slotColumns";
-import { entriesOf, HAS_BLOCK, HAS_CLOCK, type WireRow } from "./slotHistory";
+import { HAS_BLOCK, HAS_CLOCK, HAS_SHREDS, type WireRow } from "./slotHistory";
 
 const row = (slot: number): WireRow => [
   4,
-  HAS_BLOCK | HAS_CLOCK,
+  HAS_BLOCK | HAS_CLOCK | HAS_SHREDS,
   1200,
   900,
   45_000_000,
@@ -34,14 +34,11 @@ describe("SlotColumns", () => {
     expect(columns.has(102)).toBe(true);
   });
 
-  it("decodes an entry as the whole range would, finding the clock across a span's edge", () => {
+  it("measures a block's duration from the one before it across a span's edge", () => {
     const columns = new SlotColumns();
     columns.add(200, [row(200), row(201)]);
     columns.add(196, [row(196), row(197), row(198), row(199)]);
-    const whole = entriesOf({ first_slot: 196, rows: [196, 197, 198, 199, 200, 201].map(row) }, undefined, undefined);
-    for (const expected of whole.slice(1)) {
-      expect(columns.entry(expected.slot, undefined, undefined)).toEqual(expected);
-    }
+    expect(columns.entry(200, undefined, undefined)?.duration_nanos).toBe(400_000_000);
   });
 
   it("hands back the same entry while it is kept", () => {

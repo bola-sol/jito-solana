@@ -11088,7 +11088,6 @@ body {
 
 @media (min-width: 701px) {
   .cl-versions .version-row {
-    grid-template-columns: minmax(0, 6em) minmax(0, 1fr) 3.4em 15em;
     gap: 8px 16px;
   }
 
@@ -11123,10 +11122,6 @@ body {
 }
 
 @media (min-width: 701px) {
-  .cl-versions .cl-share.is-client .version-row {
-    grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr) 3.4em 15em;
-  }
-
   .cl-versions .version-row {
     grid-template-columns: minmax(0, 11.5em) minmax(0, 1fr) 3.4em 15em;
   }

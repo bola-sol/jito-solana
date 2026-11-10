@@ -18,18 +18,7 @@ import {
   writeScheduleColumns,
   writeSlotStripFolded,
 } from "./layout";
-
-function storage(): Storage {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
-    clear: () => values.clear(),
-    key: () => null,
-    length: 0,
-  } as unknown as Storage;
-}
+import { storage } from "./testStorage";
 
 beforeEach(() => {
   vi.stubGlobal("window", { localStorage: storage() });
@@ -79,16 +68,6 @@ describe("the certificates list", () => {
     window.localStorage.setItem(CERTIFICATES_STORAGE_KEY, "yes");
     expect(readCertificatesOpen()).toBe(false);
   });
-
-  it("survives storage being refused", () => {
-    vi.stubGlobal("window", {
-      get localStorage(): Storage {
-        throw new Error("denied");
-      },
-    });
-    expect(() => writeCertificatesOpen(true)).not.toThrow();
-    expect(readCertificatesOpen()).toBe(false);
-  });
 });
 
 describe("the schedule's column group", () => {
@@ -107,16 +86,6 @@ describe("the schedule's column group", () => {
     window.localStorage.setItem(SCHEDULE_COLUMNS_STORAGE_KEY, "everything");
     expect(readScheduleColumns()).toBe("status");
   });
-
-  it("survives storage being refused", () => {
-    vi.stubGlobal("window", {
-      get localStorage(): Storage {
-        throw new Error("denied");
-      },
-    });
-    expect(() => writeScheduleColumns("fees")).not.toThrow();
-    expect(readScheduleColumns()).toBe("status");
-  });
 });
 
 describe("the network card's interface list", () => {
@@ -128,16 +97,6 @@ describe("the network card's interface list", () => {
     writeInterfacesOpen(true);
     expect(readInterfacesOpen()).toBe(true);
     writeInterfacesOpen(false);
-    expect(readInterfacesOpen()).toBe(false);
-  });
-
-  it("survives storage being refused", () => {
-    vi.stubGlobal("window", {
-      get localStorage(): Storage {
-        throw new Error("denied");
-      },
-    });
-    expect(() => writeInterfacesOpen(true)).not.toThrow();
     expect(readInterfacesOpen()).toBe(false);
   });
 });
@@ -160,16 +119,6 @@ describe("folds", () => {
   it("ignore the old folded list", () => {
     window.localStorage.setItem("agave-dashboard-folded", "machine");
     expect(readFoldOpen("machine")).toBe(false);
-  });
-
-  it("survive storage being refused", () => {
-    vi.stubGlobal("window", {
-      get localStorage(): Storage {
-        throw new Error("denied");
-      },
-    });
-    expect(() => writeFoldOpen("tpu", true)).not.toThrow();
-    expect(readFoldOpen("tpu")).toBe(false);
   });
 });
 

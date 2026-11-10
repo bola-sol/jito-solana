@@ -1,3 +1,4 @@
+import { bandPaths, linePath } from "./cluster";
 import type { HandoffNow, HandoffTrend } from "./types";
 
 /** The server's bin widths, in milliseconds. */
@@ -112,41 +113,14 @@ export function trendShape(trend: HandoffTrend, width: number, height: number): 
   const highest = Math.max(0, ...trend.p75.map((value) => value ?? 0), ...means);
   const top = Math.max(150, Math.ceil(highest / 50) * 50);
   const last = Math.max(1, trend.mean.length - 1);
-  const x = (index: number) => ((index / last) * width).toFixed(1);
-  const y = (millis: number) => (height - (Math.min(top, Math.max(0, millis)) / top) * height).toFixed(1);
-
-  let line = "";
-  let drawing = false;
-  trend.mean.forEach((value, index) => {
-    if (value === null) {
-      drawing = false;
-      return;
-    }
-    line += `${drawing ? "L" : "M"}${x(index)},${y(value)}`;
-    drawing = true;
-  });
-
-  const bands: string[] = [];
-  let run: number[] = [];
-  const close = () => {
-    if (run.length > 1) {
-      const upper = run.map((index, at) => `${at ? "L" : "M"}${x(index)},${y(trend.p75[index] ?? 0)}`).join("");
-      const lower = [...run].reverse().map((index) => `L${x(index)},${y(trend.p25[index] ?? 0)}`).join("");
-      bands.push(`${upper}${lower}Z`);
-    }
-    run = [];
-  };
-  trend.p25.forEach((low, index) => {
-    if (low === null || trend.p75[index] === null) close();
-    else run.push(index);
-  });
-  close();
+  const x = (index: number) => (index / last) * width;
+  const y = (millis: number) => height - (Math.min(top, Math.max(0, millis)) / top) * height;
 
   return {
     top,
-    line,
-    bands,
-    median: trend.hour_p50 === null ? null : Number(y(trend.hour_p50)),
+    line: linePath(trend.mean, x, y),
+    bands: bandPaths(trend.p25, trend.p75, x, y),
+    median: trend.hour_p50 === null ? null : Number(y(trend.hour_p50).toFixed(1)),
     range: means.length ? [Math.min(...means), Math.max(...means)] : null,
   };
 }

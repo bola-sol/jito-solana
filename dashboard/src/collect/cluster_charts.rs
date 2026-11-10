@@ -12,11 +12,11 @@ use {
             FAST_FINAL, HAS_BLOCK, HAS_CLOCK, HAS_FINAL_CERT, HAS_NOTARIZED, HAS_SHREDS,
             SlotHistory,
         },
+        search::leader_index,
     },
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_gossip::contact_info::ContactInfo,
-    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_slot_history::Check,
@@ -587,7 +587,6 @@ pub(super) fn skip_chart(
     let span = to_slot.saturating_sub(epoch.start_slot).saturating_add(1);
     let recent_slots = (RECENT_MILLIS as f64 / slot_millis.max(1.0)) as u64;
     let recent_from = to_slot.saturating_sub(recent_slots);
-    let stride = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
     let mut binned = vec![(0u64, 0u64); BINS];
     let mut tallies = vec![(0u32, 0u32); epoch.leaders.len()];
     let (mut skipped, mut slots, mut recent_skipped, mut recent_slots_held) =
@@ -620,11 +619,7 @@ pub(super) fn skip_chart(
                 recent_skipped = recent_skipped.saturating_add(1);
             }
         }
-        let leader = offset
-            .checked_div(stride)
-            .and_then(|turn| usize::try_from(turn).ok())
-            .and_then(|turn| epoch.turns.get(turn))
-            .map(|leader| usize::from(*leader));
+        let leader = leader_index(epoch, slot).map(usize::from);
         if let Some((leader_slots, leader_skipped)) = leader.and_then(|at| tallies.get_mut(at)) {
             *leader_slots = leader_slots.saturating_add(1);
             if !made {

@@ -7226,13 +7226,6 @@ body {
   outline-offset: -2px;
 }
 
-/* Four tabs fill a 320px phone at the full gap. */
-@media (max-width: 360px) {
-  .nav {
-    gap: 16px;
-  }
-}
-
 /* ---- folding sections ---- */
 
 /* A card like the panels above it; .main's gap spaces them. */

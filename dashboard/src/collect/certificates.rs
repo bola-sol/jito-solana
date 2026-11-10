@@ -455,7 +455,7 @@ impl Collector {
                 map.and_then(|map| map.get_pubkey_stake_entry(rank))
                     .map_or(0, |entry| entry.stake.get().get())
             };
-            let total = (0..ranks).fold(0u64, |sum, rank| sum.saturating_add(stake_of(rank)));
+            let total = map.map_or(0, |map| map.total_stake().get().get());
             let unpaid = written
                 .unpaid
                 .iter()

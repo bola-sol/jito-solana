@@ -93,7 +93,6 @@ const OWN_SLOTS_KEPT: usize = 64;
 pub struct SlotRing {
     entries: BTreeMap<Slot, SlotEntry>,
     capacity: usize,
-    highest: Slot,
 }
 
 impl SlotRing {
@@ -101,7 +100,6 @@ impl SlotRing {
         Self {
             entries: BTreeMap::new(),
             capacity: capacity.max(1),
-            highest: 0,
         }
     }
 
@@ -147,7 +145,6 @@ impl SlotRing {
         let changed = before.as_ref() != Some(&*entry);
         let result = changed.then(|| entry.clone());
 
-        self.highest = self.highest.max(slot);
         self.prune();
         result
     }

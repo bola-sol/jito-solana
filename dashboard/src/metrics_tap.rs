@@ -1174,13 +1174,8 @@ impl MetricsTap {
         match point.name {
             LEADER_START => {
                 if let Some(start) = field("slot_delay_us") {
-                    // From 4.4: once per slot, the wait for the parent reported apart.
                     timing.start_micros = Some(start);
                     timing.parent_wait_micros = field("replay_is_behind_us");
-                } else if let Some(start) = field("slot_delay_max").filter(|start| *start > 0) {
-                    // Before 4.4: reported again when the slot ends, with the start's histogram
-                    // emptied.
-                    timing.start_micros = Some(start);
                 }
                 timing.fast_handover |= field("leader_handover_fast") == Some(1);
                 timing.parent_switched |= field("leader_handover_sad") == Some(1);
@@ -1940,9 +1935,8 @@ impl AddPoint for AccountsSet {
                 "num_loaded_from_write_cache" => &mut totals.loaded_from_write_cache,
                 "num_loaded_from_read_cache" => &mut totals.loaded_from_read_cache,
                 "num_loaded_from_index_storage" => &mut totals.loaded_from_storage,
-                // Two spellings: 4.3 calls stored what 4.2 called flushed.
-                "num_accounts_stored" | "num_accounts_flushed" => &mut totals.stored_accounts,
-                "account_bytes_stored" | "account_bytes_flushed" => &mut totals.stored_bytes,
+                "num_accounts_stored" => &mut totals.stored_accounts,
+                "account_bytes_stored" => &mut totals.stored_bytes,
                 _ => continue,
             };
             add_value(counter, value);
@@ -2477,7 +2471,11 @@ mod tests {
         tap.observe(&slot_point_named(
             LEADER_START,
             slot,
-            &[("slot_delay_max", "46100i"), ("leader_handover_fast", "0i")],
+            &[
+                ("slot_delay_us", "46100i"),
+                ("replay_is_behind_us", "1200i"),
+                ("leader_handover_fast", "1i"),
+            ],
         ));
         tap.observe(&slot_point_named(LEADER_BANK, slot, &[("elapsed", "400i")]));
         tap.observe(&slot_point_named(
@@ -2498,18 +2496,12 @@ mod tests {
                 ("schedule_time_us", "31000i"),
             ],
         ));
-        // At the slot's end the block creation loop reports again, its start histogram empty.
-        tap.observe(&slot_point_named(
-            LEADER_START,
-            slot,
-            &[("slot_delay_max", "0i"), ("leader_handover_fast", "1i")],
-        ));
 
         assert_eq!(
             tap.leader_timing(slot),
             Some(LeaderTiming {
                 start_micros: Some(46_100),
-                parent_wait_micros: None,
+                parent_wait_micros: Some(1_200),
                 open_millis: Some(400),
                 broadcast_micros: Some(411_000),
                 shredding_micros: Some(9_800),
@@ -3642,23 +3634,19 @@ mod tests {
     }
 
     #[test]
-    fn test_the_flush_point_is_read_under_either_spelling() {
-        // The field was renamed between validator versions and this crate is carried
-        // across both.
-        for (accounts, bytes) in [
-            ("num_accounts_stored", "account_bytes_stored"),
-            ("num_accounts_flushed", "account_bytes_flushed"),
-        ] {
-            let tap = MetricsTap::default();
-            tap.observe(&named(
-                ACCOUNTS_FLUSH,
-                &[(accounts, "500i"), (bytes, "64000i")],
-            ));
+    fn test_the_flush_point_is_read() {
+        let tap = MetricsTap::default();
+        tap.observe(&named(
+            ACCOUNTS_FLUSH,
+            &[
+                ("num_accounts_stored", "500i"),
+                ("account_bytes_stored", "64000i"),
+            ],
+        ));
 
-            let read = tap.counters().accounts;
-            assert_eq!(read.stored_accounts, 500, "{accounts}");
-            assert_eq!(read.stored_bytes, 64_000, "{bytes}");
-        }
+        let read = tap.counters().accounts;
+        assert_eq!(read.stored_accounts, 500);
+        assert_eq!(read.stored_bytes, 64_000);
     }
 
     const QUIC_POINT: &[(&str, &str)] = &[

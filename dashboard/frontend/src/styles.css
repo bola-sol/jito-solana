@@ -8179,10 +8179,6 @@ body {
     justify-self: start;
     margin-left: 0;
   }
-
-  .schedule-share-tools.is-idle {
-    display: none;
-  }
 }
 
 /* One validator's turns to come, left to right, under a ruler of the epoch. */

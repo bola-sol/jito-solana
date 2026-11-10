@@ -11,7 +11,6 @@ import {
   leaderSlotsLeft,
   matchesQuery,
   producingSlot,
-  turnKey,
   turnSpan,
   turnsOf,
   unheldSlots,
@@ -148,13 +147,6 @@ describe("matchesQuery", () => {
 
   it("does not match something absent", () => {
     expect(matchesQuery(turn, "nansen")).toBe(false);
-  });
-});
-
-describe("turnKey", () => {
-  it("names a turn by its own first slot, not its position", () => {
-    const [turn] = turnsOf([held(100), held(101)], resolver());
-    expect(turnKey(turn)).toBe("turn:100");
   });
 });
 

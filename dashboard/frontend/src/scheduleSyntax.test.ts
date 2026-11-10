@@ -23,7 +23,6 @@ describe("readSearch", () => {
       words: "1000x validator",
       filters: [],
       errors: [],
-      syntax: false,
     });
   });
 

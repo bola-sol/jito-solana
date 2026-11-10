@@ -234,7 +234,6 @@ export interface ScheduleSummary {
   held_from: { slot: number; millis: number | null } | null;
   /** The clients, countries and versions among staked nodes and scheduled leaders. */
   choices: { clients: string[]; countries: string[]; versions: string[] };
-  slow: (number | null)[] | null;
   /** Every staked node not voting now. */
   delinquent: { identity: string; last_vote: number | null }[];
 }

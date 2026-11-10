@@ -38,7 +38,6 @@ function summary(fields: Partial<ScheduleSummary>): ScheduleSummary {
     clients: [],
     held_from: null,
     choices: { clients: [], countries: [], versions: [] },
-    slow: null,
     delinquent: [],
     ...fields,
   };

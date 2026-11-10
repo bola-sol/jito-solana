@@ -290,12 +290,6 @@ impl<'a> EpochLeaders<'a> {
         held.next().is_none().then_some(key.as_str())
     }
 
-    /// The identity leading the turn; `None` outside this epoch.
-    fn key_at(&self, slot: Slot) -> Option<&'a str> {
-        let index = usize::from(leader_index(self.epoch, slot)?);
-        self.epoch.leaders.get(index).map(String::as_str)
-    }
-
     /// The turn's leader: whether it matches by name or key, whether it is ours, and its traits;
     /// `None` outside this epoch.
     fn at(&self, slot: Slot) -> Option<LeaderAt<'_>> {
@@ -966,7 +960,10 @@ pub fn future(
             wanted
                 .leaders
                 .iter()
-                .find(|held| held.key_at(params.before).is_some())?
+                .find(|held| {
+                    held.at(params.before)
+                        .is_some_and(|leader| leader.key.is_some())
+                })?
                 .only_named()
         })
         .flatten();
@@ -998,7 +995,7 @@ pub fn future(
         if matches {
             if reply.turns.len() < limit {
                 reply.turns.push(turn);
-                let key = wanted.leaders.iter().find_map(|held| held.key_at(start));
+                let key = leader.and_then(|leader| leader.key);
                 if let Some(key) = key.filter(|key| seen.insert(*key)) {
                     let traits = leader.and_then(|leader| leader.traits);
                     reply.leaders.push(LeaderRow::new(key.to_string(), traits));

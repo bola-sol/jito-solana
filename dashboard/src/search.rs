@@ -723,6 +723,12 @@ struct Prepared<'a> {
     slow: Option<Vec<Option<u32>>>,
 }
 
+/// Text as it is matched: trimmed, cut to `MAX_QUERY_CHARS`, lower case.
+fn normalize_text(text: &str) -> String {
+    let cut: String = text.trim().chars().take(MAX_QUERY_CHARS).collect();
+    cut.to_lowercase()
+}
+
 fn prepare<'a>(
     history: &RwLock<SlotHistory>,
     info: &RwLock<ValidatorInfoCache>,
@@ -730,13 +736,7 @@ fn prepare<'a>(
     epochs: &'a [EpochInfo],
     params: &'a SearchParams,
 ) -> Option<Prepared<'a>> {
-    let needle = params
-        .query
-        .trim()
-        .chars()
-        .take(MAX_QUERY_CHARS)
-        .collect::<String>()
-        .to_lowercase();
+    let needle = normalize_text(&params.query);
     let names: Vec<(bool, Vec<String>)> = params
         .conditions
         .iter()
@@ -745,14 +745,7 @@ fn prepare<'a>(
             let values = condition
                 .values
                 .iter()
-                .map(|value| {
-                    value
-                        .trim()
-                        .chars()
-                        .take(MAX_QUERY_CHARS)
-                        .collect::<String>()
-                        .to_lowercase()
-                })
+                .map(|value| normalize_text(value))
                 .filter(|value| !value.is_empty())
                 .collect();
             (condition.op != Op::IsNot, values)

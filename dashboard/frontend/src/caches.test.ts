@@ -9,6 +9,7 @@ import {
   writeOpenSections,
 } from "./caches";
 import type { AccountsCache, ProgramCache } from "./types";
+import { storage } from "./testStorage";
 
 function programs(over: Partial<ProgramCache> = {}): ProgramCache {
   return {
@@ -128,18 +129,6 @@ describe("accountsGloss", () => {
     expect(accountsGloss(accounts({ window_seconds: 0 }))).toContain("0 B/s written");
   });
 });
-
-function storage(): Storage {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
-    clear: () => values.clear(),
-    key: () => null,
-    length: 0,
-  } as unknown as Storage;
-}
 
 describe("which sections are open", () => {
   beforeEach(() => {

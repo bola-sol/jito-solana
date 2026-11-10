@@ -507,7 +507,7 @@ fn floor_below(lowest: f32) -> f64 {
 }
 
 /// Nearest rank over sorted values.
-fn at_percent<T: Copy>(sorted: &[T], percent: usize) -> Option<T> {
+pub(super) fn at_percent<T: Copy>(sorted: &[T], percent: usize) -> Option<T> {
     let index = sorted
         .len()
         .saturating_mul(percent)

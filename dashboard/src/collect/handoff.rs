@@ -2,6 +2,7 @@
 //! shred of the next leader's slot arriving here, kept for an epoch of slots.
 
 use {
+    super::cluster_charts::at_percent,
     serde::Serialize,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -493,16 +494,10 @@ impl Handoffs {
 
 /// Quartiles of sorted values, each the value at that share of the count.
 fn band(sorted: &[i32]) -> Option<Band> {
-    let at = |quarter: usize| {
-        let index = sorted.len().saturating_mul(quarter).checked_div(4)?;
-        sorted
-            .get(index.min(sorted.len().saturating_sub(1)))
-            .copied()
-    };
     Some(Band {
-        p25: at(1)?,
-        p50: at(2)?,
-        p75: at(3)?,
+        p25: at_percent(sorted, 25)?,
+        p50: at_percent(sorted, 50)?,
+        p75: at_percent(sorted, 75)?,
     })
 }
 

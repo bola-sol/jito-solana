@@ -77,14 +77,6 @@ impl ValidatorInfoCache {
         }))
     }
 
-    pub fn len(&self) -> usize {
-        self.by_identity.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_identity.is_empty()
-    }
-
     /// A read from an older slot than the one held is ignored.
     pub fn insert(&mut self, identity: Pubkey, slot: Slot, info: ValidatorInfo) -> bool {
         match self.by_identity.entry(identity) {
@@ -266,7 +258,6 @@ mod tests {
     #[test]
     fn test_merging_reports_only_what_changed() {
         let mut cache = ValidatorInfoCache::default();
-        assert!(cache.is_empty());
 
         let identity = Pubkey::new_unique();
         let info = ValidatorInfo {
@@ -275,7 +266,6 @@ mod tests {
         };
         assert_eq!(cache.merge(1, vec![(identity, info.clone())]), 1);
         assert_eq!(cache.merge(1, vec![(identity, info)]), 0, "nothing changed");
-        assert_eq!(cache.len(), 1);
         assert_eq!(
             cache.get(&identity).and_then(|info| info.name.as_deref()),
             Some("Lantern")
@@ -323,19 +313,6 @@ mod tests {
         assert!(parse(&[]).is_none());
         assert!(parse(&[0xff; 32]).is_none());
         assert!(parse(&vec![0u8; MAX_VALIDATOR_INFO_LEN.saturating_add(1)]).is_none());
-    }
-
-    #[test]
-    fn test_insert_reports_only_changes() {
-        let mut cache = ValidatorInfoCache::default();
-        let identity = Pubkey::new_unique();
-        let info = ValidatorInfo {
-            name: Some("Lantern".into()),
-            ..ValidatorInfo::default()
-        };
-        assert!(cache.insert(identity, 1, info.clone()));
-        assert!(!cache.insert(identity, 1, info));
-        assert_eq!(cache.len(), 1);
     }
 
     #[test]

@@ -120,11 +120,10 @@ describe("earnedOf", () => {
 
 describe("blockSummary", () => {
   it("averages each column over the blocks held", () => {
-    const { blocks, mean } = blockSummary([
+    const { mean } = blockSummary([
       block({ transactions: 1000, total_fees: 100, block_cost: 40, block_cost_limit: 100 }),
       block({ transactions: 2000, total_fees: 200, block_cost: 60, block_cost_limit: 100 }),
     ]);
-    expect(blocks).toBe(2);
     expect(mean.transactions).toBe(1500);
     expect(mean.earned).toBe(75);
     expect(mean.filled).toBeCloseTo(0.5, 10);
@@ -176,18 +175,15 @@ describe("blockSummary", () => {
     expect(summary.mean.durationMillis).toBe(400);
     expect(summary.worst.durationMillis).toBe(400);
     expect(summary.mean.filled).toBeCloseTo(0.5, 10);
-    expect(summary.blocks).toBe(2);
   });
 
   it("says nothing rather than nought when there is nothing to average", () => {
-    for (const empty of [blockSummary([]), blockSummary(undefined)]) {
-      expect(empty.blocks).toBe(0);
-      for (const figures of [empty.mean, empty.median, empty.worst]) {
-        expect(figures.transactions).toBeNull();
-        expect(figures.filled).toBeNull();
-        expect(figures.earned).toBeNull();
-        expect(figures.durationMillis).toBeNull();
-      }
+    const empty = blockSummary([]);
+    for (const figures of [empty.mean, empty.median, empty.worst]) {
+      expect(figures.transactions).toBeNull();
+      expect(figures.filled).toBeNull();
+      expect(figures.earned).toBeNull();
+      expect(figures.durationMillis).toBeNull();
     }
   });
 });

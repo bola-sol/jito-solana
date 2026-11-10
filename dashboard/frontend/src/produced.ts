@@ -48,7 +48,6 @@ export interface BlockFigures {
 }
 
 export interface BlockSummary {
-  blocks: number;
   mean: BlockFigures;
   median: BlockFigures;
   /** The end of each column a leader does not want: the fifth percentile, or the ninety-fifth of
@@ -112,8 +111,7 @@ export function sortBlocks<T extends BlockHead>(
   return keyed.map((entry) => entry.block);
 }
 
-export function blockSummary(blocks: readonly BlockHead[] | undefined, rates?: TipRates): BlockSummary {
-  const held = blocks ?? [];
+export function blockSummary(held: readonly BlockHead[], rates?: TipRates): BlockSummary {
   const transactions = valuesOf(held, (block) => block.transactions);
   const filled = valuesOf(held, (block) =>
     block.block_cost_limit > 0 ? block.block_cost / block.block_cost_limit : null,
@@ -125,7 +123,6 @@ export function blockSummary(blocks: readonly BlockHead[] | undefined, rates?: T
     block.duration_nanos === null ? null : block.duration_nanos / 1e6,
   );
   return {
-    blocks: held.length,
     mean: {
       transactions: meanOf(transactions),
       filled: meanOf(filled),

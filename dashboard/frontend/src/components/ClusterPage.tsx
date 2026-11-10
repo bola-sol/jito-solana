@@ -33,11 +33,11 @@ import { useStore } from "../useStore";
 import { useWidth } from "../useWidth";
 import { useHeight } from "../useHeight";
 import { useMedia } from "../useMedia";
+import { usePolledRequest } from "../usePolledRequest";
 import { HandoffCard } from "./HandoffCard";
 import { Card, Explain } from "./primitives";
 
 const POLL_MS = 15_000;
-const FIRST_POLL_MS = 1_000;
 
 const HEIGHT = 120;
 const HIST = 44;
@@ -138,35 +138,6 @@ function sharesView(shares: ChartShares): ChartView {
 }
 
 /** The charts, asked for while the page is open; the server gathers them only then. */
-function useClusterCharts(): ClusterCharts | null {
-  const store = useStore();
-  const [charts, setCharts] = useState<ClusterCharts | null>(null);
-  // Asked once the socket is open, and again on each new one.
-  const open = store.getConnection() === "open";
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const load = () => {
-      store.request("cluster.charts", {}).then(
-        (got) => {
-          if (!live) return;
-          if (got) setCharts(got);
-          timer = setTimeout(load, got ? POLL_MS : FIRST_POLL_MS);
-        },
-        () => {
-          if (live) timer = setTimeout(load, FIRST_POLL_MS);
-        },
-      );
-    };
-    load();
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [store, open]);
-  return charts;
-}
 
 /** Seconds since the finalized slot last moved, judged only on a live feed from a validator in step. */
 function useFinalizedStall(): number | null {
@@ -828,7 +799,7 @@ export function ClusterPage(): ReactElement {
   const store = useStore();
   const board = useMedia(BOARD_QUERY);
   const boardRef = useRef<HTMLDivElement>(null);
-  const charts = useClusterCharts();
+  const charts = usePolledRequest("cluster.charts", POLL_MS);
   const boardHeight = useBoardHeight(boardRef, board && charts !== null);
   const stalledSeconds = useFinalizedStall();
   const epoch = store.get("epoch", "new");

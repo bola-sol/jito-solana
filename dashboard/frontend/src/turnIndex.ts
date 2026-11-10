@@ -1,4 +1,4 @@
-import { NO_LEADER, SLOTS_PER_TURN, turnsOf, type LeaderRef, type Turn } from "./schedule";
+import { NO_LEADER, SLOTS_PER_TURN, turnFrom, type LeaderRef, type Turn } from "./schedule";
 import type { RangeBounds, ServerCondition } from "./scheduleConditions";
 import type { Only, SlowCutOffs } from "./scheduleFilters";
 import { SlotColumns, SlotRows } from "./slotColumns";
@@ -78,15 +78,6 @@ function rowsOf(number: number, held: (slot: number) => boolean): number {
   return SLOTS_PER_TURN;
 }
 
-function buildTurn(number: number, entryOf: (slot: number) => SlotEntry | undefined, leaderOf: LeaderOf) {
-  const held: SlotEntry[] = [];
-  for (let slot = number * SLOTS_PER_TURN; slot < (number + 1) * SLOTS_PER_TURN; slot++) {
-    const entry = entryOf(slot);
-    if (entry) held.push(entry);
-  }
-  return turnsOf(held, leaderOf)[0];
-}
-
 /**
  * The schedule's turns, newest first, over one unbroken run of slots: the live window and every
  * live slot seen since, as entries, and the history fetched below it, as columns.
@@ -143,7 +134,7 @@ export class TurnIndex {
   }
 
   turn(number: number): Turn | undefined {
-    return this.built.get(number, () => buildTurn(number, (slot) => this.entry(slot), this.leaderOf));
+    return this.built.get(number, () => turnFrom(number, (slot) => this.entry(slot), this.leaderOf));
   }
 
   rowCount(number: number): number {
@@ -303,7 +294,7 @@ export class FoundTurns {
   }
 
   turn(number: number, leaderOf: LeaderOf): Turn | undefined {
-    return this.built.get(number, () => buildTurn(number, (slot) => this.entry(slot), leaderOf));
+    return this.built.get(number, () => turnFrom(number, (slot) => this.entry(slot), leaderOf));
   }
 
   rowCount(number: number): number {

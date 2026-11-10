@@ -75,36 +75,20 @@ export interface Turn {
   slots: TurnSlot[];
 }
 
-export function turnsOf(
-  held: SlotEntry[],
+/** A turn's rows, newest first, down to its oldest held slot; undefined where none is held. */
+export function turnFrom(
+  number: number,
+  entryOf: (slot: number) => SlotEntry | undefined,
   leaderOf: (slot: number, mine: boolean) => LeaderRef,
-): Turn[] {
-  const byTurn = new Map<number, SlotEntry[]>();
-  for (const entry of held) {
-    const turn = Math.floor(entry.slot / SLOTS_PER_TURN);
-    const entries = byTurn.get(turn);
-    if (entries) entries.push(entry);
-    else byTurn.set(turn, [entry]);
-  }
-
-  return [...byTurn.entries()]
-    .sort(([a], [b]) => b - a)
-    .map(([turn, entries]) => {
-      const mine = entries.some((entry) => entry.mine);
-      const leader = leaderOf(turn * SLOTS_PER_TURN, mine);
-      const first = Math.min(...entries.map((entry) => entry.slot));
-      const slots: TurnSlot[] = [];
-      for (let slot = turn * SLOTS_PER_TURN + SLOTS_PER_TURN - 1; slot >= first; slot--) {
-        slots.push({ slot, entry: entries.find((entry) => entry.slot === slot) ?? null });
-      }
-      return {
-        leader: leader.key,
-        leader_icon: leader.icon,
-        leader_name: leader.name,
-        mine,
-        slots,
-      };
-    });
+): Turn | undefined {
+  const start = number * SLOTS_PER_TURN;
+  const slots: TurnSlot[] = [];
+  for (let slot = start + SLOTS_PER_TURN - 1; slot >= start; slot--) slots.push({ slot, entry: entryOf(slot) ?? null });
+  while (slots.at(-1)?.entry === null) slots.pop();
+  if (slots.length === 0) return undefined;
+  const mine = slots.some((slot) => slot.entry?.mine === true);
+  const leader = leaderOf(start, mine);
+  return { leader: leader.key, leader_icon: leader.icon, leader_name: leader.name, mine, slots };
 }
 
 /** The slot being produced: the newest held while its block is still arriving, else the one after it,

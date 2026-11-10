@@ -3,7 +3,7 @@ import { groupsOf, majorityVersion, toLine } from "./gossipStake";
 import type { GossipStake, GossipValidator } from "./types";
 
 function node(identity: string, stake: number, version: string | null): GossipValidator {
-  return { identity, name: null, icon: null, version, stake, seen: version !== null };
+  return { identity, name: null, version, stake, seen: version !== null };
 }
 
 const stake: GossipStake = {

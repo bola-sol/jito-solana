@@ -98,7 +98,6 @@ pub struct HandoffSummary {
     pub since_millis: u64,
     /// Whether the window has rolled, so it covers a whole epoch of slots.
     pub full: bool,
-    pub handoffs: u32,
     pub cluster: Band,
     /// Handoffs per 10 ms of gap from nought; negative gaps count in the first bin.
     pub gaps: Vec<u32>,
@@ -121,8 +120,6 @@ pub struct HandoffSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Trend {
     /// When the last point ends, unix milliseconds.
-    pub end_millis: u64,
-    pub step_millis: u64,
     pub mean: Vec<Option<i32>>,
     pub p25: Vec<Option<i32>>,
     pub p75: Vec<Option<i32>>,
@@ -134,8 +131,6 @@ pub struct Trend {
 pub struct HandoffNow {
     pub leader: String,
     pub country: Option<&'static str>,
-    /// The first slot of the leader's run of turns.
-    pub slot: Slot,
     /// None until the slot before has filled, or where that slot was ours or skipped.
     pub gap: Option<i32>,
     pub n: u32,
@@ -376,7 +371,6 @@ impl Handoffs {
         let summary = HandoffSummary {
             since_millis,
             full: self.rolled,
-            handoffs: count(all.len()),
             cluster,
             gaps,
             medians,
@@ -408,8 +402,6 @@ impl Handoffs {
         recent.sort_unstable_by_key(|(at, _)| *at);
 
         let mut trend = Trend {
-            end_millis: now_millis,
-            step_millis: TREND_STEP_MILLIS,
             mean: Vec::new(),
             p25: Vec::new(),
             p75: Vec::new(),
@@ -487,7 +479,6 @@ impl Handoffs {
         HandoffNow {
             leader: leader.to_string(),
             country,
-            slot,
             gap: self.held.get(&slot).map(|handoff| handoff.gap),
             n: count(own.len()),
             band: own_band,
@@ -572,7 +563,6 @@ mod tests {
     fn test_a_leader_late_on_most_turns_is_listed_and_kept_out_of_the_medians() {
         let mut handoffs = cluster();
         let summary = handoffs.summary(0, &key(1), germany).unwrap();
-        assert_eq!(summary.handoffs, 110);
         assert_eq!(summary.settled, 11);
         assert_eq!(summary.late_count, 1);
         assert_eq!(summary.late[0].leader, key(99).to_string());
@@ -651,7 +641,6 @@ mod tests {
             .unwrap()
             .trend;
         assert_eq!(trend.mean.len(), 241);
-        assert_eq!(trend.end_millis, 3_600_000);
         // The point at 3,015,000 holds the first two; the last holds only the third.
         let at = |millis: u64| usize::try_from(millis.checked_div(15_000).unwrap()).unwrap();
         assert_eq!(trend.mean[at(3_015_000)], Some(60));
@@ -681,12 +670,9 @@ mod tests {
         let first = handoffs.summary(0, &key(1), no_country).unwrap();
         handoffs.note(50_000, key(3), 500, 2_000);
         assert_eq!(handoffs.summary(9_999, &key(1), no_country).unwrap(), first);
-        assert_eq!(
-            handoffs
-                .summary(10_000, &key(1), no_country)
-                .unwrap()
-                .handoffs,
-            111
+        assert_ne!(
+            handoffs.summary(10_000, &key(1), no_country).unwrap(),
+            first
         );
     }
 

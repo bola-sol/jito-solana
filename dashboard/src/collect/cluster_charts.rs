@@ -119,7 +119,6 @@ pub struct Spread {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkipChart {
-    pub from_slot: Slot,
     pub to_slot: Slot,
     /// Placed at the median slot time back from now, since the bank keeps no clock per slot.
     pub from_millis: u64,
@@ -159,7 +158,6 @@ pub struct ClientShare {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StakeByCountry {
     pub stake: u64,
-    pub validators: usize,
     pub countries: usize,
     pub ours: Option<&'static str>,
     pub ours_continent: Option<&'static str>,
@@ -666,7 +664,6 @@ pub(super) fn skip_chart(
     let back = |slots: u64| (slots as f64 * slot_millis) as u64;
     Some((
         SkipChart {
-            from_slot: epoch.start_slot,
             to_slot,
             from_millis: now_millis.saturating_sub(back(span)),
             to_millis: now_millis,
@@ -951,7 +948,6 @@ fn country_shares(
     continents.sort_by(|a, b| b.stake.cmp(&a.stake).then_with(|| a.code.cmp(&b.code)));
     Some(StakeByCountry {
         stake: stake_total,
-        validators: described.len(),
         countries: named,
         ours,
         ours_continent: ours.and_then(geoip::continent),
@@ -1248,7 +1244,6 @@ mod tests {
         staked.push((5, None));
         let countries = country_shares(&staked, Some("SG")).unwrap();
         assert_eq!(countries.countries, 12);
-        assert_eq!(countries.validators, 13);
         assert_eq!(countries.ours, Some("SG"));
         assert_eq!(countries.ours_continent, Some("AS"));
         assert_eq!(countries.rows.len(), COUNTRIES_SHOWN.saturating_add(1));

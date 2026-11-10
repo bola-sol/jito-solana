@@ -94,19 +94,12 @@ fn gzip_copy(route: &str, source: &str, to: &Path) -> Option<String> {
 fn content_type(route: &str) -> &'static str {
     match route.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
-        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
-        Some("json") => "application/json",
+        Some("json" | "map") => "application/json",
         Some("webmanifest") => "application/manifest+json",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("ico") => "image/x-icon",
-        Some("woff2") => "font/woff2",
-        Some("woff") => "font/woff",
-        Some("ttf") => "font/ttf",
-        Some("map") => "application/json",
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }

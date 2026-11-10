@@ -92,10 +92,7 @@ pub fn read() -> io::Result<PortMap> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn read() -> io::Result<PortMap> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "socket counters are only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// `drops` is the thirteenth column, so an appended column is ignored.

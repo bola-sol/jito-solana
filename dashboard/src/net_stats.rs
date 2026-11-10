@@ -39,10 +39,7 @@ pub fn read() -> io::Result<NetReading> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn read() -> io::Result<NetReading> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "network counters are only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

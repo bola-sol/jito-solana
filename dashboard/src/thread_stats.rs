@@ -80,10 +80,7 @@ fn read_small<'a>(path: &std::path::Path, buf: &'a mut [u8]) -> Option<&'a str> 
 
 #[cfg(not(target_os = "linux"))]
 pub fn read(_known: Option<&HashMap<u64, ThreadReading>>) -> io::Result<Vec<ThreadReading>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "thread counters are only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 #[cfg(target_os = "linux")]

@@ -865,38 +865,29 @@ impl GossipMeter {
                     expired_per_second: per_second(rates.expired),
                     evicted_last_minute: minute.evicted,
                 },
-                messages: vec![
-                    GossipMessage {
-                        kind: "push",
-                        received: per_second(rates.received_push),
-                        sent: per_second(rates.sent_push),
-                    },
-                    GossipMessage {
-                        kind: "pull_request",
-                        received: per_second(rates.received_pull_requests),
-                        sent: per_second(rates.sent_pull_requests),
-                    },
-                    GossipMessage {
-                        kind: "pull_response",
-                        received: per_second(rates.received_pull_responses),
-                        sent: per_second(rates.sent_pull_responses),
-                    },
-                    GossipMessage {
-                        kind: "ping",
-                        received: per_second(rates.received_ping),
-                        sent: per_second(rates.sent_ping),
-                    },
-                    GossipMessage {
-                        kind: "pong",
-                        received: per_second(rates.received_pong),
-                        sent: per_second(rates.sent_pong),
-                    },
-                    GossipMessage {
-                        kind: "prune",
-                        received: per_second(rates.received_prune),
-                        sent: per_second(rates.sent_prune),
-                    },
-                ],
+                messages: [
+                    ("push", rates.received_push, rates.sent_push),
+                    (
+                        "pull_request",
+                        rates.received_pull_requests,
+                        rates.sent_pull_requests,
+                    ),
+                    (
+                        "pull_response",
+                        rates.received_pull_responses,
+                        rates.sent_pull_responses,
+                    ),
+                    ("ping", rates.received_ping, rates.sent_ping),
+                    ("pong", rates.received_pong, rates.sent_pong),
+                    ("prune", rates.received_prune, rates.sent_prune),
+                ]
+                .into_iter()
+                .map(|(kind, received, sent)| GossipMessage {
+                    kind,
+                    received: per_second(received),
+                    sent: per_second(sent),
+                })
+                .collect(),
                 entries: GossipEntries {
                     accepted_push: per_second(rates.accepted_push),
                     accepted_pull: per_second(rates.accepted_pull),

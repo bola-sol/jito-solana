@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Store } from "./store";
-import type { Envelope, ProducedBlock, SlotEntry, TpsSample } from "./types";
+import type { Envelope, EpochInfo, ProducedBlock, SlotEntry, TpsSample } from "./types";
 
 beforeAll(() => {
   // The store coalesces notifications onto an animation frame, which node has
@@ -24,6 +24,30 @@ function slot(number: number, level: SlotEntry["level"] = "completed"): SlotEntr
     left_out: null,
     mine: false,
   };
+}
+
+/** An epoch of `slots` from `start`, every turn the one leader's. */
+function epoch(number: number, start: number, slots: number, leader: string): EpochInfo {
+  return {
+    epoch: number,
+    start_slot: start,
+    end_slot: start + slots - 1,
+    slots_in_epoch: slots,
+    my_leader_slots: [],
+    leaders: [leader],
+    turns: Array.from({ length: slots / 4 }, () => 0),
+    block_cost_limit: 0,
+    account_cost_limit: 0,
+  };
+}
+
+/** A store with its socket open, and the frames it sends. */
+function connected(): { store: Store; sent: string[] } {
+  const store = new Store();
+  const sent: string[] = [];
+  store.setSender((frame) => sent.push(frame));
+  store.setConnection("open");
+  return { store, sent };
 }
 
 function envelope(topic: string, key: string, value: unknown): Envelope {
@@ -205,23 +229,8 @@ describe("slots", () => {
   });
 
   it("names a leader in an epoch the page was never sent, once it is fetched", async () => {
-    const store = new Store();
-    const sent: string[] = [];
-    store.setSender((frame) => sent.push(frame));
-    store.setConnection("open");
-    store.apply(
-      envelope("epoch", "new", {
-        epoch: 2,
-        start_slot: 200,
-        end_slot: 299,
-        slots_in_epoch: 100,
-        my_leader_slots: [],
-        leaders: ["NOW"],
-        turns: Array.from({ length: 25 }, () => 0),
-        block_cost_limit: 0,
-        account_cost_limit: 0,
-      }),
-    );
+    const { store, sent } = connected();
+    store.apply(envelope("epoch", "new", epoch(2, 200, 100, "NOW")));
     expect(store.leaderOf(104, false).key).toBeNull();
     const before = store.getLeaderRevision();
 
@@ -231,17 +240,7 @@ describe("slots", () => {
       topic: "epoch",
       key: "query",
       id,
-      value: {
-        epoch: 1,
-        start_slot: 100,
-        end_slot: 199,
-        slots_in_epoch: 100,
-        my_leader_slots: [],
-        leaders: ["BEFORE"],
-        turns: Array.from({ length: 25 }, () => 0),
-        block_cost_limit: 0,
-        account_cost_limit: 0,
-      },
+      value: epoch(1, 100, 100, "BEFORE"),
     });
     await loading;
 
@@ -251,10 +250,7 @@ describe("slots", () => {
   });
 
   it("asks about an epoch it has no schedule for only once", async () => {
-    const store = new Store();
-    const sent: string[] = [];
-    store.setSender((frame) => sent.push(frame));
-    store.setConnection("open");
+    const { store, sent } = connected();
 
     const loading = store.loadEpoch(1);
     const id = (JSON.parse(sent[0]) as { id: number }).id;
@@ -266,23 +262,8 @@ describe("slots", () => {
   });
 
   it("names a leader the peer table does not reach, once the table is fetched", async () => {
-    const store = new Store();
-    const sent: string[] = [];
-    store.setSender((frame) => sent.push(frame));
-    store.setConnection("open");
-    store.apply(
-      envelope("epoch", "new", {
-        epoch: 1,
-        start_slot: 100,
-        end_slot: 115,
-        slots_in_epoch: 16,
-        my_leader_slots: [],
-        leaders: ["FARAWAY"],
-        turns: [0, 0, 0, 0],
-        block_cost_limit: 0,
-        account_cost_limit: 0,
-      }),
-    );
+    const { store, sent } = connected();
+    store.apply(envelope("epoch", "new", epoch(1, 100, 16, "FARAWAY")));
     expect(store.leaderOf(104, false)).toEqual({ key: "FARAWAY", name: null, icon: null });
 
     const loading = store.loadDisplays();
@@ -303,10 +284,7 @@ describe("slots", () => {
   });
 
   it("asks for the display table once and no more", async () => {
-    const store = new Store();
-    const sent: string[] = [];
-    store.setSender((frame) => sent.push(frame));
-    store.setConnection("open");
+    const { store, sent } = connected();
 
     const loading = store.loadDisplays();
     const id = (JSON.parse(sent[0]) as { id: number }).id;
@@ -348,28 +326,13 @@ describe("slots", () => {
   it("still looks a slot that is not ours up the long way", () => {
     const store = new Store();
     store.apply(envelope("summary", "identity_key", "OURKEY"));
-    store.apply(
-      envelope("epoch", "new", {
-        epoch: 1,
-        start_slot: 100,
-        end_slot: 115,
-        slots_in_epoch: 16,
-        my_leader_slots: [],
-        leaders: ["THEIRKEY"],
-        turns: [0, 0, 0, 0],
-        block_cost_limit: 0,
-        account_cost_limit: 0,
-      }),
-    );
+    store.apply(envelope("epoch", "new", epoch(1, 100, 16, "THEIRKEY")));
     expect(store.leaderOf(104, false).key).toBe("THEIRKEY");
     expect(store.leaderOf(99, false).key).toBeNull();
   });
 
   it("answers a request with the reply carrying its id", async () => {
-    const store = new Store();
-    const sent: string[] = [];
-    store.setSender((frame) => sent.push(frame));
-    store.setConnection("open");
+    const { store, sent } = connected();
 
     const reply = store.request("slot.range", { first_slot: 4, count: 2 });
     const frame = JSON.parse(sent[0]) as { id: number; topic: string; key: string; params: unknown };
@@ -383,9 +346,7 @@ describe("slots", () => {
   it("does not fold a reply into the state it happens to be named after", () => {
     // The envelope of a reply and of a push differ only by the id, so without
     // that check a queried range would overwrite the live slot map.
-    const store = new Store();
-    store.setSender(() => {});
-    store.setConnection("open");
+    const { store } = connected();
     store.apply(envelope("slot", "overview", [slot(900)]));
 
     store.apply({ topic: "slot", key: "update", id: 77, value: slot(1) });
@@ -393,9 +354,7 @@ describe("slots", () => {
   });
 
   it("fails the requests in flight when the connection goes", async () => {
-    const store = new Store();
-    store.setSender(() => {});
-    store.setConnection("open");
+    const { store } = connected();
 
     const reply = store.request("summary.misses", {});
     store.setConnection("closed");

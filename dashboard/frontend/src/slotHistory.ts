@@ -120,21 +120,3 @@ export function entryFromRow(
     left_out: reward === "paid" || reward === "unpaid" ? leftOut : null,
   };
 }
-
-/** Holes are dropped; `turnFrom` draws the gap from the slots either side. */
-export function entriesOf(
-  range: SlotRange,
-  epoch: EpochInfo | undefined,
-  identity: string | undefined,
-): SlotEntry[] {
-  const entries: SlotEntry[] = [];
-  // From the last earlier block to fill, as the validator measures it, so a skipped slot is one long
-  // interval.
-  let previousFull: number | null = null;
-  range.rows.forEach((row, index) => {
-    if (row === null) return;
-    entries.push(entryFromRow(range.first_slot + index, row, previousFull, epoch, identity));
-    previousFull = fullAtOf(row) ?? previousFull;
-  });
-  return entries;
-}

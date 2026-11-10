@@ -403,10 +403,6 @@ impl Tally {
         }
     }
 
-    pub fn since_slot(&self) -> Slot {
-        self.since_slot
-    }
-
     pub fn rewarded(&self) -> u64 {
         self.rewarded
     }

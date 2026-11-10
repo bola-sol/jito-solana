@@ -31,7 +31,6 @@ const UNASKED_EVERY_MILLIS: u64 = 60_000;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct MissList {
     pub epoch: Epoch,
-    pub since_slot: Slot,
     pub rewarded: u64,
     pub ranks: u32,
     pub writers: Vec<MissWriter>,
@@ -158,9 +157,7 @@ pub struct MissValidator {
     pub name: Option<String>,
     pub ip: Option<String>,
     pub country: Option<&'static str>,
-    pub last_vote: Option<Slot>,
     pub delinquent: bool,
-    pub heard_millis: Option<u64>,
     pub no_gossip: bool,
 }
 
@@ -340,15 +337,13 @@ impl Collector {
                             })
                             .map(|entry| entry.node_pubkey)?;
                         let described = describe(&key, &info, heard);
-                        let (last_vote, delinquent) = standing(&key, votes, bank.slot());
+                        let (_, delinquent) = standing(&key, votes, bank.slot());
                         validators.push(MissValidator {
                             identity: key.to_string(),
                             name: described.name,
                             ip: described.ip,
                             country: described.country,
-                            last_vote,
                             delinquent,
-                            heard_millis: described.heard_millis,
                             no_gossip: is_quiet(described.heard_millis, now_millis),
                         });
                         let at = u32::try_from(validators.len().saturating_sub(1)).ok()?;
@@ -420,7 +415,6 @@ impl Collector {
         drop(info);
         let list = MissList {
             epoch: tally.epoch(),
-            since_slot: tally.since_slot(),
             rewarded: tally.rewarded(),
             ranks: tally.ranks(),
             writers,

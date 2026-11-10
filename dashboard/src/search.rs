@@ -840,39 +840,19 @@ pub fn search(
     };
     let mut found = Vec::new();
     let mut text = String::new();
-    loop {
+    let next = 'scan: loop {
         let Ok(history) = history.read() else {
-            return SearchReply {
-                turns: found,
-                next: None,
-                slow,
-            };
+            break 'scan None;
         };
         for _ in 0..TURNS_PER_LOCK {
             let Some(start) = next_start() else {
-                return SearchReply {
-                    turns: found,
-                    next: None,
-                    slow,
-                };
+                break 'scan None;
             };
             match range_side(params, &history, start) {
                 Side::Within => {}
                 // Every turn further on lies outside too.
-                Side::Below if !params.forward => {
-                    return SearchReply {
-                        turns: found,
-                        next: None,
-                        slow,
-                    };
-                }
-                Side::Above if params.forward => {
-                    return SearchReply {
-                        turns: found,
-                        next: None,
-                        slow,
-                    };
-                }
+                Side::Below if !params.forward => break 'scan None,
+                Side::Above if params.forward => break 'scan None,
                 Side::Below | Side::Above => continue,
             }
             if !reached {
@@ -886,18 +866,18 @@ pub fn search(
             }
             found.push(history.range(start.saturating_sub(lead), rows));
             if found.len() >= limit {
-                let next = if params.forward {
+                break 'scan Some(if params.forward {
                     start.saturating_add(SLOTS_PER_TURN)
                 } else {
                     start
-                };
-                return SearchReply {
-                    turns: found,
-                    next: Some(next),
-                    slow,
-                };
+                });
             }
         }
+    };
+    SearchReply {
+        turns: found,
+        next,
+        slow,
     }
 }
 

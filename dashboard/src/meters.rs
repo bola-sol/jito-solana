@@ -810,7 +810,7 @@ impl GossipMeter {
         Self {
             window: VecDeque::with_capacity(GOSSIP_MINUTE),
             entries: VecDeque::with_capacity(GOSSIP_RATE_WINDOW),
-            published: Debounced::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "gossip"),
         }
     }
 
@@ -946,8 +946,7 @@ impl GossipMeter {
                 packets_per_second: per_second(gossip_packets(&rates)),
             }
         });
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "gossip", gossip);
+        self.published.publish(publisher, gossip);
     }
 }
 
@@ -1663,7 +1662,7 @@ impl SocketMeter {
             known_sockets: HashMap::new(),
             unavailable: false,
             sampled: false,
-            published: Debounced::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "ingest_paths"),
         }
     }
 
@@ -1765,8 +1764,7 @@ impl SocketMeter {
                 .as_secs_f64(),
             paths,
         };
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "ingest_paths", summary);
+        self.published.publish(publisher, summary);
     }
 }
 
@@ -1826,10 +1824,18 @@ struct EgressSplit {
     repair_per_second: Option<u64>,
 }
 
-#[derive(Default)]
 struct EgressMeter {
     split: EgressSplit,
     published: Debounced<EgressSplit>,
+}
+
+impl Default for EgressMeter {
+    fn default() -> Self {
+        Self {
+            split: EgressSplit::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "network_egress"),
+        }
+    }
 }
 
 impl EgressMeter {
@@ -1860,8 +1866,7 @@ impl EgressMeter {
                 self.split.repair_per_second,
             ),
         };
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "network_egress", self.split);
+        self.published.publish(publisher, self.split);
     }
 }
 
@@ -1874,7 +1879,7 @@ impl ShredMeter {
     fn new() -> Self {
         Self {
             window: VecDeque::with_capacity(SHREDS_WINDOW),
-            published: Debounced::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "shreds"),
         }
     }
 
@@ -1902,8 +1907,7 @@ impl ShredMeter {
             repaired,
             repair_rate: repaired as f64 / received as f64,
         });
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "shreds", shreds);
+        self.published.publish(publisher, shreds);
     }
 }
 
@@ -1916,7 +1920,7 @@ impl TurbineMeter {
     fn new() -> Self {
         Self {
             window: VecDeque::with_capacity(SHREDS_WINDOW),
-            published: Debounced::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "turbine"),
         }
     }
 
@@ -1962,8 +1966,7 @@ impl TurbineMeter {
             xdp_dropped_total: current.xdp_dropped,
             xdp: current.retransmit_xdp,
         });
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "turbine", turbine);
+        self.published.publish(publisher, turbine);
     }
 }
 
@@ -1978,7 +1981,7 @@ impl AccountsMeter {
         Self {
             cache_window: VecDeque::with_capacity(ACCOUNTS_CACHE_WINDOW),
             window: VecDeque::with_capacity(ACCOUNTS_CACHE_WINDOW),
-            published: Debounced::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "accounts_cache"),
         }
     }
 
@@ -2031,8 +2034,7 @@ impl AccountsMeter {
                 window_seconds,
                 disk,
             });
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "accounts_cache", rate);
+        self.published.publish(publisher, rate);
     }
 }
 
@@ -2047,7 +2049,7 @@ impl ProgramCacheMeter {
         Self {
             window: VecDeque::with_capacity(PROGRAM_CACHE_WINDOW),
             levels: VecDeque::with_capacity(PROGRAM_CACHE_WINDOW),
-            published: Debounced::default(),
+            published: Debounced::new(TOPIC_SUMMARY, "program_cache"),
         }
     }
 
@@ -2080,8 +2082,7 @@ impl ProgramCacheMeter {
             peak_entries,
             entry_limit: MAX_LOADED_ENTRY_COUNT as u64,
         });
-        self.published
-            .publish(publisher, TOPIC_SUMMARY, "program_cache", cache);
+        self.published.publish(publisher, cache);
     }
 }
 
@@ -2111,18 +2112,18 @@ impl TpuMeter {
             quic_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_forwards_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_vote_window: VecDeque::with_capacity(WATERFALL_WINDOW),
-            quic_paths: Debounced::default(),
+            quic_paths: Debounced::new(TOPIC_SUMMARY, "quic_paths"),
             vote_quiet: true,
             vote_offered_at_epoch: None,
-            xdp: Debounced::default(),
+            xdp: Debounced::new(TOPIC_SUMMARY, "xdp"),
             epoch_now: None,
             leader_totals: LeaderTotals::default(),
-            epoch_span: Debounced::default(),
-            verify: Debounced::default(),
-            executed: Debounced::default(),
-            bundles: Debounced::default(),
+            epoch_span: Debounced::new(TOPIC_SUMMARY, "epoch_span"),
+            verify: Debounced::new(TOPIC_SUMMARY, "verify"),
+            executed: Debounced::new(TOPIC_SUMMARY, "executed"),
+            bundles: Debounced::new(TOPIC_SUMMARY, "bundles"),
             slot_lists_seen: None,
-            replay: Debounced::default(),
+            replay: Debounced::new(TOPIC_SUMMARY, "replay"),
         }
     }
 
@@ -2139,7 +2140,7 @@ impl TpuMeter {
     }
 
     fn collect_xdp(&mut self, tap: &MetricsTap, publisher: &Publisher) {
-        self.xdp.publish(publisher, TOPIC_SUMMARY, "xdp", tap.xdp());
+        self.xdp.publish(publisher, tap.xdp());
     }
 
     fn tick(
@@ -2204,8 +2205,6 @@ impl TpuMeter {
         let window_seconds = (self.quic_window.len() as f64) * METER_INTERVAL.as_secs_f64();
         self.quic_paths.publish(
             publisher,
-            TOPIC_SUMMARY,
-            "quic_paths",
             ever_offered.then_some(QuicPaths {
                 window_seconds,
                 ports,
@@ -2232,29 +2231,15 @@ impl TpuMeter {
 
             self.epoch_span.publish(
                 publisher,
-                TOPIC_SUMMARY,
-                "epoch_span",
                 (verify.received > 0 || executed.attempted > 0 || bundles.received > 0)
                     .then_some(span),
             );
-            self.verify.publish(
-                publisher,
-                TOPIC_SUMMARY,
-                "verify",
-                (verify.received > 0).then_some(verify),
-            );
-            self.executed.publish(
-                publisher,
-                TOPIC_SUMMARY,
-                "executed",
-                (executed.attempted > 0).then_some(executed),
-            );
-            self.bundles.publish(
-                publisher,
-                TOPIC_SUMMARY,
-                "bundles",
-                (bundles.received > 0).then_some(bundles),
-            );
+            self.verify
+                .publish(publisher, (verify.received > 0).then_some(verify));
+            self.executed
+                .publish(publisher, (executed.attempted > 0).then_some(executed));
+            self.bundles
+                .publish(publisher, (bundles.received > 0).then_some(bundles));
         }
 
         // Joined by slot in the browser, since the produced block is captured on another thread.
@@ -2286,12 +2271,8 @@ impl TpuMeter {
             }
         }
 
-        self.replay.publish(
-            publisher,
-            TOPIC_SUMMARY,
-            "replay",
-            replay_window(&tap.replay_slots()),
-        );
+        self.replay
+            .publish(publisher, replay_window(&tap.replay_slots()));
     }
 }
 

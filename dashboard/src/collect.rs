@@ -421,7 +421,6 @@ pub struct SkipRate {
     pub rate: Option<f64>,
 }
 
-#[derive(Default)]
 struct Debounces {
     client: Debounced<String>,
     gossip_address: Debounced<Option<GossipAddress>>,
@@ -468,6 +467,67 @@ struct Debounces {
     handoff: Debounced<Option<HandoffSummary>>,
     handoff_now: Debounced<Option<HandoffNow>>,
     fee_payers: Debounced<Option<FeePayerSummary>>,
+}
+
+impl Default for Debounces {
+    fn default() -> Self {
+        Self {
+            client: Debounced::new(TOPIC_SUMMARY, "client"),
+            gossip_address: Debounced::new(TOPIC_SUMMARY, "gossip_address"),
+            identity_key: Debounced::new(TOPIC_SUMMARY, "identity_key"),
+            identity_name: Debounced::new(TOPIC_SUMMARY, "identity_name"),
+            identity_icon: Debounced::new(TOPIC_SUMMARY, "identity_icon"),
+            vote_key: Debounced::new(TOPIC_SUMMARY, "vote_key"),
+            root_slot: Debounced::new(TOPIC_SUMMARY, "root_slot"),
+            optimistically_confirmed_slot: Debounced::new(
+                TOPIC_SUMMARY,
+                "optimistically_confirmed_slot",
+            ),
+            finalized_slot: Debounced::new(TOPIC_SUMMARY, "finalized_slot"),
+            completed_slot: Debounced::new(TOPIC_SUMMARY, "completed_slot"),
+            estimated_slot: Debounced::new(TOPIC_SUMMARY, "estimated_slot"),
+            vote_slot: Debounced::new(TOPIC_SUMMARY, "vote_slot"),
+            behind_cluster: Debounced::new(TOPIC_SUMMARY, "behind_cluster"),
+            replay_rate: Debounced::new(TOPIC_SUMMARY, "replay_rate"),
+            identity_balance: Debounced::new(TOPIC_SUMMARY, "identity_balance"),
+            vote_balance: Debounced::new(TOPIC_SUMMARY, "vote_balance"),
+            vote_commission: Debounced::new(TOPIC_SUMMARY, "vote_commission"),
+            stake: Debounced::new(TOPIC_SUMMARY, "stake"),
+            validator_counts: Debounced::new(TOPIC_SUMMARY, "validator_counts"),
+            versions: Debounced::new(TOPIC_SUMMARY, "versions"),
+            block_height: Debounced::new(TOPIC_SUMMARY, "block_height"),
+            slot_duration_nanos: Debounced::new(TOPIC_SUMMARY, "estimated_slot_duration_nanos"),
+            observed_slot_duration_nanos: Debounced::new(
+                TOPIC_SUMMARY,
+                "observed_slot_duration_nanos",
+            ),
+            finality_from_leader_micros: Debounced::new(
+                TOPIC_SUMMARY,
+                "finality_from_leader_micros",
+            ),
+            finalization_share: Debounced::new(TOPIC_SUMMARY, "finalization_share"),
+            next_leader_slot: Debounced::new(TOPIC_SUMMARY, "next_leader_slot"),
+            skip_rate: Debounced::new(TOPIC_SUMMARY, "skip_rate"),
+            leader_slot_counts: Debounced::new(TOPIC_SUMMARY, "leader_slot_counts"),
+            health: Debounced::new(TOPIC_SUMMARY, "health"),
+            epoch: Debounced::new(TOPIC_EPOCH, "new"),
+            consensus: Debounced::new(TOPIC_SUMMARY, "consensus"),
+            epoch_remaining_nanos: Debounced::new(TOPIC_SUMMARY, "epoch_remaining_nanos"),
+            peers: Debounced::new(TOPIC_PEERS, "all"),
+            snapshots: Debounced::new(TOPIC_SUMMARY, "snapshots"),
+            bls_key: Debounced::new(TOPIC_SUMMARY, "bls_key"),
+            admission: Debounced::new(TOPIC_SUMMARY, "admission"),
+            vote_credits: Debounced::new(TOPIC_SUMMARY, "vote_credits"),
+            epoch_earnings: Debounced::new(TOPIC_SUMMARY, "epoch_earnings"),
+            vote_participation: Debounced::new(TOPIC_SUMMARY, "vote_participation"),
+            vote_cost: Debounced::new(TOPIC_SUMMARY, "vote_cost"),
+            block_life: Debounced::new(TOPIC_SUMMARY, "block_life"),
+            cert_formation: Debounced::new(TOPIC_SUMMARY, "cert_formation"),
+            handoff: Debounced::new(TOPIC_SUMMARY, "handoff"),
+            handoff_now: Debounced::new(TOPIC_SUMMARY, "handoff_now"),
+            fee_payers: Debounced::new(TOPIC_SUMMARY, "fee_payers"),
+        }
+    }
 }
 
 pub struct Collector {
@@ -748,8 +808,6 @@ impl Collector {
         self.collect_epoch(&working_bank, completed_height);
         self.debounces.consensus.publish(
             &self.publisher,
-            TOPIC_SUMMARY,
-            "consensus",
             if working_bank.is_alpenglow() {
                 Consensus::Alpenglow
             } else {
@@ -832,23 +890,15 @@ impl Collector {
             }
             self.collect_finalization_share(&working_bank, &peers);
             self.collect_cert_formation(&root_bank);
-            self.debounces.fee_payers.publish(
-                &self.publisher,
-                TOPIC_SUMMARY,
-                "fee_payers",
-                self.fee_payers.summary(),
-            );
-            self.debounces.block_life.publish(
-                &self.publisher,
-                TOPIC_SUMMARY,
-                "block_life",
-                self.block_lives.summary(timestamp()),
-            );
+            self.debounces
+                .fee_payers
+                .publish(&self.publisher, self.fee_payers.summary());
+            self.debounces
+                .block_life
+                .publish(&self.publisher, self.block_lives.summary(timestamp()));
             let ours = self.ctx.identity();
             self.debounces.handoff.publish(
                 &self.publisher,
-                TOPIC_SUMMARY,
-                "handoff",
                 self.handoffs.summary(timestamp(), &ours, |key| {
                     country_of(&self.ctx.cluster_info, key)
                 }),
@@ -886,22 +936,16 @@ impl Collector {
     /// BAM and `JitoLabs` otherwise.
     fn collect_contact(&mut self) {
         let contact = self.ctx.cluster_info.my_contact_info();
-        self.debounces.client.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "client",
-            contact.version().client().to_string(),
-        );
+        self.debounces
+            .client
+            .publish(&self.publisher, contact.version().client().to_string());
         let address = contact.gossip().map(|addr| GossipAddress {
             ip: addr.ip().to_string(),
             country: geoip::country(addr.ip()),
         });
-        self.debounces.gossip_address.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "gossip_address",
-            address,
-        );
+        self.debounces
+            .gossip_address
+            .publish(&self.publisher, address);
     }
 
     fn report_tip_residual(&mut self) {
@@ -923,9 +967,7 @@ impl Collector {
         let snapshots = self
             .snapshots
             .observe(read, self.last_completed_slot, timestamp());
-        self.debounces
-            .snapshots
-            .publish(&self.publisher, TOPIC_SUMMARY, "snapshots", snapshots);
+        self.debounces.snapshots.publish(&self.publisher, snapshots);
     }
 
     fn collect_slot_positions(&mut self, root_bank: &Bank, highest_slot: Slot, completed: Slot) {
@@ -941,34 +983,20 @@ impl Collector {
         // briefly lag it during startup.
         let root = root.max(root_bank.slot());
 
+        self.debounces.root_slot.publish(&self.publisher, root);
         self.debounces
-            .root_slot
-            .publish(&self.publisher, TOPIC_SUMMARY, "root_slot", root);
-        self.debounces.optimistically_confirmed_slot.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "optimistically_confirmed_slot",
-            confirmed,
-        );
-        self.debounces.finalized_slot.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "finalized_slot",
-            finalized,
-        );
-        self.debounces.estimated_slot.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "estimated_slot",
-            highest_slot,
-        );
+            .optimistically_confirmed_slot
+            .publish(&self.publisher, confirmed);
+        self.debounces
+            .finalized_slot
+            .publish(&self.publisher, finalized);
+        self.debounces
+            .estimated_slot
+            .publish(&self.publisher, highest_slot);
 
-        self.debounces.completed_slot.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "completed_slot",
-            completed,
-        );
+        self.debounces
+            .completed_slot
+            .publish(&self.publisher, completed);
         self.collect_slot_durations(root_bank, completed);
         self.clock
             .mark_caught_up(self.trailed_cluster && !self.caught_cluster, completed);
@@ -990,24 +1018,16 @@ impl Collector {
         }
 
         let ns_per_slot = root_bank.ns_per_slot_at_slot(completed) as u64;
-        self.debounces.slot_duration_nanos.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "estimated_slot_duration_nanos",
-            ns_per_slot,
-        );
+        self.debounces
+            .slot_duration_nanos
+            .publish(&self.publisher, ns_per_slot);
 
-        self.debounces.observed_slot_duration_nanos.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "observed_slot_duration_nanos",
-            self.clock.observed_nanos(),
-        );
+        self.debounces
+            .observed_slot_duration_nanos
+            .publish(&self.publisher, self.clock.observed_nanos());
 
         self.debounces.finality_from_leader_micros.publish(
             &self.publisher,
-            TOPIC_SUMMARY,
-            "finality_from_leader_micros",
             self.metrics_tap
                 .finality_from_leader_micros(timestamp(), FINALITY_WINDOW_MILLIS),
         );
@@ -1166,12 +1186,9 @@ impl Collector {
         self.handoff_now_for = Some(key);
         let country = country_of(&self.ctx.cluster_info, &leader.id);
         let now = self.handoffs.now(&leader.id, country, first, timestamp());
-        self.debounces.handoff_now.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "handoff_now",
-            Some(now),
-        );
+        self.debounces
+            .handoff_now
+            .publish(&self.publisher, Some(now));
     }
 
     /// From the last earlier block that filled here to this one filling, so a slot's figure lines up
@@ -1263,12 +1280,9 @@ impl Collector {
             Some(self.ctx.blockstore.as_ref()),
             NEXT_LEADER_LOOKAHEAD,
         );
-        self.debounces.next_leader_slot.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "next_leader_slot",
-            next_mine.map(|(first, _last)| first),
-        );
+        self.debounces
+            .next_leader_slot
+            .publish(&self.publisher, next_mine.map(|(first, _last)| first));
     }
 
     /// Once the cluster passes a turn, credits it with the change in the tap's totals since the
@@ -1489,9 +1503,7 @@ impl Collector {
             .collect();
         peers.sort_by(|a, b| a.identity.cmp(&b.identity));
 
-        self.debounces
-            .peers
-            .publish(&self.publisher, TOPIC_PEERS, "all", peers);
+        self.debounces.peers.publish(&self.publisher, peers);
     }
 
     fn collect_slot_levels(&mut self, root_bank: &Bank, frozen: &[(Slot, Arc<Bank>)]) {
@@ -1879,43 +1891,25 @@ impl Collector {
 
     fn collect_identity_and_vote(&mut self, bank: &Bank, behind_cluster: Option<u64>) {
         let identity = self.ctx.identity();
-        self.debounces.identity_key.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "identity_key",
-            identity.to_string(),
-        );
-        self.debounces.vote_key.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "vote_key",
-            self.ctx.vote_account.to_string(),
-        );
+        self.debounces
+            .identity_key
+            .publish(&self.publisher, identity.to_string());
+        self.debounces
+            .vote_key
+            .publish(&self.publisher, self.ctx.vote_account.to_string());
         let (my_name, my_icon) = self.peer_display(&identity);
-        self.debounces.identity_name.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "identity_name",
-            my_name,
-        );
-        self.debounces.identity_icon.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "identity_icon",
-            my_icon,
-        );
-        self.debounces.identity_balance.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "identity_balance",
-            bank.get_balance(&identity),
-        );
-        self.debounces.vote_balance.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "vote_balance",
-            bank.get_balance(&self.ctx.vote_account),
-        );
+        self.debounces
+            .identity_name
+            .publish(&self.publisher, my_name);
+        self.debounces
+            .identity_icon
+            .publish(&self.publisher, my_icon);
+        self.debounces
+            .identity_balance
+            .publish(&self.publisher, bank.get_balance(&identity));
+        self.debounces
+            .vote_balance
+            .publish(&self.publisher, bank.get_balance(&self.ctx.vote_account));
 
         let epoch = bank.epoch();
         let vote_accounts = bank.vote_accounts();
@@ -1923,12 +1917,9 @@ impl Collector {
         let pending = mine.map_or(0, |(_, account)| {
             account.vote_state_view().pending_delegator_rewards()
         });
-        self.debounces.vote_cost.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "vote_cost",
-            compute_vote_cost(bank, pending),
-        );
+        self.debounces
+            .vote_cost
+            .publish(&self.publisher, compute_vote_cost(bank, pending));
         let total_stake: u64 = vote_accounts.values().map(|(stake, _)| *stake).sum();
         // From the same bank as our own credits, so the share never compares two moments.
         let staked_credits: Vec<u64> = vote_accounts
@@ -1960,34 +1951,22 @@ impl Collector {
             cluster_max,
             cluster_median,
         });
-        self.debounces
-            .bls_key
-            .publish(&self.publisher, TOPIC_SUMMARY, "bls_key", bls_key);
+        self.debounces.bls_key.publish(&self.publisher, bls_key);
         self.debounces.admission.publish(
             &self.publisher,
-            TOPIC_SUMMARY,
-            "admission",
             read_admission(bank, &self.ctx.vote_account),
         );
-        self.debounces.vote_credits.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "vote_credits",
-            vote_credits,
-        );
+        self.debounces
+            .vote_credits
+            .publish(&self.publisher, vote_credits);
 
         let last_vote = if voting { voter_vote } else { None };
 
-        self.debounces.vote_commission.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "vote_commission",
-            commission,
-        );
+        self.debounces
+            .vote_commission
+            .publish(&self.publisher, commission);
         self.debounces.stake.publish(
             &self.publisher,
-            TOPIC_SUMMARY,
-            "stake",
             StakeSummary {
                 activated_stake,
                 total_stake,
@@ -2002,30 +1981,20 @@ impl Collector {
         if self.debounces.vote_slot.last() != Some(&last_vote) {
             self.last_vote_advance = Instant::now();
         }
-        self.debounces
-            .vote_slot
-            .publish(&self.publisher, TOPIC_SUMMARY, "vote_slot", last_vote);
+        self.debounces.vote_slot.publish(&self.publisher, last_vote);
 
         if let Some(behind) = behind_cluster {
             self.snapshots.note_behind(behind);
         }
-        self.debounces.behind_cluster.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "behind_cluster",
-            behind_cluster,
-        );
+        self.debounces
+            .behind_cluster
+            .publish(&self.publisher, behind_cluster);
     }
 
     fn collect_epoch(&mut self, bank: &Bank, completed_height: Option<u64>) {
         // Blocks, not slots: the gap between the two is how many slots the cluster skipped.
         if let Some(height) = completed_height {
-            self.debounces.block_height.publish(
-                &self.publisher,
-                TOPIC_SUMMARY,
-                "block_height",
-                height,
-            );
+            self.debounces.block_height.publish(&self.publisher, height);
         }
 
         let epoch_schedule = bank.epoch_schedule();
@@ -2071,9 +2040,7 @@ impl Collector {
             archive.push(current.clone());
             drop(archive);
 
-            self.debounces
-                .epoch
-                .publish(&self.publisher, TOPIC_EPOCH, "new", current);
+            self.debounces.epoch.publish(&self.publisher, current);
             self.epoch_published = Some((epoch, me, known));
         }
 
@@ -2109,8 +2076,6 @@ impl Collector {
         let remaining = end.duration_since(now).unwrap_or_default();
         self.debounces.epoch_remaining_nanos.publish(
             &self.publisher,
-            TOPIC_SUMMARY,
-            "epoch_remaining_nanos",
             remaining.as_secs().saturating_mul(1_000_000_000),
         );
     }
@@ -2233,8 +2198,6 @@ impl Collector {
 
         self.debounces.validator_counts.publish(
             &self.publisher,
-            TOPIC_SUMMARY,
-            "validator_counts",
             ValidatorCounts {
                 total: tally.staked.len(),
                 delinquent: tally.delinquent.len(),
@@ -2244,12 +2207,9 @@ impl Collector {
             },
         );
 
-        self.debounces.versions.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "versions",
-            version_shares(&tally.staked, &versions),
-        );
+        self.debounces
+            .versions
+            .publish(&self.publisher, version_shares(&tally.staked, &versions));
         tally.stalest_votes
     }
 
@@ -2344,14 +2304,10 @@ impl Collector {
                 .map(|vote| self.last_completed_slot.saturating_sub(vote)),
             self.last_vote_advance.elapsed(),
         );
-        self.debounces
-            .health
-            .publish(&self.publisher, TOPIC_SUMMARY, "health", health);
+        self.debounces.health.publish(&self.publisher, health);
         let rate =
             measure_replay_rate(&self.completed_window).map(|rate| (rate * 10.0).round() / 10.0);
-        self.debounces
-            .replay_rate
-            .publish(&self.publisher, TOPIC_SUMMARY, "replay_rate", rate);
+        self.debounces.replay_rate.publish(&self.publisher, rate);
     }
 
     /// On the same basis as `solana block-production`, each slot checked once as the root passes
@@ -2397,22 +2353,16 @@ impl Collector {
                 .advance(root, |slot| history.check(slot));
         }
         let rate = self.skip_rate.rate();
-        self.debounces.skip_rate.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "skip_rate",
-            SkipRate { epoch, rate },
-        );
+        self.debounces
+            .skip_rate
+            .publish(&self.publisher, SkipRate { epoch, rate });
         let counts = [&self.previous_slots, &self.skip_rate]
             .into_iter()
             .filter_map(SkipRateWalk::counts)
             .collect();
-        self.debounces.leader_slot_counts.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "leader_slot_counts",
-            counts,
-        );
+        self.debounces
+            .leader_slot_counts
+            .publish(&self.publisher, counts);
     }
 
     fn collect_startup_progress(&mut self) {

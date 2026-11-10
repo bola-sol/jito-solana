@@ -135,7 +135,6 @@ pub struct PhaseTiming {
     pub elapsed_nanos: u64,
 }
 
-#[derive(Default)]
 pub struct StartupPublisher {
     debounce: Debounced<StartupProgress>,
     gossip: Debounced<Option<GossipStake>>,
@@ -147,10 +146,21 @@ pub struct StartupPublisher {
     taken: Vec<PhaseTiming>,
 }
 
+impl Default for StartupPublisher {
+    fn default() -> Self {
+        Self {
+            debounce: Debounced::new(TOPIC_SUMMARY, KEY_STARTUP_PROGRESS),
+            gossip: Debounced::new(TOPIC_SUMMARY, KEY_GOSSIP_STAKE),
+            replay_origin: None,
+            current: None,
+            taken: Vec::new(),
+        }
+    }
+}
+
 impl StartupPublisher {
     pub fn publish_gossip(&mut self, publisher: &Publisher, stake: Option<GossipStake>) {
-        self.gossip
-            .publish(publisher, TOPIC_SUMMARY, KEY_GOSSIP_STAKE, stake);
+        self.gossip.publish(publisher, stake);
     }
 
     pub fn publish(
@@ -174,8 +184,7 @@ impl StartupPublisher {
             phase_elapsed_nanos: self.elapsed(phase.name, Instant::now()),
             phases_taken: self.taken.clone(),
         };
-        self.debounce
-            .publish(publisher, TOPIC_SUMMARY, KEY_STARTUP_PROGRESS, progress);
+        self.debounce.publish(publisher, progress);
     }
 
     /// Whole seconds, so the debounce does not send four messages a second.

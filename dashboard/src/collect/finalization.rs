@@ -3,7 +3,7 @@
 //! certificate's with the slot eight back, so a last vote near the newest in the bank was carried.
 
 use {
-    super::{Collector, TOPIC_SUMMARY},
+    super::Collector,
     crate::geoip,
     serde::Serialize,
     solana_clock::Slot,
@@ -231,12 +231,9 @@ impl Collector {
                     .summary(&self.ctx.vote_account, now_millis, vote_micros, &places)
             })
             .flatten();
-        self.debounces.finalization_share.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "finalization_share",
-            share,
-        );
+        self.debounces
+            .finalization_share
+            .publish(&self.publisher, share);
     }
 
     /// Countries from gossip addresses; empty when our own address has none.

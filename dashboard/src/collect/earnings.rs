@@ -3,7 +3,7 @@
 
 use {
     super::{Collector, count_epoch_credits},
-    crate::{certs, proto::TOPIC_SUMMARY},
+    crate::certs,
     serde::Serialize,
     solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
@@ -194,12 +194,9 @@ pub(super) struct EarningsWalk {
 impl Collector {
     pub(super) fn collect_earnings(&mut self, root_bank: &Bank) {
         let earnings = self.read_earnings(root_bank);
-        self.debounces.epoch_earnings.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "epoch_earnings",
-            earnings,
-        );
+        self.debounces
+            .epoch_earnings
+            .publish(&self.publisher, earnings);
     }
 
     /// `None` until every block of ours the root has passed is read.

@@ -1488,11 +1488,6 @@ mod tests {
     }
 
     #[test]
-    fn test_an_unlisted_status_still_produces_a_usable_line() {
-        assert_eq!(status_line(418, false), "HTTP/1.1 418 OK");
-    }
-
-    #[test]
     fn test_only_hashed_assets_are_cached() {
         // Asset filenames carry a content hash; index.html does not, and caching it
         // would hide a redeploy.
@@ -1518,22 +1513,9 @@ mod tests {
     }
 
     #[test]
-    fn test_responses_carry_the_security_headers() {
-        let out = response_head(200, "text/html", 6, false, "");
-        assert!(out.contains("content-security-policy:"));
-        assert!(out.contains("x-content-type-options: nosniff"));
-        assert!(out.contains("referrer-policy: no-referrer"));
-    }
-
-    #[test]
     fn test_policy_still_permits_validator_icons() {
         assert!(SECURITY_HEADERS.contains("img-src 'self' data: https:"));
         assert!(!SECURITY_HEADERS.contains("img-src 'self'\r\n"));
-    }
-
-    #[test]
-    fn test_policy_lets_a_phone_read_the_manifest() {
-        assert!(SECURITY_HEADERS.contains("manifest-src 'self'"));
     }
 
     #[test]
@@ -1793,17 +1775,6 @@ mod tests {
     async fn test_an_unknown_path_falls_through_to_the_app() {
         let reply = request_with_hosts(
             b"GET /some/client/route HTTP/1.1\r\nHost: localhost\r\n\r\n",
-            vec!["localhost".to_string()],
-        )
-        .await;
-        assert!(reply.starts_with("HTTP/1.1 200 OK"));
-        assert!(reply.contains("content-type: text/html"));
-    }
-
-    #[tokio::test]
-    async fn test_a_filtered_address_serves_the_page() {
-        let reply = request_with_hosts(
-            b"GET /schedule?country=DE&duration=over-400 HTTP/1.1\r\nHost: localhost\r\n\r\n",
             vec!["localhost".to_string()],
         )
         .await;

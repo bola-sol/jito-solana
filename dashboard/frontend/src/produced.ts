@@ -13,19 +13,20 @@ export interface Earned {
   total: number;
 }
 
+export const HEAD_KEYS = [
+  "slot",
+  "slot_time_millis",
+  "transactions",
+  "block_cost",
+  "block_cost_limit",
+  "total_fees",
+  "priority_fees",
+  "tips",
+  "duration_nanos",
+] as const satisfies readonly (keyof ProducedBlock)[];
+
 /** What the list, its sort and its summary read of a block; the rest is fetched when one opens. */
-export type BlockHead = Pick<
-  ProducedBlock,
-  | "slot"
-  | "slot_time_millis"
-  | "transactions"
-  | "block_cost"
-  | "block_cost_limit"
-  | "total_fees"
-  | "priority_fees"
-  | "tips"
-  | "duration_nanos"
->;
+export type BlockHead = Pick<ProducedBlock, (typeof HEAD_KEYS)[number]>;
 
 /** Under alpenglow a block holds no votes, so every failure is among its non-vote transactions. */
 export function succeededOf(block: Pick<ProducedBlock, "non_vote_transactions" | "failed_transactions">): number {

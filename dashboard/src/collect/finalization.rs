@@ -129,12 +129,14 @@ impl FinalizationTally {
 
     /// Each vote account's share over the window, for validators staked in at least half its blocks.
     pub(super) fn shares(&self, now_millis: u64) -> HashMap<Pubkey, f64> {
+        shares_of(self.window(now_millis))
+    }
+
+    fn window(&self, now_millis: u64) -> impl Iterator<Item = &Minute> {
         let since = now_millis.saturating_sub(WINDOW_MINUTES.saturating_mul(MINUTE_MILLIS));
-        shares_of(
-            self.minutes
-                .iter()
-                .filter(|minute| minute.start_millis > since),
-        )
+        self.minutes
+            .iter()
+            .filter(move |minute| minute.start_millis > since)
     }
 
     pub(super) fn summary(
@@ -144,19 +146,13 @@ impl FinalizationTally {
         vote_micros: Option<u64>,
         places: &Places,
     ) -> Option<FinalizationShare> {
-        let since = now_millis.saturating_sub(WINDOW_MINUTES.saturating_mul(MINUTE_MILLIS));
-        let window: Vec<&Minute> = self
-            .minutes
-            .iter()
-            .filter(|minute| minute.start_millis > since)
-            .collect();
-        let blocks = window
-            .iter()
+        let blocks = self
+            .window(now_millis)
             .fold(0u32, |sum, minute| sum.saturating_add(minute.blocks));
         if blocks == 0 {
             return None;
         }
-        let shares = shares_of(window.iter().copied());
+        let shares = shares_of(self.window(now_millis));
         let mut values: Vec<f64> = shares.values().copied().collect();
         values.sort_by(f64::total_cmp);
         let own = shares.get(ours).copied();
@@ -345,10 +341,6 @@ mod tests {
 
     const MINUTE: u64 = 1_800_000_000_000;
 
-    fn block(tally: &mut FinalizationTally, votes: &[(Pubkey, Slot)], at: u64) {
-        tally.observe(votes, at);
-    }
-
     #[test]
     fn test_a_vote_near_the_newest_was_carried() {
         let (ours, near, behind) = (
@@ -364,8 +356,7 @@ mod tests {
             } else {
                 slot.saturating_sub(8)
             };
-            block(
-                &mut tally,
+            tally.observe(
                 &[
                     (ours, own),
                     (near, slot.saturating_sub(3)),
@@ -397,7 +388,7 @@ mod tests {
             let at = MINUTE.saturating_add(minute.saturating_mul(MINUTE_MILLIS));
             // Left out for the first sixty minutes, carried after.
             let own = if minute < 60 { 92 } else { 100 };
-            block(&mut tally, &[(ours, own), (Pubkey::new_unique(), 100)], at);
+            tally.observe(&[(ours, own), (Pubkey::new_unique(), 100)], at);
         }
         let now = MINUTE.saturating_add(69u64.saturating_mul(MINUTE_MILLIS));
 
@@ -421,7 +412,7 @@ mod tests {
             if slot >= 8 {
                 votes.push((late, slot));
             }
-            block(&mut tally, &votes, MINUTE);
+            tally.observe(&votes, MINUTE);
         }
 
         assert_eq!(tally.shares(MINUTE).len(), 1);
@@ -448,7 +439,7 @@ mod tests {
             // Ours is carried every time, the others in our country never.
             let mut votes = vec![(ours, slot), (away, slot)];
             votes.extend(here.iter().map(|vote| (*vote, slot.saturating_sub(8))));
-            block(&mut tally, &votes, MINUTE);
+            tally.observe(&votes, MINUTE);
         }
         let mut places = Places {
             ours: Some("SG"),

@@ -264,27 +264,7 @@ impl ProducedStore {
         self.blocks.contains_key(&slot)
     }
 
-    pub fn len(&self) -> usize {
-        self.blocks.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
-    }
-
-    pub fn floor(&self) -> Slot {
-        self.floor
-    }
-
     /// The newest `count`, oldest first.
-    pub fn recent(&self, count: usize) -> Vec<ProducedBlock> {
-        let mut recent: Vec<ProducedBlock> =
-            self.blocks.values().rev().take(count).cloned().collect();
-        recent.reverse();
-        recent
-    }
-
-    /// The newest `count`, oldest first, borrowed for encoding in place.
     pub fn recent_refs(&self, count: usize) -> Vec<&ProducedBlock> {
         let mut recent: Vec<&ProducedBlock> = self.blocks.values().rev().take(count).collect();
         recent.reverse();
@@ -638,7 +618,7 @@ mod tests {
         ring.set_certificate(11, certificate(3));
         ring.set_execution(12, execution());
         assert_eq!(slots(&ring.take_changed()), [11]);
-        assert!(ring.recent(usize::MAX)[1].certificate.is_some());
+        assert!(ring.recent_refs(usize::MAX)[1].certificate.is_some());
     }
 
     #[test]
@@ -649,7 +629,7 @@ mod tests {
         assert!(!ring.set_certificate(10, certificate(2)));
         assert!(!ring.set_certificate(11, certificate(3)));
         assert_eq!(
-            ring.recent(usize::MAX)[0]
+            ring.recent_refs(usize::MAX)[0]
                 .certificate
                 .as_ref()
                 .map(|c| c.rewards),
@@ -706,9 +686,9 @@ mod tests {
             })
         };
         assert!(ring.fill_bundles(landed));
-        assert_eq!(ring.recent(usize::MAX)[0].bundles, None);
+        assert_eq!(ring.recent_refs(usize::MAX)[0].bundles, None);
         assert_eq!(
-            ring.recent(usize::MAX)[1].bundles,
+            ring.recent_refs(usize::MAX)[1].bundles,
             Some(Bundles {
                 sanitized: 17,
                 executed: 14,
@@ -732,47 +712,12 @@ mod tests {
             ..part
         };
         assert!(ring.fill_leading(|_| Some(whole)));
-        assert_eq!(ring.recent(usize::MAX)[0].leading, Some(whole));
+        assert_eq!(ring.recent_refs(usize::MAX)[0].leading, Some(whole));
         assert!(
             !ring.fill_leading(|_| None),
             "a report gone from the tap leaves the block as it was"
         );
-        assert_eq!(ring.recent(usize::MAX)[0].leading, Some(whole));
-    }
-
-    #[test]
-    fn test_the_borrowed_list_encodes_as_the_cloned_one() {
-        let mut ring = ProducedStore::default();
-        for slot in [10, 11, 12] {
-            ring.insert(block(slot));
-        }
-        ring.set_certificate(
-            11,
-            BlockCertificate {
-                leader: Some(Pubkey::new_unique()),
-                left_out: vec![CertificateValidator {
-                    identity: Pubkey::new_unique(),
-                    name: Some("Lantern".to_string()),
-                    ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
-                    country: Some("NL"),
-                }],
-                ..certificate(3)
-            },
-        );
-        ring.set_versions(12, TxVersions::default());
-        ring.set_execution(12, execution());
-        ring.fill_bundles(|_| {
-            Some(Bundles {
-                sanitized: 4,
-                executed: 3,
-            })
-        });
-        for count in [0, 2, usize::MAX] {
-            assert_eq!(
-                crate::proto::encode("summary", "produced_blocks", &ring.recent(count)).text(),
-                crate::proto::encode("summary", "produced_blocks", &ring.recent_refs(count)).text(),
-            );
-        }
+        assert_eq!(ring.recent_refs(usize::MAX)[0].leading, Some(whole));
     }
 
     #[test]
@@ -826,12 +771,12 @@ mod tests {
         };
         assert!(!ring.set_versions(11, tally), "not a block we hold");
         assert!(ring.set_versions(10, tally));
-        assert_eq!(ring.recent(usize::MAX)[0].versions, Some(tally));
+        assert_eq!(ring.recent_refs(usize::MAX)[0].versions, Some(tally));
         assert!(
             !ring.set_versions(10, TxVersions::default()),
             "already read"
         );
-        assert_eq!(ring.recent(usize::MAX)[0].versions, Some(tally));
+        assert_eq!(ring.recent_refs(usize::MAX)[0].versions, Some(tally));
     }
 
     #[test]
@@ -841,7 +786,7 @@ mod tests {
         let execution = execution();
         assert!(!ring.set_execution(11, execution), "not a block we hold");
         assert!(ring.set_execution(10, execution));
-        assert_eq!(ring.recent(usize::MAX)[0].execution, Some(execution));
+        assert_eq!(ring.recent_refs(usize::MAX)[0].execution, Some(execution));
         assert!(!ring.set_execution(10, execution), "already set");
     }
 
@@ -851,7 +796,7 @@ mod tests {
         assert!(ring.insert(block(10)));
         // Only the first sighting of a frozen bank holds the block's own figures.
         assert!(!ring.insert(block(10)));
-        assert_eq!(ring.recent(usize::MAX).len(), 1);
+        assert_eq!(ring.recent_refs(usize::MAX).len(), 1);
     }
 
     #[test]
@@ -861,7 +806,7 @@ mod tests {
             ring.insert(block(slot));
         }
         let slots: Vec<Slot> = ring
-            .recent(usize::MAX)
+            .recent_refs(usize::MAX)
             .iter()
             .map(|block| block.slot)
             .collect();
@@ -914,7 +859,11 @@ mod tests {
         ring.take_changed();
         ring.set_versions(9, TxVersions::default());
         ring.hold_from(12);
-        assert_eq!(slots(&ring.recent(usize::MAX)), [12, 13]);
+        let held = ring.recent_refs(usize::MAX);
+        assert_eq!(
+            held.iter().map(|block| block.slot).collect::<Vec<_>>(),
+            [12, 13]
+        );
         assert!(
             ring.take_changed().is_empty(),
             "the change to 9 went with it"
@@ -992,7 +941,7 @@ mod tests {
             })
         };
         ring.fill_bundles(landed);
-        let held = ring.recent(usize::MAX);
+        let held = ring.recent_refs(usize::MAX);
         assert_eq!(held[0].bundles, None);
         assert!(held[1].bundles.is_some());
     }

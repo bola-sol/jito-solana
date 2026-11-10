@@ -256,7 +256,7 @@ export function SlotDetailsPage({
         <FeePayersFold summary={feePayers} />
       </div>
       <div className="produced-list" ref={list}>
-        <ScrollTop scroller={list} hold={false} />
+        <ScrollTop scroller={list} />
         <VirtualList
           keys={keys}
           sizeClass={sizeClass}

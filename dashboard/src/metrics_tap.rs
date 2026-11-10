@@ -15,7 +15,7 @@ use {
         collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
         str::FromStr,
         sync::{
-            Arc, Mutex,
+            Arc, Mutex, MutexGuard, PoisonError,
             atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         },
         time::UNIX_EPOCH,
@@ -188,9 +188,7 @@ struct TimedSamples(Mutex<VecDeque<(u64, u64)>>);
 
 impl TimedSamples {
     fn push(&self, at_millis: u64, value: u64) {
-        let Ok(mut samples) = self.0.lock() else {
-            return;
-        };
+        let mut samples = locked(&self.0);
         samples.push_back((at_millis, value));
         while samples.len() > FINALITY_SAMPLES {
             samples.pop_front();
@@ -198,7 +196,7 @@ impl TimedSamples {
     }
 
     fn median(&self, now_millis: u64, window_millis: u64) -> Option<u64> {
-        let samples = self.0.lock().ok()?;
+        let samples = locked(&self.0);
         let mut recent: Vec<u64> = samples
             .iter()
             .filter(|(at, _)| now_millis.saturating_sub(*at) <= window_millis)
@@ -1122,9 +1120,7 @@ impl MetricsTap {
             counts,
         };
 
-        let Ok(mut slots) = self.slot_waterfalls.lock() else {
-            return;
-        };
+        let mut slots = locked(&self.slot_waterfalls);
         // A build running two schedulers reports every leader slot twice; keep
         // the report that did the work.
         if slots.put(slot, waterfall, |held| {
@@ -1157,9 +1153,7 @@ impl MetricsTap {
             model: field("model"),
             kernel_version: field("kernel_version"),
         };
-        if let Ok(mut held) = self.xdp.lock() {
-            *held = Some(config);
-        }
+        *locked(&self.xdp) = Some(config);
     }
 
     fn remember_leader_timing(&self, point: &DataPoint) {
@@ -1167,9 +1161,7 @@ impl MetricsTap {
         let Some(slot) = field(SLOT) else {
             return;
         };
-        let Ok(mut timings) = self.leader_timings.lock() else {
-            return;
-        };
+        let mut timings = locked(&self.leader_timings);
         let timing = timings.entry(slot).or_default();
         match point.name {
             LEADER_START => {
@@ -1210,9 +1202,7 @@ impl MetricsTap {
             notarize_count: field("notar_vote_count"),
             finalize_mean_micros: field("finalize_vote_us_mean"),
         };
-        let Ok(mut arrivals) = self.vote_arrivals.lock() else {
-            return;
-        };
+        let mut arrivals = locked(&self.vote_arrivals);
         match arrivals.epoch {
             Some(held) if epoch < held => return,
             Some(held) if epoch == held => (),
@@ -1236,9 +1226,8 @@ impl MetricsTap {
             .iter()
             .find(|(name, _)| *name == "is_fast_finalization")
             .map(|(_, value)| value == "true");
-        if let Some(fast) = fast
-            && let Ok(mut paths) = self.finalized_paths.lock()
-        {
+        if let Some(fast) = fast {
+            let mut paths = locked(&self.finalized_paths);
             paths.push_back((slot, fast));
             if paths.len() > VOTE_TRACKS {
                 paths.pop_front();
@@ -1258,9 +1247,7 @@ impl MetricsTap {
                 vote.notarize_us,
             );
         }
-        let Ok(mut tracks) = self.vote_tracks.lock() else {
-            return;
-        };
+        let mut tracks = locked(&self.vote_tracks);
         tracks.insert(slot, vote);
         keep_newest(&mut tracks, VOTE_TRACKS);
     }
@@ -1287,9 +1274,8 @@ impl MetricsTap {
         if let Some(micros) = vote {
             self.vote_lag.push(now_millis, micros);
         }
-        if (vote.is_some() || finalized.is_some())
-            && let Ok(mut votes) = self.block_votes.lock()
-        {
+        if vote.is_some() || finalized.is_some() {
+            let mut votes = locked(&self.block_votes);
             votes.push_back(BlockVotes {
                 slot,
                 vote_us: vote,
@@ -1303,10 +1289,9 @@ impl MetricsTap {
 
     /// Each slot's, once.
     pub fn take_block_votes(&self) -> Vec<BlockVotes> {
-        match self.block_votes.lock() {
-            Ok(mut votes) => std::mem::take(&mut *votes).into_iter().collect(),
-            Err(_) => Vec::new(),
-        }
+        std::mem::take(&mut *locked(&self.block_votes))
+            .into_iter()
+            .collect()
     }
 
     /// The median time from the leader closing a block to its finalization here, over the window.
@@ -1316,9 +1301,7 @@ impl MetricsTap {
 
     /// The footer's producer clock for `slot`, from the certificate walk.
     pub fn note_block_closed(&self, slot: Slot, closed_at_nanos: u64) {
-        let Ok(mut closed) = self.closed_blocks.lock() else {
-            return;
-        };
+        let mut closed = locked(&self.closed_blocks);
         closed.closed_at.insert(slot, closed_at_nanos);
         keep_newest(&mut closed.closed_at, SHRED_FILLS);
         let waiting = closed.waiting.remove(&slot);
@@ -1330,9 +1313,7 @@ impl MetricsTap {
 
     /// Votor usually reports after the walk has read the footer; otherwise the finality waits.
     fn time_from_leader(&self, slot: Slot, finality_us: u64, now_millis: u64) {
-        let Ok(mut closed) = self.closed_blocks.lock() else {
-            return;
-        };
+        let mut closed = locked(&self.closed_blocks);
         let Some(&closed_at_nanos) = closed.closed_at.get(&slot) else {
             closed.waiting.insert(slot, finality_us);
             keep_newest(&mut closed.waiting, SHRED_FILLS);
@@ -1377,17 +1358,15 @@ impl MetricsTap {
     }
 
     pub fn take_finalized_paths(&self) -> Vec<(Slot, bool)> {
-        match self.finalized_paths.lock() {
-            Ok(mut paths) => std::mem::take(&mut *paths).into_iter().collect(),
-            Err(_) => Vec::new(),
-        }
+        std::mem::take(&mut *locked(&self.finalized_paths))
+            .into_iter()
+            .collect()
     }
 
     pub fn take_vote_tracks(&self) -> Vec<(Slot, VoteSent)> {
-        match self.vote_tracks.lock() {
-            Ok(mut tracks) => std::mem::take(&mut *tracks).into_iter().collect(),
-            Err(_) => Vec::new(),
-        }
+        std::mem::take(&mut *locked(&self.vote_tracks))
+            .into_iter()
+            .collect()
     }
 
     fn remember_replay(&self, point: &DataPoint) {
@@ -1449,9 +1428,7 @@ impl MetricsTap {
         }
 
         slot.observed_millis = timestamp();
-        let Ok(mut slots) = self.replay_slots.lock() else {
-            return;
-        };
+        let mut slots = locked(&self.replay_slots);
         // A slot replayed twice keeps the later report. Bounded from the lowest
         // slot, which is the oldest during ordinary running.
         slots.insert(slot.slot, slot);
@@ -1490,9 +1467,7 @@ impl MetricsTap {
         fill.slot = slot;
         fill.shreds = last_index.saturating_add(1);
 
-        let Ok(mut fills) = self.shred_fills.lock() else {
-            return;
-        };
+        let mut fills = locked(&self.shred_fills);
         fills.insert(slot, fill);
         keep_newest(&mut fills, SHRED_FILLS);
     }
@@ -1513,9 +1488,7 @@ impl MetricsTap {
         let worker = tag_named(point, WORKER_ID)
             .and_then(|id| id.parse().ok())
             .unwrap_or(u64::MAX);
-        let Ok(mut timings) = self.worker_timings.lock() else {
-            return;
-        };
+        let mut timings = locked(&self.worker_timings);
         timings.push_back(WorkerTiming {
             at_millis,
             worker,
@@ -1543,9 +1516,7 @@ impl MetricsTap {
         let Some(slot) = slot else {
             return;
         };
-        let Ok(mut slots) = self.vote_timings.lock() else {
-            return;
-        };
+        let mut slots = locked(&self.vote_timings);
         slots.insert(slot, times);
         keep_newest(&mut slots, PENDING_SLOTS);
     }
@@ -1569,9 +1540,7 @@ impl MetricsTap {
             return;
         };
 
-        let Ok(mut slots) = self.bundle_slots.lock() else {
-            return;
-        };
+        let mut slots = locked(&self.bundle_slots);
         let landing = slots.entry(slot).or_insert(BundleLanding {
             slot,
             ..BundleLanding::default()
@@ -1613,9 +1582,7 @@ impl MetricsTap {
         };
         cost.slot = slot_number;
 
-        let Ok(mut costs) = self.slot_costs.lock() else {
-            return;
-        };
+        let mut costs = locked(&self.slot_costs);
         if costs.put(slot_number, cost, |_| true) {
             self.note_slot_lists_changed();
         }
@@ -1627,30 +1594,22 @@ impl MetricsTap {
 
     /// The newest `count`, oldest first.
     pub fn recent_costs(&self, count: usize) -> Vec<SlotCost> {
-        self.slot_costs
-            .lock()
-            .map(|costs| costs.recent(count))
-            .unwrap_or_default()
+        locked(&self.slot_costs).recent(count)
     }
 
     /// Those recorded or replaced since the last call, oldest first.
     pub fn take_changed_costs(&self) -> Vec<SlotCost> {
-        self.slot_costs
-            .lock()
-            .map(|mut costs| costs.take_changed())
-            .unwrap_or_default()
+        locked(&self.slot_costs).take_changed()
     }
 
     pub fn cost(&self, slot: Slot) -> Option<SlotCost> {
-        self.slot_costs.lock().ok()?.held.get(&slot).cloned()
+        locked(&self.slot_costs).held.get(&slot).cloned()
     }
 
     /// How often each of `accounts` was a held block's costliest, and its costliest block, in
     /// one pass over the blocks held.
     pub fn costliest_recurrences(&self, accounts: &[&str]) -> HashMap<String, Recurrence> {
-        let Ok(costs) = self.slot_costs.lock() else {
-            return HashMap::new();
-        };
+        let costs = locked(&self.slot_costs);
         let of = costs.held.len() as u64;
         let mut found: HashMap<String, Recurrence> = HashMap::new();
         for cost in costs.held.values() {
@@ -1676,12 +1635,8 @@ impl MetricsTap {
 
     /// Our leader slots' reports older than `floor` are dropped and refused from then on.
     pub fn hold_slots_from(&self, floor: Slot) {
-        if let Ok(mut slots) = self.slot_waterfalls.lock() {
-            slots.hold_from(floor);
-        }
-        if let Ok(mut costs) = self.slot_costs.lock() {
-            costs.hold_from(floor);
-        }
+        locked(&self.slot_waterfalls).hold_from(floor);
+        locked(&self.slot_costs).hold_from(floor);
         self.note_slot_lists_changed();
     }
 
@@ -1705,19 +1660,15 @@ impl MetricsTap {
         if seen.total == 0 {
             return;
         }
-        if let Ok(mut held) = self.stake_in_gossip.lock() {
-            *held = Some(seen);
-        }
+        *locked(&self.stake_in_gossip) = Some(seen);
     }
 
     pub fn stake_in_gossip(&self) -> Option<StakeInGossip> {
-        self.stake_in_gossip.lock().ok().and_then(|held| *held)
+        *locked(&self.stake_in_gossip)
     }
 
     pub fn memory_parts(&self) -> MemoryParts {
-        let Ok(memory) = self.memory.lock() else {
-            return MemoryParts::default();
-        };
+        let memory = locked(&self.memory);
         MemoryParts {
             index_estimate: memory.index_estimate,
             write_cache: memory.write_cache,
@@ -1734,7 +1685,7 @@ impl MetricsTap {
 
     /// `None` until a column family has reported.
     pub fn ledger_files(&self) -> Option<LedgerFiles> {
-        let memory = self.memory.lock().ok()?;
+        let memory = locked(&self.memory);
         (!memory.blockstore_files.is_empty()).then(|| {
             let mut files = LedgerFiles::default();
             for (column_family, bytes) in &memory.blockstore_files {
@@ -1746,7 +1697,7 @@ impl MetricsTap {
 
     /// `None` until the storages have reported.
     pub fn accounts_files(&self) -> Option<AccountsFiles> {
-        let levels = self.accounts.lock().ok()?.levels;
+        let levels = locked(&self.accounts).levels;
         (levels.storage_bytes > 0).then_some(AccountsFiles {
             live: levels.storage_alive_bytes,
             fragmented: levels
@@ -1756,19 +1707,19 @@ impl MetricsTap {
     }
 
     pub fn xdp(&self) -> Option<XdpConfig> {
-        self.xdp.lock().ok().and_then(|held| held.clone())
+        locked(&self.xdp).clone()
     }
 
     pub fn replayed(&self, slot: Slot) -> Option<ReplaySlotTimes> {
-        self.replay_slots.lock().ok()?.get(&slot).copied()
+        locked(&self.replay_slots).get(&slot).copied()
     }
 
     pub fn shred_fill(&self, slot: Slot) -> Option<ShredFill> {
-        self.shred_fills.lock().ok()?.get(&slot).copied()
+        locked(&self.shred_fills).get(&slot).copied()
     }
 
     pub fn worker_time(&self, from: u64, to: u64) -> Option<WorkerSum> {
-        let timings = self.worker_timings.lock().ok()?;
+        let timings = locked(&self.worker_timings);
         let mut sum = WorkerSum::default();
         let mut workers = BTreeSet::new();
         let first = timings.partition_point(|timing| timing.at_millis < from);
@@ -1788,64 +1739,48 @@ impl MetricsTap {
     }
 
     pub fn leader_timing(&self, slot: Slot) -> Option<LeaderTiming> {
-        self.leader_timings.lock().ok()?.get(&slot).copied()
+        locked(&self.leader_timings).get(&slot).copied()
     }
 
     /// The epoch they describe, and each vote account's arrivals.
     pub fn vote_arrival_epoch(&self) -> Option<Epoch> {
-        self.vote_arrivals.lock().ok()?.epoch
+        locked(&self.vote_arrivals).epoch
     }
 
     pub fn vote_arrivals(&self) -> (Option<Epoch>, HashMap<Pubkey, VoteArrival>) {
-        self.vote_arrivals
-            .lock()
-            .map(|arrivals| (arrivals.epoch, arrivals.by_vote.clone()))
-            .unwrap_or_default()
+        let arrivals = locked(&self.vote_arrivals);
+        (arrivals.epoch, arrivals.by_vote.clone())
     }
 
     pub fn vote_time(&self, slot: Slot) -> Option<StageTimes> {
-        self.vote_timings.lock().ok()?.get(&slot).copied()
+        locked(&self.vote_timings).get(&slot).copied()
     }
 
     pub fn bundles_landed(&self, slot: Slot) -> Option<BundleLanding> {
-        self.bundle_slots.lock().ok()?.get(&slot).copied()
+        locked(&self.bundle_slots).get(&slot).copied()
     }
 
     pub fn replay_slots(&self) -> Vec<ReplaySlotTimes> {
-        self.replay_slots
-            .lock()
-            .map(|slots| slots.values().copied().collect())
-            .unwrap_or_default()
+        locked(&self.replay_slots).values().copied().collect()
     }
 
     /// The newest `count`, oldest first.
     pub fn recent_waterfalls(&self, count: usize) -> Vec<SlotWaterfall> {
-        self.slot_waterfalls
-            .lock()
-            .map(|slots| slots.recent(count))
-            .unwrap_or_default()
+        locked(&self.slot_waterfalls).recent(count)
     }
 
     /// Those recorded or replaced since the last call, oldest first.
     pub fn take_changed_waterfalls(&self) -> Vec<SlotWaterfall> {
-        self.slot_waterfalls
-            .lock()
-            .map(|mut slots| slots.take_changed())
-            .unwrap_or_default()
+        locked(&self.slot_waterfalls).take_changed()
     }
 
     /// Those held in `first..=last`.
     pub fn waterfalls_in(&self, first: Slot, last: Slot) -> Vec<SlotWaterfall> {
-        self.slot_waterfalls
-            .lock()
-            .map(|slots| {
-                slots
-                    .held
-                    .range(first..=last)
-                    .map(|(_, waterfall)| *waterfall)
-                    .collect()
-            })
-            .unwrap_or_default()
+        locked(&self.slot_waterfalls)
+            .held
+            .range(first..=last)
+            .map(|(_, waterfall)| *waterfall)
+            .collect()
     }
 
     #[cfg(test)]
@@ -2271,16 +2206,17 @@ impl GossipSet {
     }
 }
 
-/// Poisoning cannot happen, since only saturating additions run under these locks; one that did
-/// would drop the point rather than panic on a validator thread.
+/// A poisoned lock is still read: these hold plain figures, valid whatever panicked.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn add_to<T: AddPoint>(set: &Mutex<T>, point: &DataPoint) {
-    if let Ok(mut set) = set.lock() {
-        set.add_point(point);
-    }
+    locked(set).add_point(point);
 }
 
 fn copy_of<T: Copy + Default>(set: &Mutex<T>) -> T {
-    set.lock().map(|set| *set).unwrap_or_default()
+    *locked(set)
 }
 
 fn number_named(point: &DataPoint, wanted: &str) -> Option<u64> {

@@ -119,7 +119,6 @@ function misses(writers: MissWriter[], places: [number, MissPlace][], rewarded: 
   }));
   return {
     epoch: 1,
-    since_slot: 0,
     rewarded,
     ranks: 10,
     writers,

@@ -1323,10 +1323,7 @@ export interface MissValidator {
   name: string | null;
   ip: string | null;
   country: string | null;
-  last_vote: number | null;
   delinquent: boolean;
-  /** When this node last heard it over gossip, in unix milliseconds. */
-  heard_millis: number | null;
   /** Unheard for five minutes, or absent from this node's gossip table. */
   no_gossip: boolean;
 }
@@ -1343,7 +1340,6 @@ export interface MissRow {
 
 export interface MissList {
   epoch: number;
-  since_slot: number;
   rewarded: number;
   ranks: number;
   writers: MissWriter[];

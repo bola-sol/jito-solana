@@ -28,7 +28,6 @@ function list(
 ): MissList {
   return {
     epoch: 124,
-    since_slot: 6_696_000,
     rewarded: 5_774,
     ranks: 112,
     writers: writers.map(([name, misses, certificates]) => ({
@@ -46,9 +45,7 @@ function list(
       name,
       ip: null,
       country: null,
-      last_vote: 6_699_990,
       delinquent: false,
-      heard_millis: 1_758_800_000_000,
       no_gossip: false,
     })),
     rows: rows.map(([writer, others], index) => ({

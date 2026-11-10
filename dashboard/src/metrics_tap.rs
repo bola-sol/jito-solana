@@ -50,7 +50,6 @@ const VOTOR_SERVER: &str = "votor_datagram_server";
 const PACKETS_COUNT: &str = "packets_count";
 
 /// Reported once a second and reset; submitted directly, so it arrives at any log level.
-const SCHEDULER_COUNTS: &str = "banking_stage_scheduler_counts";
 /// Same worker, tick and `id` as the counts point, so both read into one set of counters.
 const WORKER_ERROR_METRICS: &str = "banking_stage_worker_error_metrics";
 
@@ -250,13 +249,9 @@ pub struct MetricsTap {
     executed: Mutex<ExecutedTotals>,
     bundles: Mutex<BundleTotals>,
 
-    scheduler: Mutex<SchedulerTotals>,
-
     gossip: Mutex<GossipSet>,
 
     slot_waterfalls: Mutex<HeldSlots<SlotWaterfall>>,
-
-    scheduler_is_bam: AtomicBool,
 
     slot_costs: Mutex<HeldSlots<SlotCost>>,
 
@@ -988,7 +983,6 @@ pub struct TapCounters {
     pub gossip_sent_millis: u64,
     pub repair_sent_bytes: u64,
     pub repair_sent_millis: u64,
-    pub scheduler: SchedulerTotals,
     pub accounts: AccountsTotals,
     pub accounts_storage_bytes: u64,
     pub accounts_storage_alive_bytes: u64,
@@ -1060,13 +1054,6 @@ impl MetricsTap {
             }
             REPAIR_SENDER => {
                 self.add_sent(&self.repair_sent_bytes, &self.repair_sent_millis, point)
-            }
-            SCHEDULER_COUNTS => {
-                self.scheduler_is_bam.store(
-                    scheduler_source(point) == SchedulerSource::Bam,
-                    Ordering::Relaxed,
-                );
-                add_to(&self.scheduler, point)
             }
             SCHEDULER_SLOT_COUNTS => self.remember_slot(point),
             REPLAY_SLOT_STATS => self.remember_replay(point),
@@ -1937,14 +1924,6 @@ impl MetricsTap {
             .unwrap_or_default()
     }
 
-    pub fn scheduler_source(&self) -> SchedulerSource {
-        if self.scheduler_is_bam.load(Ordering::Relaxed) {
-            SchedulerSource::Bam
-        } else {
-            SchedulerSource::Scheduler
-        }
-    }
-
     /// The newest `count`, oldest first.
     pub fn recent_waterfalls(&self, count: usize) -> Vec<SlotWaterfall> {
         self.slot_waterfalls
@@ -2012,7 +1991,6 @@ impl MetricsTap {
             gossip_sent_millis: self.gossip_sent_millis.load(Ordering::Relaxed),
             repair_sent_bytes: self.repair_sent_bytes.load(Ordering::Relaxed),
             repair_sent_millis: self.repair_sent_millis.load(Ordering::Relaxed),
-            scheduler: copy_of(&self.scheduler),
             accounts: accounts.totals,
             accounts_storage_bytes: accounts.levels.storage_bytes,
             accounts_storage_alive_bytes: accounts.levels.storage_alive_bytes,
@@ -3000,40 +2978,39 @@ mod tests {
         assert_eq!(counters.repair_sent_millis, 10_004);
     }
 
-    fn scheduler(fields: &[(&'static str, &str)]) -> DataPoint {
-        named(SCHEDULER_COUNTS, fields)
-    }
-
     #[test]
     fn test_the_waterfall_counters_land_where_they_belong() {
         // Several of these names differ only in their tail; a transposed pair would
         // put the wrong reason under a label.
         let tap = MetricsTap::default();
-        tap.observe(&scheduler(&[
-            ("num_received", "1000i"),
-            ("num_dropped_on_receive", "900i"),
-            ("num_dropped_on_check_work_queue_full", "1i"),
-            ("num_dropped_on_parsing_and_sanitization", "2i"),
-            ("num_dropped_on_validate_locks", "3i"),
-            ("num_dropped_on_receive_compute_budget", "4i"),
-            ("num_dropped_on_receive_age", "5i"),
-            ("num_dropped_on_receive_already_processed", "6i"),
-            ("num_dropped_on_receive_fee_payer", "7i"),
-            ("num_dropped_on_filter_key", "8i"),
-            ("num_dropped_on_nonce_dedup", "9i"),
-            ("num_buffered", "55i"),
-            ("num_dropped_on_capacity", "10i"),
-            ("num_evicted_on_nonce_dedup", "11i"),
-            ("num_dropped_on_clear", "12i"),
-            ("num_dropped_on_clean", "13i"),
-            ("num_scheduled", "40i"),
-            ("num_unschedulable_conflicts", "14i"),
-            ("num_unschedulable_threads", "15i"),
-            ("num_finished", "38i"),
-            ("num_retryable", "16i"),
-        ]));
+        tap.observe(&slot_point(
+            7,
+            &[
+                ("num_received", "1000i"),
+                ("num_dropped_on_receive", "900i"),
+                ("num_dropped_on_check_work_queue_full", "1i"),
+                ("num_dropped_on_parsing_and_sanitization", "2i"),
+                ("num_dropped_on_validate_locks", "3i"),
+                ("num_dropped_on_receive_compute_budget", "4i"),
+                ("num_dropped_on_receive_age", "5i"),
+                ("num_dropped_on_receive_already_processed", "6i"),
+                ("num_dropped_on_receive_fee_payer", "7i"),
+                ("num_dropped_on_filter_key", "8i"),
+                ("num_dropped_on_nonce_dedup", "9i"),
+                ("num_buffered", "55i"),
+                ("num_dropped_on_capacity", "10i"),
+                ("num_evicted_on_nonce_dedup", "11i"),
+                ("num_dropped_on_clear", "12i"),
+                ("num_dropped_on_clean", "13i"),
+                ("num_scheduled", "40i"),
+                ("num_unschedulable_conflicts", "14i"),
+                ("num_unschedulable_threads", "15i"),
+                ("num_finished", "38i"),
+                ("num_retryable", "16i"),
+            ],
+        ));
 
-        let counters = tap.counters().scheduler;
+        let counters = tap.slot_waterfalls()[0].counts;
         assert_eq!(counters.received, 1_000);
         assert_eq!(counters.not_held, 900);
         assert_eq!(counters.check_queue_full, 1);
@@ -3062,22 +3039,25 @@ mod tests {
         // The identity the validator's own tests assert: everything received either
         // got in or has a reason it did not.
         let counters = MetricsTap::default();
-        counters.observe(&scheduler(&[
-            ("num_received", "1000i"),
-            ("num_dropped_on_receive", "900i"),
-            ("num_dropped_on_check_work_queue_full", "1i"),
-            ("num_dropped_on_parsing_and_sanitization", "2i"),
-            ("num_dropped_on_validate_locks", "3i"),
-            ("num_dropped_on_receive_compute_budget", "4i"),
-            ("num_dropped_on_receive_age", "5i"),
-            ("num_dropped_on_receive_already_processed", "6i"),
-            ("num_dropped_on_receive_fee_payer", "7i"),
-            ("num_dropped_on_filter_key", "8i"),
-            ("num_dropped_on_nonce_dedup", "9i"),
-            ("num_buffered", "55i"),
-        ]));
+        counters.observe(&slot_point(
+            7,
+            &[
+                ("num_received", "1000i"),
+                ("num_dropped_on_receive", "900i"),
+                ("num_dropped_on_check_work_queue_full", "1i"),
+                ("num_dropped_on_parsing_and_sanitization", "2i"),
+                ("num_dropped_on_validate_locks", "3i"),
+                ("num_dropped_on_receive_compute_budget", "4i"),
+                ("num_dropped_on_receive_age", "5i"),
+                ("num_dropped_on_receive_already_processed", "6i"),
+                ("num_dropped_on_receive_fee_payer", "7i"),
+                ("num_dropped_on_filter_key", "8i"),
+                ("num_dropped_on_nonce_dedup", "9i"),
+                ("num_buffered", "55i"),
+            ],
+        ));
 
-        let totals = counters.counters().scheduler;
+        let totals = counters.slot_waterfalls()[0].counts;
         let accounted = [
             totals.not_held,
             totals.check_queue_full,
@@ -3644,7 +3624,6 @@ mod tests {
         assert_eq!(held[0].slot, 430_789_128);
         assert_eq!(held[0].counts.received, 500);
         assert_eq!(held[1].counts.buffered, 90);
-        assert_eq!(tap.counters().scheduler.received, 0);
     }
 
     #[test]
@@ -3706,29 +3685,6 @@ mod tests {
             assert_eq!(held[0].counts.finished, 735, "arrival order {order:?}");
             assert_eq!(held[0].source, SchedulerSource::Bam);
         }
-    }
-
-    #[test]
-    fn test_the_interval_counts_say_which_scheduler_sent_them() {
-        let tap = MetricsTap::default();
-        assert_eq!(
-            tap.scheduler_source(),
-            SchedulerSource::Scheduler,
-            "a validator running one scheduler, before any point arrives"
-        );
-
-        let mut bam = named(SCHEDULER_COUNTS, &[("num_received", "5i")]);
-        bam.tags.push((SCHEDULER_ID, "10000".to_string()));
-        tap.observe(&bam);
-        assert_eq!(tap.scheduler_source(), SchedulerSource::Bam);
-
-        let mut own = named(SCHEDULER_COUNTS, &[("num_received", "5i")]);
-        own.tags.push((SCHEDULER_ID, "0".to_string()));
-        tap.observe(&own);
-        assert_eq!(tap.scheduler_source(), SchedulerSource::Scheduler);
-
-        tap.observe(&named(SCHEDULER_COUNTS, &[("num_received", "5i")]));
-        assert_eq!(tap.scheduler_source(), SchedulerSource::Scheduler);
     }
 
     #[test]
@@ -4226,12 +4182,15 @@ mod tests {
     #[test]
     fn test_the_priority_gauges_are_left_out_of_the_waterfall() {
         let tap = MetricsTap::default();
-        tap.observe(&scheduler(&[
-            ("min_priority", "5i"),
-            ("max_priority", "900000i"),
-            ("num_received", "7i"),
-        ]));
-        assert_eq!(tap.counters().scheduler.received, 7);
+        tap.observe(&slot_point(
+            7,
+            &[
+                ("min_priority", "5i"),
+                ("max_priority", "900000i"),
+                ("num_received", "7i"),
+            ],
+        ));
+        assert_eq!(tap.slot_waterfalls()[0].counts.received, 7);
     }
 
     #[test]

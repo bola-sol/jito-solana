@@ -10,8 +10,8 @@ use {
         metrics_tap::{
             AccountsFiles, AccountsTotals, BundleTotals, ExecutedTotals, GOSSIP_ENTRY_TYPES,
             GossipEntryTotals, GossipTotals, LedgerFiles, MemoryParts, MetricsTap,
-            ProgramCacheTotals, QuicLevels, QuicTotals, ReplaySlotTimes, SchedulerSource,
-            SchedulerTotals, TapCounters, VerifyTotals, WindowedCounters, XdpConfig,
+            ProgramCacheTotals, QuicLevels, QuicTotals, ReplaySlotTimes, TapCounters, VerifyTotals,
+            WindowedCounters, XdpConfig,
         },
         net_ifaces::{self, InterfaceKind, InterfaceReading},
         net_stats::{self, Counted, InterfaceCounters, NetCounters, NetReading},
@@ -321,13 +321,6 @@ pub struct QuicPaths {
 pub struct IngestSummary {
     pub window_seconds: f64,
     pub paths: Vec<IngestPath>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct WaterfallWindow {
-    #[serde(flatten)]
-    pub counts: SchedulerTotals,
-    pub source: SchedulerSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -2093,9 +2086,6 @@ impl ProgramCacheMeter {
 }
 
 struct TpuMeter {
-    waterfall_window: VecDeque<SchedulerTotals>,
-    waterfall: Debounced<Option<WaterfallWindow>>,
-    waterfall_source: SchedulerSource,
     quic_window: VecDeque<QuicTotals>,
     quic_forwards_window: VecDeque<QuicTotals>,
     quic_vote_window: VecDeque<QuicTotals>,
@@ -2118,9 +2108,6 @@ struct TpuMeter {
 impl TpuMeter {
     fn new() -> Self {
         Self {
-            waterfall_window: VecDeque::with_capacity(WATERFALL_WINDOW),
-            waterfall: Debounced::default(),
-            waterfall_source: SchedulerSource::default(),
             quic_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_forwards_window: VecDeque::with_capacity(WATERFALL_WINDOW),
             quic_vote_window: VecDeque::with_capacity(WATERFALL_WINDOW),
@@ -2164,28 +2151,6 @@ impl TpuMeter {
         tpu_offhost: bool,
         publisher: &Publisher,
     ) {
-        // A stage with an empty window is absent rather than nought. Started over when the
-        // scheduler changes, since the two count `received` in different units.
-        let source = tap.scheduler_source();
-        if source != self.waterfall_source {
-            self.waterfall_window.clear();
-            self.waterfall_source = source;
-        }
-        let scheduler = sum_window(
-            &mut self.waterfall_window,
-            current.scheduler.since(&previous.scheduler),
-            WATERFALL_WINDOW,
-        );
-        self.waterfall.publish(
-            publisher,
-            TOPIC_SUMMARY,
-            "waterfall",
-            (scheduler.received > 0).then_some(WaterfallWindow {
-                counts: scheduler,
-                source,
-            }),
-        );
-
         if current.quic_vote.offered > previous.quic_vote.offered {
             self.vote_quiet = false;
         }
@@ -2372,13 +2337,6 @@ mod tests {
         solana_rpc::optimistically_confirmed_bank_tracker::BankNotification,
         std::{net::Ipv4Addr, thread::sleep},
     };
-
-    fn tap(scheduler: SchedulerTotals) -> TapCounters {
-        TapCounters {
-            scheduler,
-            ..TapCounters::default()
-        }
-    }
 
     fn quic_tap(offered: u64) -> TapCounters {
         TapCounters {
@@ -2943,76 +2901,6 @@ mod tests {
         assert!(sent.contains(r#""value":null"#), "{sent}");
     }
 
-    #[test]
-    fn test_waterfall_reports_the_window() {
-        let harness = fixture();
-        let mut meters = harness.meters();
-
-        let start = SchedulerTotals {
-            received: 1_000,
-            buffered: 40,
-            ..SchedulerTotals::default()
-        };
-        let next = SchedulerTotals {
-            received: 1_100,
-            buffered: 50,
-            ..SchedulerTotals::default()
-        };
-        let last = SchedulerTotals {
-            received: 1_250,
-            buffered: 65,
-            ..SchedulerTotals::default()
-        };
-        meters.collect_waterfall(&tap(start), &tap(next));
-        meters.collect_waterfall(&tap(next), &tap(last));
-
-        let published = harness.published_key("summary", "waterfall").unwrap();
-        assert!(published.contains(r#""received":250"#), "{published}");
-        assert!(published.contains(r#""buffered":25"#), "{published}");
-    }
-
-    #[test]
-    fn test_idle_scheduler_reports_nothing() {
-        let harness = fixture();
-        let mut meters = harness.meters();
-        meters.collect_waterfall(&TapCounters::default(), &TapCounters::default());
-
-        let published = harness.published_key("summary", "waterfall").unwrap();
-        assert!(published.contains(r#""value":null"#), "{published}");
-    }
-
-    #[test]
-    fn test_a_changeover_restarts_the_waterfall_window() {
-        // The two schedulers count `received` in different units, so a window
-        // spanning a handover would add two units.
-        let harness = fixture();
-        let mut meters = harness.meters();
-
-        let mut previous = SchedulerTotals::default();
-        for step in 1..=3u64 {
-            let current = SchedulerTotals {
-                received: step.saturating_mul(10),
-                ..SchedulerTotals::default()
-            };
-            meters.collect_waterfall(&tap(previous), &tap(current));
-            previous = current;
-        }
-        assert_eq!(meters.tpu.waterfall_window.len(), 3);
-
-        meters.tpu.waterfall_source = SchedulerSource::Bam;
-        let current = SchedulerTotals {
-            received: 145,
-            ..SchedulerTotals::default()
-        };
-        meters.collect_waterfall(&tap(previous), &tap(current));
-
-        assert_eq!(meters.tpu.waterfall_window.len(), 1);
-        assert_eq!(meters.tpu.waterfall_source, SchedulerSource::Scheduler);
-        let published = harness.published_key("summary", "waterfall").unwrap();
-        assert!(published.contains(r#""source":"scheduler""#), "{published}");
-        assert!(published.contains(r#""received":115"#), "{published}");
-    }
-
     fn at(epoch: Epoch, slots_in: u64) -> EpochPosition {
         let start_slot = epoch.saturating_mul(432_000);
         EpochPosition {
@@ -3340,30 +3228,6 @@ mod tests {
 
         let published = harness.published_key("summary", "quic_paths").unwrap();
         assert!(published.contains(r#""tpu_offhost":false"#), "{published}");
-    }
-
-    #[test]
-    fn test_the_waterfall_window_forgets_what_falls_out_of_it() {
-        let harness = fixture();
-        let mut meters = harness.meters();
-
-        let mut previous = SchedulerTotals::default();
-        for step in 1..=WATERFALL_WINDOW.saturating_add(10) {
-            let current = SchedulerTotals {
-                received: (step as u64).saturating_mul(10),
-                ..SchedulerTotals::default()
-            };
-            meters.collect_waterfall(&tap(previous), &tap(current));
-            previous = current;
-        }
-
-        assert_eq!(meters.tpu.waterfall_window.len(), WATERFALL_WINDOW);
-        let published = harness.published_key("summary", "waterfall").unwrap();
-        let expected = (WATERFALL_WINDOW as u64).saturating_mul(10);
-        assert!(
-            published.contains(&format!(r#""received":{expected}"#)),
-            "{published}"
-        );
     }
 
     #[cfg(target_os = "linux")]

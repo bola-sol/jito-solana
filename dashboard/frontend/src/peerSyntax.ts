@@ -119,7 +119,7 @@ function tally(peers: readonly GossipPeer[], of: (peer: GossipPeer) => string | 
   return [...held].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
-export function peerOffered(peers: GossipPeer[], arrivalsHidden: boolean, now: number): PeerOffered {
+export function peerOffered(peers: GossipPeer[], now: number): PeerOffered {
   return {
     counts: filterCounts(peers, now),
     clients: tally(peers, (peer) => peer.clientName),
@@ -130,7 +130,7 @@ export function peerOffered(peers: GossipPeer[], arrivalsHidden: boolean, now: n
       .sort((a, b) => b.stake - a.stake)
       .map((peer) => peer.name ?? ""),
     finalization: peers.some((peer) => peer.finalization !== null),
-    arrivals: !arrivalsHidden && peers.some((peer) => peer.voteArrival !== null),
+    arrivals: peers.some((peer) => peer.voteArrival !== null),
   };
 }
 

@@ -107,12 +107,6 @@ export function shareBy(curve: readonly number[], ms: number): number {
   return (curve[index] ?? 0) / SHARE_SCALE;
 }
 
-/** 4.3's votor times a leader window's later slots from this node finishing their replay, and drops
- *  the votes that arrive before it, so its averages lean late. */
-export function timedFromReplay(version: string | null | undefined): boolean {
-  return version?.startsWith("4.3.") ?? false;
-}
-
 export interface PathShare {
   text: string;
   /** Finalized more than half the slots. */

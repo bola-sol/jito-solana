@@ -16,7 +16,6 @@ import {
   replayAt,
   runningPath,
   shareBy,
-  timedFromReplay,
   ticks,
   unmeasured,
   votersIn,
@@ -545,8 +544,6 @@ export function CertFormationCard({
 }): ReactElement | null {
   const store = useStore();
   const formation = store.get("summary", "cert_formation");
-  const version = store.get("summary", "version");
-  // Not on 4.3, whose arrival times lean late.
-  if (!formation || version === undefined || timedFromReplay(version)) return null;
+  if (!formation) return null;
   return <FormationPanel formation={formation} peers={peers} onPick={onPick} />;
 }

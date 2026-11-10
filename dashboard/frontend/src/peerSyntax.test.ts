@@ -45,7 +45,9 @@ const LIST: GossipPeers = {
 };
 
 const PEERS = gossipPeers(LIST);
-const OFFERED = peerOffered(PEERS, false, NOW);
+const OFFERED = peerOffered(PEERS, NOW);
+/** Before votor has reported an epoch. */
+const NO_ARRIVALS = peerOffered(PEERS.map((peer) => ({ ...peer, voteArrival: null })), NOW);
 const CLOCK = { now: NOW, slotMillis: 400, arrivalKind: "notarize" as const };
 
 const number = (key: PeerCondition["key"], op: PeerCondition["op"], value: number): PeerCondition => ({ key, op, value, values: [] });
@@ -62,8 +64,8 @@ describe("peerOffered", () => {
   });
 
   it("offers arrivals only where the table shows them", () => {
-    expect(peerOffered(PEERS, true, NOW).arrivals).toBe(false);
-    expect(readPeerSearch("arrival>300", peerOffered(PEERS, true, NOW)).errors).toHaveLength(1);
+    expect(NO_ARRIVALS.arrivals).toBe(false);
+    expect(readPeerSearch("arrival>300", NO_ARRIVALS).errors).toHaveLength(1);
   });
 });
 
@@ -197,7 +199,7 @@ describe("peerSuggest", () => {
   });
 
   it("leaves out what the table does not show", () => {
-    expect(peerSuggest("arr", peerOffered(PEERS, true, NOW))).toEqual([]);
+    expect(peerSuggest("arr", NO_ARRIVALS)).toEqual([]);
   });
 });
 
@@ -215,7 +217,7 @@ describe("peerBrowse", () => {
   });
 
   it("drops a kind already in the box, and keys the table does not show", () => {
-    const rows = peerBrowse(peerOffered(PEERS, true, NOW), ["staked"]);
+    const rows = peerBrowse(NO_ARRIVALS, ["staked"]);
     expect(rows.some((row) => row.syntax === "is:staked")).toBe(false);
     expect(rows.some((row) => row.syntax.startsWith("arrival"))).toBe(false);
   });

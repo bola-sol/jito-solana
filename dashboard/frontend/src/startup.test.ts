@@ -97,7 +97,7 @@ describe("stakeSeen", () => {
     const seen = stakeSeen({
       ...waiting,
       stake_percent: 0.01,
-      stake_in_gossip: { online: 2_350_000, offline: 401_650_000, total: 404_000_000 },
+      stake_in_gossip: { online: 2_350_000, total: 404_000_000 },
     });
     expect(seen?.decimals).toBe(3);
     expect(seen?.fraction).toBeCloseTo(0.005817, 6);

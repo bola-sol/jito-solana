@@ -81,7 +81,7 @@ Gossip sends these points itself and clears each counter when it sends it. The d
 | Point | Fields read | Feeds |
 | --- | --- | --- |
 | `xdp-network-config` | tags `driver`, `zero_copy`; `vendor`, `model`, `kernel_version` | Host network card: the XDP transmit setup |
-| `wfsm_gossip` | `online_stake`, `offline_stake`, `total_activated_stake` | The exact stake during the supermajority wait. The validator's own progress value is a whole percent. |
+| `wfsm_gossip` | `online_stake`, `total_activated_stake` | The exact stake during the supermajority wait. The validator's own progress value is a whole percent. |
 
 ## Frozen banks
 

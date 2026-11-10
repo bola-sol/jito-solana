@@ -2,8 +2,6 @@
 //! read from `/proc` and `statvfs` so the panel works on a node logging below
 //! the default.
 
-#[cfg(target_os = "linux")]
-use std::path::PathBuf;
 use {
     serde::Serialize,
     std::{collections::BTreeMap, io, path::Path},
@@ -297,8 +295,7 @@ pub fn filesystem_id(_path: &Path) -> io::Result<u64> {
 /// A partition is folded up to its disk, since they share a queue.
 #[cfg(target_os = "linux")]
 pub fn device_for(path: &Path) -> io::Result<Option<String>> {
-    use std::os::linux::fs::MetadataExt;
-    let device = std::fs::metadata(path)?.st_dev();
+    let device = filesystem_id(path)?;
     let (major, minor) = (nix::sys::stat::major(device), nix::sys::stat::minor(device));
     if major == 0 {
         // Anonymous device: tmpfs, overlayfs and the like, with no block
@@ -306,8 +303,7 @@ pub fn device_for(path: &Path) -> io::Result<Option<String>> {
         return Ok(None);
     }
 
-    let link = PathBuf::from(format!("/sys/dev/block/{major}:{minor}"));
-    let Ok(resolved) = std::fs::canonicalize(&link) else {
+    let Ok(resolved) = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")) else {
         return Ok(None);
     };
     // A partition carries this file; a whole disk does not.

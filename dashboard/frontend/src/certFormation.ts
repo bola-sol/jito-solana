@@ -264,8 +264,7 @@ export function barTone(direction: 1 | -1, middle: number, formation: CertFormat
   return middle <= second ? "finalize" : "after";
 }
 
-export function growth(replayMs: number | null, from: number): number {
-  if (replayMs === null) return 1;
+export function growth(replayMs: number, from: number): number {
   const done = Math.max(0, Math.min(1, (replayMs - from) / GROW_MS));
   return 1 - Math.pow(1 - done, 3);
 }

@@ -1,8 +1,5 @@
 import type { HandoffNow, HandoffTrend } from "./types";
 
-/** A leader's own band means something from this many handoffs. */
-export const SETTLED = 10;
-
 /** The server's bin widths, in milliseconds. */
 export const GAP_BIN = 10;
 export const MEDIAN_BIN = 6;

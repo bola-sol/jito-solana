@@ -3,7 +3,7 @@
 //! reported. Weighted by that epoch's rank map, the stake the certificates count against.
 
 use {
-    super::{Collector, TOPIC_SUMMARY},
+    super::Collector,
     crate::metrics_tap::VoteArrival,
     serde::Serialize,
     solana_clock::Epoch,
@@ -187,12 +187,9 @@ impl Collector {
                 second_round_slots: paths.map(|(_, second)| second),
                 ..formation
             });
-        self.debounces.cert_formation.publish(
-            &self.publisher,
-            TOPIC_SUMMARY,
-            "cert_formation",
-            formation,
-        );
+        self.debounces
+            .cert_formation
+            .publish(&self.publisher, formation);
     }
 }
 

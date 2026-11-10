@@ -380,33 +380,31 @@ impl Publisher {
 }
 
 pub struct Debounced<T> {
+    topic: &'static str,
+    key: &'static str,
     last: Option<T>,
 }
 
-impl<T> Default for Debounced<T> {
-    fn default() -> Self {
-        Self { last: None }
-    }
-}
-
 impl<T> Debounced<T> {
+    pub fn new(topic: &'static str, key: &'static str) -> Self {
+        Self {
+            topic,
+            key,
+            last: None,
+        }
+    }
+
     pub fn last(&self) -> Option<&T> {
         self.last.as_ref()
     }
 }
 
 impl<T: Serialize + PartialEq> Debounced<T> {
-    pub fn publish(
-        &mut self,
-        publisher: &Publisher,
-        topic: &'static str,
-        key: &'static str,
-        value: T,
-    ) {
+    pub fn publish(&mut self, publisher: &Publisher, value: T) {
         if self.last.as_ref() == Some(&value) {
             return;
         }
-        publisher.publish(topic, key, &value);
+        publisher.publish(self.topic, self.key, &value);
         self.last = Some(value);
     }
 }
@@ -455,13 +453,13 @@ mod tests {
     fn test_a_debounce_remembers_what_it_last_sent() {
         // The collector compares against it, so it holds the value, not a hash.
         let publisher = Publisher::new();
-        let mut debounced: Debounced<u64> = Debounced::default();
+        let mut debounced: Debounced<u64> = Debounced::new("summary", "root_slot");
         assert_eq!(debounced.last(), None);
 
-        debounced.publish(&publisher, "summary", "root_slot", 7);
+        debounced.publish(&publisher, 7);
         assert_eq!(debounced.last(), Some(&7));
 
-        debounced.publish(&publisher, "summary", "root_slot", 9);
+        debounced.publish(&publisher, 9);
         assert_eq!(debounced.last(), Some(&9));
     }
 
@@ -520,9 +518,9 @@ mod tests {
     fn test_debounce_suppresses_unchanged_values() {
         let publisher = Publisher::new();
         let mut receiver = publisher.subscribe();
-        let mut debounced = Debounced::default();
-        debounced.publish(&publisher, "summary", "root_slot", 7u64);
-        debounced.publish(&publisher, "summary", "root_slot", 7u64);
+        let mut debounced = Debounced::new("summary", "root_slot");
+        debounced.publish(&publisher, 7u64);
+        debounced.publish(&publisher, 7u64);
         assert!(receiver.try_recv().is_ok());
         assert!(receiver.try_recv().is_err());
     }

@@ -7,7 +7,6 @@ use {
         certs, geoip,
         history::HAS_CLOCK,
         produced::{BlockCertificate, CertificateValidator},
-        proto::TOPIC_SUMMARY,
         validator_info::ValidatorInfoCache,
     },
     serde::Serialize,
@@ -292,12 +291,9 @@ impl Collector {
             let participation =
                 tally.participation(|leader| info.get(leader).and_then(|info| info.name.clone()));
             drop(info);
-            self.debounces.vote_participation.publish(
-                &self.publisher,
-                TOPIC_SUMMARY,
-                "vote_participation",
-                participation,
-            );
+            self.debounces
+                .vote_participation
+                .publish(&self.publisher, participation);
         }
     }
 

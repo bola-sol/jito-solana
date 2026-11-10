@@ -26,7 +26,7 @@ pub(super) struct SkipRateWalk {
     leader_slots: Vec<Slot>,
     pub(super) next_index: usize,
     produced: usize,
-    elapsed: usize,
+    skipped: usize,
 }
 
 impl SkipRateWalk {
@@ -52,21 +52,14 @@ impl SkipRateWalk {
             if slot > root {
                 break;
             }
-            let made = match check(slot) {
+            match check(slot) {
                 // The history has not reached the root yet; asked again next time.
                 Check::Future => break,
-                Check::TooOld => None,
-                Check::Found => Some(true),
-                Check::NotFound => Some(false),
-            };
-            self.next_index = self.next_index.saturating_add(1);
-            let Some(made) = made else {
-                continue;
-            };
-            if made {
-                self.produced = self.produced.saturating_add(1);
+                Check::TooOld => {}
+                Check::Found => self.produced = self.produced.saturating_add(1),
+                Check::NotFound => self.skipped = self.skipped.saturating_add(1),
             }
-            self.elapsed = self.elapsed.saturating_add(1);
+            self.next_index = self.next_index.saturating_add(1);
         }
     }
 
@@ -77,13 +70,13 @@ impl SkipRateWalk {
             slots: self.leader_slots.len(),
             passed: self.next_index,
             produced: self.produced,
-            skipped: self.elapsed.saturating_sub(self.produced),
+            skipped: self.skipped,
         })
     }
 
     pub(super) fn rate(&self) -> Option<f64> {
-        (self.elapsed > 0)
-            .then(|| self.elapsed.saturating_sub(self.produced) as f64 / self.elapsed as f64)
+        let elapsed = self.produced.saturating_add(self.skipped);
+        (elapsed > 0).then(|| self.skipped as f64 / elapsed as f64)
     }
 }
 

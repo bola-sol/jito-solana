@@ -70,18 +70,12 @@ export function lifeSegments(stages: BlockLifeStages): LifeSegment[] {
 
 /** Where each stage of the median ends, to mark on every row. */
 export function lifeMarks(median: BlockLifeStages): number[] {
-  const marks = median.building === null ? [] : [lifeAt(-median.building)];
   let at = 0;
-  for (const part of ["reaching", "replay", "vote", "finalize"] as const) {
-    const ms = median[part];
-    if (ms === null) {
-      if (part === "vote") continue;
-      break;
-    }
+  return lifeParts(median).map(({ part, ms }) => {
+    if (part === "building") return lifeAt(-ms);
     at += ms;
-    marks.push(lifeAt(at));
-  }
-  return marks;
+    return lifeAt(at);
+  });
 }
 
 export function lifeTicks(): LifeTick[] {

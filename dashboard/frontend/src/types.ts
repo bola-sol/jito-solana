@@ -108,9 +108,8 @@ export type LeaderRow = Pick<Peer, "identity" | "client" | "version" | "ip" | "c
 
 export type GossipMessageKind = "push" | "pull_request" | "pull_response" | "ping" | "pong" | "prune";
 
-/** Rates over `window_seconds`, from gossip's own stats points; null while none arrive. */
+/** Rates over a window, from gossip's own stats points; null while none arrive. */
 export interface Gossip {
-  window_seconds: number;
   table: {
     entries: number;
     pubkeys: number;
@@ -586,7 +585,6 @@ export interface QuicPort {
 }
 
 export interface QuicPaths {
-  window_seconds: number;
   ports: QuicPort[];
   tpu_offhost: boolean;
 }
@@ -1053,7 +1051,6 @@ export interface ReplayWindow {
   program_cache_peak: number;
   checking: number;
   other: number;
-  cpu_peak: number;
 }
 
 export interface SlotCost {
@@ -1246,13 +1243,11 @@ export interface SnapshotWritten {
 }
 
 export interface Turbine {
-  window_seconds: number;
   root: number;
   layer_1: number;
   layer_2: number;
   layer_3: number;
   xdp_dropped: number;
-  xdp_dropped_total: number;
   xdp: boolean | null;
 }
 

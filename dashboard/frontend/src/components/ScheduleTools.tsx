@@ -16,6 +16,7 @@ import {
 } from "../summaryTable";
 import { jitoShare } from "../tips";
 import type { ScanFigures, ScheduleSummary, TipRates } from "../types";
+import { useCopied } from "./Copyable";
 
 /** Where the validator's history starts, in a line. */
 export function heldText(held: Held): string {
@@ -380,20 +381,13 @@ export function SyntaxSearch<Row extends SearchRow>({
 
 /** A link to the filtered schedule and a way to keep it; hidden, not removed, while nothing is searched. */
 export function ShareTools({ shown, onSave }: { shown: boolean; onSave: () => void }): ReactElement {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(timer);
-  }, [copied]);
+  const [copied, copy] = useCopied();
   return (
     <span className={`schedule-share-tools${shown ? "" : " is-idle"}`}>
       <button
         type="button"
         className={`schedule-tool${copied ? " is-done" : ""}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(window.location.href).then(() => setCopied(true), () => {});
-        }}
+        onClick={() => void copy(window.location.href)}
       >
         {copied ? "Copied" : "Copy link"}
       </button>

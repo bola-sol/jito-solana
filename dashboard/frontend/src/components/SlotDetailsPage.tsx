@@ -47,6 +47,7 @@ import {
   versionsTitle,
   versionsValue,
   type Capacity,
+  type ExecutionSegment,
   type SchedulerView,
 } from "../slotDetail";
 import type { WaterfallRow } from "../waterfall";
@@ -840,6 +841,32 @@ function CapacityBar({ cap }: { cap: Capacity }) {
   );
 }
 
+/** A bar cut by share, with its legend. */
+function SegmentBar({ segments }: { segments: ExecutionSegment[] }) {
+  return (
+    <div className="sx-cap">
+      <div className="sx-cap-bar" aria-hidden="true">
+        {segments.map((segment) => (
+          <i
+            key={segment.key}
+            className={`sx-exec-seg is-${segment.key}`}
+            style={{ width: `${segment.share * 100}%` }}
+          />
+        ))}
+      </div>
+      <div className="sx-legend">
+        {segments.map((segment) => (
+          <span className="sx-key" key={segment.key}>
+            <i className={`sx-sw is-${segment.key}`} />
+            {segment.explain ? <Explain text={segment.explain}>{segment.label}</Explain> : segment.label}{" "}
+            <b>{micros(segment.micros)}</b>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BlockAccount({
   block,
   cost,
@@ -1069,30 +1096,7 @@ function ExecutionTime({ execution }: { execution: Execution }) {
         <div className="sx-cu-value">{micros(view.total)}</div>
         <div className="sx-cu-of">thread time</div>
       </div>
-      <div className="sx-cap">
-        <div className="sx-cap-bar" aria-hidden="true">
-          {view.segments.map((segment) => (
-            <i
-              key={segment.key}
-              className={`sx-exec-seg is-${segment.key}`}
-              style={{ width: `${segment.share * 100}%` }}
-            />
-          ))}
-        </div>
-        <div className="sx-legend">
-          {view.segments.map((segment) => (
-            <span className="sx-key" key={segment.key}>
-              <i className={`sx-sw is-${segment.key}`} />
-              {segment.explain ? (
-                <Explain text={segment.explain}>{segment.label}</Explain>
-              ) : (
-                segment.label
-              )}{" "}
-              <b>{micros(segment.micros)}</b>
-            </span>
-          ))}
-        </div>
-      </div>
+      <SegmentBar segments={view.segments} />
       <div className="sx-keep">
         <Stat label="thread time over that span" value={spanRatio(view.perSlot, execution.workers)} />
         <Stat label="per worker" value={micros(view.perWorker)} />
@@ -1140,26 +1144,7 @@ function LeadingTime({ slot, leading }: { slot: number; leading: LeaderTiming })
           )}
         </div>
       </div>
-      <div className="sx-cap">
-        <div className="sx-cap-bar" aria-hidden="true">
-          {view.segments.map((segment) => (
-            <i
-              key={segment.key}
-              className={`sx-exec-seg is-${segment.key}`}
-              style={{ width: `${segment.share * 100}%` }}
-            />
-          ))}
-        </div>
-        <div className="sx-legend">
-          {view.segments.map((segment) => (
-            <span className="sx-key" key={segment.key}>
-              <i className={`sx-sw is-${segment.key}`} />
-              {segment.explain ? <Explain text={segment.explain}>{segment.label}</Explain> : segment.label}{" "}
-              <b>{micros(segment.micros)}</b>
-            </span>
-          ))}
-        </div>
-      </div>
+      <SegmentBar segments={view.segments} />
       {stats.some(([, value]) => value !== null) && (
         <div className="sx-keep">
           {stats.map(([label, value, title]) =>

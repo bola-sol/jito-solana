@@ -132,9 +132,7 @@ impl Replies {
             .cloned()
             .collect()
     }
-}
 
-impl Replies {
     /// The blocks, turns, waterfalls and costs in `first..=last`, clamped as the store clamps.
     pub fn produced_detail(&self, first: Slot, last: Slot) -> Option<ProducedDetail> {
         let (blocks, turns, fees) = {
@@ -771,11 +769,7 @@ impl Collector {
         // Slot order, for the tip meter's running total. Everything else is a
         // difference against a parent and would be right in any order.
         frozen.sort_by_key(|(slot, _)| *slot);
-        let completed = frozen
-            .iter()
-            .map(|(slot, _)| *slot)
-            .max()
-            .unwrap_or_default();
+        let completed = frozen.last().map_or(0, |(slot, _)| *slot);
         // Processed's own, which the page shows it beside; the working bank is Highest's.
         let completed_height = frozen.last().map(|(_, bank)| bank.block_height());
 
@@ -855,10 +849,10 @@ impl Collector {
             self.overview_dirty = false;
             self.overview_retained_at = now;
         }
-        if subscribers > 0 && self.produced_unsent {
-            self.publish_produced();
-        }
         if subscribers > 0 {
+            if self.produced_unsent {
+                self.publish_produced();
+            }
             self.collect_handoff_now(&root_bank);
         }
 
@@ -2239,17 +2233,13 @@ impl Collector {
     }
 
     fn collect_health(&mut self) {
+        let vote_slot = self.debounces.vote_slot.last().copied().flatten();
         let health = assess_health(
             self.last_completed_at.elapsed(),
             self.last_completed_slot,
             self.voting,
-            self.debounces.vote_slot.last().copied().flatten(),
-            self.debounces
-                .vote_slot
-                .last()
-                .copied()
-                .flatten()
-                .map(|vote| self.last_completed_slot.saturating_sub(vote)),
+            vote_slot,
+            vote_slot.map(|vote| self.last_completed_slot.saturating_sub(vote)),
             self.last_vote_advance.elapsed(),
         );
         self.debounces.health.publish(&self.publisher, health);

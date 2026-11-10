@@ -17,7 +17,6 @@ function now(over: Partial<HandoffNow>): HandoffNow {
   return {
     leader: "L",
     country: null,
-    slot: 1,
     gap: 80,
     n: 40,
     band: { p25: 60, p50: 70, p75: 90 },
@@ -85,8 +84,6 @@ describe("stackedBins", () => {
 
 describe("trendShape", () => {
   const trend = {
-    end_millis: 0,
-    step_millis: 15_000,
     mean: [100, 120, null, 90, 110],
     p25: [60, 70, null, 50, 60],
     p75: [140, 160, null, 120, 130],

@@ -42,7 +42,6 @@ pub struct GossipStake {
 pub struct GossipValidator {
     pub identity: String,
     pub name: Option<String>,
-    pub icon: Option<String>,
     pub version: Option<String>,
     pub stake: u64,
     pub seen: bool,
@@ -86,7 +85,6 @@ pub fn gossip_stake(
             GossipValidator {
                 identity: identity.to_string(),
                 name: info.and_then(|info| info.name.clone()),
-                icon: info.and_then(|info| info.icon_url.clone()),
                 seen: version.is_some(),
                 version,
                 stake,

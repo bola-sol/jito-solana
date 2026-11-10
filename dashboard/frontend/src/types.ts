@@ -728,7 +728,6 @@ export interface SkipLeader {
 }
 
 export interface SkipChart {
-  from_slot: number;
   to_slot: number;
   from_millis: number;
   to_millis: number;
@@ -762,7 +761,6 @@ export interface CountryStake {
 
 export interface StakeByCountry {
   stake: number;
-  validators: number;
   countries: number;
   ours: string | null;
   ours_continent: string | null;
@@ -824,7 +822,6 @@ export interface HandoffSummary {
   since_millis: number;
   /** Whether the window covers a whole epoch of slots. */
   full: boolean;
-  handoffs: number;
   cluster: HandoffBand;
   /** Handoffs per 10 ms from nought; the first bin holds negative gaps, the last every longer one. */
   gaps: number[];
@@ -842,11 +839,8 @@ export interface HandoffSummary {
   trend: HandoffTrend;
 }
 
-/** The mean gap over each minute of the last hour, a point each `step_millis`, oldest first; null for
- *  a minute without a handoff. */
+/** The mean gap over each minute of the last hour, oldest first; null for a minute without a handoff. */
 export interface HandoffTrend {
-  end_millis: number;
-  step_millis: number;
   mean: (number | null)[];
   p25: (number | null)[];
   p75: (number | null)[];
@@ -857,7 +851,6 @@ export interface HandoffTrend {
 export interface HandoffNow {
   leader: string;
   country: string | null;
-  slot: number;
   /** Null until the slot before has filled, or where that slot was ours or skipped. */
   gap: number | null;
   n: number;
@@ -1187,7 +1180,6 @@ export interface GossipStake {
 export interface GossipValidator {
   identity: string;
   name: string | null;
-  icon: string | null;
   version: string | null;
   stake: number;
   seen: boolean;

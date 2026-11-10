@@ -11,7 +11,7 @@ import {
 import { count, shortKey } from "../format";
 import type { FeePayerAlert, FeePayerEpoch, FeePayerRow, FeePayerSummary } from "../types";
 import { Copyable } from "./Copyable";
-import { Explain, Fold } from "./primitives";
+import { Fold, Stat } from "./primitives";
 
 export function FeePayersFold({ summary }: { summary: FeePayerSummary | null }): ReactElement {
   const epoch = summary?.epochs[0];
@@ -68,40 +68,32 @@ function FeePayersBody({ summary, epoch }: { summary: FeePayerSummary; epoch: Fe
   return (
     <div className="fee-body">
       <div className="fee-stats">
-        <div className="stat">
-          <span className="stat-label">failed in our slots</span>
-          <span className="stat-value">{shareLabel(epoch.failed, epoch.transactions)}</span>
-          <span className="stat-sub">
-            {count(epoch.failed)} of {count(epoch.transactions)} transactions
-          </span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">
-            <Explain text="The payers seen in our blocks this epoch, in other leaders' blocks from when each was first seen.">
-              same payers, other leaders
-            </Explain>
-          </span>
-          <span className="stat-value">{shareLabel(epoch.away_failed, epoch.away_transactions)}</span>
-          <span className="stat-sub">
-            {epoch.away_transactions > 0
+        <Stat
+          label="failed in our slots"
+          value={shareLabel(epoch.failed, epoch.transactions)}
+          sub={`${count(epoch.failed)} of ${count(epoch.transactions)} transactions`}
+        />
+        <Stat
+          label="same payers, other leaders"
+          explain="The payers seen in our blocks this epoch, in other leaders' blocks from when each was first seen."
+          value={shareLabel(epoch.away_failed, epoch.away_transactions)}
+          sub={
+            epoch.away_transactions > 0
               ? `over ${count(epoch.away_transactions)} of their txns`
-              : "none seen in other leaders' blocks yet"}
-          </span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">priority fees on failed</span>
-          <span className="stat-value">{priorityLabel(epoch.priority_failed)}</span>
-          <span className="stat-sub">in our {count(epoch.blocks)} blocks</span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">alerts this epoch</span>
-          <span className={`stat-value${escalated > 0 ? " tone-bad" : flagged > 0 ? " tone-warn" : ""}`}>
-            {count(escalated > 0 ? escalated : flagged)}
-          </span>
-          <span className="stat-sub">
-            {escalated > 0 ? `escalated, ${count(flagged)} flagged` : flagged > 0 ? "flagged" : "no payer flagged"}
-          </span>
-        </div>
+              : "none seen in other leaders' blocks yet"
+          }
+        />
+        <Stat
+          label="priority fees on failed"
+          value={priorityLabel(epoch.priority_failed)}
+          sub={`in our ${count(epoch.blocks)} blocks`}
+        />
+        <Stat
+          label="alerts this epoch"
+          value={count(escalated > 0 ? escalated : flagged)}
+          tone={escalated > 0 ? "bad" : flagged > 0 ? "warn" : undefined}
+          sub={escalated > 0 ? `escalated, ${count(flagged)} flagged` : flagged > 0 ? "flagged" : "no payer flagged"}
+        />
       </div>
 
       <div className="fee-epochs">

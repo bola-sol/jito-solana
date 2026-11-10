@@ -92,7 +92,6 @@
   --sky: #3f89b5;
   --lavender: #7d64c0;
   --apricot: #d0862b;
-  --vote: var(--sky);
   --part-4: #c76b74;
   --flow: #7a9459;
   --stake: #9fb385;
@@ -105,11 +104,6 @@
   --path-6: #e3e9d9;
 
   --level-incomplete: #d3ddc6;
-  --level-completed: var(--sky);
-  --level-optimistically_confirmed: var(--lavender);
-  --level-rooted: var(--apricot);
-  --level-finalized: var(--good);
-  --level-skipped: var(--bad);
 }
 
 * {

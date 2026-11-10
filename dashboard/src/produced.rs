@@ -397,43 +397,31 @@ impl ProducedStore {
     }
 
     pub fn set_versions(&mut self, slot: Slot, versions: TxVersions) -> bool {
-        let set = match self.blocks.get_mut(&slot) {
-            Some(block) if block.versions.is_none() => {
-                block.versions = Some(versions);
-                true
-            }
-            _ => false,
-        };
-        self.note_changed(slot, set)
+        self.set_once(slot, versions, |block| &mut block.versions)
     }
 
     pub fn set_certificate(&mut self, slot: Slot, certificate: BlockCertificate) -> bool {
-        let set = match self.blocks.get_mut(&slot) {
-            Some(block) if block.certificate.is_none() => {
-                block.certificate = Some(certificate);
-                true
-            }
-            _ => false,
-        };
-        self.note_changed(slot, set)
+        self.set_once(slot, certificate, |block| &mut block.certificate)
     }
 
     pub fn set_execution(&mut self, slot: Slot, execution: Execution) -> bool {
-        let set = match self.blocks.get_mut(&slot) {
-            Some(block) if block.execution.is_none() => {
-                block.execution = Some(execution);
-                true
-            }
-            _ => false,
-        };
-        self.note_changed(slot, set)
+        self.set_once(slot, execution, |block| &mut block.execution)
     }
 
-    fn note_changed(&mut self, slot: Slot, set: bool) -> bool {
-        if set {
-            self.changed.insert(slot);
-        }
-        set
+    /// Sets a field still empty on a held block, and marks the block changed.
+    fn set_once<T>(
+        &mut self,
+        slot: Slot,
+        value: T,
+        field: impl FnOnce(&mut ProducedBlock) -> &mut Option<T>,
+    ) -> bool {
+        let empty = self.blocks.get_mut(&slot).map(field);
+        let Some(held) = empty.filter(|held| held.is_none()) else {
+            return false;
+        };
+        *held = Some(value);
+        self.changed.insert(slot);
+        true
     }
 
     /// How many of `first..=last` produced a block.

@@ -575,7 +575,6 @@ export interface QuicPort {
   invalid_size: number;
 
   handed_on: number;
-  bytes_handed_on: number;
   queue_full: number;
   disconnected: number;
 

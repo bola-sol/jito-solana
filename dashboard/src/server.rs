@@ -847,21 +847,14 @@ fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
             };
             Some(encode_json_with_id("summary", "displays", id, &json))
         }
-        ("summary", "misses") => {
+        ("summary", key @ ("misses" | "written")) => {
             replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
             let json = match replies.misses.read() {
-                Ok(misses) => misses.misses.clone(),
-                Err(_) => return Some(encode_with_id("summary", "misses", id, &())),
+                Ok(held) if key == "misses" => held.misses.clone(),
+                Ok(held) => held.written.clone(),
+                Err(_) => return Some(encode_with_id("summary", key, id, &())),
             };
-            Some(encode_json_with_id("summary", "misses", id, &json))
-        }
-        ("summary", "written") => {
-            replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
-            let json = match replies.misses.read() {
-                Ok(misses) => misses.written.clone(),
-                Err(_) => return Some(encode_with_id("summary", "written", id, &())),
-            };
-            Some(encode_json_with_id("summary", "written", id, &json))
+            Some(encode_json_with_id("summary", key, id, &json))
         }
         ("peers", "gossip") => {
             replies

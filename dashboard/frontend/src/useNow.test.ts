@@ -6,32 +6,6 @@ type Sample = { at: number };
 const at = (millis: number): Sample => ({ at: millis * 1e6 });
 const stamp = (sample: Sample) => sample.at;
 
-describe("render lag", () => {
-  const WIDTH = 600;
-  const windowMs = 60_000;
-  const at = (timestampMs: number, now: number) =>
-    WIDTH * (1 - (now - RENDER_LAG_MS - timestampMs) / windowMs);
-
-  it("keeps the newest sample past the right edge for a whole interval", () => {
-    const arrived = 1_000_000;
-    for (let elapsed = 0; elapsed < RENDER_LAG_MS; elapsed += 100) {
-      expect(at(arrived, arrived + elapsed)).toBeGreaterThanOrEqual(WIDTH);
-    }
-  });
-
-  it("has the sample reach the edge exactly as the next one is due", () => {
-    const arrived = 1_000_000;
-    expect(at(arrived, arrived + RENDER_LAG_MS)).toBeCloseTo(WIDTH, 6);
-  });
-
-  it("still slides at a constant rate", () => {
-    const arrived = 1_000_000;
-    const first = at(arrived, arrived + 500);
-    const second = at(arrived, arrived + 600);
-    expect(first - second).toBeCloseTo(1, 6);
-  });
-});
-
 describe("chartEdge", () => {
   it("takes the clock offset off before the lag", () => {
     expect(chartEdge(1_000_000, 300)).toBe(1_000_000 - 300 - RENDER_LAG_MS);

@@ -1140,8 +1140,6 @@ impl Throughput {
             non_vote_failed: failed.min(non_vote),
         };
 
-        publisher.publish(TOPIC_SUMMARY, "estimated_tps", &tps);
-
         let sample = TpsSample {
             slot: current.slot,
             timestamp_nanos: system_time_nanos(SystemTime::now()),
@@ -2305,6 +2303,13 @@ mod tests {
         std::{net::Ipv4Addr, thread::sleep},
     };
 
+    /// The newest sample of the retained chart series.
+    fn last_tps(harness: &crate::fixture::Fixture) -> Option<serde_json::Value> {
+        let message = harness.published_key("summary", "tps_history")?;
+        let history: serde_json::Value = serde_json::from_str(&message).unwrap();
+        history["value"].as_array()?.last().cloned()
+    }
+
     fn quic_tap(offered: u64) -> TapCounters {
         TapCounters {
             quic: QuicTotals {
@@ -3187,7 +3192,7 @@ mod tests {
             "the heartbeat stopped while replay held the lock"
         );
         assert!(
-            harness.published_key("summary", "estimated_tps").is_some(),
+            last_tps(&harness).is_some(),
             "the sample was skipped while replay held the lock"
         );
     }
@@ -3200,8 +3205,8 @@ mod tests {
         meters.tick();
         sleep(Duration::from_millis(20));
         meters.tick();
-        let rate = harness.published_key("summary", "estimated_tps").unwrap();
-        assert!(rate.contains(r#""total":0.0"#), "{rate}");
+        let rate = last_tps(&harness).unwrap();
+        assert_eq!(rate["total"].as_f64(), Some(0.0), "{rate}");
     }
 
     #[test]
@@ -3212,7 +3217,7 @@ mod tests {
 
         meters.tick();
         assert!(
-            harness.published_key("summary", "estimated_tps").is_none(),
+            last_tps(&harness).is_none(),
             "a rate was reported from one reading"
         );
 
@@ -3221,7 +3226,7 @@ mod tests {
         meters.tick();
 
         assert!(
-            harness.published_key("summary", "estimated_tps").is_some(),
+            last_tps(&harness).is_some(),
             "two readings should have produced a rate"
         );
         assert!(
@@ -3251,17 +3256,16 @@ mod tests {
         assert_eq!(harness.failed_total.load(Ordering::Relaxed), 4);
         meters.tick();
 
-        let message = harness.published_key("summary", "estimated_tps").unwrap();
-        let tps: serde_json::Value = serde_json::from_str(&message).unwrap();
-        let failed = tps["value"]["non_vote_failed"].as_f64().unwrap();
-        let non_vote = failed + tps["value"]["non_vote_success"].as_f64().unwrap();
+        let tps = last_tps(&harness).unwrap();
+        let failed = tps["non_vote_failed"].as_f64().unwrap();
+        let non_vote = failed + tps["non_vote_success"].as_f64().unwrap();
         assert!(
             failed > 0.0,
             "one failure in the last slot was reported as none"
         );
         assert!(
             (failed - non_vote).abs() < 1e-9,
-            "every non-vote transaction failed, so the two rates should agree: {message}"
+            "every non-vote transaction failed, so the two rates should agree: {tps}"
         );
     }
 
@@ -3291,17 +3295,16 @@ mod tests {
         assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
         meters.tick();
 
-        let message = harness.published_key("summary", "estimated_tps").unwrap();
-        let tps: serde_json::Value = serde_json::from_str(&message).unwrap();
-        let failed = tps["value"]["non_vote_failed"].as_f64().unwrap();
-        let non_vote = failed + tps["value"]["non_vote_success"].as_f64().unwrap();
+        let tps = last_tps(&harness).unwrap();
+        let failed = tps["non_vote_failed"].as_f64().unwrap();
+        let non_vote = failed + tps["non_vote_success"].as_f64().unwrap();
         assert!(
             failed > 0.0,
-            "the failures of a bank pruned before the sample were lost: {message}"
+            "the failures of a bank pruned before the sample were lost: {tps}"
         );
         assert!(
             (failed - non_vote).abs() < 1e-9,
-            "every non-vote transaction failed, so the two rates should agree: {message}"
+            "every non-vote transaction failed, so the two rates should agree: {tps}"
         );
     }
 
@@ -3316,7 +3319,7 @@ mod tests {
         meters.tick();
 
         assert!(
-            harness.published_key("summary", "estimated_tps").is_none(),
+            last_tps(&harness).is_none(),
             "a rate was reported before the collector counted"
         );
     }
@@ -3336,7 +3339,7 @@ mod tests {
         assert_eq!(harness.failed_total.load(Ordering::Relaxed), 3);
         meters.tick();
         assert!(
-            harness.published_key("summary", "estimated_tps").is_none(),
+            last_tps(&harness).is_none(),
             "the failures drained at attach were reported as one second's"
         );
 
@@ -3344,13 +3347,8 @@ mod tests {
         harness.advance_to(2);
         collector.tick();
         meters.tick();
-        let message = harness.published_key("summary", "estimated_tps").unwrap();
-        let tps: serde_json::Value = serde_json::from_str(&message).unwrap();
-        assert_eq!(
-            tps["value"]["non_vote_failed"].as_f64(),
-            Some(0.0),
-            "{message}"
-        );
+        let tps = last_tps(&harness).unwrap();
+        assert_eq!(tps["non_vote_failed"].as_f64(), Some(0.0), "{tps}");
     }
 
     #[test]
@@ -3367,7 +3365,7 @@ mod tests {
         meters.tick();
 
         assert!(
-            harness.published_key("summary", "estimated_tps").is_none(),
+            last_tps(&harness).is_none(),
             "a sample was taken across a fork switch"
         );
     }
@@ -3385,7 +3383,7 @@ mod tests {
         meters.tick();
 
         assert!(
-            harness.published_key("summary", "estimated_tps").is_none(),
+            last_tps(&harness).is_none(),
             "replay throughput was reported as cluster throughput"
         );
     }

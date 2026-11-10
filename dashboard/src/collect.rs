@@ -729,11 +729,6 @@ impl Collector {
         self.publisher
             .publish(TOPIC_SUMMARY, "version", &version.as_semver_string());
         self.collect_contact();
-        self.publisher.publish(
-            TOPIC_SUMMARY,
-            "commit_hash",
-            &format!("{:08x}", version.commit()),
-        );
         self.publisher
             .publish(TOPIC_SUMMARY, "cluster", &self.ctx.cluster_name());
         // The rates the page derives tip figures with, sent rather than applied so a corrected rate

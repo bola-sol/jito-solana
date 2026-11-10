@@ -26,7 +26,7 @@ import {
   txNote,
   type TxView,
 } from "../cluster";
-import { count, duration, percent, release, solCompact } from "../format";
+import { count, countryName, duration, percent, release, shortKey, solCompact } from "../format";
 import type { ChartSeries, ChartShares, ClientShare, ClusterCharts, SkipChart, StakeByCountry } from "../types";
 import { useNow } from "../useNow";
 import { useStore } from "../useStore";
@@ -561,7 +561,7 @@ function SkipCard({ skips, through, fill }: { skips: SkipChart; through: number 
           {skips.leaders.slice(0, shown).map((leader) => (
             <div key={leader.identity} className="cl-leader">
               <span className="handoff-who">
-                <span className="handoff-who-name">{leader.name ?? `${leader.identity.slice(0, 4)}…${leader.identity.slice(-4)}`}</span>
+                <span className="handoff-who-name">{leader.name ?? shortKey(leader.identity, 4, 4)}</span>
                 {leader.country && <span className="country-code">{leader.country}</span>}
               </span>
               <span className="cl-leader-n">
@@ -736,16 +736,6 @@ const CONTINENTS: Record<string, { name: string; tone: string }> = {
 
 const continentOf = (code: string | null) =>
   (code !== null ? CONTINENTS[code] : undefined) ?? { name: "unknown", tone: "unknown" };
-
-const regionNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames(["en"], { type: "region" }) : null;
-
-function countryName(code: string): string {
-  try {
-    return regionNames?.of(code) ?? code;
-  } catch {
-    return code;
-  }
-}
 
 function CountryCard({ data, fill }: { data: StakeByCountry; fill?: boolean }) {
   const share = (stake: number) => (data.stake === 0 ? 0 : stake / data.stake);

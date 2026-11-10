@@ -256,19 +256,6 @@ export interface LeaderFacts {
   delinquent: boolean;
 }
 
-function voted(entry: SlotEntry): string | null {
-  switch (entry.reward) {
-    case "paid":
-      return "paid";
-    case "unpaid":
-      return "unpaid";
-    case "no_certificate":
-      return "none";
-    default:
-      return null;
-  }
-}
-
 /** A figure in the unit shown; null where not measured. */
 function figure(
   field: Field,
@@ -356,7 +343,7 @@ export function conditionHolds(
   if (info.list) {
     const value =
       condition.field === "voted"
-        ? voted(entry)
+        ? entry.reward === "no_certificate" ? "none" : entry.reward
         : condition.field === "leader"
           ? facts && (facts.delinquent ? "delinquent" : "voting")
           : condition.field === "client"

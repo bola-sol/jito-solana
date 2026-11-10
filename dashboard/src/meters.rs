@@ -2917,53 +2917,13 @@ mod tests {
     }
 
     #[test]
-    fn test_bundles_are_summed_over_the_epoch() {
+    fn test_leader_totals_add_the_whole_epoch() {
         let mut totals = LeaderTotals::default();
         totals.add(at(842, 10), verified(100), attempted(40), bundled(6, 21));
         totals.add(at(842, 20), verified(0), attempted(0), bundled(0, 0));
         totals.add(at(842, 30), verified(70), attempted(25), bundled(4, 9));
 
         assert_eq!(totals.bundles, bundled(10, 30));
-        assert_eq!(totals.executed.attempted, 65);
-    }
-
-    #[test]
-    fn test_bundles_start_over_with_the_stage() {
-        let mut totals = LeaderTotals::default();
-        totals.add(
-            at(842, 400_000),
-            verified(900),
-            attempted(300),
-            bundled(80, 240),
-        );
-        totals.add(at(843, 3), verified(11), attempted(4), bundled(1, 2));
-
-        assert_eq!(totals.bundles, bundled(1, 2));
-        assert_eq!(totals.epoch, Some(843));
-    }
-
-    #[test]
-    fn test_leader_totals_add_the_whole_epoch() {
-        let mut totals = LeaderTotals::default();
-        totals.add(
-            at(842, 10),
-            verified(100),
-            attempted(40),
-            BundleTotals::default(),
-        );
-        totals.add(
-            at(842, 20),
-            verified(0),
-            attempted(0),
-            BundleTotals::default(),
-        );
-        totals.add(
-            at(842, 30),
-            verified(70),
-            attempted(25),
-            BundleTotals::default(),
-        );
-
         assert_eq!(totals.verify.received, 170);
         assert_eq!(totals.executed.attempted, 65);
         assert_eq!(totals.executed.succeeded, 65);
@@ -2978,16 +2938,12 @@ mod tests {
             at(842, 400_000),
             verified(900),
             attempted(300),
-            BundleTotals::default(),
+            bundled(80, 240),
         );
-        totals.add(
-            at(843, 3),
-            verified(11),
-            attempted(4),
-            BundleTotals::default(),
-        );
+        totals.add(at(843, 3), verified(11), attempted(4), bundled(1, 2));
 
         assert_eq!(totals.epoch, Some(843));
+        assert_eq!(totals.bundles, bundled(1, 2));
         assert_eq!(totals.verify.received, 11);
         assert_eq!(totals.executed.attempted, 4);
         assert_eq!(totals.span(at(843, 3)).counted_slots, 1);
@@ -3209,24 +3165,6 @@ mod tests {
 
         let published = harness.published_key("summary", "quic_paths").unwrap();
         assert!(published.contains(r#""tpu_offhost":false"#), "{published}");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn test_the_threads_are_published_from_the_second_tick() {
-        let harness = fixture();
-        let _viewer = harness.publisher.subscribe();
-        let mut meters = harness.meters();
-        meters.tick();
-        assert!(
-            harness
-                .published_key("summary", "threads_history")
-                .is_none()
-        );
-        sleep(Duration::from_millis(20));
-        meters.tick();
-        let published = harness.published_key("summary", "threads_history").unwrap();
-        assert!(published.contains(r#""groups":["#), "{published}");
     }
 
     #[test]
@@ -3484,14 +3422,16 @@ mod tests {
 
         let _viewer = harness.publisher.subscribe();
         meters.tick();
-        sleep(Duration::from_millis(20));
-        meters.tick();
         assert!(
             harness
                 .published_key("summary", "threads_history")
-                .is_some(),
-            "a viewer attached and the thread walk still did not run"
+                .is_none(),
+            "the threads were published before a second reading"
         );
+        sleep(Duration::from_millis(20));
+        meters.tick();
+        let published = harness.published_key("summary", "threads_history").unwrap();
+        assert!(published.contains(r#""groups":["#), "{published}");
     }
 
     #[cfg(target_os = "linux")]

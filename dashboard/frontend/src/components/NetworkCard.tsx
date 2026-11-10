@@ -19,6 +19,8 @@ import { Card, chartY, Explain } from "./primitives";
 
 const WIDTH = 300;
 const HEIGHT = 38;
+const WINDOW_MS = NETWORK_WINDOW_SECONDS * 1000;
+const SCOPE = "This host's network cards, each byte counted once, not the validator alone.";
 
 /** The live rate stands for the minute, so the figure is right from the first second. */
 function steady(rate: number): Direction {
@@ -38,14 +40,11 @@ export function NetworkCard(): ReactElement | null {
   const edge = useChartEdge();
   if (!rates) return null;
 
-  const windowMs = NETWORK_WINDOW_SECONDS * 1000;
-  const visible = windowed(store.getNetwork(), edge, windowMs, (s) => s.timestamp_nanos);
+  const visible = windowed(store.getNetwork(), edge, WINDOW_MS, (s) => s.timestamp_nanos);
   const received = visible.map((sample) => sample.received_per_second);
   const sent = visible.map((sample) => sample.sent_per_second);
   const peak = sharedPeak(received, sent);
   const egress = direction(sent) ?? steady(rates.sent_per_second);
-
-  const scope = "This host's network cards, each byte counted once, not the validator alone.";
 
   return (
     <Card
@@ -60,9 +59,7 @@ export function NetworkCard(): ReactElement | null {
         samples={visible}
         value={(sample) => sample.received_per_second}
         edge={edge}
-        windowMs={windowMs}
         peak={peak}
-        explain={scope}
       />
       <Row
         label="Out"
@@ -71,9 +68,7 @@ export function NetworkCard(): ReactElement | null {
         samples={visible}
         value={(sample) => sample.sent_per_second}
         edge={edge}
-        windowMs={windowMs}
         peak={peak}
-        explain={scope}
       />
       {split && <Split total={egress.current} split={split} />}
       {xdp && <Xdp xdp={xdp} dropped={turbine?.xdp_dropped ?? null} />}
@@ -332,9 +327,7 @@ function Row({
   samples,
   value,
   edge,
-  windowMs,
   peak,
-  explain,
 }: {
   label: string;
   kind: "ingress" | "egress";
@@ -342,9 +335,7 @@ function Row({
   samples: NetworkSample[];
   value: (sample: NetworkSample) => number;
   edge: number;
-  windowMs: number;
   peak: number;
-  explain: string;
 }) {
   const { unit, divisor } = unitFor(read.current);
   const arrow = read.trend === "up" ? "▲" : read.trend === "down" ? "▼" : "·";
@@ -353,20 +344,13 @@ function Row({
     <div className="net-row">
       <span className="net-label">
         <i className={`net-swatch is-${kind}`} aria-hidden="true" />
-        <Explain text={explain}>{label}</Explain>
+        <Explain text={SCOPE}>{label}</Explain>
       </span>
       <span className="net-value">
         {decimal(read.current / divisor, 2)} <small>{unit}/s</small>
       </span>
       <span className="net-spark">
-        <Spark
-          kind={kind}
-          samples={samples}
-          value={value}
-          edge={edge}
-          windowMs={windowMs}
-          peak={peak}
-        />
+        <Spark kind={kind} samples={samples} value={value} edge={edge} peak={peak} />
       </span>
       <span className="net-meta">
         <b>avg {decimal(read.average / divisor, 2)}</b>
@@ -384,14 +368,12 @@ function Spark({
   samples,
   value,
   edge,
-  windowMs,
   peak,
 }: {
   kind: string;
   samples: NetworkSample[];
   value: (sample: NetworkSample) => number;
   edge: number;
-  windowMs: number;
   peak: number;
 }) {
   if (samples.length < 2) {
@@ -400,7 +382,7 @@ function Spark({
   // Placed by timestamp rather than by index, so a second the meter missed
   // leaves a gap of the right width instead of shifting everything after it.
   const points = samples.map((sample): [number, number] => [
-    WIDTH * (1 - (edge - sample.timestamp_nanos / 1e6) / windowMs),
+    WIDTH * (1 - (edge - sample.timestamp_nanos / 1e6) / WINDOW_MS),
     chartY(value(sample), peak, HEIGHT),
   ]);
   const line = points

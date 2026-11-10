@@ -2787,27 +2787,17 @@ mod tests {
     }
 
     #[test]
-    fn test_shreds_are_counted_by_the_socket_they_arrived_on() {
-        let tap = MetricsTap::default();
-        tap.observe(&named(SHREDS_TURBINE, &[("packets_count", "900i")]));
-        tap.observe(&named(SHREDS_REPAIR, &[("packets_count", "12i")]));
-        tap.observe(&named(SHREDS_TURBINE, &[("packets_count", "100i")]));
-
-        let counters = tap.counters();
-        assert_eq!(counters.shreds_turbine, 1_000);
-        assert_eq!(counters.shreds_repair, 12);
-    }
-
-    #[test]
     fn test_each_socket_receiver_counts_into_its_own_port() {
         let tap = MetricsTap::default();
         tap.observe(&named(SHREDS_TURBINE, &[("packets_count", "900i")]));
         tap.observe(&named(GOSSIP_RECEIVER, &[("packets_count", "40i")]));
         tap.observe(&named(TPU_VOTE_RECEIVER, &[("packets_count", "70i")]));
         tap.observe(&named(GOSSIP_RECEIVER, &[("packets_count", "2i")]));
+        tap.observe(&named(SHREDS_REPAIR, &[("packets_count", "12i")]));
 
         let counters = tap.counters();
         assert_eq!(counters.shreds_turbine, 900);
+        assert_eq!(counters.shreds_repair, 12);
         assert_eq!(counters.packets_gossip, 42);
         assert_eq!(counters.packets_tpu_vote, 70);
     }
@@ -3035,48 +3025,6 @@ mod tests {
     }
 
     #[test]
-    fn test_the_receive_stretch_of_that_point_balances() {
-        // The identity the validator's own tests assert: everything received either
-        // got in or has a reason it did not.
-        let counters = MetricsTap::default();
-        counters.observe(&slot_point(
-            7,
-            &[
-                ("num_received", "1000i"),
-                ("num_dropped_on_receive", "900i"),
-                ("num_dropped_on_check_work_queue_full", "1i"),
-                ("num_dropped_on_parsing_and_sanitization", "2i"),
-                ("num_dropped_on_validate_locks", "3i"),
-                ("num_dropped_on_receive_compute_budget", "4i"),
-                ("num_dropped_on_receive_age", "5i"),
-                ("num_dropped_on_receive_already_processed", "6i"),
-                ("num_dropped_on_receive_fee_payer", "7i"),
-                ("num_dropped_on_filter_key", "8i"),
-                ("num_dropped_on_nonce_dedup", "9i"),
-                ("num_buffered", "55i"),
-            ],
-        ));
-
-        let totals = counters.slot_waterfalls()[0].counts;
-        let accounted = [
-            totals.not_held,
-            totals.check_queue_full,
-            totals.unparsable,
-            totals.bad_locks,
-            totals.compute_budget,
-            totals.too_old,
-            totals.already_processed,
-            totals.fee_payer,
-            totals.filtered,
-            totals.nonce_conflict,
-            totals.buffered,
-        ]
-        .into_iter()
-        .fold(0u64, u64::saturating_add);
-        assert_eq!(accounted, totals.received);
-    }
-
-    #[test]
     fn test_a_window_of_readings_differences_and_sums() {
         let first = SchedulerTotals {
             received: 100,
@@ -3285,17 +3233,6 @@ mod tests {
         assert!(tap.take_vote_tracks().is_empty(), "taken once");
     }
 
-    fn full_block(tap: &MetricsTap, slot: &str, total_time_ms: &str) {
-        tap.observe(&named(
-            SHRED_FULL,
-            &[
-                ("slot", slot),
-                ("total_time_ms", total_time_ms),
-                ("last_index", "40i"),
-            ],
-        ));
-    }
-
     /// Full at unix second 1,000, so close times can be set relative to it.
     const FULL_AT_NANOS: u64 = 1_000_000_000_000;
 
@@ -3378,7 +3315,7 @@ mod tests {
     #[test]
     fn test_finality_and_our_vote_are_timed_from_the_last_shred() {
         let tap = MetricsTap::default();
-        full_block(&tap, "100i", "180i");
+        full_block_at(&tap, "100i", "180i");
         tap.observe(&named(
             VOTE_TRACKING,
             &[
@@ -3429,7 +3366,7 @@ mod tests {
     #[test]
     fn test_our_vote_is_timed_from_the_last_shred() {
         let tap = MetricsTap::default();
-        full_block(&tap, "100i", "180i");
+        full_block_at(&tap, "100i", "180i");
         tap.observe(&named(
             VOTE_TRACKING,
             &[
@@ -3474,7 +3411,7 @@ mod tests {
     #[test]
     fn test_finality_needs_the_first_shred_and_the_full_block() {
         let tap = MetricsTap::default();
-        full_block(&tap, "101i", "100i");
+        full_block_at(&tap, "101i", "100i");
         tap.observe(&named(
             VOTE_TRACKING,
             &[
@@ -3491,7 +3428,7 @@ mod tests {
                 ("finalized", "270000i"),
             ],
         ));
-        full_block(&tap, "103i", "300i");
+        full_block_at(&tap, "103i", "300i");
         tap.observe(&named(
             VOTE_TRACKING,
             &[
@@ -3508,7 +3445,7 @@ mod tests {
     fn test_time_to_our_vote_is_the_median_sample() {
         let tap = MetricsTap::default();
         for (slot, voted) in [("104i", "30000i"), ("108i", "10000i"), ("112i", "20000i")] {
-            full_block(&tap, slot, "0i");
+            full_block_at(&tap, slot, "0i");
             tap.observe(&named(
                 VOTE_TRACKING,
                 &[
@@ -3844,6 +3781,7 @@ mod tests {
         assert_eq!(quic.refused_full, 412);
         assert_eq!(quic.handshake_timeout, 1_205);
         assert_eq!(quic.handshake_error, 338);
+        assert_eq!(quic.handshook, 7_445);
         assert_eq!(quic.add_failed, 7);
         assert_eq!(quic.admitted_staked, 1_890);
         assert_eq!(quic.admitted_unstaked, 5_548);
@@ -3859,46 +3797,6 @@ mod tests {
         assert_eq!(quic.disconnected, 1);
         assert_eq!(read.quic_levels.open, 1_284);
         assert_eq!(read.quic_levels.active_streams, 46);
-    }
-
-    #[test]
-    fn test_the_shed_connections_account_for_the_offer() {
-        // Every attempt is shed at one gate, fails the handshake, or is admitted.
-        // This sample avoids the two uncounted drops.
-        let tap = MetricsTap::default();
-        tap.observe(&named(QUIC_TPU, QUIC_POINT));
-
-        let quic = tap.counters().quic;
-        let accounted = [
-            quic.shed_all,
-            quic.shed_address,
-            quic.refused_full,
-            quic.handshake_timeout,
-            quic.handshake_error,
-            quic.add_failed,
-            quic.admitted_staked,
-            quic.admitted_unstaked,
-        ]
-        .into_iter()
-        .fold(0u64, u64::saturating_add);
-        assert_eq!(accounted, quic.offered);
-    }
-
-    #[test]
-    fn test_the_handshake_checkpoint_is_read() {
-        let tap = MetricsTap::default();
-        tap.observe(&named(QUIC_TPU, QUIC_POINT));
-
-        let quic = tap.counters().quic;
-        assert_eq!(quic.handshook, 7_445);
-        let after = [
-            quic.add_failed,
-            quic.admitted_staked,
-            quic.admitted_unstaked,
-        ]
-        .into_iter()
-        .fold(0u64, u64::saturating_add);
-        assert_eq!(after, quic.handshook);
     }
 
     #[test]

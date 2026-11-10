@@ -1,7 +1,7 @@
 /** The Gossip peers search box: plain words search as typed, and expressions such as
  *  `finalization<50` or `geo:DE,NL` become filters. All of it is answered in the page. */
 
-import { count, countryName } from "./format";
+import { count, countryName, LAMPORTS_PER_SOL } from "./format";
 import { arrivalMicros, filterCounts, PEER_FILTERS, type ArrivalKind, type GossipPeer, type PeerFilter } from "./gossip";
 import {
   compared,
@@ -15,8 +15,6 @@ import {
   type Op,
 } from "./scheduleConditions";
 import { EXPRESSION, OPS, splitValues, type SearchRow, type Suggestion, type TypeAction } from "./scheduleSyntax";
-
-const LAMPORTS_PER_SOL = 1_000_000_000;
 
 const UNITS = /\s*(ms|sol|slots?|%)$/i;
 

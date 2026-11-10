@@ -11051,15 +11051,6 @@ body {
   white-space: nowrap;
 }
 
-/* Three across, or one column where three do not fit: never two with one left alone. */
-.grid.cl-three {
-  --three-across: calc(3 * 300px + 2 * var(--gap));
-  grid-template-columns: repeat(
-    auto-fit,
-    minmax(min(100%, max(300px, (var(--three-across) - 100%) * 999)), 1fr)
-  );
-}
-
 .cl-card {
   container-type: inline-size;
 }

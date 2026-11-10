@@ -30,8 +30,7 @@ import { count, countryName, duration, percent, release, shortKey, solCompact } 
 import type { ChartSeries, ChartShares, ClientShare, ClusterCharts, SkipChart, StakeByCountry } from "../types";
 import { useNow } from "../useNow";
 import { useStore } from "../useStore";
-import { useWidth } from "../useWidth";
-import { useHeight } from "../useHeight";
+import { useHeight, useWidth } from "../useWidth";
 import { useMedia } from "../useMedia";
 import { usePolledRequest } from "../usePolledRequest";
 import { HandoffCard } from "./HandoffCard";

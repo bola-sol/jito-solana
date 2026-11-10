@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode, type RefObject } from "react";
-import { count, percent } from "../format";
+import { count, LAMPORTS_PER_SOL, percent } from "../format";
 import { typedTime, type Held } from "../scheduleFilters";
 import { complete, type SearchRow, type Suggestion } from "../scheduleSyntax";
 import type { SavedView } from "../scheduleViews";
@@ -16,8 +16,6 @@ import {
 } from "../summaryTable";
 import { jitoShare } from "../tips";
 import type { ScanFigures, ScheduleSummary, TipRates } from "../types";
-
-const LAMPORTS_PER_SOL = 1_000_000_000;
 
 /** Where the validator's history starts, in a line. */
 export function heldText(held: Held): string {

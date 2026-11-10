@@ -2,6 +2,7 @@
  *  address and to the validator, and how the page matches it on the live window. The validator
  *  matches the same in `search.rs`. */
 
+import { LAMPORTS_PER_SOL } from "./format";
 import type { ScheduleColumns } from "./layout";
 import { SLOTS_PER_TURN } from "./schedule";
 import { isBareTime, parseJump, type Jump } from "./scheduleFilters";
@@ -92,8 +93,6 @@ const VOTED: readonly (readonly [value: string, label: string])[] = [
   ["unpaid", "✗ left out"],
   ["none", "○ none written"],
 ];
-
-const LAMPORTS_PER_SOL = 1_000_000_000;
 
 const DAY_MILLIS = 86_400_000;
 

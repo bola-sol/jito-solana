@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 import { count, percent, shortKey } from "../format";
+import { LOW_SHARE } from "../finalization";
 import { delinquentTitle } from "../misses";
 import {
   ariaSort,
@@ -365,9 +366,6 @@ function TimeCard({ time }: { time: Gossip["time"] }) {
   );
 }
 
-/** Under this share the column marks a validator's votes as usually late to the certificate. */
-const LOW_FINALIZATION = 0.5;
-
 /** Past this many times the middle peer's, a validator's votes are marked as arriving late. */
 const LATE_ARRIVAL = 2;
 
@@ -729,7 +727,7 @@ const PeerLine = memo(function PeerLine({
       </td>
       {finalization && (
         <td
-          className={`is-num${peer.finalization !== null && peer.finalization < LOW_FINALIZATION ? " tone-warn" : ""}`}
+          className={`is-num${peer.finalization !== null && peer.finalization < LOW_SHARE ? " tone-warn" : ""}`}
         >
           {percent(peer.finalization, 0)}
         </td>

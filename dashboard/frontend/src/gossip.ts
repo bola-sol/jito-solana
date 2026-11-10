@@ -208,7 +208,7 @@ function snapshotAge(peer: GossipPeer): number {
   return peer.incremental ?? peer.full ?? Infinity;
 }
 
-type Key = (peer: GossipPeer, nowMillis: number) => number | string | null;
+type Key = (peer: GossipPeer, nowMillis: number, kind: ArrivalKind) => number | string | null;
 
 /** A null sorts last either way. */
 const COLUMNS: Record<PeerColumn, { key: Key; ascending: boolean }> = {
@@ -222,7 +222,7 @@ const COLUMNS: Record<PeerColumn, { key: Key; ascending: boolean }> = {
   snapshot: { key: snapshotAge, ascending: false },
   ledger: { key: (peer) => peer.ledger, ascending: false },
   finalization: { key: (peer) => peer.finalization, ascending: false },
-  arrival: { key: (peer) => peer.voteArrival?.mean ?? null, ascending: true },
+  arrival: { key: (peer, _now, kind) => arrivalMicros(peer.voteArrival, kind), ascending: true },
 };
 
 function compareKeys(a: number | string, b: number | string): number {
@@ -237,11 +237,9 @@ export function sortPeers(
   nowMillis: number,
   kind: ArrivalKind = "notarize",
 ): GossipPeer[] {
-  const { ascending } = COLUMNS[sort.column];
-  const key: Key =
-    sort.column === "arrival" ? (peer) => arrivalMicros(peer.voteArrival, kind) : COLUMNS[sort.column].key;
+  const { ascending, key } = COLUMNS[sort.column];
   const sign = ascending !== sort.reversed ? 1 : -1;
-  const keyed = peers.map((peer) => ({ peer, value: key(peer, nowMillis) }));
+  const keyed = peers.map((peer) => ({ peer, value: key(peer, nowMillis, kind) }));
   keyed.sort((a, b) => {
     if (a.value !== b.value) {
       if (a.value === null) return 1;

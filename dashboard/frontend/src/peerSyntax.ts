@@ -316,12 +316,8 @@ export function nextPeerOp(condition: PeerCondition): Op {
   return ops[(ops.indexOf(condition.op) + 1) % ops.length] ?? condition.op;
 }
 
-function keyOf(condition: PeerCondition): PeerKey | undefined {
-  return KEYS.find((key) => key.name === condition.key);
-}
-
 export function peerConditionParts(condition: PeerCondition): { label: string; op: string; value: string; unit: string } {
-  const key = keyOf(condition);
+  const key = keyNamed(condition.key);
   const value =
     condition.value === null
       ? condition.values.join(", ")
@@ -334,7 +330,7 @@ export function peerConditionParts(condition: PeerCondition): { label: string; o
 /** A condition's value as typed in its pill. */
 export function peerValueText(condition: PeerCondition): string {
   if (condition.value === null) return condition.values.map((value) => (value.includes(",") ? `"${value}"` : value)).join(", ");
-  return keyOf(condition)?.kind === "time" ? gapText(condition.value) : String(condition.value);
+  return keyNamed(condition.key)?.kind === "time" ? gapText(condition.value) : String(condition.value);
 }
 
 /** The condition with the value typed in its pill, or why that cannot be read. */

@@ -38,7 +38,6 @@ function quiet(over: Partial<QuicPort> = {}): QuicPort {
     read_errors: 0,
     invalid_size: 0,
     handed_on: 0,
-    bytes_handed_on: 0,
     queue_full: 0,
     disconnected: 0,
     open: 0,

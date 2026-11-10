@@ -543,7 +543,6 @@ pub struct ReplaySlotTimes {
     pub bytecode: u64,
     pub serialising: u64,
     pub deserialising: u64,
-    pub creating_vms: u64,
     pub load: u64,
     pub store: u64,
     pub program_cache: u64,
@@ -719,7 +718,6 @@ counter_totals! {
         pub one_hit_wonders: u64,
         pub prunes_orphan: u64,
         pub prunes_environment: u64,
-        pub empty_entries: u64,
     }
 }
 
@@ -757,7 +755,6 @@ counter_totals! {
         pub read_errors: u64,
         pub invalid_size: u64,
         pub handed_on: u64,
-        pub bytes_handed_on: u64,
         /// The one row here meaning this validator could not keep up.
         pub queue_full: u64,
         pub disconnected: u64,
@@ -1444,7 +1441,6 @@ impl MetricsTap {
                 "execute_details_execute_inner_us" => &mut slot.bytecode,
                 "execute_details_serialize_us" => &mut slot.serialising,
                 "execute_details_deserialize_us" => &mut slot.deserialising,
-                "execute_details_create_vm_us" => &mut slot.creating_vms,
                 "load_us" => &mut slot.load,
                 "store_us" => &mut slot.store,
                 "program_cache_us" => &mut slot.program_cache,
@@ -2054,7 +2050,6 @@ impl AddPoint for ProgramCacheSet {
                 "one_hit_wonders" => &mut totals.one_hit_wonders,
                 "prunes_orphan" => &mut totals.prunes_orphan,
                 "prunes_environment" => &mut totals.prunes_environment,
-                "empty_entries" => &mut totals.empty_entries,
                 _ => continue,
             };
             add_value(counter, value);
@@ -2100,7 +2095,6 @@ impl AddPoint for QuicSet {
                 "stream_read_errors" => &mut totals.read_errors,
                 "invalid_stream_size" => &mut totals.invalid_size,
                 "packets_sent_to_consumer" => &mut totals.handed_on,
-                "bytes_sent_to_consumer" => &mut totals.bytes_handed_on,
                 "total_handle_chunk_to_packet_send_full_err" => &mut totals.queue_full,
                 "total_handle_chunk_to_packet_send_disconnected_err" => &mut totals.disconnected,
                 _ => continue,
@@ -3734,7 +3728,6 @@ mod tests {
         assert_eq!(quic.read_errors, 41);
         assert_eq!(quic.invalid_size, 12);
         assert_eq!(quic.handed_on, 900);
-        assert_eq!(quic.bytes_handed_on, 64_000);
         assert_eq!(quic.queue_full, 8);
         assert_eq!(quic.disconnected, 1);
         assert_eq!(read.quic_levels.open, 1_284);

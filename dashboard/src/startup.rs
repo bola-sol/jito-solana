@@ -405,7 +405,6 @@ mod tests {
     fn test_the_stake_count_rides_only_on_the_wait() {
         let seen = Some(StakeInGossip {
             online: 3,
-            offline: 7,
             total: 10,
         });
         let waiting = ValidatorStartProgress::WaitingForSupermajority {
@@ -421,7 +420,7 @@ mod tests {
             StartupPublisher::default().publish(&publisher, phase, seen);
             let sent = publisher.snapshot().pop().unwrap();
             assert_eq!(
-                sent.contains(r#""stake_in_gossip":{"online":3,"offline":7,"total":10}"#),
+                sent.contains(r#""stake_in_gossip":{"online":3,"total":10}"#),
                 carried,
                 "{sent}"
             );

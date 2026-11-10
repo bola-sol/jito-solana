@@ -1563,22 +1563,6 @@ body {
   padding-top: 16px;
 }
 
-.stake-share-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 7px;
-}
-
-.stake-share-head b {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-
 /* Fifty ticks fit a card as narrow as 300px; the gap gives way before the ticks become hairlines.
    */
 .stake-strip {
@@ -1612,11 +1596,6 @@ body {
   font-size: 12px;
   color: var(--text-dim);
   margin-top: 7px;
-}
-
-.stake-share-key em {
-  font-style: normal;
-  color: var(--bad);
 }
 
 /* The staked total set beside the active count, so the two read as a fraction. */

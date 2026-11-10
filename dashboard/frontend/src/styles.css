@@ -282,7 +282,6 @@ body {
 
   .who-meta {
     flex-wrap: wrap;
-    column-gap: 10px;
   }
 
   .who .verdict-hero {
@@ -3302,7 +3301,6 @@ body {
 /* Faint and ruled off, so it reads as the columns' head; padded like a row so the figures line up.
    */
 .produced-averages {
-  padding: 5px 6px;
   border-bottom: 1px solid var(--border);
   color: var(--text-faint);
   cursor: default;
@@ -6694,7 +6692,6 @@ body {
 
   .host-thread.is-head {
     grid-template-areas: "name now wait";
-    padding: 5px 6px;
   }
 
   .host-thread .is-count,
@@ -7094,12 +7091,10 @@ body {
   }
 
   .net-label {
-    grid-column: 1;
     grid-row: 1;
   }
 
   .net-value {
-    grid-column: 1;
     grid-row: 2;
     font-size: 20px;
   }
@@ -7113,10 +7108,8 @@ body {
   }
 
   .net-spark {
-    grid-column: 2;
     grid-row: 2;
     height: 30px;
-    min-width: 0;
   }
 
   /* The XDP and turbine lines wrap instead of clipping. */

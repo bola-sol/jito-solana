@@ -69,15 +69,8 @@ pub fn gossip_stake(
         cluster_info.my_contact_info().version().to_string(),
     );
 
-    let mut staked: HashMap<Pubkey, u64> = HashMap::new();
-    for (stake, account) in bank.vote_accounts().values() {
-        if *stake > 0 {
-            let held = staked.entry(*account.node_pubkey()).or_insert(0);
-            *held = held.saturating_add(*stake);
-        }
-    }
-
-    let mut validators: Vec<GossipValidator> = staked
+    let mut validators: Vec<GossipValidator> = crate::collect::tally_bank_stake(bank)
+        .staked
         .into_iter()
         .map(|(identity, stake)| {
             let info = names.get(&identity);

@@ -2,7 +2,7 @@
 //! skips from the root bank's slot history, and the cluster's stake by client and by country.
 
 use {
-    super::{Collector, EpochInfo, Replies, country_of, strip_prerelease},
+    super::{Collector, EpochInfo, Replies, country_of, strip_prerelease, tally_bank_stake},
     crate::{
         geoip,
         history::{
@@ -774,7 +774,7 @@ impl Collector {
             charts.skips = Some(chart);
         }
         drop(epochs);
-        let staked = staked_identities(bank);
+        let staked = tally_bank_stake(bank).staked;
         let ours_country = self
             .ctx
             .cluster_info
@@ -823,19 +823,6 @@ struct Described {
     client: String,
     release: String,
     country: Option<&'static str>,
-}
-
-/// Every identity's activated stake, summed over its vote accounts.
-fn staked_identities(bank: &Bank) -> HashMap<Pubkey, u64> {
-    let mut stakes: HashMap<Pubkey, u64> = HashMap::new();
-    for (stake, account) in bank.vote_accounts().values() {
-        if *stake == 0 {
-            continue;
-        }
-        let held = stakes.entry(*account.node_pubkey()).or_insert(0);
-        *held = held.saturating_add(*stake);
-    }
-    stakes
 }
 
 /// Clients gossip names by number only, and identities gossip does not hold, are folded with the

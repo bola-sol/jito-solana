@@ -1375,27 +1375,21 @@ impl Collector {
     /// The client, country and stake of every staked node and of every held epoch's leaders, which
     /// the schedule's leader conditions, its by-client summary and its turn cards read.
     fn collect_leader_traits(&self, bank: &Bank, peers: &[(ContactInfo, u64)]) {
-        let mut map = LeaderMap::new();
-        // The oldest last vote among a validator's staked accounts, `None` where one never voted.
-        let mut stalest: LastVotes = HashMap::new();
-        for (stake, account) in bank.vote_accounts().values() {
-            if *stake == 0 {
-                continue;
-            }
-            let identity = *account.node_pubkey();
-            let traits: &mut LeaderTraits = map.entry(identity).or_default();
-            traits.stake = traits.stake.saturating_add(*stake);
-            let last_vote = account.vote_state_view().last_voted_slot();
-            let held = stalest.entry(identity).or_insert(last_vote);
-            *held = (*held).min(last_vote);
-        }
-        let tip = bank.slot();
-        for (identity, last_vote) in stalest {
-            if let Some(traits) = map.get_mut(&identity) {
-                traits.last_vote = last_vote;
-                traits.delinquent = is_delinquent(last_vote, tip);
-            }
-        }
+        let tally = tally_bank_stake(bank);
+        let mut map: LeaderMap = tally
+            .staked
+            .iter()
+            .map(|(identity, stake)| {
+                let last_vote = tally.stalest_votes.get(identity).copied().flatten();
+                let traits = LeaderTraits {
+                    stake: *stake,
+                    last_vote,
+                    delinquent: is_delinquent(last_vote, bank.slot()),
+                    ..LeaderTraits::default()
+                };
+                (*identity, traits)
+            })
+            .collect();
         // A leader can lose its stake after the schedule that names it was fixed.
         let scheduled: HashSet<Pubkey> = self
             .epochs
@@ -1443,17 +1437,7 @@ impl Collector {
             slot = slot.saturating_add(stride);
         }
 
-        let mut stakes: HashMap<Pubkey, u64> = HashMap::new();
-        for (stake, account) in bank.vote_accounts().values() {
-            if *stake == 0 {
-                continue;
-            }
-            let identity = account.node_pubkey();
-            if leaders.contains(identity) {
-                let total = stakes.entry(*identity).or_insert(0);
-                *total = total.saturating_add(*stake);
-            }
-        }
+        let stakes = tally_bank_stake(bank).staked;
 
         let mut gossip: HashMap<Pubkey, Heard> = HashMap::new();
         for (contact_info, _) in peers {
@@ -2149,22 +2133,8 @@ impl Collector {
 
     /// Returns each validator's stalest vote, which the certificate lists mark delinquency by.
     fn collect_peers(&mut self, bank: &Bank, peers: &[(ContactInfo, u64)]) -> LastVotes {
-        let vote_accounts = bank.vote_accounts();
-        let tip = bank.slot();
         let rpc_nodes = count_rpc_nodes(&self.ctx.cluster_info, peers);
-
-        let tally = tally_stake(
-            vote_accounts
-                .iter()
-                .map(|(_vote_pubkey, (stake, account))| {
-                    (
-                        *account.node_pubkey(),
-                        *stake,
-                        account.vote_state_view().last_voted_slot(),
-                    )
-                }),
-            tip,
-        );
+        let tally = tally_bank_stake(bank);
 
         // A validator can be in gossip or the vote accounts without the other, so both are walked.
         // Versions are kept only for the staked identities they are counted over.
@@ -2432,8 +2402,8 @@ fn classify_slot(slot: Slot, root: Slot, confirmed: Slot, finalized: Slot) -> Sl
 
 /// Keyed by identity: several staked vote accounts are one validator.
 #[derive(Debug, Default, PartialEq, Eq)]
-struct StakeTally {
-    staked: HashMap<Pubkey, u64>,
+pub(crate) struct StakeTally {
+    pub(crate) staked: HashMap<Pubkey, u64>,
     delinquent: HashSet<Pubkey>,
     /// The oldest last vote among each validator's staked accounts, `None` where one never voted.
     stalest_votes: LastVotes,
@@ -2446,6 +2416,18 @@ pub(crate) fn is_delinquent(last_vote: Option<Slot>, tip: Slot) -> bool {
     last_vote
         .map(|vote| tip.saturating_sub(vote) > DELINQUENT_VALIDATOR_SLOT_DISTANCE)
         .unwrap_or(true)
+}
+
+/// The bank's staked vote accounts tallied by identity, against the bank's own slot.
+pub(crate) fn tally_bank_stake(bank: &Bank) -> StakeTally {
+    let accounts = bank.vote_accounts();
+    tally_stake(
+        accounts.iter().map(|(_, (stake, account))| {
+            let last_vote = account.vote_state_view().last_voted_slot();
+            (*account.node_pubkey(), *stake, last_vote)
+        }),
+        bank.slot(),
+    )
 }
 
 fn tally_stake(

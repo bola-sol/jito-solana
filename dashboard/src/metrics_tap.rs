@@ -1125,12 +1125,7 @@ impl MetricsTap {
     }
 
     fn remember_slot(&self, point: &DataPoint) {
-        let Some(slot) = point
-            .fields
-            .iter()
-            .find(|(name, _)| *name == SLOT)
-            .and_then(|(_, value)| field_u64(value))
-        else {
+        let Some(slot) = number_named(point, SLOT) else {
             return;
         };
 
@@ -1160,13 +1155,7 @@ impl MetricsTap {
 
     /// `driver` and `zero_copy` are tags; an unparseable `zero_copy` reads as false.
     fn remember_xdp(&self, point: &DataPoint) {
-        let tag = |wanted: &str| {
-            point
-                .tags
-                .iter()
-                .find(|(name, _)| *name == wanted)
-                .map(|(_, value)| value.as_str())
-        };
+        let tag = |wanted| tag_named(point, wanted);
         let field = |wanted: &str| {
             point
                 .fields
@@ -1189,13 +1178,7 @@ impl MetricsTap {
     }
 
     fn remember_leader_timing(&self, point: &DataPoint) {
-        let field = |wanted: &str| {
-            point
-                .fields
-                .iter()
-                .find(|(name, _)| *name == wanted)
-                .and_then(|(_, value)| field_u64(value))
-        };
+        let field = |wanted| number_named(point, wanted);
         let Some(slot) = field(SLOT) else {
             return;
         };
@@ -1231,21 +1214,11 @@ impl MetricsTap {
     }
 
     fn remember_vote_arrival(&self, point: &DataPoint) {
-        let Some(vote) = point
-            .tags
-            .iter()
-            .find(|(name, _)| *name == VOTE_ACCOUNT)
-            .and_then(|(_, key)| Pubkey::from_str(key).ok())
+        let Some(vote) = tag_named(point, VOTE_ACCOUNT).and_then(|key| Pubkey::from_str(key).ok())
         else {
             return;
         };
-        let field = |wanted: &str| {
-            point
-                .fields
-                .iter()
-                .find(|(name, _)| *name == wanted)
-                .and_then(|(_, value)| field_u64(value))
-        };
+        let field = |wanted| number_named(point, wanted);
         // Absent where the validator sent no notarize vote that epoch.
         let (Some(epoch), Some(notarize_mean_micros)) =
             (field("epoch"), field("notar_vote_us_mean"))
@@ -1274,13 +1247,7 @@ impl MetricsTap {
     }
 
     fn remember_vote_track(&self, point: &DataPoint) {
-        let field = |wanted: &str| {
-            point
-                .fields
-                .iter()
-                .find(|(name, _)| *name == wanted)
-                .and_then(|(_, value)| field_u64(value))
-        };
+        let field = |wanted| number_named(point, wanted);
         let Some(slot) = field(SLOT) else {
             return;
         };
@@ -1576,11 +1543,8 @@ impl MetricsTap {
                 *field = micros;
             }
         }
-        let worker = point
-            .tags
-            .iter()
-            .find(|(name, _)| *name == WORKER_ID)
-            .and_then(|(_, id)| id.parse().ok())
+        let worker = tag_named(point, WORKER_ID)
+            .and_then(|id| id.parse().ok())
             .unwrap_or(u64::MAX);
         let Ok(mut timings) = self.worker_timings.lock() else {
             return;
@@ -2021,13 +1985,7 @@ impl AddPoint for AccountsSet {
 
 impl AddPoint for MemorySet {
     fn add_point(&mut self, point: &DataPoint) {
-        let field = |wanted: &str| {
-            point
-                .fields
-                .iter()
-                .find(|(name, _)| *name == wanted)
-                .and_then(|(_, value)| field_u64(value))
-        };
+        let field = |wanted| number_named(point, wanted);
         match point.name {
             ACCOUNTS_DB_TIMINGS => {
                 if let Some(bytes) = field("read_only_accounts_cache_data_size") {
@@ -2364,6 +2322,16 @@ fn add_to<T: AddPoint>(set: &Mutex<T>, point: &DataPoint) {
 
 fn copy_of<T: Copy + Default>(set: &Mutex<T>) -> T {
     set.lock().map(|set| *set).unwrap_or_default()
+}
+
+fn number_named(point: &DataPoint, wanted: &str) -> Option<u64> {
+    let (_, value) = point.fields.iter().find(|(name, _)| *name == wanted)?;
+    field_u64(value)
+}
+
+fn tag_named<'a>(point: &'a DataPoint, wanted: &str) -> Option<&'a str> {
+    let (_, value) = point.tags.iter().find(|(name, _)| *name == wanted)?;
+    Some(value.as_str())
 }
 
 fn add_named(counter: &AtomicU64, point: &DataPoint, wanted: &str) {

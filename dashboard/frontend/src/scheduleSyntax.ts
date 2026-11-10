@@ -321,7 +321,7 @@ export interface Suggestion {
   what: string;
 }
 
-const MAX_SUGGESTIONS = 6;
+export const MAX_SUGGESTIONS = 6;
 
 /** What to offer for the word being typed, the text up to the caret: names, then their values. */
 export function suggest(before: string, offered: Offered): Suggestion[] {
@@ -345,17 +345,30 @@ export function suggest(before: string, offered: Offered): Suggestion[] {
       })
       .slice(0, MAX_SUGGESTIONS);
   }
+  return suggestValues(word, (name) => {
+    const key = keyNamed(name);
+    if (!key || (key.kind !== "list" && key.kind !== "is") || !keyOffered(key, offered)) return null;
+    return valuesOf(key, offered);
+  });
+}
+
+/** The values to offer for a `key:done,typing` word, from those `valuesFor` gives the key; null
+ *  where the key takes none. */
+export function suggestValues(
+  word: string,
+  valuesFor: (name: string) => (readonly [value: string, what: string])[] | null,
+): Suggestion[] {
   const listed = /^(-?)([a-z]+):((?:[^,\s]*,)*)([^,\s]*)$/i.exec(word);
   if (!listed) return [];
   const [, not = "", name = "", done = "", typing = ""] = listed;
-  const key = keyNamed(name);
-  if (!key || (key.kind !== "list" && key.kind !== "is") || !keyOffered(key, offered)) return [];
+  const values = valuesFor(name);
+  if (!values) return [];
   const already = new Set(splitValues(done).map((value) => value.toLowerCase()));
   const lower = typing.replace(/^"/, "").toLowerCase();
   // A name is found by any part of it, the rest by how they start.
   const fits = (value: string): boolean =>
-    key.field === "name" ? value.toLowerCase().includes(lower) : value.toLowerCase().startsWith(lower);
-  return valuesOf(key, offered)
+    name.toLowerCase() === "name" ? value.toLowerCase().includes(lower) : value.toLowerCase().startsWith(lower);
+  return values
     // A value typed in full is not offered again.
     .filter(([value]) => fits(value) && value.toLowerCase() !== lower && !already.has(value.toLowerCase()))
     .slice(0, MAX_SUGGESTIONS)
@@ -391,7 +404,7 @@ export function complete(text: string, caret: number, insert: string): { text: s
   return { text: `${joined}${after}`, caret: joined.length };
 }
 
-const TYPED_OPS: Readonly<Partial<Record<Op, string>>> = { gt: ">", ge: ">=", lt: "<", le: "<=", eq: "=" };
+export const TYPED_OPS: Readonly<Partial<Record<Op, string>>> = { gt: ">", ge: ">=", lt: "<", le: "<=", eq: "=" };
 
 /** A condition's value as typed in its pill: the number, or the list with quotes where a value holds a comma. */
 export function valueText(condition: Condition): string {

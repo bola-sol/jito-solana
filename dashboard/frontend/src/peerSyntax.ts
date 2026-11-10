@@ -14,11 +14,19 @@ import {
   versionNamed,
   type Op,
 } from "./scheduleConditions";
-import { EXPRESSION, OPS, splitValues, type SearchRow, type Suggestion, type TypeAction } from "./scheduleSyntax";
+import {
+  EXPRESSION,
+  MAX_SUGGESTIONS,
+  OPS,
+  splitValues,
+  suggestValues,
+  TYPED_OPS,
+  type SearchRow,
+  type Suggestion,
+  type TypeAction,
+} from "./scheduleSyntax";
 
 const UNITS = /\s*(ms|sol|slots?|%)$/i;
-
-const MAX_SUGGESTIONS = 6;
 
 type KeyName =
   | "name"
@@ -329,8 +337,6 @@ export function peerValueText(condition: PeerCondition): string {
   return keyOf(condition)?.kind === "time" ? gapText(condition.value) : String(condition.value);
 }
 
-const TYPED_OPS: Readonly<Partial<Record<Op, string>>> = { gt: ">", ge: ">=", lt: "<", le: "<=", eq: "=" };
-
 /** The condition with the value typed in its pill, or why that cannot be read. */
 export function withPeerValue(condition: PeerCondition, text: string, offered: PeerOffered): PeerCondition | string {
   const expression =
@@ -390,25 +396,12 @@ export function peerSuggest(before: string, offered: PeerOffered): Suggestion[] 
         }));
     return [...keys, ...only].slice(0, MAX_SUGGESTIONS);
   }
-  const listed = /^(-?)([a-z]+):((?:[^,\s]*,)*)([^,\s]*)$/i.exec(word);
-  if (!listed) return [];
-  const [, not = "", name = "", done = "", typing = ""] = listed;
-  const lower = typing.replace(/^"/, "").toLowerCase();
-  const already = new Set(splitValues(done).map((value) => value.toLowerCase()));
-  const key = keyNamed(name);
-  const isKey = name.toLowerCase() === "is";
-  if (!isKey && (key?.kind !== "list" || !keyOffered(key, offered))) return [];
-  const values: (readonly [string, string])[] = key
-    ? valuesOf(key, offered)
-    : ONLY_NAMES.map((only) => [only, `${ONLY_WHAT[only]}, ${peersText(offered.counts[only])}`]);
-  // A name is found by any part of it, the rest by how they start.
-  const fits = (value: string): boolean =>
-    key?.name === "name" ? value.toLowerCase().includes(lower) : value.toLowerCase().startsWith(lower);
-  return values
-    // A value typed in full is not offered again.
-    .filter(([value]) => fits(value) && value.toLowerCase() !== lower && !already.has(value.toLowerCase()))
-    .slice(0, MAX_SUGGESTIONS)
-    .map(([value, what]) => ({ insert: `${not}${name}:${done}${/[\s,]/.test(value) ? `"${value}"` : value}`, ghost: "", what }));
+  return suggestValues(word, (name) => {
+    const key = keyNamed(name);
+    if (key) return key.kind === "list" && keyOffered(key, offered) ? valuesOf(key, offered) : null;
+    if (name.toLowerCase() !== "is") return null;
+    return ONLY_NAMES.map((only) => [only, `${ONLY_WHAT[only]}, ${peersText(offered.counts[only])}`]);
+  });
 }
 
 export interface PeerRow extends SearchRow {

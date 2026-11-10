@@ -191,9 +191,7 @@ impl BlockLives {
         life.shreds = shreds.count;
         life.repaired = shreds.repaired;
         life.recovered = shreds.recovered;
-        while self.blocks.len() > HELD_BLOCKS {
-            self.blocks.pop_first();
-        }
+        crate::metrics_tap::keep_newest(&mut self.blocks, HELD_BLOCKS);
     }
 
     /// Only for a block already noted, so footers of this node's own blocks are passed by.

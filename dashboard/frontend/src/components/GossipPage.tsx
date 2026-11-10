@@ -55,6 +55,7 @@ import {
 } from "../peerSyntax";
 import type { Gossip, GossipPeers } from "../types";
 import { useNarrow } from "../narrow";
+import { usePolledRequest } from "../usePolledRequest";
 import { useStore } from "../useStore";
 import { CertificatesSection } from "./CertificatesSection";
 import { CertFormationCard, type Pick } from "./CertFormationCard";
@@ -66,8 +67,6 @@ import { SyntaxSearch, type Pill } from "./ScheduleTools";
 
 /** The server gathers the list on its five-second tick, and only while it is being asked for. */
 const POLL_MS = 5_000;
-/** Until the first list is gathered. */
-const FIRST_POLL_MS = 1_000;
 
 const ROWS_PER_PAGE = 200;
 
@@ -92,7 +91,7 @@ export function GossipPage(): ReactElement {
     store.get("summary", "observed_slot_duration_nanos") ?? store.get("summary", "estimated_slot_duration_nanos");
   // Rounded so the table redraws when the rate moves, not on every tick.
   const slotMillis = slotNanos ? Math.round(slotNanos / 1e7) * 10 : null;
-  const list = useGossipPeers();
+  const list = usePolledRequest("peers.gossip", POLL_MS);
   const verdict = gossipVerdict(gossip, list);
   const alpenglow = useAlpenglow();
   const version = store.get("summary", "version");
@@ -140,37 +139,6 @@ export function GossipPage(): ReactElement {
 }
 
 /** Asked for while the page is open; a closed page stops the server gathering it. */
-function useGossipPeers(): GossipPeers | null {
-  const store = useStore();
-  const [list, setList] = useState<GossipPeers | null>(null);
-
-  // Asked once the socket is open, and again on each new one.
-  const open = store.getConnection() === "open";
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const load = () => {
-      store.request("peers.gossip", {}).then(
-        (got) => {
-          if (!live) return;
-          if (got) setList(got);
-          timer = setTimeout(load, got ? POLL_MS : FIRST_POLL_MS);
-        },
-        () => {
-          if (live) timer = setTimeout(load, FIRST_POLL_MS);
-        },
-      );
-    };
-    load();
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [store, open]);
-
-  return list;
-}
 
 function TableCard({ table }: { table: Gossip["table"] }) {
   return (

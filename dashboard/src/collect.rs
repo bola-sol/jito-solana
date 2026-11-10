@@ -2001,37 +2001,23 @@ impl Collector {
 
         let me = self.ctx.identity();
         if self.epoch_published != Some((epoch, me, true)) {
-            // An unknown schedule is published as no leader slots.
-            let my_leader_slots = self.leader_slots_in_epoch(bank, epoch).unwrap_or_default();
-            let (leaders, turns) = self.epoch_turns(epoch, slots_in_epoch);
-            let known = !turns.is_empty();
-
-            let (block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
-                Ok(tracker) => (tracker.get_block_limit(), tracker.get_account_limit()),
-                Err(_) => (0, 0),
-            };
-
             let current = EpochInfo {
-                epoch,
-                start_slot,
-                end_slot,
-                slots_in_epoch,
-                my_leader_slots,
-                leaders,
-                turns,
-                block_cost_limit,
-                account_cost_limit,
+                // An unknown schedule is published as no leader slots.
+                my_leader_slots: self.leader_slots_in_epoch(bank, epoch).unwrap_or_default(),
+                ..self.epoch_record(bank, epoch)
             };
+            let known = !current.turns.is_empty();
 
             // The previous epoch, kept for the server rather than sent: half a megabyte, wanted
             // only by a page reading back across the boundary.
             let previous = epoch
                 .checked_sub(1)
-                .map(|before| self.epoch_record(bank, before));
+                .map(|before| self.epoch_record(bank, before))
+                .filter(|record| !record.turns.is_empty());
 
             let mut archive = self.epochs.write().unwrap();
             archive.clear();
-            archive.extend(previous.into_iter().flatten());
+            archive.extend(previous);
             archive.push(current.clone());
             drop(archive);
 
@@ -2075,20 +2061,17 @@ impl Collector {
         );
     }
 
-    fn epoch_record(&self, bank: &Bank, epoch: Epoch) -> Option<EpochInfo> {
+    /// With no leader slots of ours, and no turns where the schedule is not derived.
+    fn epoch_record(&self, bank: &Bank, epoch: Epoch) -> EpochInfo {
         let schedule = bank.epoch_schedule();
         let start_slot = schedule.get_first_slot_in_epoch(epoch);
         let slots_in_epoch = schedule.get_slots_in_epoch(epoch);
         let (leaders, turns) = self.epoch_turns(epoch, slots_in_epoch);
-        if turns.is_empty() {
-            return None;
-        }
-
         let (block_cost_limit, account_cost_limit) = match bank.read_cost_tracker() {
             Ok(tracker) => (tracker.get_block_limit(), tracker.get_account_limit()),
             Err(_) => (0, 0),
         };
-        Some(EpochInfo {
+        EpochInfo {
             epoch,
             start_slot,
             end_slot: start_slot.saturating_add(slots_in_epoch.saturating_sub(1)),
@@ -2098,7 +2081,7 @@ impl Collector {
             turns,
             block_cost_limit,
             account_cost_limit,
-        })
+        }
     }
 
     /// Empty, never partial, if the length is not whole turns.
@@ -2924,10 +2907,9 @@ mod tests {
         let bank = harness.working_bank();
         let epoch = bank.epoch_schedule().get_epoch(bank.slot());
 
-        if let Some(record) = collector.epoch_record(&bank, epoch) {
-            assert!(record.my_leader_slots.is_empty());
-            assert!(!record.turns.is_empty(), "and it is otherwise whole");
-        }
+        let record = collector.epoch_record(&bank, epoch);
+        assert!(record.my_leader_slots.is_empty());
+        assert_eq!(record.epoch, epoch);
     }
 
     #[test]

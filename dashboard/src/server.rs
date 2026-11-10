@@ -294,11 +294,7 @@ fn origin_is_allowed(head: &str) -> bool {
 }
 
 fn is_websocket_upgrade(head: &str) -> bool {
-    head.lines()
-        .filter_map(|line| line.split_once(':'))
-        .any(|(name, value)| {
-            name.eq_ignore_ascii_case("upgrade") && value.trim().eq_ignore_ascii_case("websocket")
-        })
+    header(head, "upgrade").is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
 }
 
 fn request_path(head: &str) -> &str {

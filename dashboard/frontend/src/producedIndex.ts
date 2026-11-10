@@ -1,8 +1,17 @@
-import type { BlockHead } from "./produced";
+import { HEAD_KEYS, type BlockHead } from "./produced";
 import type { FigureRow, FiguresPage, LeaderTurn, ProducedBlock, TurnHeadRow } from "./types";
 
+const TURN_KEYS = [
+  "first",
+  "last",
+  "produced",
+  "drained_millis",
+  "since_millis",
+  "bundles",
+] as const satisfies readonly (keyof LeaderTurn)[];
+
 /** A turn as the list's divider shows it; the rest of the turn is fetched when it opens. */
-export type TurnHead = Pick<LeaderTurn, "first" | "last" | "produced" | "drained_millis" | "since_millis" | "bundles">;
+export type TurnHead = Pick<LeaderTurn, (typeof TURN_KEYS)[number]>;
 
 export function headOf(row: FigureRow): BlockHead {
   const [slot, slotTime, transactions, blockCost, costLimit, totalFees, priorityFees, tips, duration] = row;
@@ -24,41 +33,13 @@ export function turnHeadOf(row: TurnHeadRow): TurnHead {
   return { first, last, produced, drained_millis: drained, since_millis: since, bundles: bundles ?? null };
 }
 
-function headOfBlock(block: ProducedBlock): BlockHead {
-  return {
-    slot: block.slot,
-    slot_time_millis: block.slot_time_millis,
-    transactions: block.transactions,
-    block_cost: block.block_cost,
-    block_cost_limit: block.block_cost_limit,
-    total_fees: block.total_fees,
-    priority_fees: block.priority_fees,
-    tips: block.tips,
-    duration_nanos: block.duration_nanos,
-  };
+/** Only `keys` of `from`. */
+function pick<T, K extends keyof T>(from: T, keys: readonly K[]): Pick<T, K> {
+  return Object.fromEntries(keys.map((key) => [key, from[key]])) as Pick<T, K>;
 }
 
-function sameHead(a: BlockHead, b: BlockHead): boolean {
-  return (
-    a.slot_time_millis === b.slot_time_millis &&
-    a.transactions === b.transactions &&
-    a.block_cost === b.block_cost &&
-    a.block_cost_limit === b.block_cost_limit &&
-    a.total_fees === b.total_fees &&
-    a.priority_fees === b.priority_fees &&
-    a.tips === b.tips &&
-    a.duration_nanos === b.duration_nanos
-  );
-}
-
-function sameTurn(a: TurnHead, b: TurnHead): boolean {
-  return (
-    a.last === b.last &&
-    a.produced === b.produced &&
-    a.drained_millis === b.drained_millis &&
-    a.since_millis === b.since_millis &&
-    a.bundles === b.bundles
-  );
+function same<T>(a: T, b: T, keys: readonly (keyof T)[]): boolean {
+  return keys.every((key) => a[key] === b[key]);
 }
 
 /**
@@ -129,24 +110,17 @@ export class ProducedIndex {
     let changed = false;
     for (const block of blocks) {
       if (block.slot < this.floor) continue;
-      const head = headOfBlock(block);
+      const head: BlockHead = pick(block, HEAD_KEYS);
       const held = this.heads.get(block.slot);
-      if (held && sameHead(held, head)) continue;
+      if (held && same(held, head, HEAD_KEYS)) continue;
       this.heads.set(block.slot, head);
       changed = true;
     }
     for (const turn of turns) {
       if (turn.first < this.floor) continue;
-      const head: TurnHead = {
-        first: turn.first,
-        last: turn.last,
-        produced: turn.produced,
-        drained_millis: turn.drained_millis,
-        since_millis: turn.since_millis,
-        bundles: turn.bundles ?? null,
-      };
+      const head: TurnHead = { ...pick(turn, TURN_KEYS), bundles: turn.bundles ?? null };
       const held = this.turns.get(turn.first);
-      if (held && sameTurn(held, head)) continue;
+      if (held && same(held, head, TURN_KEYS)) continue;
       this.turns.set(turn.first, head);
       changed = true;
     }

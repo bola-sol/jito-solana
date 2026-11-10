@@ -4,13 +4,11 @@ import type { Turbine } from "./types";
 
 function turbine(over: Partial<Turbine> = {}): Turbine {
   return {
-    window_seconds: 300,
     root: 30,
     layer_1: 410,
     layer_2: 550,
     layer_3: 10,
     xdp_dropped: 0,
-    xdp_dropped_total: 0,
     xdp: true,
     ...over,
   };

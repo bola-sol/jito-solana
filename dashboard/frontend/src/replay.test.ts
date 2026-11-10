@@ -24,7 +24,6 @@ function window(over: Partial<ReplayWindow> = {}): ReplayWindow {
     program_cache_peak: 44546,
     checking: 5900,
     other: 5700,
-    cpu_peak: 500000,
     ...over,
   };
 }

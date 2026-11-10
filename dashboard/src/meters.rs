@@ -77,13 +77,11 @@ pub struct Shreds {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Turbine {
-    pub window_seconds: u64,
     pub root: u64,
     pub layer_1: u64,
     pub layer_2: u64,
     pub layer_3: u64,
     pub xdp_dropped: u64,
-    pub xdp_dropped_total: u64,
     pub xdp: Option<bool>,
 }
 
@@ -312,7 +310,6 @@ pub struct QuicPort {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QuicPaths {
-    pub window_seconds: f64,
     pub ports: Vec<QuicPort>,
     pub tpu_offhost: bool,
 }
@@ -419,7 +416,6 @@ pub struct ReplayWindow {
     pub program_cache_peak: u64,
     pub checking: u64,
     pub other: u64,
-    pub cpu_peak: u64,
 }
 
 fn replay_window(slots: &[ReplaySlotTimes]) -> Option<ReplayWindow> {
@@ -456,7 +452,6 @@ fn replay_window(slots: &[ReplaySlotTimes]) -> Option<ReplayWindow> {
         program_cache_peak: peak(|s| s.program_cache),
         checking: mean(sum(|s| s.checking)),
         other: mean(sum(|s| s.other)),
-        cpu_peak: peak(ReplaySlotTimes::cpu),
     })
 }
 
@@ -708,7 +703,6 @@ const GOSSIP_PUBKEY_CAPACITY: u64 = 8192;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Gossip {
-    pub window_seconds: f64,
     pub table: GossipTable,
     pub messages: Vec<GossipMessage>,
     pub entries: GossipEntries,
@@ -862,7 +856,6 @@ impl GossipMeter {
                 .collect();
             types.sort_by(|a, b| (b.push + b.pull).total_cmp(&(a.push + a.pull)));
             Gossip {
-                window_seconds: seconds,
                 table: GossipTable {
                     entries: levels.table_size,
                     pubkeys: levels.pubkeys,
@@ -1957,13 +1950,11 @@ impl TurbineMeter {
                 .saturating_add(layer_3)
                 > 0;
         let turbine = reported.then_some(Turbine {
-            window_seconds: self.window.len() as u64,
             root,
             layer_1,
             layer_2,
             layer_3,
             xdp_dropped,
-            xdp_dropped_total: current.xdp_dropped,
             xdp: current.retransmit_xdp,
         });
         self.published.publish(publisher, turbine);
@@ -2202,14 +2193,9 @@ impl TpuMeter {
         let ever_offered = current.quic.offered > 0
             || current.quic_forwards.offered > 0
             || current.quic_vote.offered > 0;
-        let window_seconds = (self.quic_window.len() as f64) * METER_INTERVAL.as_secs_f64();
         self.quic_paths.publish(
             publisher,
-            ever_offered.then_some(QuicPaths {
-                window_seconds,
-                ports,
-                tpu_offhost,
-            }),
+            ever_offered.then_some(QuicPaths { ports, tpu_offhost }),
         );
 
         // Summed over the epoch, not the window: these stages run only while
@@ -2869,7 +2855,6 @@ mod tests {
         assert!(sent.contains(r#""layer_1":50"#), "{sent}");
         assert!(sent.contains(r#""layer_2":70"#), "{sent}");
         assert!(sent.contains(r#""xdp_dropped":4"#), "{sent}");
-        assert!(sent.contains(r#""xdp_dropped_total":9"#), "{sent}");
         assert!(sent.contains(r#""xdp":true"#), "{sent}");
     }
 
@@ -3521,7 +3506,6 @@ mod tests {
             previous = current;
         }
         let sent = publisher.snapshot().pop().unwrap();
-        assert!(sent.contains(r#""window_seconds":10.0"#), "{sent}");
         assert!(
             sent.contains(r#""kind":"push","received":1000.0"#),
             "{sent}"

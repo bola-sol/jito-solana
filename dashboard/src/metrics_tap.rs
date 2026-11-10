@@ -561,15 +561,6 @@ impl ReplaySlotTimes {
             .saturating_add(self.confirming)
             .saturating_add(self.completing)
     }
-
-    pub fn cpu(&self) -> u64 {
-        self.execute
-            .saturating_add(self.load)
-            .saturating_add(self.store)
-            .saturating_add(self.program_cache)
-            .saturating_add(self.checking)
-            .saturating_add(self.other)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -3418,7 +3409,9 @@ mod tests {
         assert_eq!(held[0].execute, 176_771);
         assert_eq!(held[0].transactions, 1_232);
         assert_eq!(held[0].serial(), 2_034 + 17_288 + 443);
-        assert_eq!(held[0].cpu(), 176_771 + 26_210 + 10_150 + 22_954);
+        assert_eq!(held[0].load, 26_210);
+        assert_eq!(held[0].store, 10_150);
+        assert_eq!(held[0].program_cache, 22_954);
     }
 
     #[test]
@@ -3435,7 +3428,10 @@ mod tests {
         assert_eq!(held[0].confirming, 17_288);
         assert_eq!(held[0].dispatch, 9_828);
         assert_eq!(held[0].serial(), 2_034 + 17_288 + 443);
-        assert_eq!(held[0].cpu(), 0, "the batch wall clock is not thread time");
+        assert_eq!(
+            held[0].execute, 0,
+            "the batch wall clock is not thread time"
+        );
     }
 
     #[test]

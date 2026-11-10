@@ -221,7 +221,6 @@ describe("text", () => {
 });
 
 const GOSSIP: Gossip = {
-  window_seconds: 10,
   table: {
     entries: 231_904,
     pubkeys: 4_112,

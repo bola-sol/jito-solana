@@ -66,37 +66,23 @@ fn read_from(contents: &str, sys: &Path) -> Option<(NetCounters, Counted)> {
         .or_else(|| parse(contents, |_| true).map(|counters| (counters, Counted::Every)))
 }
 
-/// Transmit counters start at the ninth field.
+/// The rows `include` keeps, summed; none where it keeps none.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse(contents: &str, include: impl Fn(&str) -> bool) -> Option<NetCounters> {
+    let mut rows = crate::net_ifaces::parse_counters(contents)
+        .into_iter()
+        .filter(|(name, _, _)| include(name))
+        .peekable();
+    rows.peek()?;
     let mut totals = NetCounters {
         received: 0,
         sent: 0,
     };
-    let mut seen_any = false;
-
-    for line in contents.lines() {
-        let Some((name, counters)) = line.split_once(':') else {
-            // The first two lines are column headings and carry no colon.
-            continue;
-        };
-        let name = name.trim();
-        if name == "lo" || !include(name) {
-            continue;
-        }
-        let fields: Vec<u64> = counters
-            .split_whitespace()
-            .map(|field| field.parse().unwrap_or(0))
-            .collect();
-        let (Some(received), Some(sent)) = (fields.first(), fields.get(8)) else {
-            continue;
-        };
-        totals.received = totals.received.saturating_add(*received);
-        totals.sent = totals.sent.saturating_add(*sent);
-        seen_any = true;
+    for (_, received, sent) in rows {
+        totals.received = totals.received.saturating_add(received);
+        totals.sent = totals.sent.saturating_add(sent);
     }
-
-    seen_any.then_some(totals)
+    Some(totals)
 }
 
 #[cfg(test)]

@@ -161,7 +161,6 @@ export interface ExecutionSegment {
 
 export interface ExecutionView {
   total: number;
-  votes: number | null;
   segments: ExecutionSegment[];
   perSlot: number | null;
   perWorker: number | null;
@@ -205,7 +204,6 @@ export function executionView(execution: Execution): ExecutionView {
   }));
   return {
     total,
-    votes,
     segments,
     perSlot: execution.window_millis > 0 ? total / (execution.window_millis * 1000) : null,
     perWorker: execution.workers > 0 ? nonVote / execution.workers : null,

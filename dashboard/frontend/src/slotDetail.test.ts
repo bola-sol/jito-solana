@@ -244,7 +244,6 @@ describe("executionView", () => {
       votes,
       window_millis: 402,
     });
-    expect(view.votes).toBe(25_900);
     expect(view.total).toBe(656_700);
     expect(view.segments.map((s) => s.key)).toEqual([
       "load",
@@ -269,7 +268,6 @@ describe("executionView", () => {
       votes: idle,
       window_millis: 402,
     });
-    expect(view.votes).toBe(0);
     expect(view.segments.some((s) => s.key === "votes")).toBe(false);
     expect(view.segments.find((s) => s.key === "send")?.label).toBe("after commit");
   });
@@ -288,7 +286,6 @@ describe("executionView", () => {
       votes: null,
       window_millis: 0,
     });
-    expect(view.votes).toBeNull();
     expect(view.segments.some((s) => s.key === "votes")).toBe(false);
     expect(view.perSlot).toBeNull();
     expect(view.perWorker).toBeNull();

@@ -272,12 +272,6 @@ pub struct Publisher {
     joined: AtomicU64,
 }
 
-impl Default for Publisher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Publisher {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -440,13 +434,6 @@ mod tests {
                 encode_with_id("summary", "misses", id, &value).text(),
             );
         }
-    }
-
-    #[test]
-    fn test_a_publisher_defaults_to_an_empty_one() {
-        let publisher = Publisher::default();
-        assert!(publisher.snapshot().is_empty());
-        assert_eq!(publisher.subscriber_count(), 0);
     }
 
     #[test]

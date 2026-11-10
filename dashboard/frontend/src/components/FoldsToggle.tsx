@@ -13,37 +13,16 @@ export function FoldsToggle(): ReactElement {
       title={action}
       aria-label={action}
     >
-      {allOpen ? <FoldIcon /> : <OpenIcon />}
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <path
+          d={allOpen ? "M5 2.5L8 5.5L11 2.5M5 13.5L8 10.5L11 13.5" : "M5 5.5L8 2.5L11 5.5M5 10.5L8 13.5L11 10.5"}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     </button>
-  );
-}
-
-function OpenIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <path
-        d="M5 5.5L8 2.5L11 5.5M5 10.5L8 13.5L11 10.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function FoldIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      <path
-        d="M5 2.5L8 5.5L11 2.5M5 13.5L8 10.5L11 13.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }

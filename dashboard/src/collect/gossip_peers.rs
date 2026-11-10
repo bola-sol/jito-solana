@@ -2,7 +2,7 @@
 //! client is asking for it.
 
 use {
-    super::{Collector, is_delinquent},
+    super::{Collector, is_delinquent, tally_bank_stake},
     crate::{geoip, metrics_tap::VoteArrival},
     serde::Serialize,
     solana_clock::{Epoch, Slot},
@@ -90,20 +90,11 @@ impl Collector {
         peers: &[(ContactInfo, u64)],
         now_millis: u64,
     ) -> GossipPeers {
-        let mut stakes: HashMap<Pubkey, u64> = HashMap::new();
-        let mut stalest: HashMap<Pubkey, Option<Slot>> = HashMap::new();
-        let mut total: u64 = 0;
-        for (stake, account) in bank.vote_accounts().values() {
-            if *stake == 0 {
-                continue;
-            }
-            let held = stakes.entry(*account.node_pubkey()).or_insert(0);
-            *held = held.saturating_add(*stake);
-            total = total.saturating_add(*stake);
-            let last_vote = account.vote_state_view().last_voted_slot();
-            let vote = stalest.entry(*account.node_pubkey()).or_insert(last_vote);
-            *vote = (*vote).min(last_vote);
-        }
+        let tally = tally_bank_stake(bank);
+        let (stakes, stalest) = (&tally.staked, &tally.stalest_votes);
+        let total = tally
+            .delinquent_stake
+            .saturating_add(tally.non_delinquent_stake);
         let tip = bank.slot();
         let stake_of = |key: &Pubkey| stakes.get(key).copied().unwrap_or(0);
         let finalization = self.finalization_by_node(bank, now_millis);

@@ -1293,7 +1293,6 @@ export function SchedulePage({
       <div className="schedule-list" ref={list}>
         <ScrollTop
           scroller={list}
-          hold={false}
           label={jumping || (futureMode !== null && !nowName) ? "Back to live" : nowName ? `${nowName} leading now` : undefined}
           onPress={jumping ? backToLive : futureMode !== null ? toLive : undefined}
           shown={futureMode !== null ? edge === "above" : undefined}
@@ -1328,7 +1327,7 @@ export function SchedulePage({
           </div>
         )}
         {futureMode !== null && openOnMatch === null && (
-          <ScrollTop scroller={list} hold={false} below shown={edge === "below"} label="Back to live" onPress={toLive} />
+          <ScrollTop scroller={list} below shown={edge === "below"} label="Back to live" onPress={toLive} />
         )}
       </div>
     </section>

@@ -106,18 +106,20 @@ impl DashboardService {
         log::info!("dashboard: answering to hosts {:?}", config.allowed_hosts);
 
         let server = {
-            let publisher = publisher.clone();
-            let history = history.clone();
-            let info_cache = info_cache.clone();
-            let epochs = epochs.clone();
-            let replies = replies.clone();
+            let handles = server::Handles {
+                publisher: publisher.clone(),
+                history: history.clone(),
+                info_cache: info_cache.clone(),
+                epochs: epochs.clone(),
+                replies: replies.clone(),
+            };
             let exit = exit.clone();
             thread::Builder::new()
                 .name("solDashSrv".to_string())
                 .spawn(move || {
                     runtime.block_on(async move {
                         tokio::select! {
-                            _ = server::serve(listener, publisher, history, info_cache, epochs, replies, allowed_hosts) => {}
+                            _ = server::serve(listener, handles, allowed_hosts) => {}
                             _ = wait_for_exit(exit) => {}
                         }
                     });

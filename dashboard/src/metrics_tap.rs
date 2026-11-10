@@ -1038,17 +1038,11 @@ impl MetricsTap {
                     add_field(counter, value);
                 }
             }
-            SHREDS_TURBINE => self.add_packets(&self.shreds_turbine, point),
-            SHREDS_REPAIR => self.add_packets(&self.shreds_repair, point),
-            GOSSIP_RECEIVER => self.add_packets(&self.packets_gossip, point),
-            TPU_VOTE_RECEIVER => self.add_packets(&self.packets_tpu_vote, point),
-            VOTOR_SERVER => {
-                for (name, value) in &point.fields {
-                    if *name == "datagrams_received" {
-                        add_field(&self.votes_votor, value);
-                    }
-                }
-            }
+            SHREDS_TURBINE => add_named(&self.shreds_turbine, point, PACKETS_COUNT),
+            SHREDS_REPAIR => add_named(&self.shreds_repair, point, PACKETS_COUNT),
+            GOSSIP_RECEIVER => add_named(&self.packets_gossip, point, PACKETS_COUNT),
+            TPU_VOTE_RECEIVER => add_named(&self.packets_tpu_vote, point, PACKETS_COUNT),
+            VOTOR_SERVER => add_named(&self.votes_votor, point, "datagrams_received"),
             GOSSIP_SENDER => {
                 self.add_sent(&self.gossip_sent_bytes, &self.gossip_sent_millis, point)
             }
@@ -1100,11 +1094,7 @@ impl MetricsTap {
     }
 
     fn add_retransmit(&self, point: &DataPoint) {
-        for (name, value) in &point.fields {
-            if *name == "num_shreds_dropped_xdp_full" {
-                add_field(&self.xdp_dropped, value);
-            }
-        }
+        add_named(&self.xdp_dropped, point, "num_shreds_dropped_xdp_full");
         if let Some((_, is_xdp)) = point.tags.iter().find(|(name, _)| *name == IS_XDP) {
             let flag = if is_xdp == "true" { 2 } else { 1 };
             self.retransmit_xdp.store(flag, Ordering::Relaxed);
@@ -1121,15 +1111,6 @@ impl MetricsTap {
                 _ => continue,
             };
             add_field(counter, value);
-        }
-    }
-
-    fn add_packets(&self, counter: &AtomicU64, point: &DataPoint) {
-        for (name, value) in &point.fields {
-            if *name == PACKETS_COUNT {
-                add_field(counter, value);
-                return;
-            }
         }
     }
 
@@ -2383,6 +2364,12 @@ fn add_to<T: AddPoint>(set: &Mutex<T>, point: &DataPoint) {
 
 fn copy_of<T: Copy + Default>(set: &Mutex<T>) -> T {
     set.lock().map(|set| *set).unwrap_or_default()
+}
+
+fn add_named(counter: &AtomicU64, point: &DataPoint, wanted: &str) {
+    if let Some((_, value)) = point.fields.iter().find(|(name, _)| *name == wanted) {
+        add_field(counter, value);
+    }
 }
 
 fn add_field(counter: &AtomicU64, value: &str) {

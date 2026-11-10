@@ -334,7 +334,7 @@ struct VoteArrivals {
     by_vote: HashMap<Pubkey, VoteArrival>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct StakeInGossip {
     pub online: u64,
     pub offline: u64,
@@ -360,7 +360,7 @@ pub struct SlotWaterfall {
     pub counts: SchedulerTotals,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct SlotCost {
     pub slot: Slot,
     pub costliest_account: String,
@@ -1683,16 +1683,7 @@ impl MetricsTap {
         }
 
         let mut slot = None;
-        let mut cost = SlotCost {
-            slot: 0,
-            costliest_account: String::new(),
-            costliest_cost: 0,
-            block_cost: 0,
-            accounts: 0,
-            contended: 0,
-            new_account_data: 0,
-            in_flight: 0,
-        };
+        let mut cost = SlotCost::default();
         for (name, value) in &point.fields {
             match *name {
                 "costliest_account" => cost.costliest_account = value.trim_matches('"').to_string(),
@@ -1792,11 +1783,7 @@ impl MetricsTap {
     }
 
     fn remember_stake_in_gossip(&self, point: &DataPoint) {
-        let mut seen = StakeInGossip {
-            online: 0,
-            offline: 0,
-            total: 0,
-        };
+        let mut seen = StakeInGossip::default();
         for (name, value) in &point.fields {
             let Some(number) = field_u64(value) else {
                 continue;

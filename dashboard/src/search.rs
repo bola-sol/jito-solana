@@ -320,7 +320,8 @@ fn turn_index(epoch: &EpochInfo, slot: Slot) -> Option<usize> {
     usize::try_from(turn).ok()
 }
 
-fn leader_index(epoch: &EpochInfo, slot: Slot) -> Option<u16> {
+/// The index into the epoch's leaders of the turn `slot` is in; `None` outside the epoch.
+pub(crate) fn leader_index(epoch: &EpochInfo, slot: Slot) -> Option<u16> {
     epoch.turns.get(turn_index(epoch, slot)?).copied()
 }
 

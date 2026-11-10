@@ -35,7 +35,6 @@ import {
   type PeerFilter,
   type PeerSort,
 } from "../gossip";
-import { timedFromReplay } from "../certFormation";
 import { useAlpenglow } from "../consensus";
 import { unitFor } from "../network";
 import {
@@ -94,7 +93,6 @@ export function GossipPage(): ReactElement {
   const list = usePolledRequest("peers.gossip", POLL_MS);
   const verdict = gossipVerdict(gossip, list);
   const alpenglow = useAlpenglow();
-  const version = store.get("summary", "version");
   const [search, setSearch] = useState(NO_SEARCH);
   const searchBox = useRef<HTMLInputElement>(null);
   const listSearched = (next: PeerSearch): void => {
@@ -132,7 +130,6 @@ export function GossipPage(): ReactElement {
         searchBox={searchBox}
         ours={ours}
         slotMillis={slotMillis}
-        arrivalsHidden={version === undefined || timedFromReplay(version)}
       />
     </>
   );
@@ -357,7 +354,6 @@ function PeersCard({
   searchBox,
   ours,
   slotMillis,
-  arrivalsHidden,
 }: {
   list: GossipPeers | null;
   search: PeerSearch;
@@ -365,7 +361,6 @@ function PeersCard({
   searchBox: RefObject<HTMLInputElement>;
   ours: string | null;
   slotMillis: number | null;
-  arrivalsHidden: boolean;
 }) {
   const { text, only, where, picked } = search;
   const [sort, setSort] = useState<PeerSort>(FIRST_SORT);
@@ -373,7 +368,7 @@ function PeersCard({
   // Read when the list arrives, so the filters and the table agree until the next one.
   const arrivalKind: ArrivalKind = picked?.kind ?? "notarize";
   const { peers, now } = useMemo(() => ({ peers: list ? gossipPeers(list) : [], now: Date.now() }), [list]);
-  const offered = useMemo(() => peerOffered(peers, arrivalsHidden, now), [peers, arrivalsHidden, now]);
+  const offered = useMemo(() => peerOffered(peers, now), [peers, now]);
   const words = useMemo(() => readPeerSearch(text, offered).words, [text, offered]);
   const rows = useMemo(() => {
     const clock = { now, slotMillis, arrivalKind };
@@ -526,7 +521,6 @@ function PeersCard({
           searched={searched}
           arrivalEpoch={list.vote_arrival_epoch ?? null}
           arrivalKind={arrivalKind}
-          arrivalsHidden={arrivalsHidden}
         />
       )}
       <div className="card-footnote">
@@ -547,7 +541,6 @@ const PeersTable = memo(function PeersTable({
   searched,
   arrivalEpoch,
   arrivalKind,
-  arrivalsHidden,
 }: {
   rows: GossipPeer[];
   sort: PeerSort;
@@ -559,15 +552,11 @@ const PeersTable = memo(function PeersTable({
   arrivalEpoch: number | null;
   arrivalKind: ArrivalKind;
   /** On 4.3, whose arrival averages lean late. */
-  arrivalsHidden: boolean;
 }) {
   const [limit, setLimit] = useState(ROWS_PER_PAGE);
   // Only under Alpenglow, where the shares exist, and the arrivals once votor has reported an epoch.
   const finalization = useMemo(() => rows.some((row) => row.finalization !== null), [rows]);
-  const arrivals = useMemo(
-    () => !arrivalsHidden && rows.some((row) => row.voteArrival !== null),
-    [rows, arrivalsHidden],
-  );
+  const arrivals = useMemo(() => rows.some((row) => row.voteArrival !== null), [rows]);
   const lateAfter = useMemo(() => {
     const median = arrivalMedian(rows, arrivalKind);
     return median === null ? null : median * LATE_ARRIVAL;

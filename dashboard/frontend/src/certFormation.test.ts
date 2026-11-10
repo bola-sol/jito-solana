@@ -17,7 +17,6 @@ import {
   runningPath,
   shareBy,
   ticks,
-  timedFromReplay,
   unmeasured,
   votersIn,
   xAt,
@@ -294,14 +293,6 @@ describe("replayAt", () => {
     const total = (480 - 200) * REPLAY_SLOWDOWN + marks.length * HOLD_MS;
     expect(replayAt(total - 1, marks, 200, 480).done).toBe(false);
     expect(replayAt(total, marks, 200, 480)).toEqual({ ms: 480, hold: null, done: true });
-  });
-});
-
-describe("timedFromReplay", () => {
-  it("is 4.3's votor only", () => {
-    expect(timedFromReplay("4.3.2")).toBe(true);
-    expect(timedFromReplay("4.4.0-beta.1")).toBe(false);
-    expect(timedFromReplay(null)).toBe(false);
   });
 });
 

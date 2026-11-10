@@ -41,7 +41,7 @@ use {
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    solana_transaction::versioned::VersionedTransaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::{
         collections::HashSet,
         sync::{Arc, RwLock, atomic::AtomicU64},
@@ -89,24 +89,11 @@ impl Fixture {
 
     /// Written before the freeze, since a bank asserts against stores afterwards.
     pub fn advance_with(&self, slot: Slot, accounts: &[(Pubkey, AccountSharedData)]) -> Arc<Bank> {
-        let parent = self.working_bank();
-        if !parent.is_frozen() {
-            parent.freeze();
-        }
-        let bank = Bank::new_from_parent(
-            parent,
-            SlotLeader {
-                id: self.identity,
-                vote_address: self.vote_account,
-            },
-            slot,
-        );
+        let bank = self.child_of(self.working_bank(), slot);
         for (pubkey, account) in accounts {
             bank.store_account(pubkey, account);
         }
-        bank.freeze();
-        self.bank_forks.write().unwrap().insert(bank);
-        self.bank_forks.read().unwrap().get(slot).unwrap()
+        self.insert_frozen(bank)
     }
 
     pub fn advance_with_failures(&self, slot: Slot, failures: usize) -> Arc<Bank> {
@@ -115,58 +102,21 @@ impl Fixture {
 
     /// Transfers of more than the mint holds, in a bank on `parent`.
     pub fn fork_with_failures(&self, parent: Arc<Bank>, slot: Slot, failures: usize) -> Arc<Bank> {
-        if !parent.is_frozen() {
-            parent.freeze();
-        }
-        let bank = Bank::new_from_parent(
-            parent,
-            SlotLeader {
-                id: self.identity,
-                vote_address: self.vote_account,
-            },
-            slot,
-        );
+        let bank = self.child_of(parent, slot);
         for _ in 0..failures {
-            let transfer = system_transaction::transfer(
-                &self.mint,
-                &Pubkey::new_unique(),
-                MINT.saturating_mul(2),
-                bank.last_blockhash(),
-            );
-            assert!(bank.process_transaction(&transfer).is_err());
+            self.fail_transfer(&bank);
         }
-        bank.freeze();
-        self.bank_forks.write().unwrap().insert(bank);
-        self.bank_forks.read().unwrap().get(slot).unwrap()
+        self.insert_frozen(bank)
     }
 
     /// As [`Self::fork_with_failures`] on the working bank, with the block's entries in the
     /// blockstore.
     pub fn advance_with_failed_entries(&self, slot: Slot, failures: usize) -> Arc<Bank> {
         let parent = self.working_bank();
-        if !parent.is_frozen() {
-            parent.freeze();
-        }
         let parent_slot = parent.slot();
-        let bank = Bank::new_from_parent(
-            parent,
-            SlotLeader {
-                id: self.identity,
-                vote_address: self.vote_account,
-            },
-            slot,
-        );
+        let bank = self.child_of(parent, slot);
         let transactions = (0..failures)
-            .map(|_| {
-                let transfer = system_transaction::transfer(
-                    &self.mint,
-                    &Pubkey::new_unique(),
-                    MINT.saturating_mul(2),
-                    bank.last_blockhash(),
-                );
-                assert!(bank.process_transaction(&transfer).is_err());
-                VersionedTransaction::from(transfer)
-            })
+            .map(|_| VersionedTransaction::from(self.fail_transfer(&bank)))
             .collect();
         let entries = [Entry {
             num_hashes: 1,
@@ -175,9 +125,38 @@ impl Fixture {
         }];
         let shreds = entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
         self.ctx.blockstore.insert_shreds(shreds, true).unwrap();
+        self.insert_frozen(bank)
+    }
+
+    /// A bank at `slot` on `parent`, which is frozen first.
+    fn child_of(&self, parent: Arc<Bank>, slot: Slot) -> Bank {
+        if !parent.is_frozen() {
+            parent.freeze();
+        }
+        let leader = SlotLeader {
+            id: self.identity,
+            vote_address: self.vote_account,
+        };
+        Bank::new_from_parent(parent, leader, slot)
+    }
+
+    fn insert_frozen(&self, bank: Bank) -> Arc<Bank> {
+        let slot = bank.slot();
         bank.freeze();
         self.bank_forks.write().unwrap().insert(bank);
         self.bank_forks.read().unwrap().get(slot).unwrap()
+    }
+
+    /// A transfer of more than the mint holds, which `bank` refuses.
+    fn fail_transfer(&self, bank: &Bank) -> Transaction {
+        let transfer = system_transaction::transfer(
+            &self.mint,
+            &Pubkey::new_unique(),
+            MINT.saturating_mul(2),
+            bank.last_blockhash(),
+        );
+        assert!(bank.process_transaction(&transfer).is_err());
+        transfer
     }
 
     pub fn published(&self) -> Vec<String> {
@@ -196,9 +175,7 @@ impl Fixture {
     }
 
     pub fn collector(&self) -> Collector {
-        self.collector_with_startup(Arc::new(std::sync::Mutex::new(
-            crate::startup::StartupPublisher::default(),
-        )))
+        self.collector_with_startup(Arc::default())
     }
 
     pub fn collector_with_startup(
@@ -210,12 +187,7 @@ impl Fixture {
 
     /// Fed by replay's freeze notifications, as the validator wires it.
     pub fn notified_collector(&self, frozen_banks: BankNotificationReceiver) -> Collector {
-        self.collector_with(
-            Arc::new(std::sync::Mutex::new(
-                crate::startup::StartupPublisher::default(),
-            )),
-            Some(frozen_banks),
-        )
+        self.collector_with(Arc::default(), Some(frozen_banks))
     }
 
     fn collector_with(

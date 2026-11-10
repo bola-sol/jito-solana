@@ -88,14 +88,9 @@ mod tests {
     }
 
     #[test]
-    fn test_every_cluster_reports_a_name() {
-        for (cluster_type, name) in [
-            (ClusterType::Testnet, "testnet"),
-            (ClusterType::MainnetBeta, "mainnet-beta"),
-            (ClusterType::Devnet, "devnet"),
-            (ClusterType::Development, "development"),
-        ] {
-            assert_eq!(cluster_name(cluster_type), name);
+    fn test_cluster_names_are_the_ones_upstream_parses() {
+        for cluster_type in ClusterType::STRINGS.map(|name| name.parse::<ClusterType>().unwrap()) {
+            assert_eq!(cluster_name(cluster_type).parse(), Ok(cluster_type));
         }
     }
 }

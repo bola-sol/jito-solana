@@ -81,6 +81,20 @@ pub use self::{
 };
 
 const SLOW_TICK: Duration = Duration::from_secs(5);
+
+/// How long after the last request an on-demand reply is still gathered.
+const WANTED_FOR_MILLIS: u64 = 30_000;
+
+/// A reply encoded for the server to hold.
+fn json_or_null<T: Serialize>(value: &T) -> Arc<str> {
+    match serde_json::to_string(value) {
+        Ok(json) => Arc::from(json),
+        Err(err) => {
+            log::error!("dashboard: failed to encode a reply: {err}");
+            Arc::from("null")
+        }
+    }
+}
 /// Stakes and gossip versions move slowly; the schedule's leader conditions read them.
 const LEADER_TRAITS_EVERY: Duration = Duration::from_secs(10);
 

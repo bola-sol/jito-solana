@@ -268,6 +268,11 @@ describe("verifySection", () => {
     ).toBe(420);
   });
 
+  it("never reports a negative count when the parts do not line up", () => {
+    const section = verifySection({ ...stage, duplicate: 39_000, evicted_batches: 0 });
+    expect(keys(section.losses)).not.toContain("verify_bad");
+  });
+
   it("keeps the evicted batches out of the bar, being a different unit", () => {
     const section = verifySection({ ...stage, evicted_batches: 3 });
     expect(section.aside?.count).toBe(3);
@@ -300,6 +305,59 @@ describe("executedSection", () => {
     program_not_executable: 0,
     program_restricted: 0,
     ...over,
+  });
+
+  const countOf = (losses: PathLoss[], key: string) =>
+    losses.find((loss) => loss.key === key)?.count ?? 0;
+
+  it("accounts for everything the workers took up", () => {
+    // A testnet reading: 101 attempted, 13 handed back, 63 committed, and 25 in no row at all.
+    const section = executedSection(
+      stage({ attempted: 101, retryable: 13, processed: 63, succeeded: 63 }),
+      null,
+    );
+    expect(countOf(section.losses, "exec_dropped")).toBe(25);
+    expect(countOf(section.detail, "exec_other_reasons")).toBe(25);
+  });
+
+  it("names the reasons it has and gathers the rest", () => {
+    const section = executedSection(
+      stage({
+        attempted: 100,
+        retryable: 10,
+        processed: 60,
+        succeeded: 60,
+        blockhash_missing: 12,
+        fee_payer_broke: 8,
+        already_processed: 4,
+      }),
+      null,
+    );
+    expect(countOf(section.losses, "exec_dropped")).toBe(30);
+    expect(countOf(section.detail, "exec_blockhash_missing")).toBe(12);
+    expect(countOf(section.detail, "exec_fee_payer_broke")).toBe(8);
+    expect(countOf(section.detail, "exec_other_reasons")).toBe(6);
+  });
+
+  it("does not go negative when the two points disagree", () => {
+    // The outcomes and the reasons are reported separately, so a window can
+    // catch more reasons than it caught loss. Nought, not a negative row.
+    const section = executedSection(
+      stage({ attempted: 10, processed: 10, succeeded: 10, account_missing: 4 }),
+      null,
+    );
+    expect(keys(section.losses)).not.toContain("exec_dropped");
+    expect(keys(section.detail)).not.toContain("exec_other_reasons");
+  });
+
+  it("derives the failures from committed less succeeded", () => {
+    const section = executedSection(stage({ attempted: 100, processed: 90, succeeded: 80 }), null);
+    expect(countOf(section.losses, "exec_failed")).toBe(10);
+  });
+
+  it("does not go negative if succeeded outruns committed across a reset", () => {
+    const section = executedSection(stage({ attempted: 10, processed: 5, succeeded: 9 }), null);
+    expect(keys(section.losses)).not.toContain("exec_failed");
   });
 
   it("keeps the load reasons out of the losses and out of the bar", () => {

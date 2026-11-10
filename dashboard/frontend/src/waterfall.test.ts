@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ExecutedStage, VerifyStage, Waterfall } from "./types";
-import { executedRows, verifyRows, waterfallRows } from "./waterfall";
+import type { Waterfall } from "./types";
+import { waterfallRows } from "./waterfall";
 
 function quiet(over: Partial<Waterfall> = {}): Waterfall {
   return {
@@ -180,112 +180,6 @@ function rowOf(rows: ReturnType<typeof waterfallRows>, key: string) {
   if (!row) throw new Error(`no row ${key}`);
   return row;
 }
-
-describe("verifyRows", () => {
-  const stage = (over: Partial<VerifyStage> = {}): VerifyStage => ({
-    received: 0,
-    duplicate: 0,
-    below_floor: 0,
-    verified: 0,
-    evicted_batches: 0,
-    ...over,
-  });
-
-  it("derives bad signatures from what the other outcomes leave over", () => {
-    const rows = verifyRows(
-      stage({ received: 1000, duplicate: 300, below_floor: 50, verified: 620 }),
-    );
-    expect(rowOf(rows, "verify_bad").count).toBe(30);
-  });
-
-  it("never reports a negative count when the parts do not line up", () => {
-    const rows = verifyRows(stage({ received: 100, duplicate: 90, verified: 40 }));
-    expect(rowOf(rows, "verify_bad").count).toBe(0);
-  });
-
-  it("keeps the batch figure out of the transaction arithmetic", () => {
-    const rows = verifyRows(
-      stage({ received: 100, duplicate: 0, verified: 100, evicted_batches: 7 }),
-    );
-    expect(rowOf(rows, "verify_bad").count).toBe(0);
-    expect(rowOf(rows, "verify_evicted").count).toBe(7);
-    expect(rowOf(rows, "verify_evicted").kind).toBe("count");
-    expect(rowOf(rows, "verify_evicted").share).toBe(0);
-  });
-});
-
-describe("executedRows", () => {
-  const stage = (over: Partial<ExecutedStage> = {}): ExecutedStage => ({
-    attempted: 0,
-    cost_throttled: 0,
-    retryable: 0,
-    expired_bank: 0,
-    processed: 0,
-    succeeded: 0,
-    too_many_locks: 0,
-    account_missing: 0,
-    fee_payer_broke: 0,
-    fee_payer_invalid: 0,
-    blockhash_missing: 0,
-    blockhash_old: 0,
-    already_processed: 0,
-    bad_compute_budget: 0,
-    account_data_too_large: 0,
-    program_not_executable: 0,
-    program_restricted: 0,
-    ...over,
-  });
-
-  it("accounts for everything the workers took up", () => {
-    // A testnet reading: 101 attempted, 13 handed back, 63 committed, and 25 in no row at all.
-    const rows = executedRows(
-      stage({ attempted: 101, retryable: 13, processed: 63, succeeded: 63 }),
-    );
-    const dropped = rowOf(rows, "exec_dropped");
-    expect(dropped.count).toBe(25);
-    expect(dropped.share).toBeCloseTo(25 / 101, 10);
-
-    expect(rowOf(rows, "exec_other_reasons").count).toBe(25);
-  });
-
-  it("names the reasons it has and gathers the rest", () => {
-    const rows = executedRows(
-      stage({
-        attempted: 100,
-        retryable: 10,
-        processed: 60,
-        succeeded: 60,
-        blockhash_missing: 12,
-        fee_payer_broke: 8,
-        already_processed: 4,
-      }),
-    );
-    expect(rowOf(rows, "exec_dropped").count).toBe(30);
-    expect(rowOf(rows, "exec_blockhash_missing").count).toBe(12);
-    expect(rowOf(rows, "exec_fee_payer_broke").count).toBe(8);
-    expect(rowOf(rows, "exec_other_reasons").count).toBe(6);
-  });
-
-  it("does not go negative when the two points disagree", () => {
-    // The outcomes and the reasons are reported separately, so a window can
-    // catch more reasons than it caught loss. Nought, not a negative row.
-    const rows = executedRows(
-      stage({ attempted: 10, retryable: 0, processed: 10, succeeded: 10, account_missing: 4 }),
-    );
-    expect(rowOf(rows, "exec_dropped").count).toBe(0);
-    expect(rowOf(rows, "exec_other_reasons").count).toBe(0);
-  });
-
-  it("derives the failures from committed less succeeded", () => {
-    const rows = executedRows(stage({ attempted: 100, processed: 90, succeeded: 80 }));
-    expect(rowOf(rows, "exec_failed").count).toBe(10);
-  });
-
-  it("does not go negative if succeeded outruns committed across a reset", () => {
-    const rows = executedRows(stage({ attempted: 10, processed: 5, succeeded: 9 }));
-    expect(rowOf(rows, "exec_failed").count).toBe(0);
-  });
-});
 
 describe("a stage fed from the queue", () => {
   it("caps its bar and reports the overflow rather than exceeding the total", () => {

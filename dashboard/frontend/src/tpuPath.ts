@@ -7,7 +7,6 @@ import type {
   QuicPort,
   VerifyStage,
 } from "./types";
-import { executedRows, verifyRows, type WaterfallRow } from "./waterfall";
 
 
 export interface PathLoss {
@@ -299,31 +298,28 @@ export function listenerSection(q: QuicPort): PathSection {
   };
 }
 
-function pick(rows: WaterfallRow[], key: string): number {
-  return rows.find((row) => row.key === key)?.count ?? 0;
-}
-
 export function verifySection(v: VerifyStage): PathSection {
-  const rows = verifyRows(v);
+  // Sigverify discards at one step, so what is left after the other three is exactly the bad.
+  const bad = Math.max(0, v.received - v.duplicate - v.below_floor - v.verified);
   const { losses, zeros } = sorted(v.received, [
     [
       "verify_duplicate",
       "duplicate",
-      pick(rows, "verify_duplicate"),
+      v.duplicate,
       false,
       "Seen before. The network resends transactions as a matter of course.",
     ],
     [
       "verify_bad",
       "bad signature",
-      pick(rows, "verify_bad"),
+      bad,
       false,
       "Failed verification. Derived: received less duplicates, underpaying and verified.",
     ],
     [
       "verify_below_floor",
       "below priority floor",
-      pick(rows, "verify_below_floor"),
+      v.below_floor,
       false,
       "Dropped for paying under the priority floor, where one is configured.",
     ],
@@ -354,41 +350,52 @@ export function verifySection(v: VerifyStage): PathSection {
   };
 }
 
-const LOAD_REASONS: Array<[key: string, label: string]> = [
-  ["exec_blockhash_missing", "blockhash not found"],
-  ["exec_blockhash_old", "blockhash too old"],
-  ["exec_already_processed", "already processed"],
-  ["exec_fee_payer_broke", "fee payer could not pay"],
-  ["exec_fee_payer_invalid", "fee payer not usable"],
-  ["exec_account_missing", "account not found"],
-  ["exec_too_many_locks", "too many account locks"],
-  ["exec_bad_compute_budget", "compute budget"],
-  ["exec_account_data_too_large", "account data too large"],
-  ["exec_program_not_executable", "program not executable"],
-  ["exec_program_restricted", "program restricted"],
-  ["exec_other_reasons", "other reasons"],
+const LOAD_REASONS: Array<[key: string, label: string, field: keyof ExecutedStage]> = [
+  ["exec_blockhash_missing", "blockhash not found", "blockhash_missing"],
+  ["exec_blockhash_old", "blockhash too old", "blockhash_old"],
+  ["exec_already_processed", "already processed", "already_processed"],
+  ["exec_fee_payer_broke", "fee payer could not pay", "fee_payer_broke"],
+  ["exec_fee_payer_invalid", "fee payer not usable", "fee_payer_invalid"],
+  ["exec_account_missing", "account not found", "account_missing"],
+  ["exec_too_many_locks", "too many account locks", "too_many_locks"],
+  ["exec_bad_compute_budget", "compute budget", "bad_compute_budget"],
+  ["exec_account_data_too_large", "account data too large", "account_data_too_large"],
+  ["exec_program_not_executable", "program not executable", "program_not_executable"],
+  ["exec_program_restricted", "program restricted", "program_restricted"],
 ];
 
-function executedDetail(rows: WaterfallRow[]): { detail: PathLoss[]; zeros: number } {
-  const failedToLoad = pick(rows, "exec_dropped");
-  const loadReasons = LOAD_REASONS.map(([key, label]) => ({
+function executedDetail(
+  e: ExecutedStage,
+  failedToLoad: number,
+): { detail: PathLoss[]; zeros: number } {
+  const named = LOAD_REASONS.map(([key, label, field]): [string, string, number] => [
     key,
     label,
-    count: pick(rows, key),
-    share: shareOf(failedToLoad, pick(rows, key)),
-    warn: false,
-    explain:
-      "One reason a transaction could not be loaded, as a share of those that failed to load.",
-  })).filter((reason) => reason.count > 0);
+    e[field],
+  ]);
+  // The rarer errors gathered into one row. Floored: the two counters are reported separately.
+  const other = failedToLoad - named.reduce((sum, [, , count]) => sum + count, 0);
+  named.push(["exec_other_reasons", "other reasons", Math.max(0, other)]);
+  const loadReasons = named
+    .map(([key, label, count]) => ({
+      key,
+      label,
+      count,
+      share: shareOf(failedToLoad, count),
+      warn: false,
+      explain:
+        "One reason a transaction could not be loaded, as a share of those that failed to load.",
+    }))
+    .filter((reason) => reason.count > 0);
   // Both are counted inside the segments already, so reasons behind them and not segments beside.
-  const expired = pick(rows, "exec_expired_bank");
-  const throttled = pick(rows, "exec_cost_throttled");
+  const expired = e.expired_bank;
+  const throttled = e.cost_throttled;
   const counted: PathLoss[] = [
     {
       key: "exec_expired_bank",
       label: "retried because the bank had gone",
       count: expired,
-      share: shareOf(pick(rows, "exec_retryable"), expired),
+      share: shareOf(e.retryable, expired),
       warn: false,
       explain:
         "Of those sent back to retry, the ones handed back before running because " +
@@ -398,14 +405,14 @@ function executedDetail(rows: WaterfallRow[]): { detail: PathLoss[]; zeros: numb
       key: "exec_cost_throttled",
       label: "no room in the block",
       count: throttled,
-      share: shareOf(pick(rows, "exec_attempted"), throttled),
+      share: shareOf(e.attempted, throttled),
       warn: false,
       explain:
         "Of those taken up, the ones the cost model left out for want of room, each also counted " +
         "as sent back to retry or failed to load.",
     },
   ].filter((reason) => reason.count > 0);
-  const zeros = LOAD_REASONS.length - loadReasons.length + 2 - counted.length;
+  const zeros = named.length - loadReasons.length + 2 - counted.length;
   return { detail: [...counted, ...loadReasons], zeros };
 }
 
@@ -413,34 +420,36 @@ export function executedSection(
   e: ExecutedStage,
   bundles: BundleStage | null,
 ): PathSection {
-  const rows = executedRows(e);
-  const attempted = pick(rows, "exec_attempted");
+  const attempted = e.attempted;
+  const failed = Math.max(0, e.processed - e.succeeded);
+  // Derived: no counter holds it, and without it the section does not close.
+  const dropped = Math.max(0, e.attempted - e.processed - e.retryable);
   const { losses, zeros } = sorted(attempted, [
     [
       "exec_failed",
       "failed, but still in the block",
-      pick(rows, "exec_failed"),
+      failed,
       false,
       "Executed, failed, and committed anyway. A failed transaction still pays its fee and takes room in the block.",
     ],
     [
       "exec_dropped",
       "failed to load",
-      pick(rows, "exec_dropped"),
+      dropped,
       false,
       "Never executed because its accounts or blockhash could not be loaded. The reasons are behind the control below.",
     ],
     [
       "exec_retryable",
       "sent back to retry",
-      pick(rows, "exec_retryable"),
+      e.retryable,
       false,
       "Handed back to be tried again: its accounts were locked by another transaction in flight, " +
         "the block had no room, or its slot had ended. The last two are behind the control below.",
     ],
   ]);
 
-  const behind = executedDetail(rows);
+  const behind = executedDetail(e, dropped);
 
   return {
     key: "executed",
@@ -449,7 +458,7 @@ export function executedSection(
     explain:
       "The worker threads added together, counted over the epoch. Absent until the first leader slot of the epoch.",
     total: attempted,
-    through: { label: "succeeded", count: pick(rows, "exec_succeeded") },
+    through: { label: "succeeded", count: e.succeeded },
     losses,
     detail: behind.detail,
     zeros: zeros + behind.zeros,

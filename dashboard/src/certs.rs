@@ -61,6 +61,19 @@ pub struct Mark {
     pub skip: u32,
 }
 
+impl Mark {
+    fn no_certificate(slot: Slot, rank: usize) -> Self {
+        Self {
+            slot,
+            reward: Reward::NoCertificate,
+            rank,
+            paid: Vec::new(),
+            notar: 0,
+            skip: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Participation {
     pub epoch: Epoch,
@@ -589,11 +602,9 @@ pub fn walk(
         if matches!(block, Block::Pending) {
             break;
         }
-        let ranked = slot
-            .checked_sub(NUM_SLOTS_FOR_REWARD)
-            .and_then(|reward_slot| {
-                rank_of(bank, vote_account, reward_slot).map(|rank| (reward_slot, rank))
-            });
+        let ranked = rewarded_slot(slot).and_then(|reward_slot| {
+            rank_of(bank, vote_account, reward_slot).map(|rank| (reward_slot, rank))
+        });
         if let Block::Footer(footer) = &block {
             walked.readings.push(footer_reading(bank, slot, footer));
         }
@@ -623,14 +634,7 @@ fn read_slot(block: Block, ranked: Option<(Slot, (usize, usize))>) -> (Option<u6
         }
         Block::Missing => (
             None,
-            ranked.map(|(reward_slot, (rank, _))| Mark {
-                slot: reward_slot,
-                reward: Reward::NoCertificate,
-                rank,
-                paid: Vec::new(),
-                notar: 0,
-                skip: 0,
-            }),
+            ranked.map(|(reward_slot, (rank, _))| Mark::no_certificate(reward_slot, rank)),
         ),
         Block::Pending | Block::Opaque => (None, None),
     }
@@ -640,7 +644,7 @@ fn read_slot(block: Block, ranked: Option<(Slot, (usize, usize))>) -> (Option<u6
 /// the same slot, so fast means 80% of stake notarized in time for it.
 fn footer_reading(bank: &Bank, slot: Slot, footer: &BlockFooterV1) -> FooterReading {
     let notarized = footer.notar_reward_cert.as_ref().and_then(|cert| {
-        let rewarded = slot.checked_sub(NUM_SLOTS_FOR_REWARD)?;
+        let rewarded = rewarded_slot(slot)?;
         Some((rewarded, notarized_share(bank, rewarded, cert.bitmap())?))
     });
     FooterReading {
@@ -724,14 +728,7 @@ fn build_mark(
     len: usize,
 ) -> Option<Mark> {
     if notar.is_none() && skip.is_none() {
-        return Some(Mark {
-            slot,
-            reward: Reward::NoCertificate,
-            rank,
-            paid: Vec::new(),
-            notar: 0,
-            skip: 0,
-        });
+        return Some(Mark::no_certificate(slot, rank));
     }
     let notar_paid = match notar {
         Some(bitmap) => decode_paid(bitmap, len)?,

@@ -2,7 +2,10 @@
 //! skips from the root bank's slot history, and the cluster's stake by client and by country.
 
 use {
-    super::{Collector, EpochInfo, Replies, country_of, strip_prerelease, tally_bank_stake},
+    super::{
+        Collector, EpochInfo, Replies, WANTED_FOR_MILLIS, country_of, json_or_null,
+        strip_prerelease, tally_bank_stake,
+    },
     crate::{
         geoip,
         history::{
@@ -24,8 +27,6 @@ use {
     },
 };
 
-/// How long after the last request the charts are still gathered.
-const WANTED_FOR_MILLIS: u64 = 30_000;
 const GATHER_EVERY_MILLIS: u64 = 15_000;
 
 /// Named clients and countries shown before the rest are folded.
@@ -804,15 +805,8 @@ impl Collector {
             .collect();
         charts.clients = client_shares(&described);
         charts.countries = country_shares(&described, ours_country);
-        let json = match serde_json::to_string(&charts) {
-            Ok(json) => json,
-            Err(err) => {
-                log::error!("dashboard: failed to encode the cluster charts: {err}");
-                return;
-            }
-        };
         if let Ok(mut held) = self.replies.cluster_charts.write() {
-            *held = Arc::from(json);
+            *held = json_or_null(&charts);
         }
     }
 }

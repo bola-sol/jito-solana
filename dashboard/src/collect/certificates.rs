@@ -2,7 +2,7 @@
 //! miss and written lists read from that tally.
 
 use {
-    super::{Collector, is_delinquent},
+    super::{Collector, WANTED_FOR_MILLIS, is_delinquent, json_or_null},
     crate::{
         certs, geoip,
         history::HAS_CLOCK,
@@ -21,9 +21,6 @@ use {
 };
 
 const CERT_SLOTS_PER_TICK: u64 = 64;
-
-/// How long after the last request the miss and written lists are rebuilt every slow tick.
-const WANTED_FOR_MILLIS: u64 = 30_000;
 
 /// How often the lists are rebuilt while nobody is asking.
 const UNASKED_EVERY_MILLIS: u64 = 60_000;
@@ -108,16 +105,6 @@ impl MissReplies {
 impl Default for MissReplies {
     fn default() -> Self {
         Self::new(&MissList::default(), &WrittenList::default())
-    }
-}
-
-fn json_or_null<T: Serialize>(value: &T) -> Arc<str> {
-    match serde_json::to_string(value) {
-        Ok(json) => Arc::from(json),
-        Err(err) => {
-            log::error!("dashboard: failed to encode the miss list: {err}");
-            Arc::from("null")
-        }
     }
 }
 

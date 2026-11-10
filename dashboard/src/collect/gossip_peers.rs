@@ -2,21 +2,15 @@
 //! client is asking for it.
 
 use {
-    super::{Collector, is_delinquent, tally_bank_stake},
+    super::{Collector, WANTED_FOR_MILLIS, is_delinquent, json_or_null, tally_bank_stake},
     crate::{geoip, metrics_tap::VoteArrival},
     serde::Serialize,
     solana_clock::{Epoch, Slot},
     solana_gossip::{contact_info::ContactInfo, crds_data::SnapshotHashes},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::{
-        collections::HashMap,
-        sync::{Arc, atomic::Ordering},
-    },
+    std::{collections::HashMap, sync::atomic::Ordering},
 };
-
-/// How long after the last request the list is still gathered.
-const WANTED_FOR_MILLIS: u64 = 30_000;
 
 /// Notarize mean, its spread and its worst, then the finalize mean, in microseconds; then the
 /// notarize votes the mean is over.
@@ -71,15 +65,8 @@ impl Collector {
             return;
         }
         let list = self.gossip_peers(bank, root, peers, now_millis);
-        let json = match serde_json::to_string(&list) {
-            Ok(json) => json,
-            Err(err) => {
-                log::error!("dashboard: failed to encode the gossip peers: {err}");
-                return;
-            }
-        };
         if let Ok(mut held) = self.replies.gossip_peers.write() {
-            *held = Arc::from(json);
+            *held = json_or_null(&list);
         }
     }
 

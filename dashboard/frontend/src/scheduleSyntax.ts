@@ -207,7 +207,7 @@ function readList(key: Key, op: string, text: string, not: boolean, offered: Off
     const chips: Filter[] = [];
     for (const name of typed) {
       const only = IS_NAMES[name.toLowerCase()];
-      if (!only || !offered.only.includes(only)) return `is takes ${isNames(offered).join(", ")}.`;
+      if (!only || !offered.only.includes(only)) return `is takes ${isChips(offered).map(([name]) => name).join(", ")}.`;
       chips.push({ kind: "only", only });
     }
     return chips;
@@ -218,10 +218,8 @@ function readList(key: Key, op: string, text: string, not: boolean, offered: Off
   return [{ kind: "condition", condition: { field: key.field, op: not ? "is_not" : "is", value: null, values } }];
 }
 
-function isNames(offered: Offered): string[] {
-  return Object.entries(IS_NAMES)
-    .filter(([, only]) => offered.only.includes(only))
-    .map(([name]) => name);
+function isChips(offered: Offered): [name: string, only: Only][] {
+  return Object.entries(IS_NAMES).filter(([, only]) => offered.only.includes(only));
 }
 
 /** A range's two ends, either open, each a slot or a time; null where an end cannot be read. */
@@ -365,7 +363,7 @@ export function suggest(before: string, offered: Offered): Suggestion[] {
 }
 
 function valuesOf(key: Key, offered: Offered): (readonly [value: string, what: string])[] {
-  if (key.kind === "is") return isNames(offered).map((name) => [name, chipTitle(IS_NAMES[name])]);
+  if (key.kind === "is") return isChips(offered).map(([name, only]) => [name, ONLY_TITLES[only]]);
   switch (key.field) {
     case "name":
       return offered.names.map((named) => [named, ""]);
@@ -382,10 +380,6 @@ function valuesOf(key: Key, offered: Offered): (readonly [value: string, what: s
     default:
       return [];
   }
-}
-
-function chipTitle(only: Only | undefined): string {
-  return only ? ONLY_TITLES[only] : "";
 }
 
 /** The word up to the caret replaced by a suggestion, and where the caret then goes. */
@@ -468,10 +462,8 @@ function exampleOf(key: Key, slot: number | null, epoch: number | null): string 
 
 /** Every expression the box takes, offered when nothing is typed: the chips first, each one row. */
 export function browse(offered: Offered, slot: number | null, epoch: number | null): BrowseRow[] {
-  const chips = isNames(offered).flatMap((name): BrowseRow[] => {
-    const only = IS_NAMES[name];
-    if (!only) return [];
-    return [{ group: "only", syntax: `is:${name}`, what: ONLY_TITLES[only].replace(/\.$/, ""), action: { kind: "only", only } }];
+  const chips = isChips(offered).map(([name, only]): BrowseRow => {
+    return { group: "only", syntax: `is:${name}`, what: ONLY_TITLES[only].replace(/\.$/, ""), action: { kind: "only", only } };
   });
   const keys = KEYS.filter((key) => key.kind !== "is" && keyOffered(key, offered)).map((key): BrowseRow => {
     const syntax = exampleOf(key, slot, epoch);

@@ -3,7 +3,7 @@
 //! certificate's with the slot eight back, so a last vote near the newest in the bank was carried.
 
 use {
-    super::Collector,
+    super::{Collector, cluster_charts::at_percent},
     crate::geoip,
     serde::Serialize,
     solana_clock::Slot,
@@ -176,7 +176,7 @@ impl FinalizationTally {
                 TrendMinute {
                     start_millis: minute.start_millis,
                     ours: shares.get(ours).copied(),
-                    median: median(&values),
+                    median: at_percent(&values, 50),
                 }
             })
             .collect();
@@ -184,7 +184,7 @@ impl FinalizationTally {
             blocks,
             validators: values.len(),
             ours: own,
-            median: median(&values),
+            median: at_percent(&values, 50),
             above,
             bands: bands_of(&values),
             trend,
@@ -316,7 +316,7 @@ fn country_share(
     Some(CountryShare {
         code,
         validators: values.len(),
-        median: median(&values)?,
+        median: at_percent(&values, 50)?,
         bands: bands_of(&values),
     })
 }
@@ -328,11 +328,6 @@ fn bands_of(values: &[f64]) -> [u32; BANDS] {
         bands[band] = bands[band].saturating_add(1);
     }
     bands
-}
-
-/// The upper middle of sorted values.
-fn median(sorted: &[f64]) -> Option<f64> {
-    sorted.get(sorted.len().checked_div(2)?).copied()
 }
 
 #[cfg(test)]

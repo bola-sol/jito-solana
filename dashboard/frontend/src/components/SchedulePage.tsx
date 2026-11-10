@@ -32,8 +32,6 @@ import {
   type Turn,
   type TurnSlot,
 } from "../schedule";
-import type { SlotRange } from "../slotHistory";
-import type { Store } from "../store";
 import { mergeLeaders } from "../leaderTable";
 import { Stripes } from "../stripes";
 import { timelineOf } from "../timeline";
@@ -199,10 +197,6 @@ function nowRowOf(slot: number, producing: number | null): NowRow {
   if (producing === null) return null;
   if (slot === producing) return "current";
   return slot > producing ? "upcoming" : null;
-}
-
-function fetchSpan(store: Store, first: number, count: number): Promise<SlotRange> {
-  return store.request("slot.range", { first_slot: first, count });
 }
 
 /** The validator's list of every leader, asked for while the page is open and again on each new socket. */
@@ -371,7 +365,7 @@ export function SchedulePage({
     try {
       // Aligned down to a turn boundary so a span never begins mid-turn.
       const first = Math.max(0, Math.floor((floor - SPAN_SLOTS) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
-      const range = await fetchSpan(store, first, floor - first);
+      const range = await store.request("slot.range", { first_slot: first, count: floor - first });
       if (started !== index.generation) return;
       // A span with nothing in it is older than the validator keeps.
       if (range.rows.every((row) => row === null)) {
@@ -942,9 +936,8 @@ export function SchedulePage({
   const [boxText, setBoxText] = useState(query);
   const [syntaxError, setSyntaxError] = useState<string | null>(null);
   const choices = summary?.choices;
-  const clientSlots = epochClients;
   const syntaxOffered = useMemo((): Offered => {
-    const slots = new Map((clientSlots ?? []).map((row) => [row.client, row.slots]));
+    const slots = new Map((epochClients ?? []).map((row) => [row.client, row.slots]));
     const clients = (choices?.clients ?? [])
       .map((client) => [client, slots.get(client) ?? 0] as const)
       .sort((a, b) => b[1] - a[1]);
@@ -953,7 +946,7 @@ export function SchedulePage({
       .sort((a, b) => b.stake - a.stake)
       .map((peer) => peer.name ?? "");
     return { fields, only: offered, clients, countries: choices?.countries ?? [], versions: choices?.versions ?? [], names };
-  }, [fields, offered, choices, clientSlots, peers]);
+  }, [fields, offered, choices, epochClients, peers]);
   const suggestFor = useCallback((before: string) => suggest(before, syntaxOffered), [syntaxOffered]);
   // A search set elsewhere, by a view or the address, replaces what the box holds.
   useEffect(() => {
@@ -1313,7 +1306,7 @@ export function SchedulePage({
           render={renderTurn}
           scroller={list}
           onNearEnd={nearEnd}
-          onNearStart={jumping ? nearStart : futureMode === "all" || futureMode === "matches" ? moreAhead : undefined}
+          onNearStart={jumping ? nearStart : futureMode !== null ? moreAhead : undefined}
           follow={!jumping && futureMode === null}
           reveal={jumping ? landingTurn : futureMode !== null ? (openOnMatch ?? EDGE_KEY) : undefined}
           revealGap={jumping ? REVEAL_GAP : 0}

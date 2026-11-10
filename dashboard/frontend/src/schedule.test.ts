@@ -12,9 +12,11 @@ import {
   matchesQuery,
   producingSlot,
   turnSpan,
-  turnsOf,
+  turnFrom,
   unheldSlots,
+  SLOTS_PER_TURN,
   type LeaderRef,
+  type Turn,
 } from "./schedule";
 import type { SlotEntry } from "./types";
 
@@ -40,39 +42,35 @@ function resolver(
   return (slot) => leaders[slot] ?? fallback;
 }
 
-describe("turnsOf", () => {
+/** The turn holding the first of `entries`, built from them. */
+function turnOf(entries: SlotEntry[], leaderOf: (slot: number, mine: boolean) => LeaderRef = resolver()): Turn {
+  const number = Math.floor((entries[0]?.slot ?? 0) / SLOTS_PER_TURN);
+  const turn = turnFrom(number, (slot) => entries.find((entry) => entry.slot === slot), leaderOf);
+  if (!turn) throw new Error("no slot of the turn is held");
+  return turn;
+}
+
+describe("turnFrom", () => {
   it("draws a turn whole from its first slot alone", () => {
-    const [turn] = turnsOf([held(100)], resolver());
+    const turn = turnOf([held(100)], resolver());
     expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102, 101, 100]);
     expect(turn.slots.map((slot) => slot.entry !== null)).toEqual([false, false, false, true]);
   });
 
   it("fills the rows where they stand as the slots arrive", () => {
-    const [turn] = turnsOf([held(100), held(101)], resolver());
+    const turn = turnOf([held(100), held(101)], resolver());
     expect(turn.slots).toHaveLength(4);
     expect(turn.slots.map((slot) => slot.entry !== null)).toEqual([false, false, true, true]);
   });
 
-  it("splits a leader drawn twice in a row into two turns", () => {
-    const slots = [96, 97, 98, 99, 100, 101, 102, 103].map((slot) => held(slot));
-    const turns = turnsOf(slots, resolver());
-    expect(turns.map((turn) => turn.slots.length)).toEqual([4, 4]);
-    expect(turns[0].slots.map((slot) => slot.slot)).toEqual([103, 102, 101, 100]);
-  });
-
-  it("puts the newest turn first", () => {
-    const turns = turnsOf([held(100), held(200)], resolver());
-    expect(turns.map((turn) => turn.slots.at(-1)?.slot)).toEqual([200, 100]);
-  });
-
   it("invents no rows for slots older than the window", () => {
-    const [turn] = turnsOf([held(102), held(103)], resolver());
+    const turn = turnOf([held(102), held(103)], resolver());
     expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102]);
   });
 
   it("asks for the leader once per turn, at the turn's own first slot", () => {
     const asked: number[] = [];
-    const [turn] = turnsOf([held(101), held(102)], (slot) => {
+    const turn = turnOf([held(101), held(102)], (slot) => {
       asked.push(slot);
       return { key: "bob", name: "Bob Co", icon: null };
     });
@@ -89,40 +87,41 @@ describe("turnsOf", () => {
       asked.push([slot, mine]);
       return { key: "us", name: "Lantern", icon: null };
     };
-    turnsOf([{ ...held(100), mine: true }, held(200)], resolve);
+    turnOf([{ ...held(100), mine: true }], resolve);
+    turnOf([held(200)], resolve);
     expect(asked).toEqual([
-      [200, false],
       [100, true],
+      [200, false],
     ]);
   });
 
   it("names nobody for a turn whose epoch the page has no schedule for", () => {
     // Deep history can reach past the epoch whose arrays the page holds. Better
     // an unknown leader than a confident wrong one.
-    const [turn] = turnsOf([held(100)], resolver({}, { key: null, name: null, icon: null }));
+    const turn = turnOf([held(100)], resolver({}, { key: null, name: null, icon: null }));
     expect(turn.leader).toBeNull();
   });
 
   it("has nothing to say about an empty list", () => {
-    expect(turnsOf([], resolver())).toEqual([]);
+    expect(turnFrom(25, () => undefined, resolver())).toBeUndefined();
   });
 });
 
 describe("unheldSlots", () => {
   it("is empty for a turn held from its first slot", () => {
-    const [turn] = turnsOf([held(100)], resolver());
+    const turn = turnOf([held(100)], resolver());
     expect(unheldSlots(turn)).toEqual([]);
   });
 
   it("lists the slots below where what is held starts", () => {
-    const [turn] = turnsOf([held(102)], resolver());
+    const turn = turnOf([held(102)], resolver());
     expect(turn.slots.map((slot) => slot.slot)).toEqual([103, 102]);
     expect(unheldSlots(turn)).toEqual([101, 100]);
   });
 });
 
 describe("matchesQuery", () => {
-  const [turn] = turnsOf(
+  const turn = turnOf(
     [held(430789128)],
     resolver({}, { key: "J7v9KQ8s", name: "Staking Facilities", icon: null }),
   );

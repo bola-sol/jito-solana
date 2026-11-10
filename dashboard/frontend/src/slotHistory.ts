@@ -121,7 +121,7 @@ export function entryFromRow(
   };
 }
 
-/** Holes are dropped; `turnsOf` draws the gap from the slots either side. */
+/** Holes are dropped; `turnFrom` draws the gap from the slots either side. */
 export function entriesOf(
   range: SlotRange,
   epoch: EpochInfo | undefined,

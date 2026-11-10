@@ -200,7 +200,6 @@ function ChartCard({
   view,
   from,
   to,
-  title,
   controls,
   note,
   className,
@@ -209,8 +208,6 @@ function ChartCard({
   view: ChartView;
   from: number;
   to: number;
-  /** In place of the view's own label, for a card showing one of several. */
-  title?: ReactNode;
   /** Beside the title, as the tabs of a merged card. */
   controls?: ReactNode;
   /** After the spread on the figure line. */
@@ -261,7 +258,9 @@ function ChartCard({
   return (
     <section className={`card cl-card${className ? ` ${className}` : ""}`}>
       <div className="card-head">
-        <h2 className="card-title">{title ?? <Explain text={view.explain}>{view.label}</Explain>}</h2>
+        <h2 className="card-title">
+          <Explain text={view.explain}>{view.label}</Explain>
+        </h2>
         {controls}
         <span className="card-aside">since {clock(from)}</span>
       </div>
@@ -422,7 +421,6 @@ function TransactionsCard({ charts, fill }: { charts: ClusterCharts; fill?: bool
       to={charts.to_millis}
       className="cl-span-2"
       fill={fill}
-      title={<Explain text={TX_EXPLAIN}>Transactions</Explain>}
       controls={
         <div className="toggle-group cl-tx-toggle" role="group" aria-label="Which transactions to show">
           {TX_VIEWS.map((entry) => (

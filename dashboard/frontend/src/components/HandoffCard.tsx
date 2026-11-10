@@ -79,16 +79,12 @@ function Strip({
   );
 }
 
-function Bars({ values, className, current }: { values: number[]; className: string; current?: number }) {
+function Bars({ values, className }: { values: number[]; className: string }) {
   const top = Math.max(1, ...values);
   return (
     <div className={className} aria-hidden="true">
       {values.map((value, index) => (
-        <i
-          key={index}
-          className={index === current ? "is-current" : undefined}
-          style={{ height: `${(value / top) * 100}%` }}
-        />
+        <i key={index} style={{ height: `${(value / top) * 100}%` }} />
       ))}
     </div>
   );

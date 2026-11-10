@@ -357,9 +357,7 @@ impl Tally {
             return;
         }
         self.pending_votes.insert(slot, vote);
-        while self.pending_votes.len() > PENDING_VOTES {
-            self.pending_votes.pop_first();
-        }
+        crate::metrics_tap::keep_newest(&mut self.pending_votes, PENDING_VOTES);
     }
 
     pub fn writer_certificates(&self, writer: &Pubkey) -> u64 {

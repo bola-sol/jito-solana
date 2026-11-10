@@ -40,9 +40,7 @@ impl FinalizedPaths {
         let (fast_slots, second_slots) = self.by_epoch.entry(epoch).or_default();
         let count = if fast { fast_slots } else { second_slots };
         *count = count.saturating_add(1);
-        while self.by_epoch.len() > PATH_EPOCHS_HELD {
-            self.by_epoch.pop_first();
-        }
+        crate::metrics_tap::keep_newest(&mut self.by_epoch, PATH_EPOCHS_HELD);
     }
 
     fn counts(&self, epoch: Epoch) -> Option<(u64, u64)> {

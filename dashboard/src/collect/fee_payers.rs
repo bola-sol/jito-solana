@@ -157,9 +157,7 @@ impl FeePayers {
             return;
         }
         self.waiting.insert(slot, (bank.clone(), ours));
-        while self.waiting.len() > MAX_WAITING {
-            self.waiting.pop_first();
-        }
+        crate::metrics_tap::keep_newest(&mut self.waiting, MAX_WAITING);
     }
 
     /// Reads each held block once the blockstore has all of it, and lets its bank go. Returns what
@@ -186,9 +184,7 @@ impl FeePayers {
             self.unsettled.insert(slot, tally);
             fees.extend(paid);
         }
-        while self.unsettled.len() > MAX_UNSETTLED {
-            self.unsettled.pop_first();
-        }
+        crate::metrics_tap::keep_newest(&mut self.unsettled, MAX_UNSETTLED);
         fees
     }
 

@@ -110,8 +110,6 @@ export interface ReadSearch {
   filters: Filter[];
   /** Why an expression could not be read, one line each. */
   errors: string[];
-  /** Whether any expression was typed, read or not. */
-  syntax: boolean;
 }
 
 export function keyNamed(name: string): Key | undefined {
@@ -314,7 +312,7 @@ export function readSearch(text: string, offered: Offered, now: number): ReadSea
     else filters.push(...read);
   });
   words.push(text.slice(cursor));
-  return { words: words.join(" ").trim().replace(/\s+/g, " "), filters, errors, syntax: starts.length > 0 };
+  return { words: words.join(" ").trim().replace(/\s+/g, " "), filters, errors };
 }
 
 export interface Suggestion {

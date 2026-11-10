@@ -151,10 +151,6 @@ export function matchesQuery(turn: Turn, query: string): boolean {
   return turn.slots.some((slot) => String(slot.slot).includes(needle));
 }
 
-export function turnKey(turn: Turn): string {
-  return `turn:${turn.slots.at(-1)?.slot}`;
-}
-
 export function rewardTitle(reward: Reward | null | undefined): string {
   switch (reward) {
     case "paid":

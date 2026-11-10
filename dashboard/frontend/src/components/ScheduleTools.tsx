@@ -589,7 +589,6 @@ const TYPICAL_SUMMARY: ScheduleSummary = {
   countries: [],
   held_from: null,
   choices: { clients: [], countries: [], versions: [] },
-  slow: null,
   delinquent: [],
 };
 

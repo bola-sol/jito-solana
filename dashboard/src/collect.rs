@@ -1988,8 +1988,7 @@ impl Collector {
         let slot = bank.slot();
         let epoch = epoch_schedule.get_epoch(slot);
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
-        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-        let end_slot = start_slot.saturating_add(slots_in_epoch.saturating_sub(1));
+        let end_slot = epoch_schedule.get_last_slot_in_epoch(epoch);
 
         let me = self.ctx.identity();
         if self.epoch_published != Some((epoch, me, true)) {
@@ -2066,7 +2065,7 @@ impl Collector {
         EpochInfo {
             epoch,
             start_slot,
-            end_slot: start_slot.saturating_add(slots_in_epoch.saturating_sub(1)),
+            end_slot: schedule.get_last_slot_in_epoch(epoch),
             slots_in_epoch,
             my_leader_slots: Vec::new(),
             leaders,
@@ -2121,8 +2120,7 @@ impl Collector {
     fn leader_slots_in_epoch(&self, bank: &Bank, epoch: Epoch) -> Option<Vec<Slot>> {
         let epoch_schedule = bank.epoch_schedule();
         let start_slot = epoch_schedule.get_first_slot_in_epoch(epoch);
-        let end_slot =
-            start_slot.saturating_add(epoch_schedule.get_slots_in_epoch(epoch).saturating_sub(1));
+        let end_slot = epoch_schedule.get_last_slot_in_epoch(epoch);
 
         // `get_leader_upcoming_slots` yields an endlessly repeating schedule, so
         // the `take_while` is what bounds it to the epoch asked for.

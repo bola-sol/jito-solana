@@ -734,8 +734,7 @@ impl Collector {
         {
             let share = epoch.checked_sub(1).and_then(|previous| {
                 let first = schedule.get_first_slot_in_epoch(previous);
-                let last =
-                    first.saturating_add(schedule.get_slots_in_epoch(previous).saturating_sub(1));
+                let last = schedule.get_last_slot_in_epoch(previous);
                 skip_share(first, last, |slot| slot_history.check(slot))
             });
             self.previous_skips = Some((epoch, share));

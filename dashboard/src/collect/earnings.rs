@@ -106,22 +106,19 @@ fn rank_stakes(map: &BLSPubkeyToRankMap) -> impl Iterator<Item = u64> + '_ {
 
 /// Ranks in either reward certificate; `None` where one does not decode.
 fn paid_ranks(footer: &BlockFooterV1, len: usize) -> Option<Vec<bool>> {
-    let notar = match &footer.notar_reward_cert {
-        Some(cert) => Some(certs::decode_paid(cert.bitmap(), len)?),
-        None => None,
+    let mut paid = vec![false; len];
+    let mut mark = |ranks: Vec<bool>| {
+        for (flag, set) in paid.iter_mut().zip(ranks) {
+            *flag |= set;
+        }
     };
-    let skip = match &footer.skip_reward_cert {
-        Some(cert) => Some(certs::decode_paid(cert.to_bitmap(), len)?),
-        None => None,
-    };
-    let set = |ranks: Option<&[bool]>, rank: usize| {
-        ranks.is_some_and(|ranks| ranks.get(rank).copied().unwrap_or(false))
-    };
-    Some(
-        (0..len)
-            .map(|rank| set(notar.as_deref(), rank) || set(skip.as_deref(), rank))
-            .collect(),
-    )
+    if let Some(cert) = &footer.notar_reward_cert {
+        mark(certs::decode_paid(cert.bitmap(), len)?);
+    }
+    if let Some(cert) = &footer.skip_reward_cert {
+        mark(certs::decode_paid(cert.to_bitmap(), len)?);
+    }
+    Some(paid)
 }
 
 enum BlockRead {

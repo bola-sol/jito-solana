@@ -53,9 +53,7 @@ const NO_GOSSIP_AFTER_MILLIS: u64 = 5 * 60 * 1000;
 
 /// Unheard for five minutes, or absent from the table, as a staked node is two days after it stops.
 fn is_quiet(heard_millis: Option<u64>, now_millis: u64) -> bool {
-    heard_millis
-        .map(|at| now_millis.saturating_sub(at) > NO_GOSSIP_AFTER_MILLIS)
-        .unwrap_or(true)
+    heard_millis.is_none_or(|at| now_millis.saturating_sub(at) > NO_GOSSIP_AFTER_MILLIS)
 }
 
 /// Each staked validator's stalest vote, `None` where one of its accounts never voted.
@@ -561,21 +559,17 @@ impl Collector {
             .leader_schedule_cache
             .slot_leader_at(writer_slot, Some(bank))
             .map(|leader| leader.id);
-        let late = match (self.slots.get(slot), self.slots.get(writer_slot)) {
-            (Some(voted), Some(written)) => {
-                match (
-                    voted.time_millis,
-                    voted.replayed_millis,
-                    written.time_millis,
-                ) {
-                    (Some(arrived), Some(replayed), Some(writer_arrived)) => {
-                        arrived.saturating_add(replayed) > writer_arrived
-                    }
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
+        let replayed_at = self.slots.get(slot).and_then(|voted| {
+            let (arrived, replayed) = voted.time_millis.zip(voted.replayed_millis)?;
+            Some(arrived.saturating_add(replayed))
+        });
+        let writer_arrived = self
+            .slots
+            .get(writer_slot)
+            .and_then(|written| written.time_millis);
+        let late = replayed_at
+            .zip(writer_arrived)
+            .is_some_and(|(ours, theirs)| ours > theirs);
         certs::MissDetail { writer, late }
     }
 }

@@ -324,14 +324,6 @@ fn alert(ours: &Tally, away: &Tally) -> Option<Alert> {
     }
 }
 
-#[derive(Debug, Default)]
-struct PayerFees {
-    transactions: u64,
-    failed: u64,
-    priority: u64,
-    paid: u64,
-}
-
 #[derive(Debug)]
 struct PaidTransaction<'a> {
     transaction: &'a VersionedTransaction,
@@ -344,7 +336,7 @@ struct PaidTransaction<'a> {
 /// What one of our blocks' non-vote transactions paid, as they are read.
 #[derive(Debug, Default)]
 struct BlockPaid<'a> {
-    payers: HashMap<Pubkey, PayerFees>,
+    payers: HashMap<Pubkey, TopFeePayer>,
     transactions: Vec<PaidTransaction<'a>>,
 }
 
@@ -358,7 +350,13 @@ impl<'a> BlockPaid<'a> {
         base: u64,
     ) {
         let paid = base.saturating_add(priority);
-        let fees = self.payers.entry(payer).or_default();
+        let fees = self.payers.entry(payer).or_insert(TopFeePayer {
+            payer,
+            transactions: 0,
+            failed: 0,
+            priority: 0,
+            paid: 0,
+        });
         fees.transactions = fees.transactions.saturating_add(1);
         fees.failed = fees
             .failed
@@ -376,8 +374,8 @@ impl<'a> BlockPaid<'a> {
 
     fn top(mut self, slot: Slot) -> BlockFees {
         let payer_count = u64::try_from(self.payers.len()).unwrap_or(u64::MAX);
-        let mut payers: Vec<(Pubkey, PayerFees)> = self.payers.into_iter().collect();
-        payers.sort_unstable_by_key(|(_, fees)| Reverse(fees.paid));
+        let mut payers: Vec<TopFeePayer> = self.payers.into_values().collect();
+        payers.sort_unstable_by_key(|fees| Reverse(fees.paid));
         payers.truncate(TOP_IN_BLOCK);
         self.transactions
             .sort_unstable_by_key(|row| Reverse(row.paid));
@@ -385,16 +383,7 @@ impl<'a> BlockPaid<'a> {
         BlockFees {
             slot,
             payer_count,
-            payers: payers
-                .into_iter()
-                .map(|(payer, fees)| TopFeePayer {
-                    payer,
-                    transactions: fees.transactions,
-                    failed: fees.failed,
-                    priority: fees.priority,
-                    paid: fees.paid,
-                })
-                .collect(),
+            payers,
             transactions: self
                 .transactions
                 .into_iter()

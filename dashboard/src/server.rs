@@ -111,15 +111,17 @@ enum ConnectionError {
     Oversized(usize),
 }
 
-pub async fn serve(
-    listener: TcpListener,
-    publisher: Arc<Publisher>,
-    history: Arc<RwLock<SlotHistory>>,
-    info: Arc<RwLock<ValidatorInfoCache>>,
-    epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    replies: Arc<Replies>,
-    allowed_hosts: Arc<[String]>,
-) {
+/// What every connection is answered from.
+#[derive(Clone)]
+pub struct Handles {
+    pub publisher: Arc<Publisher>,
+    pub history: Arc<RwLock<SlotHistory>>,
+    pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
+    pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
+    pub replies: Arc<Replies>,
+}
+
+pub async fn serve(listener: TcpListener, handles: Handles, allowed_hosts: Arc<[String]>) {
     let limits = Limits::new();
     loop {
         let (socket, peer) = match listener.accept().await {
@@ -130,26 +132,11 @@ pub async fn serve(
                 continue;
             }
         };
-        let publisher = publisher.clone();
-        let history = history.clone();
-        let info = info.clone();
-        let epochs = epochs.clone();
-        let replies = replies.clone();
+        let handles = handles.clone();
         let limits = limits.clone();
         let allowed_hosts = allowed_hosts.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle(
-                socket,
-                publisher,
-                history,
-                info,
-                epochs,
-                replies,
-                limits,
-                &allowed_hosts,
-            )
-            .await
-            {
+            if let Err(err) = handle(socket, handles, limits, &allowed_hosts).await {
                 log::debug!("dashboard: connection from {peer} ended: {err}");
             }
         });
@@ -158,11 +145,7 @@ pub async fn serve(
 
 async fn handle(
     mut socket: TcpStream,
-    publisher: Arc<Publisher>,
-    history: Arc<RwLock<SlotHistory>>,
-    info: Arc<RwLock<ValidatorInfoCache>>,
-    epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    replies: Arc<Replies>,
+    handles: Handles,
     limits: Limits,
     allowed_hosts: &[String],
 ) -> Result<(), ConnectionError> {
@@ -203,7 +186,7 @@ async fn handle(
             return refuse(socket, head_len, 503, b"too many dashboard clients").await;
         };
         let path = request_path(&head).to_string();
-        serve_websocket(socket, publisher, history, info, epochs, replies, &path).await
+        serve_websocket(socket, handles, &path).await
     } else {
         // Closing with unread data sends RST rather than FIN, which truncates the response.
         let mut consumed = vec![0u8; head_len];
@@ -522,11 +505,7 @@ fn limit_unsent(_socket: &TcpStream) {}
 
 async fn serve_websocket(
     socket: TcpStream,
-    publisher: Arc<Publisher>,
-    history: Arc<RwLock<SlotHistory>>,
-    info: Arc<RwLock<ValidatorInfoCache>>,
-    epochs: Arc<RwLock<Vec<EpochInfo>>>,
-    replies: Arc<Replies>,
+    handles: Handles,
     path: &str,
 ) -> Result<(), ConnectionError> {
     limit_unsent(&socket);
@@ -561,8 +540,8 @@ async fn serve_websocket(
 
     // Subscribing before taking the snapshot means a value that changes between
     // the two arrives as an update instead of going missing.
-    let mut updates = publisher.subscribe();
-    let snapshot = publisher.snapshot();
+    let mut updates = handles.publisher.subscribe();
+    let snapshot = handles.publisher.snapshot();
 
     // soketto applies these to what it receives only, so a frame over the bound is refused from
     // its header, before its payload is read.
@@ -657,10 +636,8 @@ async fn serve_websocket(
             sleep(wait).await;
         }
         let reply = match search_request(&incoming) {
-            Some((scan, id, params)) => {
-                Some(answer_search(scan, id, params, &history, &info, &epochs, &replies).await)
-            }
-            None => respond(&incoming, &history, &info, &epochs, &replies),
+            Some((scan, id, params)) => Some(answer_search(scan, id, params, &handles).await),
+            None => respond(&incoming, &handles),
         };
         if let Some(reply) = reply {
             deflate_ahead(std::slice::from_ref(&reply), deflate).await;
@@ -797,10 +774,7 @@ async fn answer_search(
     scan: Scan,
     id: Option<u64>,
     params: Option<SearchParams>,
-    history: &Arc<RwLock<SlotHistory>>,
-    info: &Arc<RwLock<ValidatorInfoCache>>,
-    epochs: &Arc<RwLock<Vec<EpochInfo>>>,
-    replies: &Arc<Replies>,
+    handles: &Handles,
 ) -> Message {
     let key = scan.key();
     let Some(params) = params else {
@@ -814,12 +788,13 @@ async fn answer_search(
     let Ok(_permit) = SEARCHES.acquire().await else {
         return encode_with_id("slot", key, id, &());
     };
-    let (history, info, epochs, replies) = (
-        Arc::clone(history),
-        Arc::clone(info),
-        Arc::clone(epochs),
-        Arc::clone(replies),
-    );
+    let Handles {
+        history,
+        info_cache: info,
+        epochs,
+        replies,
+        ..
+    } = handles.clone();
     let found = spawn_blocking(move || {
         // Held for the scan; the collector writes the epoch records once an epoch.
         let epochs = epochs.read().ok()?;
@@ -853,19 +828,20 @@ async fn answer_search(
 }
 
 /// Even unknown requests get an answer, so no client waits on an id that never comes back.
-fn respond(
-    payload: &[u8],
-    history: &RwLock<SlotHistory>,
-    info: &RwLock<ValidatorInfoCache>,
-    epochs: &RwLock<Vec<EpochInfo>>,
-    replies: &Replies,
-) -> Option<Message> {
+fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
+    let Handles {
+        history,
+        info_cache,
+        epochs,
+        replies,
+        ..
+    } = handles;
     let request: Request = serde_json::from_slice(payload).ok()?;
     let id = request.id;
     match (request.topic.as_str(), request.key.as_str()) {
         ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
         ("summary", "displays") => {
-            let json = match info.read() {
+            let json = match info_cache.read() {
                 Ok(info) => info.displays_json(),
                 Err(_) => return Some(encode_with_id("summary", "displays", id, &())),
             };
@@ -1017,36 +993,14 @@ mod tests {
         std::io::Read,
     };
 
-    fn empty() -> RwLock<SlotHistory> {
-        RwLock::new(SlotHistory::new(16))
-    }
-
-    fn empty_history() -> Arc<RwLock<SlotHistory>> {
-        Arc::new(empty())
-    }
-
-    fn no_info() -> RwLock<ValidatorInfoCache> {
-        RwLock::new(ValidatorInfoCache::default())
-    }
-
-    fn no_info_shared() -> Arc<RwLock<ValidatorInfoCache>> {
-        Arc::new(no_info())
-    }
-
-    fn no_epochs() -> RwLock<Vec<EpochInfo>> {
-        RwLock::new(Vec::new())
-    }
-
-    fn no_epochs_shared() -> Arc<RwLock<Vec<EpochInfo>>> {
-        Arc::new(no_epochs())
-    }
-
-    fn no_replies() -> Replies {
-        Replies::default()
-    }
-
-    fn no_replies_shared() -> Arc<Replies> {
-        Arc::new(no_replies())
+    fn handles() -> Handles {
+        Handles {
+            publisher: Arc::new(Publisher::new()),
+            history: Arc::new(RwLock::new(SlotHistory::new(16))),
+            info_cache: Arc::default(),
+            epochs: Arc::default(),
+            replies: Arc::default(),
+        }
     }
 
     fn epoch_record(epoch: u64) -> EpochInfo {
@@ -1065,13 +1019,13 @@ mod tests {
 
     #[test]
     fn test_held_epoch_is_answered_with_its_arrays() {
-        let epochs = RwLock::new(vec![epoch_record(841), epoch_record(842)]);
+        let handles = Handles {
+            epochs: Arc::new(RwLock::new(vec![epoch_record(841), epoch_record(842)])),
+            ..handles()
+        };
         let reply = respond(
             br#"{"topic":"epoch","key":"query","id":11,"params":{"epoch":841}}"#,
-            &empty(),
-            &no_info(),
-            &epochs,
-            &no_replies(),
+            &handles,
         )
         .unwrap();
         assert!(reply.contains(r#""id":11"#), "{reply}");
@@ -1082,13 +1036,13 @@ mod tests {
     #[test]
     fn test_dropped_epoch_is_answered_with_nothing() {
         // A validator that has not been up that long has no schedule for it.
-        let epochs = RwLock::new(vec![epoch_record(842)]);
+        let handles = Handles {
+            epochs: Arc::new(RwLock::new(vec![epoch_record(842)])),
+            ..handles()
+        };
         let reply = respond(
             br#"{"topic":"epoch","key":"query","id":12,"params":{"epoch":700}}"#,
-            &empty(),
-            &no_info(),
-            &epochs,
-            &no_replies(),
+            &handles,
         )
         .unwrap();
         assert!(reply.contains(r#""id":12"#), "{reply}");
@@ -1098,8 +1052,8 @@ mod tests {
     #[test]
     fn test_the_display_table_carries_what_a_validator_calls_itself() {
         use crate::validator_info::ValidatorInfo;
-        let info = RwLock::new(ValidatorInfoCache::default());
-        info.write().unwrap().insert(
+        let handles = handles();
+        handles.info_cache.write().unwrap().insert(
             solana_pubkey::Pubkey::new_from_array([7; 32]),
             0,
             ValidatorInfo {
@@ -1108,14 +1062,7 @@ mod tests {
             },
         );
 
-        let reply = respond(
-            br#"{"topic":"summary","key":"displays","id":4}"#,
-            &empty(),
-            &info,
-            &no_epochs(),
-            &no_replies(),
-        )
-        .unwrap();
+        let reply = respond(br#"{"topic":"summary","key":"displays","id":4}"#, &handles).unwrap();
         assert!(reply.contains(r#""id":4"#), "{reply}");
         assert!(reply.contains(r#""Lantern""#), "{reply}");
         assert!(reply.contains(r#""https://l/i.png""#), "{reply}");
@@ -1124,30 +1071,23 @@ mod tests {
     #[test]
     fn test_unnamed_validator_takes_no_room() {
         use crate::validator_info::ValidatorInfo;
-        let info = RwLock::new(ValidatorInfoCache::default());
-        info.write().unwrap().insert(
+        let handles = handles();
+        handles.info_cache.write().unwrap().insert(
             solana_pubkey::Pubkey::new_from_array([9; 32]),
             0,
             ValidatorInfo::default(),
         );
 
-        let reply = respond(
-            br#"{"topic":"summary","key":"displays","id":5}"#,
-            &empty(),
-            &info,
-            &no_epochs(),
-            &no_replies(),
-        )
-        .unwrap();
+        let reply = respond(br#"{"topic":"summary","key":"displays","id":5}"#, &handles).unwrap();
         assert!(reply.contains(r#""keys":[]"#), "{reply}");
     }
 
     #[test]
     fn test_the_display_reply_is_what_encoding_the_table_gives() {
         use crate::validator_info::ValidatorInfo;
-        let info = RwLock::new(ValidatorInfoCache::default());
+        let handles = handles();
         {
-            let mut cache = info.write().unwrap();
+            let mut cache = handles.info_cache.write().unwrap();
             for (byte, name, icon) in [
                 (1u8, Some("Lantern"), Some("https://l/i.png")),
                 (2, Some("a \"quoted\" name"), None),
@@ -1171,22 +1111,23 @@ mod tests {
             ),
             (&br#"{"topic":"summary","key":"displays"}"#[..], None),
         ] {
-            let reply = respond(request, &empty(), &info, &no_epochs(), &no_replies()).unwrap();
-            let expected =
-                encode_with_id("summary", "displays", id, &info.read().unwrap().displays());
+            let reply = respond(request, &handles).unwrap();
+            let expected = encode_with_id(
+                "summary",
+                "displays",
+                id,
+                &handles.info_cache.read().unwrap().displays(),
+            );
             assert_eq!(reply.text(), expected.text());
         }
     }
 
     #[test]
     fn test_a_range_request_is_answered_with_its_own_id() {
-        let history = empty();
+        let handles = handles();
         let reply = respond(
             br#"{"topic":"slot","key":"range","id":9,"params":{"first_slot":4,"count":2}}"#,
-            &history,
-            &no_info(),
-            &no_epochs(),
-            &no_replies(),
+            &handles,
         )
         .unwrap();
         assert!(reply.contains(r#""id":9"#), "{reply}");
@@ -1196,7 +1137,7 @@ mod tests {
 
     #[test]
     fn test_a_bin_lists_the_leaders_whose_median_falls_in_it() {
-        let replies = no_replies();
+        let handles = handles();
         let leader = |name: &str, p50: i32| crate::collect::LeaderFigures {
             leader: name.to_string(),
             country: Some("DE"),
@@ -1206,7 +1147,7 @@ mod tests {
             p75: p50,
             late: false,
         };
-        *replies.handoff_leaders.write().unwrap() = vec![
+        *handles.replies.handoff_leaders.write().unwrap() = vec![
             leader("a", -5),
             leader("b", 42),
             leader("c", 47),
@@ -1216,10 +1157,7 @@ mod tests {
         let ask = |params: &str| {
             respond(
                 format!(r#"{{"topic":"handoff","key":"bin","id":3,"params":{params}}}"#).as_bytes(),
-                &empty(),
-                &no_info(),
-                &no_epochs(),
-                &replies,
+                &handles,
             )
             .unwrap()
         };
@@ -1237,9 +1175,10 @@ mod tests {
 
     #[test]
     fn test_figures_are_paged_newest_first() {
-        let replies = no_replies();
+        let handles = handles();
         for slot in [40, 41, 42] {
-            replies
+            handles
+                .replies
                 .produced
                 .write()
                 .unwrap()
@@ -1247,10 +1186,7 @@ mod tests {
         }
         let reply = respond(
             br#"{"topic":"produced","key":"figures","id":6,"params":{"before":42}}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
+            &handles,
         )
         .unwrap();
         assert!(reply.contains(r#""id":6"#), "{reply}");
@@ -1260,10 +1196,7 @@ mod tests {
 
         let newest = respond(
             br#"{"topic":"produced","key":"figures","id":7,"params":{}}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
+            &handles,
         )
         .unwrap();
         assert!(newest.contains(r#""figures":[[42,"#), "{newest}");
@@ -1271,18 +1204,16 @@ mod tests {
 
     #[test]
     fn test_detail_carries_the_blocks_asked_for() {
-        let replies = no_replies();
-        replies
+        let handles = handles();
+        handles
+            .replies
             .produced
             .write()
             .unwrap()
             .insert(crate::produced::sample_block(40));
         let reply = respond(
             br#"{"topic":"produced","key":"detail","id":2,"params":{"first":40,"last":40}}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
+            &handles,
         )
         .unwrap();
         assert!(reply.contains(r#""id":2"#), "{reply}");
@@ -1290,10 +1221,7 @@ mod tests {
 
         let bad = respond(
             br#"{"topic":"produced","key":"detail","id":3,"params":{"first":40}}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
+            &handles,
         )
         .unwrap();
         assert!(bad.contains("error"), "{bad}");
@@ -1303,10 +1231,7 @@ mod tests {
     fn test_bad_range_parameters_are_answered() {
         let reply = respond(
             br#"{"topic":"slot","key":"range","id":3,"params":{"first_slot":"soon"}}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &no_replies(),
+            &handles(),
         )
         .unwrap();
         assert!(reply.contains(r#""id":3"#), "{reply}");
@@ -1465,11 +1390,10 @@ mod tests {
                 let (socket, _) = listener.accept().await.unwrap();
                 handle(
                     socket,
-                    publisher,
-                    empty_history(),
-                    no_info_shared(),
-                    no_epochs_shared(),
-                    no_replies_shared(),
+                    Handles {
+                        publisher,
+                        ..handles()
+                    },
                     limits,
                     &allowed_hosts,
                 )
@@ -1494,11 +1418,10 @@ mod tests {
             let (socket, _) = listener.accept().await.unwrap();
             handle(
                 socket,
-                publisher,
-                empty_history(),
-                no_info_shared(),
-                no_epochs_shared(),
-                no_replies_shared(),
+                Handles {
+                    publisher,
+                    ..handles()
+                },
                 limits,
                 &allowed_hosts,
             )
@@ -1584,11 +1507,10 @@ mod tests {
                 let (socket, _) = listener.accept().await.unwrap();
                 handle(
                     socket,
-                    publisher,
-                    empty_history(),
-                    no_info_shared(),
-                    no_epochs_shared(),
-                    no_replies_shared(),
+                    Handles {
+                        publisher,
+                        ..handles()
+                    },
                     limits,
                     &allowed_hosts,
                 )
@@ -1722,16 +1644,7 @@ mod tests {
             br#"{"topic":"slot","key":"search","id":7,"params":{"query":"x","before":64}}"#,
         )
         .expect("a search");
-        let reply = answer_search(
-            scan,
-            id,
-            params,
-            &empty_history(),
-            &no_info_shared(),
-            &no_epochs_shared(),
-            &no_replies_shared(),
-        )
-        .await;
+        let reply = answer_search(scan, id, params, &handles()).await;
         assert!(reply.contains(r#""id":7"#), "{reply}");
         assert!(reply.contains(r#""turns":[]"#), "{reply}");
     }
@@ -1742,16 +1655,7 @@ mod tests {
             search_request(br#"{"topic":"slot","key":"search","id":8,"params":{"query":"x"}}"#)
                 .expect("a search");
         assert!(params.is_none());
-        let reply = answer_search(
-            scan,
-            id,
-            params,
-            &empty_history(),
-            &no_info_shared(),
-            &no_epochs_shared(),
-            &no_replies_shared(),
-        )
-        .await;
+        let reply = answer_search(scan, id, params, &handles()).await;
         assert!(
             reply.contains(r#""id":8"#) && reply.contains("error"),
             "{reply}"
@@ -1764,16 +1668,7 @@ mod tests {
             search_request(br#"{"topic":"slot","key":"future","id":13,"params":{"before":64}}"#)
                 .expect("turns to come");
         assert_eq!(scan, Scan::Future);
-        let reply = answer_search(
-            scan,
-            id,
-            params,
-            &empty_history(),
-            &no_info_shared(),
-            &no_epochs_shared(),
-            &no_replies_shared(),
-        )
-        .await;
+        let reply = answer_search(scan, id, params, &handles()).await;
         assert!(reply.contains(r#""id":13"#), "{reply}");
         assert!(reply.contains(r#""turns":[]"#), "{reply}");
     }
@@ -1785,16 +1680,7 @@ mod tests {
         )
         .expect("a summary");
         assert_eq!(scan, Scan::Summary);
-        let reply = answer_search(
-            scan,
-            id,
-            params,
-            &empty_history(),
-            &no_info_shared(),
-            &no_epochs_shared(),
-            &no_replies_shared(),
-        )
-        .await;
+        let reply = answer_search(scan, id, params, &handles()).await;
         assert!(reply.contains(r#""id":12"#), "{reply}");
         assert!(reply.contains(r#""clients":[]"#), "{reply}");
     }
@@ -1807,22 +1693,15 @@ mod tests {
 
     #[test]
     fn test_the_miss_list_is_answered_and_the_ask_remembered() {
-        let replies = no_replies();
-        let reply = respond(
-            br#"{"topic":"summary","key":"misses","id":9}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
-        )
-        .unwrap();
+        let handles = handles();
+        let reply = respond(br#"{"topic":"summary","key":"misses","id":9}"#, &handles).unwrap();
         assert!(reply.contains(r#""id":9"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
         assert!(
             !reply.contains("written"),
             "served on its own route: {reply}"
         );
-        let asked = replies.misses_wanted.load(Ordering::Relaxed);
+        let asked = handles.replies.misses_wanted.load(Ordering::Relaxed);
         assert!(
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"
@@ -1831,21 +1710,14 @@ mod tests {
 
     #[test]
     fn test_the_gossip_peers_are_answered_and_the_ask_remembered() {
-        let replies = no_replies();
-        let reply = respond(
-            br#"{"topic":"peers","key":"gossip","id":11}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
-        )
-        .unwrap();
+        let handles = handles();
+        let reply = respond(br#"{"topic":"peers","key":"gossip","id":11}"#, &handles).unwrap();
         assert!(reply.contains(r#""id":11"#), "{reply}");
         assert!(
             reply.contains(r#""value":null"#),
             "not gathered yet: {reply}"
         );
-        let asked = replies.gossip_peers_wanted.load(Ordering::Relaxed);
+        let asked = handles.replies.gossip_peers_wanted.load(Ordering::Relaxed);
         assert!(
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"
@@ -1854,9 +1726,9 @@ mod tests {
 
     #[test]
     fn test_every_leader_is_answered_with_what_a_turn_shows() {
-        let replies = no_replies();
+        let handles = handles();
         let identity = Pubkey::new_unique();
-        replies.leader_traits.write().unwrap().insert(
+        handles.replies.leader_traits.write().unwrap().insert(
             identity,
             LeaderTraits {
                 client: Some("Agave".to_string()),
@@ -1868,14 +1740,7 @@ mod tests {
                 last_vote: None,
             },
         );
-        let reply = respond(
-            br#"{"topic":"peers","key":"leaders","id":14}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
-        )
-        .unwrap();
+        let reply = respond(br#"{"topic":"peers","key":"leaders","id":14}"#, &handles).unwrap();
         assert!(reply.contains(r#""id":14"#), "{reply}");
         assert!(reply.contains(&identity.to_string()), "{reply}");
         for field in [
@@ -1891,21 +1756,17 @@ mod tests {
 
     #[test]
     fn test_the_cluster_charts_are_answered_and_the_ask_remembered() {
-        let replies = no_replies();
-        let reply = respond(
-            br#"{"topic":"cluster","key":"charts","id":12}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
-        )
-        .unwrap();
+        let handles = handles();
+        let reply = respond(br#"{"topic":"cluster","key":"charts","id":12}"#, &handles).unwrap();
         assert!(reply.contains(r#""id":12"#), "{reply}");
         assert!(
             reply.contains(r#""value":null"#),
             "not gathered yet: {reply}"
         );
-        let asked = replies.cluster_charts_wanted.load(Ordering::Relaxed);
+        let asked = handles
+            .replies
+            .cluster_charts_wanted
+            .load(Ordering::Relaxed);
         assert!(
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"
@@ -1914,38 +1775,22 @@ mod tests {
 
     #[test]
     fn test_cluster_charts_held_from_an_earlier_viewing_are_not_served() {
-        let replies = no_replies();
-        *replies.cluster_charts.write().unwrap() = Arc::from(r#"{"epoch":7}"#);
-        let ask = || {
-            respond(
-                br#"{"topic":"cluster","key":"charts","id":3}"#,
-                &empty(),
-                &no_info(),
-                &no_epochs(),
-                &replies,
-            )
-            .unwrap()
-        };
+        let handles = handles();
+        *handles.replies.cluster_charts.write().unwrap() = Arc::from(r#"{"epoch":7}"#);
+        let ask = || respond(br#"{"topic":"cluster","key":"charts","id":3}"#, &handles).unwrap();
         assert!(ask().contains(r#""value":null"#));
-        *replies.cluster_charts.write().unwrap() = Arc::from(r#"{"epoch":8}"#);
+        *handles.replies.cluster_charts.write().unwrap() = Arc::from(r#"{"epoch":8}"#);
         assert!(ask().contains(r#""value":{"epoch":8}"#));
     }
 
     #[test]
     fn test_the_written_list_is_answered_and_the_ask_remembered() {
-        let replies = no_replies();
-        let reply = respond(
-            br#"{"topic":"summary","key":"written","id":10}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &replies,
-        )
-        .unwrap();
+        let handles = handles();
+        let reply = respond(br#"{"topic":"summary","key":"written","id":10}"#, &handles).unwrap();
         assert!(reply.contains(r#""id":10"#), "{reply}");
         assert!(reply.contains(r#""certificates":0"#), "{reply}");
         assert!(reply.contains(r#""rows":[]"#), "{reply}");
-        let asked = replies.misses_wanted.load(Ordering::Relaxed);
+        let asked = handles.replies.misses_wanted.load(Ordering::Relaxed);
         assert!(
             timestamp().saturating_sub(asked) < 5_000,
             "asked at {asked}"
@@ -1970,42 +1815,19 @@ mod tests {
 
     #[test]
     fn test_ping_is_answered_with_its_id() {
-        let reply = respond(
-            br#"{"topic":"summary","key":"ping","id":7}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &no_replies(),
-        )
-        .unwrap();
+        let reply = respond(br#"{"topic":"summary","key":"ping","id":7}"#, &handles()).unwrap();
         assert!(reply.contains(r#""id":7"#));
     }
 
     #[test]
     fn test_unknown_requests_still_get_a_reply() {
-        let reply = respond(
-            br#"{"topic":"nope","key":"nope","id":1}"#,
-            &empty(),
-            &no_info(),
-            &no_epochs(),
-            &no_replies(),
-        )
-        .unwrap();
+        let reply = respond(br#"{"topic":"nope","key":"nope","id":1}"#, &handles()).unwrap();
         assert!(reply.contains("unsupported request"));
     }
 
     #[test]
     fn test_malformed_requests_are_ignored() {
-        assert!(
-            respond(
-                b"not json",
-                &empty(),
-                &no_info(),
-                &no_epochs(),
-                &no_replies()
-            )
-            .is_none()
-        );
+        assert!(respond(b"not json", &handles()).is_none());
     }
 
     #[test]
@@ -2118,11 +1940,10 @@ mod tests {
             let (socket, _) = listener.accept().await.unwrap();
             handle(
                 socket,
-                publisher,
-                empty_history(),
-                no_info_shared(),
-                no_epochs_shared(),
-                no_replies_shared(),
+                Handles {
+                    publisher,
+                    ..handles()
+                },
                 Limits::new(),
                 &allowed_hosts,
             )

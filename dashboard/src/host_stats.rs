@@ -196,10 +196,7 @@ pub fn read() -> io::Result<HostSnapshot> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn read() -> io::Result<HostSnapshot> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "host counters are only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// The first core's frequency governor; `None` where the kernel exposes no cpufreq, as on most
@@ -234,10 +231,7 @@ pub fn filesystem(path: &Path) -> io::Result<Filesystem> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn filesystem(_path: &Path) -> io::Result<Filesystem> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "filesystem capacity is only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// The process's resident memory, and how much of it is heap, mapped files and shared memory.
@@ -264,10 +258,7 @@ pub fn process_memory() -> io::Result<ProcessMemory> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn process_memory() -> io::Result<ProcessMemory> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "process memory is only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -300,10 +291,7 @@ pub fn filesystem_id(path: &Path) -> io::Result<u64> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn filesystem_id(_path: &Path) -> io::Result<u64> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "filesystem identity is only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// A partition is folded up to its disk, since they share a queue.
@@ -337,10 +325,7 @@ pub fn device_for(path: &Path) -> io::Result<Option<String>> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn device_for(_path: &Path) -> io::Result<Option<String>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "block devices are only available on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

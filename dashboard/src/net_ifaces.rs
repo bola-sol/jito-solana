@@ -65,10 +65,7 @@ pub fn read() -> io::Result<Vec<InterfaceReading>> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn read() -> io::Result<Vec<InterfaceReading>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "network interfaces are only read on Linux",
-    ))
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// Each interface but loopback, with its received and sent bytes.

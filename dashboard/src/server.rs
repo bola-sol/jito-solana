@@ -825,6 +825,22 @@ async fn answer_search(
 
 /// Even unknown requests get an answer, so no client waits on an id that never comes back.
 fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
+    let request: Request = serde_json::from_slice(payload).ok()?;
+    let (topic, key, id) = (request.topic.as_str(), request.key.as_str(), request.id);
+    let reply = answer(topic, key, id, request.params, handles).unwrap_or_else(|error| {
+        encode_with_id(topic, key, id, &serde_json::json!({ "error": error }))
+    });
+    Some(reply)
+}
+
+/// The reply, or what was wrong with the request.
+fn answer(
+    topic: &str,
+    key: &str,
+    id: Option<u64>,
+    params: serde_json::Value,
+    handles: &Handles,
+) -> Result<Message, &'static str> {
     let Handles {
         history,
         info_cache,
@@ -832,25 +848,23 @@ fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
         replies,
         ..
     } = handles;
-    let request: Request = serde_json::from_slice(payload).ok()?;
-    let id = request.id;
-    match (request.topic.as_str(), request.key.as_str()) {
-        ("summary", "ping") => Some(encode_with_id("summary", "ping", id, &())),
+    Ok(match (topic, key) {
+        ("summary", "ping") => encode_with_id("summary", "ping", id, &()),
         ("summary", "displays") => {
             let json = match info_cache.read() {
                 Ok(info) => info.displays_json(),
-                Err(_) => return Some(encode_with_id("summary", "displays", id, &())),
+                Err(_) => return Ok(encode_with_id("summary", "displays", id, &())),
             };
-            Some(encode_json_with_id("summary", "displays", id, &json))
+            encode_json_with_id("summary", "displays", id, &json)
         }
         ("summary", key @ ("misses" | "written")) => {
             replies.misses_wanted.store(timestamp(), Ordering::Relaxed);
             let json = match replies.misses.read() {
                 Ok(held) if key == "misses" => held.misses.clone(),
                 Ok(held) => held.written.clone(),
-                Err(_) => return Some(encode_with_id("summary", key, id, &())),
+                Err(_) => return Ok(encode_with_id("summary", key, id, &())),
             };
-            Some(encode_json_with_id("summary", key, id, &json))
+            encode_json_with_id("summary", key, id, &json)
         }
         ("peers", "gossip") => {
             replies
@@ -858,36 +872,25 @@ fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
                 .store(timestamp(), Ordering::Relaxed);
             let json = match replies.gossip_peers.read() {
                 Ok(peers) => peers.clone(),
-                Err(_) => return Some(encode_with_id("peers", "gossip", id, &())),
+                Err(_) => return Ok(encode_with_id("peers", "gossip", id, &())),
             };
-            Some(encode_json_with_id("peers", "gossip", id, &json))
+            encode_json_with_id("peers", "gossip", id, &json)
         }
         ("peers", "leaders") => {
             let Ok(leaders) = replies.leader_traits.read() else {
-                return Some(encode_with_id("peers", "leaders", id, &()));
+                return Ok(encode_with_id("peers", "leaders", id, &()));
             };
-            Some(encode_with_id(
-                "peers",
-                "leaders",
-                id,
-                &leader_rows(&leaders),
-            ))
+            encode_with_id("peers", "leaders", id, &leader_rows(&leaders))
         }
         ("cluster", "charts") => {
             let Some(json) = replies.ask_cluster_charts(timestamp()) else {
-                return Some(encode_with_id("cluster", "charts", id, &()));
+                return Ok(encode_with_id("cluster", "charts", id, &()));
             };
-            Some(encode_json_with_id("cluster", "charts", id, &json))
+            encode_json_with_id("cluster", "charts", id, &json)
         }
         ("epoch", "query") => {
-            let Ok(params) = serde_json::from_value::<EpochParams>(request.params) else {
-                return Some(encode_with_id(
-                    "epoch",
-                    "query",
-                    id,
-                    &serde_json::json!({ "error": "query needs an epoch" }),
-                ));
-            };
+            let params: EpochParams =
+                serde_json::from_value(params).map_err(|_| "query needs an epoch")?;
             let found = match epochs.read() {
                 Ok(epochs) => epochs
                     .iter()
@@ -895,62 +898,38 @@ fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
                     .cloned(),
                 Err(_) => None,
             };
-            Some(encode_with_id("epoch", "query", id, &found))
+            encode_with_id("epoch", "query", id, &found)
         }
         ("produced", "figures") => {
-            let Ok(params) = serde_json::from_value::<FiguresParams>(request.params) else {
-                return Some(encode_with_id(
-                    "produced",
-                    "figures",
-                    id,
-                    &serde_json::json!({ "error": "figures takes an optional before slot" }),
-                ));
-            };
+            let params: FiguresParams = serde_json::from_value(params)
+                .map_err(|_| "figures takes an optional before slot")?;
             let page = match replies.produced.read() {
                 Ok(store) => store.figures(params.before),
-                Err(_) => return Some(encode_with_id("produced", "figures", id, &())),
+                Err(_) => return Ok(encode_with_id("produced", "figures", id, &())),
             };
-            Some(encode_with_id("produced", "figures", id, &page))
+            encode_with_id("produced", "figures", id, &page)
         }
         ("produced", "detail") => {
-            let Ok(params) = serde_json::from_value::<DetailParams>(request.params) else {
-                return Some(encode_with_id(
-                    "produced",
-                    "detail",
-                    id,
-                    &serde_json::json!({ "error": "detail needs a first and a last slot" }),
-                ));
-            };
+            let params: DetailParams = serde_json::from_value(params)
+                .map_err(|_| "detail needs a first and a last slot")?;
             let detail = replies.produced_detail(params.first, params.last);
-            Some(encode_with_id("produced", "detail", id, &detail))
+            encode_with_id("produced", "detail", id, &detail)
         }
         ("handoff", "bin") => {
-            let Ok(params) = serde_json::from_value::<HandoffBinParams>(request.params) else {
-                return Some(encode_with_id(
-                    "handoff",
-                    "bin",
-                    id,
-                    &serde_json::json!({ "error": "bin takes an optional from and to" }),
-                ));
-            };
+            let params: HandoffBinParams =
+                serde_json::from_value(params).map_err(|_| "bin takes an optional from and to")?;
             let leaders = replies.handoff_leaders_between(params.from, params.to);
-            Some(encode_with_id("handoff", "bin", id, &leaders))
+            encode_with_id("handoff", "bin", id, &leaders)
         }
         ("slot", "range") => {
             // A client waiting on an id cannot tell silence from slowness.
-            let Ok(params) = serde_json::from_value::<SlotRangeParams>(request.params) else {
-                return Some(encode_with_id(
-                    "slot",
-                    "range",
-                    id,
-                    &serde_json::json!({ "error": "range needs a first_slot and a count" }),
-                ));
-            };
+            let params: SlotRangeParams = serde_json::from_value(params)
+                .map_err(|_| "range needs a first_slot and a count")?;
             let range = match history.read() {
                 Ok(history) => history.range(params.first_slot, params.count),
-                Err(_) => return Some(encode_with_id("slot", "range", id, &())),
+                Err(_) => return Ok(encode_with_id("slot", "range", id, &())),
             };
-            Some(encode_with_id("slot", "range", id, &range))
+            encode_with_id("slot", "range", id, &range)
         }
         (topic, key) => {
             log::debug!(
@@ -958,14 +937,9 @@ fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
                 for_logging(topic),
                 for_logging(key)
             );
-            Some(encode_with_id(
-                topic,
-                key,
-                id,
-                &serde_json::json!({ "error": "unsupported request" }),
-            ))
+            return Err("unsupported request");
         }
-    }
+    })
 }
 
 #[cfg(test)]

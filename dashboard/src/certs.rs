@@ -663,19 +663,13 @@ fn carried_fast(footer: &BlockFooterV1) -> Option<bool> {
 fn notarized_share(bank: &Bank, slot: Slot, bitmap: &[u8]) -> Option<u16> {
     let map = bank.get_rank_map(slot)?;
     let paid = decode_paid(bitmap, map.len())?;
-    let (mut total, mut notarized) = (0u64, 0u64);
-    for (rank, set) in paid.iter().enumerate() {
-        let stake = map
-            .get_pubkey_stake_entry(rank)
-            .map_or(0, |entry| entry.stake.get());
-        total = total.saturating_add(stake);
-        if *set {
-            notarized = notarized.saturating_add(stake);
-        }
-    }
+    let notarized = (0..map.len())
+        .filter(|rank| paid.get(*rank) == Some(&true))
+        .filter_map(|rank| map.get_pubkey_stake_entry(rank))
+        .fold(0u64, |sum, entry| sum.saturating_add(entry.stake.get()));
     let share = u128::from(notarized)
         .saturating_mul(10_000)
-        .checked_div(u128::from(total))?;
+        .checked_div(u128::from(map.total_stake().get()))?;
     u16::try_from(share).ok()
 }
 

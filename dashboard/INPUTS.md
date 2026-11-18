@@ -173,6 +173,8 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | `peers.leaders` | Each staked node's and scheduled leader's client, version, address, country and stake, for schedule rows the peer table no longer holds |
 | `produced.figures` | This epoch's blocks, and the previous epoch's until a fifth of this one has passed, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
 | `produced.detail` | Our blocks in a range of up to 64 slots, with their turns, waterfalls and costs; for a single slot, who paid the most in it |
+| `rewind.range` | With `--dashboard-history-dir`, the recorded segments' start, end and block count |
+| `rewind.read` | One recorded block of up to 768 KB: the messages the feed published, with when each went out. Two decoded at a time, on blocking threads. |
 | `cluster.charts` | The Cluster page: Transactions, CU Used, Slot Time, Notarized Stake and Fast Finalization in up to 120 bins from catching up to now, each at least three 20-slot runs wide, the epoch's skips, and stake by client and by country. Gathered on a page's first ask and every fifteen seconds while it keeps asking; charts held from an earlier viewing are not served. |
 
 ## The host

@@ -266,6 +266,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("dashboard_history_dir")
+            .long("dashboard-history-dir")
+            .value_name("DIR")
+            .takes_value(true)
+            .requires("dashboard_port")
+            .help(
+                "Record the dashboard's feed in this directory, about 0.6 GB for the two days \
+                 kept, so the page can rewind past the minutes it has held itself",
+            ),
+    )
+    .arg(
         Arg::with_name("private_rpc")
             .long("private-rpc")
             .takes_value(false)

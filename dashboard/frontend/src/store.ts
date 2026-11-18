@@ -1,6 +1,7 @@
 /** Everything the websocket has told us. Notifications are coalesced to at
  *  most one per `RENDER_INTERVAL_MS`, on an animation frame. */
 
+import type { BlockReply, RangeReply } from "./archive";
 import { leaderAt, NO_LEADER, type LeaderRef } from "./schedule";
 import type { SlotRange } from "./slotHistory";
 import type { ServerCondition } from "./scheduleConditions";
@@ -63,6 +64,8 @@ export interface Requests {
   "cluster.charts": { params: Record<string, never>; reply: ClusterCharts | null };
   "produced.figures": { params: { before?: number }; reply: FiguresPage | null };
   "produced.detail": { params: { first: number; last: number }; reply: ProducedDetail | null };
+  "rewind.range": { params: Record<string, never>; reply: RangeReply | null };
+  "rewind.read": { params: { segment: number; block: number }; reply: BlockReply | null };
 }
 
 /** Slots kept for the strip and the schedule. Matches the server's overview length. */

@@ -926,6 +926,58 @@ body {
   right: 0;
 }
 
+/* The left end's label, as the span chooser when the validator records the feed. */
+.rw-zoom {
+  top: 13px;
+}
+
+.rw-zoom select {
+  appearance: none;
+  height: 18px;
+  padding: 0 11px 0 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rw-zoom::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 1px;
+  width: 4px;
+  height: 4px;
+  border-right: 1px solid var(--text-faint);
+  border-bottom: 1px solid var(--text-faint);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.rw-zoom select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Nothing was recorded here: the validator was down or the recorder had stopped. */
+.rw-gap {
+  position: absolute;
+  top: 8px;
+  height: 4px;
+  min-width: 2px;
+  background: repeating-linear-gradient(90deg, var(--text-faint) 0 2px, var(--panel) 2px 4px);
+  pointer-events: none;
+}
+
+.rw-day {
+  color: var(--text-dim);
+}
+
+.rw-bar.is-loading .rw-range {
+  opacity: 0.55;
+}
+
 .rw-right {
   display: flex;
   align-items: center;
@@ -995,6 +1047,13 @@ body {
   }
 }
 
+/* A day beside the time leaves no room for the "ago", which the pill also shows. */
+@container header (width < 520px) {
+  .rw-when:has(.rw-day) .rw-ago {
+    display: none;
+  }
+}
+
 /* The pill carries the "ago" on a phone. */
 @container header (width < 420px) {
   .rw-bar {
@@ -1014,6 +1073,7 @@ body {
   }
 
   .rw-ago,
+  .rw-day,
   .rw-live-long,
   .rw-word-long {
     display: none;

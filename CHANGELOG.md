@@ -174,7 +174,8 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 * Added an optional web dashboard, served by the validator itself and enabled with `--dashboard-port`.
   It has no authentication and binds `127.0.0.1` unless `--dashboard-bind-address` says otherwise;
   `--dashboard-allowed-host` names the domains it answers to behind a reverse proxy. The host and
-  socket panels read `/proc` and appear on Linux only.
+  socket panels read `/proc` and appear on Linux only. `--dashboard-history-dir` records its feed
+  for two days so the page can rewind past what it has held itself.
 
 ## 4.3.0
 

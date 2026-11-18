@@ -364,6 +364,11 @@ impl Publisher {
         self.sender.subscribe()
     }
 
+    /// Counted as a join without subscribing, for a recorder opening a new segment.
+    pub fn note_join(&self) {
+        self.joined.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn joined(&self) -> u64 {
         self.joined.load(Ordering::Relaxed)
     }

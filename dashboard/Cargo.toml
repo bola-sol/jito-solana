@@ -60,6 +60,7 @@ solana-vote-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["compat"] }
+zstd = { workspace = true }
 
 [build-dependencies]
 flate2 = { workspace = true }

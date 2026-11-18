@@ -125,6 +125,36 @@ describe("play", () => {
     expect(rewind.at()).toBe(1_028_000);
   });
 
+  it("plays slower than live at a quarter", () => {
+    const rewind = new Rewind();
+    feed(rewind, 30);
+    rewind.seek(1_010_000);
+    rewind.setSpeed(0.25);
+    rewind.play();
+    vi.advanceTimersByTime(8_000);
+    expect(rewind.at()).toBe(1_012_000);
+    expect(newest(rewind, false)).toBe(12);
+    expect(rewind.getState().live).toBe(false);
+  });
+
+  it("carries on from the earliest moment held once the ring drops where it was", () => {
+    const rewind = new Rewind(new Ring(10_000, Number.POSITIVE_INFINITY, 1_000));
+    feed(rewind, 30);
+    rewind.seek(0);
+    rewind.setSpeed(0.25);
+    rewind.play();
+    feed(rewind, 20, 30);
+    const start = rewind.ring.start() ?? 0;
+    expect(rewind.at()).toBeGreaterThanOrEqual(start);
+    expect(rewind.at() - start).toBeLessThan(1_000);
+    expect(newest(rewind, false)).toBeGreaterThanOrEqual((start - 1_000_000) / 1_000);
+    expect(rewind.getState().live).toBe(false);
+    // It keeps playing at a quarter from there.
+    const carried = rewind.at();
+    vi.advanceTimersByTime(4_000);
+    expect(rewind.at()).toBe(carried + 1_000);
+  });
+
   it("runs behind live at one times", () => {
     const rewind = new Rewind();
     feed(rewind, 30);

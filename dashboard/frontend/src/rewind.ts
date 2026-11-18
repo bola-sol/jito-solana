@@ -5,7 +5,7 @@ import { Ring, type Cursor } from "./ring";
 import { Store } from "./store";
 import type { Envelope } from "./types";
 
-export const SPEEDS = [1, 4, 16] as const;
+export const SPEEDS = [0.25, 0.5, 1, 4, 16] as const;
 export type Speed = (typeof SPEEDS)[number];
 
 /** Playback this close to now drops back to live. */
@@ -131,10 +131,17 @@ export class Rewind {
   }
 
   private tick = (): void => {
-    const at = this.at();
+    let at = this.at();
     if (at >= Date.now() - CATCH_UP_MS) {
       this.goLive();
       return;
+    }
+    // Playback the ring has dropped from carries on from the earliest moment still held.
+    const start = this.ring.start();
+    if (start !== null && at < start) {
+      this.position = start;
+      this.playedAt = performance.now();
+      at = start;
     }
     this.cursor = this.cursor ? this.ring.advance(this.cursor, at, this.view) : this.ring.stateAt(at, this.view);
   };

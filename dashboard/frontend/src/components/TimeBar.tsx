@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement } from "react";
 import { clockTime, duration } from "../format";
-import { readMoment, SPEEDS, type Rewind } from "../rewind";
+import { readMoment, SPEEDS, type Rewind, type Speed } from "../rewind";
 import type { Page } from "../route";
 import { useWallClock } from "../useNow";
 import { useRewind, useRewindState } from "../useStore";
@@ -145,7 +145,6 @@ export function TimeBar({ page }: { page: Page }): ReactElement | null {
   const at = rewind.at();
   const start = rewind.ring.start() ?? at;
   const span = Math.max(0, now - start);
-  const nextSpeed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] ?? 1;
   const note = UNRECORDED[page];
 
   return (
@@ -160,14 +159,24 @@ export function TimeBar({ page }: { page: Page }): ReactElement | null {
         >
           {playing ? <PauseIcon /> : <PlayIcon />}
         </button>
-        <button
-          type="button"
-          className="rw-chip rw-speed"
-          title="Playback speed"
-          onClick={() => rewind.setSpeed(nextSpeed)}
-        >
-          {speed}×
-        </button>
+        <span className="rw-speed">
+          <select
+            className="rw-chip"
+            aria-label="Playback speed"
+            title="Playback speed"
+            value={speed}
+            onChange={(event) => {
+              const chosen = SPEEDS.find((option) => option === Number(event.target.value));
+              if (chosen !== undefined) rewind.setSpeed(chosen);
+            }}
+          >
+            {SPEEDS.map((option: Speed) => (
+              <option key={option} value={option}>
+                {option}×
+              </option>
+            ))}
+          </select>
+        </span>
         <button
           type="button"
           className="rw-step"

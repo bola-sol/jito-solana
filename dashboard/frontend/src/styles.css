@@ -734,6 +734,7 @@ body {
 
 .rw-pill:focus-visible,
 .rw-bar button:focus-visible,
+.rw-speed select:focus-visible,
 .rw-time:focus-visible,
 .rw-range:focus-visible {
   outline: 2px solid var(--accent);
@@ -817,9 +818,27 @@ body {
 }
 
 .rw-speed {
+  position: relative;
   flex: none;
-  min-width: 34px;
+}
+
+.rw-speed select {
+  appearance: none;
+  padding: 0 18px 0 7px;
   font-variant-numeric: tabular-nums;
+}
+
+.rw-speed::after {
+  content: "";
+  position: absolute;
+  top: 9px;
+  right: 7px;
+  width: 4px;
+  height: 4px;
+  border-right: 1px solid var(--text-faint);
+  border-bottom: 1px solid var(--text-faint);
+  transform: rotate(45deg);
+  pointer-events: none;
 }
 
 .rw-time {
@@ -983,7 +1002,15 @@ body {
   }
 
   .rw-when {
-    gap: 6px;
+    gap: 4px;
+  }
+
+  .rw-speed select {
+    padding: 0 12px 0 4px;
+  }
+
+  .rw-speed::after {
+    right: 4px;
   }
 
   .rw-ago,
@@ -995,7 +1022,7 @@ body {
   .rw-time {
     flex: 1;
     min-width: 0;
-    padding: 0 6px;
+    padding: 0 4px;
   }
 
   .rw-chip {

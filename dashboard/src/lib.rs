@@ -18,6 +18,7 @@ pub mod net_ifaces;
 pub mod net_stats;
 pub mod produced;
 pub mod proto;
+pub mod rewind_log;
 pub mod search;
 pub mod server;
 pub mod service;

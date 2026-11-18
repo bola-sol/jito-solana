@@ -151,10 +151,18 @@ or hands the untouched socket to soketto.
 The SPA lives in `frontend/`. Its `dist` directory is checked in so that a plain
 `cargo build` needs no Node toolchain.
 
-The page can pause, rewind up to fifteen minutes and play back from there, all
-in the browser: `ring.ts` keeps a copy of the store every thirty seconds and the
-messages since, per-slot ones whole and the rest thinned to about one a second.
-Nothing is recorded on the validator, so a page rewinds no further back than
+The page can pause, rewind and play back from there. In the browser, `ring.ts`
+keeps a copy of the store every thirty seconds and the messages since, per-slot
+ones whole and the rest thinned to about one a second, for fifteen minutes.
+With `--dashboard-history-dir <DIR>` the validator also records its feed there
+for two days: one file per ten minutes, each opening with the snapshot a joining
+page receives and going on with every message after it, packed into zstd blocks
+that `zstd -dc` reads. That is about 0.3 GB a day on mainnet, capped at 2 GiB,
+and the files are deleted as they age out; nothing else in the directory is
+touched. The recorder listens as a page does, so the work done only while
+somebody watches runs all the time. A page reaches further back than its own
+fifteen minutes by fetching the blocks it needs, and restarts show as gaps.
+Without the flag nothing is written and a page rewinds no further back than
 when it was opened. Replies to requests are not recorded, so the Slots block
 list, schedule searches, the Gossip peer table and certificate lists and the
 Cluster charts are not rewound.
@@ -207,14 +215,16 @@ validator or a condition on their slots or leaders, down or up from a given
 slot or time, `slot.summary` for the same matches summed up overall and by
 leader client, `slot.future` for a page of the epoch's turns to come whose
 leader and slot match, all three answered off the async threads and one at a
-time, and
+time,
 `peers.gossip` for every node in gossip, which the server gathers only while it
 is being asked for, `peers.leaders` for the client, version, address, country
 and stake of every staked node and scheduled leader, where `peers.all` holds
 only the leaders near the tip, `handoff.bin` for the settled leaders whose median handoff
 gap falls in a range, from the figures each ten-second handoff summary keeps,
-and `cluster.charts` for the Cluster page, gathered on the first ask and then
-every fifteen seconds only while it is being asked for.
+`cluster.charts` for the Cluster page, gathered on the first ask and then
+every fifteen seconds only while it is being asked for, `rewind.range` for the
+recorded segments, and `rewind.read` for one recorded block, decoded off the
+async threads and two at a time.
 
 A client that offers the `deflate` websocket subprotocol is sent every message
 of 512 bytes or more as a binary frame holding the zlib-deflated JSON, which the

@@ -104,6 +104,18 @@ export function clockTime(millis: number | null | undefined): string {
   return TIME.format(at);
 }
 
+/** The day, as "17 Nov", for a moment that is not today. */
+export function dayText(millis: number): string {
+  return DAY.format(new Date(millis));
+}
+
+/** "YYYY-MM-DD HH:MM:SS" in this browser's zone, the form the rewind time field reads back. */
+export function dateTimeText(millis: number): string {
+  const at = new Date(millis);
+  const two = (part: number) => String(part).padStart(2, "0");
+  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())}`;
+}
+
 export function blockStamp(millis: number | null | undefined): string {
   if (millis === null || millis === undefined) return "—";
   const at = new Date(millis);

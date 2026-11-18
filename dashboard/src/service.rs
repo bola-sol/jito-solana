@@ -13,6 +13,7 @@ use {
         meters::{METER_INTERVAL, Meters},
         metrics_tap::MetricsTap,
         proto::{Publisher, TOPIC_SUMMARY},
+        rewind_log::{Recorder, RewindLog, Settings},
         server,
         startup::{GossipReadyReceiver, StartupPublisher, gossip_stake},
         tips::TipMeter,
@@ -21,6 +22,7 @@ use {
     solana_core::validator::ValidatorStartProgress,
     solana_pubkey::Pubkey,
     solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationReceiver,
+    solana_time_utils::timestamp,
     std::{
         io,
         sync::{
@@ -61,6 +63,7 @@ pub struct DashboardService {
     collector: Option<JoinHandle<()>>,
     meters: Option<JoinHandle<()>>,
     info_loader: Option<JoinHandle<()>>,
+    recorder: Option<JoinHandle<()>>,
 }
 
 impl DashboardService {
@@ -90,6 +93,20 @@ impl DashboardService {
         });
         let attached = Arc::new(AtomicBool::new(false));
         let startup = Arc::new(std::sync::Mutex::new(StartupPublisher::default()));
+        // A directory that cannot be used costs the recording, not the validator.
+        let rewind = config
+            .history_dir
+            .as_ref()
+            .and_then(|dir| match RewindLog::open(dir) {
+                Ok(log) => {
+                    log::info!("dashboard: recording the feed to {}", dir.display());
+                    Some(Arc::new(log))
+                }
+                Err(err) => {
+                    log::error!("dashboard: not recording to {}: {err}", dir.display());
+                    None
+                }
+            });
 
         let runtime = Builder::new_multi_thread()
             .worker_threads(RUNTIME_THREADS)
@@ -112,6 +129,7 @@ impl DashboardService {
                 info_cache: info_cache.clone(),
                 epochs: epochs.clone(),
                 replies: replies.clone(),
+                rewind: rewind.clone(),
             };
             let exit = exit.clone();
             thread::Builder::new()
@@ -196,6 +214,25 @@ impl DashboardService {
                 })?
         };
 
+        // Started here so the boot is recorded too.
+        let recorder = match rewind {
+            Some(log) => {
+                let recorder = Recorder::new(
+                    log,
+                    publisher.clone(),
+                    Settings::default(),
+                    Box::new(timestamp),
+                );
+                let exit = exit.clone();
+                Some(
+                    thread::Builder::new()
+                        .name("solDashRec".to_string())
+                        .spawn(move || recorder.run(&exit))?,
+                )
+            }
+            None => None,
+        };
+
         Ok(Self {
             exit,
             attached,
@@ -215,6 +252,7 @@ impl DashboardService {
             collector: None,
             meters: None,
             info_loader: None,
+            recorder,
         })
     }
 
@@ -318,6 +356,7 @@ impl DashboardService {
             self.boot.take(),
             self.server.take(),
             self.info_loader.take(),
+            self.recorder.take(),
         ]
         .into_iter()
         .flatten()
@@ -350,6 +389,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             tip_payment_program_id: None,
             commission_bps: None,
+            history_dir: None,
         };
         let mut service = DashboardService::start(
             config,
@@ -362,6 +402,60 @@ mod tests {
 
         exit.store(true, Ordering::Relaxed);
         // Joined on a helper thread so a regression fails instead of hanging.
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || sender.send(service.join()));
+        receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the dashboard did not stop within ten seconds")
+            .unwrap();
+    }
+
+    fn config(history_dir: Option<std::path::PathBuf>) -> DashboardConfig {
+        DashboardConfig {
+            history_dir,
+            ..DashboardConfig::new("127.0.0.1:0".parse().unwrap())
+        }
+    }
+
+    #[test]
+    fn test_without_a_history_dir_nothing_records() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let service = DashboardService::start(
+            config(None),
+            Arc::new(RwLock::new(ValidatorStartProgress::Running)),
+            exit.clone(),
+            None,
+        )
+        .unwrap();
+        assert!(service.recorder.is_none());
+        assert_eq!(service.publisher.subscriber_count(), 0);
+        exit.store(true, Ordering::Relaxed);
+        service.join().unwrap();
+    }
+
+    #[test]
+    fn test_a_history_dir_is_recorded_into_and_the_recorder_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let exit = Arc::new(AtomicBool::new(false));
+        let service = DashboardService::start(
+            config(Some(dir.path().join("rewind"))),
+            Arc::new(RwLock::new(ValidatorStartProgress::Running)),
+            exit.clone(),
+            None,
+        )
+        .unwrap();
+        assert!(service.recorder.is_some());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let recorded = || {
+            std::fs::read_dir(dir.path().join("rewind"))
+                .map(|entries| entries.count() > 0)
+                .unwrap_or(false)
+        };
+        while !recorded() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(recorded());
+        exit.store(true, Ordering::Relaxed);
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || sender.send(service.join()));
         receiver

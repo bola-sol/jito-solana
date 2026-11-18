@@ -10,6 +10,7 @@ use {
             DEFLATE_PROTOCOL, Frame, Message, Publisher, Request, coalesce, encode_json_with_id,
             encode_with_id,
         },
+        rewind_log::{Block, RewindLog},
         search::{SearchParams, future, leader_rows, search, summarize},
         validator_info::ValidatorInfoCache,
     },
@@ -20,6 +21,7 @@ use {
     solana_clock::Slot,
     solana_time_utils::timestamp,
     std::{
+        fmt::Write as _,
         io,
         net::IpAddr,
         sync::{Arc, RwLock, atomic::Ordering},
@@ -44,6 +46,9 @@ const WEBSOCKET_PATH: &str = "/websocket";
 
 /// One search at a time across every connection, since each can read the whole history.
 static SEARCHES: Semaphore = Semaphore::const_new(1);
+
+/// Two recorded blocks decoded at a time across every connection.
+static READS: Semaphore = Semaphore::const_new(2);
 
 /// Long messages are deflated on the blocking pool, one at a time across every connection.
 static DEFLATES: Semaphore = Semaphore::const_new(1);
@@ -119,6 +124,8 @@ pub struct Handles {
     pub info_cache: Arc<RwLock<ValidatorInfoCache>>,
     pub epochs: Arc<RwLock<Vec<EpochInfo>>>,
     pub replies: Arc<Replies>,
+    /// Only when the feed is recorded.
+    pub rewind: Option<Arc<RewindLog>>,
 }
 
 pub async fn serve(listener: TcpListener, handles: Handles, allowed_hosts: Arc<[String]>) {
@@ -631,9 +638,12 @@ async fn serve_websocket(
         if !wait.is_zero() {
             sleep(wait).await;
         }
-        let reply = match search_request(&incoming) {
-            Some((scan, id, params)) => Some(answer_search(scan, id, params, &handles).await),
-            None => respond(&incoming, &handles),
+        let reply = if let Some((scan, id, params)) = search_request(&incoming) {
+            Some(answer_search(scan, id, params, &handles).await)
+        } else if let Some((id, params)) = read_request(&incoming) {
+            Some(answer_read(id, params, &handles).await)
+        } else {
+            respond(&incoming, &handles)
         };
         if let Some(reply) = reply {
             deflate_ahead(std::slice::from_ref(&reply), deflate).await;
@@ -823,6 +833,81 @@ async fn answer_search(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RewindReadParams {
+    segment: u64,
+    block: usize,
+}
+
+/// A request for a recorded block, with its parameters if they parse.
+fn read_request(payload: &[u8]) -> Option<(Option<u64>, Option<RewindReadParams>)> {
+    let request: Request = serde_json::from_slice(payload).ok()?;
+    ((request.topic.as_str(), request.key.as_str()) == ("rewind", "read"))
+        .then(|| (request.id, serde_json::from_value(request.params).ok()))
+}
+
+/// Read and decoded on the blocking pool, two at a time, so a stranger paging through the log
+/// holds up no other client's updates.
+async fn answer_read(
+    id: Option<u64>,
+    params: Option<RewindReadParams>,
+    handles: &Handles,
+) -> Message {
+    let Some(params) = params else {
+        return encode_with_id(
+            "rewind",
+            "read",
+            id,
+            &serde_json::json!({ "error": "read needs a segment and a block" }),
+        );
+    };
+    let Some(log) = handles.rewind.clone() else {
+        return encode_with_id("rewind", "read", id, &());
+    };
+    let Ok(_permit) = READS.acquire().await else {
+        return encode_with_id("rewind", "read", id, &());
+    };
+    let json = spawn_blocking(move || {
+        log.read(params.segment, params.block)
+            .map(|block| block_json(&block))
+    })
+    .await;
+    match json {
+        Ok(Some(json)) => encode_json_with_id("rewind", "read", id, &json),
+        _ => encode_with_id("rewind", "read", id, &()),
+    }
+}
+
+/// The recorded envelopes spliced in as they were published, without parsing them again.
+fn block_json(block: &Block) -> String {
+    let mut json = String::with_capacity(block.text.len().saturating_add(block.text.len() / 16));
+    let _ = write!(
+        json,
+        r#"{{"keyframe":{},"first":{},"last":{},"records":["#,
+        block.keyframe, block.first, block.last
+    );
+    let mut first = true;
+    for line in block.text.lines() {
+        let Some((at, envelope)) = line.split_once(' ') else {
+            continue;
+        };
+        if at.is_empty() || !at.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        if !first {
+            json.push(',');
+        }
+        first = false;
+        json.push('[');
+        json.push_str(at);
+        json.push(',');
+        json.push_str(envelope);
+        json.push(']');
+    }
+    json.push_str("]}");
+    json
+}
+
 /// Even unknown requests get an answer, so no client waits on an id that never comes back.
 fn respond(payload: &[u8], handles: &Handles) -> Option<Message> {
     let request: Request = serde_json::from_slice(payload).ok()?;
@@ -921,6 +1006,13 @@ fn answer(
             let leaders = replies.handoff_leaders_between(params.from, params.to);
             encode_with_id("handoff", "bin", id, &leaders)
         }
+        ("rewind", "range") => {
+            let reply = match &handles.rewind {
+                Some(log) => serde_json::json!({ "enabled": true, "segments": log.range() }),
+                None => serde_json::json!({ "enabled": false }),
+            };
+            encode_with_id("rewind", "range", id, &reply)
+        }
         ("slot", "range") => {
             // A client waiting on an id cannot tell silence from slowness.
             let params: SlotRangeParams = serde_json::from_value(params)
@@ -963,6 +1055,7 @@ mod tests {
             info_cache: Arc::default(),
             epochs: Arc::default(),
             replies: Arc::default(),
+            rewind: None,
         }
     }
 
@@ -2258,5 +2351,123 @@ mod tests {
         assert!(head.contains("vary: accept-encoding\r\n"), "{head}");
         assert!(head.contains(&format!("content-length: {}\r\n", body.len())));
         assert!(body == raw, "the page is not the entry document");
+    }
+
+    fn recorded() -> (tempfile::TempDir, Handles) {
+        use crate::rewind_log::{Recorder, Settings};
+        let dir = tempfile::tempdir().unwrap();
+        let log = Arc::new(RewindLog::open(dir.path()).unwrap());
+        let publisher = Arc::new(Publisher::new());
+        let mut recorder = Recorder::new(
+            log.clone(),
+            publisher.clone(),
+            Settings::default(),
+            Box::new(|| 5_000),
+        );
+        publisher.publish(TOPIC_SLOT, "cluster", &"testnet");
+        recorder.step();
+        publisher.publish_ephemeral(TOPIC_SLOT, "note", &"a b");
+        recorder.step();
+        recorder.close();
+        let handles = Handles {
+            publisher,
+            rewind: Some(log),
+            ..handles()
+        };
+        (dir, handles)
+    }
+
+    #[test]
+    fn test_the_rewind_range_says_when_nothing_is_recorded() {
+        let reply = respond(br#"{"topic":"rewind","key":"range","id":3}"#, &handles()).unwrap();
+        assert!(reply.contains(r#""value":{"enabled":false}"#), "{reply}");
+    }
+
+    #[test]
+    fn test_the_rewind_range_lists_segments_with_their_blocks() {
+        let (_dir, handles) = recorded();
+        let reply = respond(br#"{"topic":"rewind","key":"range","id":3}"#, &handles).unwrap();
+        assert!(
+            reply.contains(r#""value":{"enabled":true,"segments":[[5000,5000,2]]}"#),
+            "{reply}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_rewind_read_returns_the_records_as_published() {
+        let (_dir, handles) = recorded();
+        let (id, params) = read_request(
+            br#"{"topic":"rewind","key":"read","id":9,"params":{"segment":5000,"block":1}}"#,
+        )
+        .unwrap();
+        let reply = answer_read(id, params, &handles).await;
+        let parsed: serde_json::Value = serde_json::from_str(reply.text()).unwrap();
+        assert_eq!(parsed["id"], 9);
+        assert_eq!(parsed["value"]["keyframe"], false);
+        let records = parsed["value"]["records"].as_array().unwrap();
+        assert_eq!(records[0][0], 5000);
+        assert_eq!(records[0][1]["key"], "cluster");
+        assert_eq!(records[1][1]["value"], "a b");
+        let keyframe = answer_read(
+            Some(1),
+            Some(RewindReadParams {
+                segment: 5000,
+                block: 0,
+            }),
+            &handles,
+        )
+        .await;
+        assert!(keyframe.contains(r#""keyframe":true"#), "{keyframe}");
+    }
+
+    #[tokio::test]
+    async fn test_a_rewind_read_of_nothing_held_is_answered_with_null() {
+        let (_dir, held) = recorded();
+        for (segment, block) in [(5000, 7), (1, 0)] {
+            let reply =
+                answer_read(Some(4), Some(RewindReadParams { segment, block }), &held).await;
+            assert!(reply.contains(r#""value":null"#), "{reply}");
+        }
+        let unrecorded = answer_read(
+            Some(4),
+            Some(RewindReadParams {
+                segment: 5000,
+                block: 0,
+            }),
+            &handles(),
+        )
+        .await;
+        assert!(unrecorded.contains(r#""value":null"#), "{unrecorded}");
+        let (id, params) =
+            read_request(br#"{"topic":"rewind","key":"read","id":5,"params":{"segment":"x"}}"#)
+                .unwrap();
+        let refused = answer_read(id, params, &held).await;
+        assert!(
+            refused.contains("read needs a segment and a block"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn test_a_full_block_reply_stays_under_the_message_ceiling() {
+        let line = format!(
+            r#"{{"topic":"slot","key":"update","value":"{}"}}"#,
+            "x".repeat(300)
+        );
+        let mut text = String::new();
+        while text.len() < 768 * 1024 {
+            text.push_str("1700000000000 ");
+            text.push_str(&line);
+            text.push('\n');
+        }
+        let json = block_json(&Block {
+            keyframe: false,
+            first: 1,
+            last: 2,
+            text,
+        });
+        let reply = encode_json_with_id("rewind", "read", Some(1), &json);
+        assert!(reply.len() < crate::proto::MAX_MESSAGE, "{}", reply.len());
+        serde_json::from_str::<serde_json::Value>(reply.text()).unwrap();
     }
 }

@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement } from "react";
-import { clockTime, duration } from "../format";
+import { clockTime, dateTimeText, dayText, duration } from "../format";
 import { readMoment, SPEEDS, type Rewind, type Speed } from "../rewind";
+import { MINUTES_15, SECONDS_10, ZOOMS, zoomFor, zoomsFor } from "../zoom";
 import type { Page } from "../route";
 import { useWallClock } from "../useNow";
 import { useRewind, useRewindState } from "../useStore";
 import { PauseIcon, PlayIcon } from "./RewindIcons";
 
-const STEP_MS = 10_000;
-
-const JUMPS: { label: string; ms: number }[] = [
-  { label: "10 s", ms: 10_000 },
-  { label: "1 m", ms: 60_000 },
-  { label: "5 m", ms: 300_000 },
-  { label: "15 m", ms: 900_000 },
-];
+function sameDay(a: number, b: number): boolean {
+  return new Date(a).toDateString() === new Date(b).toDateString();
+}
 
 /** Pages drawn in part from replies the feed does not carry, which are not rewound. */
 const UNRECORDED: Partial<Record<Page, string>> = {
@@ -40,8 +36,8 @@ function TimeField({ rewind, at, now }: { rewind: Rewind; at: number; now: numbe
       return;
     }
     if (event.key !== "Enter" || typed === null) return;
-    const moment = readMoment(typed, now, (slot) => rewind.ring.slotArrival(slot));
-    const start = rewind.ring.start();
+    const moment = readMoment(typed, now, (slot) => rewind.slotArrival(slot));
+    const start = rewind.earliest();
     if (moment === null || start === null || moment < start || moment > now) {
       setWrong(true);
       return;
@@ -56,10 +52,10 @@ function TimeField({ rewind, at, now }: { rewind: Rewind; at: number; now: numbe
       className="rw-time"
       aria-label="Time or slot"
       aria-invalid={wrong}
-      title="A time of day or a slot number, then Enter."
+      title="A time, a date and time, or a slot number, then Enter."
       value={typed ?? clockTime(at)}
       onFocus={(event) => {
-        setTyped(clockTime(at));
+        setTyped(sameDay(at, now) ? clockTime(at) : dateTimeText(at));
         event.currentTarget.select();
       }}
       onBlur={() => {
@@ -75,8 +71,52 @@ function TimeField({ rewind, at, now }: { rewind: Rewind; at: number; now: numbe
   );
 }
 
-/** The slider over what the ring holds, seeking once a frame while dragged. */
-function Track({ rewind, at, start, now }: { rewind: Rewind; at: number; start: number; now: number }): ReactElement {
+/** The slider's span, chosen where the left end's label would be. */
+function ZoomSelect({
+  zooms,
+  zoom,
+  held,
+  onChange,
+}: {
+  zooms: { ms: number }[];
+  zoom: number;
+  held: number;
+  onChange: (ms: number) => void;
+}): ReactElement {
+  return (
+    <span className="rw-tick rw-zoom">
+      <select
+        aria-label="Slider span"
+        title="Slider span"
+        value={zoom}
+        onChange={(event) => onChange(Number(event.target.value))}
+      >
+        {zooms.map((option) => (
+          <option key={option.ms} value={option.ms}>
+            −{duration(Math.min(option.ms, held), 1)}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+/** The slider over the span shown, seeking once a frame while dragged; recording gaps are hatched. */
+function Track({
+  rewind,
+  at,
+  start,
+  now,
+  gaps,
+  zoomSelect,
+}: {
+  rewind: Rewind;
+  at: number;
+  start: number;
+  now: number;
+  gaps: [number, number][];
+  zoomSelect: ReactElement | null;
+}): ReactElement {
   const [dragged, setDragged] = useState<number | null>(null);
   const frame = useRef<number | null>(null);
   const wanted = useRef(0);
@@ -123,12 +163,16 @@ function Track({ rewind, at, start, now }: { rewind: Rewind; at: number; start: 
         onKeyUp={release}
         onBlur={release}
       />
-      {span >= 10_000 && (
-        <>
-          <span className="rw-tick">−{duration(span, 1)}</span>
-          <span className="rw-tick rw-tick-mid">−{duration(span / 2, 1)}</span>
-        </>
-      )}
+      {span > 0 &&
+        gaps
+          .filter(([from, to]) => to > start && from < now)
+          .map(([from, to]) => {
+            const left = ((Math.max(from, start) - start) / span) * 100;
+            const width = ((Math.min(to, now) - Math.max(from, start)) / span) * 100;
+            return <span key={from} className="rw-gap" style={{ left: `${left}%`, width: `${width}%` }} />;
+          })}
+      {zoomSelect ?? (span >= 10_000 && <span className="rw-tick">−{duration(span, 1)}</span>)}
+      {span >= 10_000 && <span className="rw-tick rw-tick-mid">−{duration(span / 2, 1)}</span>}
       <span className="rw-tick rw-tick-end">now</span>
     </div>
   );
@@ -137,18 +181,26 @@ function Track({ rewind, at, start, now }: { rewind: Rewind; at: number; start: 
 /** Shown only while the page is paused, rewound or playing. */
 export function TimeBar({ page }: { page: Page }): ReactElement | null {
   const rewind = useRewind();
-  const { live, playing, speed } = useRewindState();
+  const { live, playing, speed, loading } = useRewindState();
+  const [chosen, setChosen] = useState(ZOOMS[0]?.ms ?? MINUTES_15.ms);
   // A quarter second while playing keeps the time and slider moving; a second otherwise ages "ago".
   const now = useWallClock(!live, playing ? 250 : 1_000);
   if (live) return null;
 
   const at = rewind.at();
-  const start = rewind.ring.start() ?? at;
-  const span = Math.max(0, now - start);
+  const earliest = rewind.earliest() ?? at;
+  const held = Math.max(0, now - earliest);
+  const recorded = rewind.archive.isEnabled();
+  const zooms = recorded ? zoomsFor(held) : ZOOMS.slice(0, 1);
+  const zoom = zoomFor(zooms, chosen, now - at);
+  const zoomMs = zoom?.ms ?? MINUTES_15.ms;
+  const jumps = zoom?.jumps ?? [];
+  const step = jumps[0] ?? SECONDS_10;
+  const start = Math.max(earliest, now - zoomMs);
   const note = UNRECORDED[page];
 
   return (
-    <div className="rw-bar">
+    <div className={loading ? "rw-bar is-loading" : "rw-bar"} aria-busy={loading}>
       <div className="rw-when">
         <button
           type="button"
@@ -180,31 +232,41 @@ export function TimeBar({ page }: { page: Page }): ReactElement | null {
         <button
           type="button"
           className="rw-step"
-          aria-label="Back 10 seconds"
-          onClick={() => seekAndSettle(rewind, at - STEP_MS)}
+          aria-label={`Back ${step.spoken}`}
+          onClick={() => seekAndSettle(rewind, at - step.ms)}
         >
           ‹
         </button>
+        {!sameDay(at, now) && <span className="rw-day">{dayText(at)}</span>}
         <TimeField rewind={rewind} at={at} now={now} />
         <button
           type="button"
           className="rw-step"
-          aria-label="Forward 10 seconds"
-          onClick={() => seekAndSettle(rewind, at + STEP_MS)}
+          aria-label={`Forward ${step.spoken}`}
+          onClick={() => seekAndSettle(rewind, at + step.ms)}
         >
           ›
         </button>
-        <span className="rw-ago">{duration(Math.max(0, now - at), 2)} ago</span>
+        <span className="rw-ago">{loading ? "fetching" : `${duration(Math.max(0, now - at), 2)} ago`}</span>
       </div>
-      <Track rewind={rewind} at={at} start={start} now={now} />
+      <Track
+        rewind={rewind}
+        at={at}
+        start={start}
+        now={now}
+        gaps={recorded ? rewind.archive.gaps() : []}
+        zoomSelect={
+          zooms.length > 1 ? <ZoomSelect zooms={zooms} zoom={zoomMs} held={held} onChange={setChosen} /> : null
+        }
+      />
       <div className="rw-right">
         <div className="rw-chips">
-          {JUMPS.map((jump) => (
+          {jumps.map((jump) => (
             <button
               key={jump.label}
               type="button"
               className="rw-chip"
-              disabled={jump.ms > span}
+              disabled={jump.ms > held}
               onClick={() => seekAndSettle(rewind, Date.now() - jump.ms)}
             >
               {jump.label}

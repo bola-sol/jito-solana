@@ -19,7 +19,7 @@ const JUMPS: { label: string; ms: number }[] = [
 const UNRECORDED: Partial<Record<Page, string>> = {
   slots: "The block list is not rewound.",
   schedule: "Searches read the validator's present history.",
-  gossip: "The peer table is not recorded and holds its last reply.",
+  gossip: "The peer table and certificate lists are not recorded and hold their last reply.",
   cluster: "The cluster charts are not recorded and hold their last reply.",
 };
 

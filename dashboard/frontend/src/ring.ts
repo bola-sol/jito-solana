@@ -9,7 +9,7 @@ export const RING_SPAN_MS = 15 * 60_000;
 
 /** Characters of message text the entries may hold before the oldest segment goes. Keyframes are not
  *  counted, and the ring may run a segment over. */
-const RING_BUDGET_CHARS = 24_000_000;
+const RING_BUDGET_CHARS = 36_000_000;
 
 const SEGMENT_MS = 30_000;
 
@@ -35,27 +35,13 @@ const WHOLE = new Set([
   "epoch.new",
 ]);
 
-/** Kept once a second, so the strip's markers keep up with its bars. */
-const EVERY_SECOND = new Set([
-  "summary.completed_slot",
-  "summary.root_slot",
-  "summary.finalized_slot",
-  "summary.optimistically_confirmed_slot",
-  "summary.estimated_slot",
-  "summary.block_height",
-  "summary.vote_slot",
-  "summary.behind_cluster",
-  "summary.observed_slot_duration_nanos",
-  "summary.handoff_now",
-]);
-
-/** Everything else is kept once in this long. */
-const THINNED_MS = 10_000;
+/** Everything else is kept about once a second; a little under, so a key the server sends each second
+ *  keeps every copy despite jitter. */
+const THINNED_MS = 900;
 
 /** Milliseconds between kept copies of a key; 0 keeps every one. */
 export function keptEvery(name: string): number {
-  if (WHOLE.has(name)) return 0;
-  return EVERY_SECOND.has(name) ? 1_000 : THINNED_MS;
+  return WHOLE.has(name) ? 0 : THINNED_MS;
 }
 
 interface Entry {

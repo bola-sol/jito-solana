@@ -41,12 +41,12 @@ function feed(ring = new Ring()) {
 }
 
 describe("keptEvery", () => {
-  it("keeps what adds up whole, the slot markers each second and the rest each ten", () => {
+  it("keeps what adds up whole and the rest about each second", () => {
     expect(keptEvery("slot.update")).toBe(0);
     expect(keptEvery("summary.tps_sample")).toBe(0);
-    expect(keptEvery("summary.root_slot")).toBe(1_000);
-    expect(keptEvery("summary.host")).toBe(10_000);
-    expect(keptEvery("summary.never_heard_of")).toBe(10_000);
+    expect(keptEvery("summary.root_slot")).toBe(900);
+    expect(keptEvery("summary.vote_participation")).toBe(900);
+    expect(keptEvery("summary.never_heard_of")).toBe(900);
   });
 });
 
@@ -82,26 +82,45 @@ describe("stateAt", () => {
     const { ring, deliver } = feed();
     deliver(envelope("summary", "replay_rate", 1), 0);
     // Inside the interval, so held rather than kept.
-    deliver(envelope("summary", "replay_rate", 2), 3_000);
-    deliver(slot(5), 9_000);
+    deliver(envelope("summary", "replay_rate", 2), 300);
+    deliver(slot(5), 850);
     const before = new Store();
-    ring.stateAt(9_000, before);
+    ring.stateAt(850, before);
     expect(before.get("summary", "replay_rate")).toBe(1);
     // The next message past the interval writes the held copy.
-    deliver(slot(6), 10_500);
+    deliver(slot(6), 1_050);
     const after = new Store();
-    ring.stateAt(10_500, after);
+    ring.stateAt(1_050, after);
     expect(after.get("summary", "replay_rate")).toBe(2);
   });
 
   it("keeps the arriving copy when it is the message that crosses its own interval", () => {
     const { ring, deliver } = feed();
     deliver(envelope("summary", "replay_rate", 0), 0);
-    deliver(envelope("summary", "replay_rate", 5), 5_000);
-    deliver(envelope("summary", "replay_rate", 10), 10_000);
+    deliver(envelope("summary", "replay_rate", 5), 500);
+    deliver(envelope("summary", "replay_rate", 10), 1_000);
     const view = new Store();
-    ring.stateAt(10_000, view);
+    ring.stateAt(1_000, view);
     expect(view.get("summary", "replay_rate")).toBe(10);
+  });
+
+  it("keeps every copy of a key sent each second with jitter, at its arrival", () => {
+    const { ring, deliver } = feed(new Ring(60_000, Number.POSITIVE_INFINITY, 30_000));
+    const arrivals: number[] = [];
+    for (let i = 0; i < 40; i += 1) arrivals.push(i * 1_000 + (i % 3 === 0 ? 15 : i % 3 === 1 ? 0 : 8));
+    let next = 0;
+    for (let at = 0; at < 40_000; at += 100) {
+      while (next < arrivals.length && (arrivals[next] ?? Infinity) <= at) {
+        deliver(envelope("summary", "replay_rate", next), arrivals[next] ?? at);
+        next += 1;
+      }
+      deliver(slot(at / 100), at);
+    }
+    arrivals.forEach((arrival, i) => {
+      const view = new Store();
+      ring.stateAt(arrival, view);
+      expect(view.get("summary", "replay_rate")).toBe(i);
+    });
   });
 
   it("takes the exact keyframe on crossing a segment", () => {

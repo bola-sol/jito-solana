@@ -156,8 +156,8 @@ in the browser: `ring.ts` keeps a copy of the store every thirty seconds and the
 messages since, per-slot ones whole and the rest thinned to about one a second.
 Nothing is recorded on the validator, so a page rewinds no further back than
 when it was opened. Replies to requests are not recorded, so the Slots block
-list, schedule searches, the Gossip peer table and the Cluster charts are not
-rewound.
+list, schedule searches, the Gossip peer table and certificate lists and the
+Cluster charts are not rewound.
 
 [INPUTS.md](INPUTS.md) lists every validator input the dashboard reads and what
 each one feeds.

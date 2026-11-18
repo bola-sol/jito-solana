@@ -96,7 +96,7 @@ import { browse, BROWSE_TITLES, readSearch, suggest, valueText, withValue, type 
 import { heldText, ShareTools, SummaryHold, SummaryLine, SummaryTable, SyntaxSearch, ViewsMenu, type Pill } from "./ScheduleTools";
 import { DEFAULT_SUMMARY_SORT, nextSummarySort, type SummaryGroup, type SummarySort } from "../summaryTable";
 import type { LeaderRow, Peer, Reward, SlotEntry, TipRates } from "../types";
-import { useStore } from "../useStore";
+import { useRequests, useStore, useStoreInstance } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import { useNarrow } from "../narrow";
 import { delinquentTitle } from "../misses";
@@ -202,14 +202,16 @@ function nowRowOf(slot: number, producing: number | null): NowRow {
 /** The validator's list of every leader, asked for while the page is open and again on each new socket. */
 function useLeaderRows(): readonly LeaderRow[] {
   const store = useStore();
+  const requests = useRequests();
   const [rows, setRows] = useState<readonly LeaderRow[]>(NO_ROWS);
-  const open = store.getConnection() === "open";
+  // A past view holds the last rows.
+  const open = store.getConnection() === "open" && (store.isLive() || rows === NO_ROWS);
   useEffect(() => {
     if (!open) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
-      store.request("peers.leaders", {}).then(
+      requests.request("peers.leaders", {}).then(
         (got) => {
           if (!live) return;
           // Empty until the collector's first reading.
@@ -227,7 +229,7 @@ function useLeaderRows(): readonly LeaderRow[] {
       live = false;
       clearTimeout(timer);
     };
-  }, [store, open]);
+  }, [requests, open]);
   return rows;
 }
 
@@ -264,6 +266,7 @@ export function SchedulePage({
   onFilter,
 }: ScheduleFilter & { onFilter: (next: Partial<ScheduleFilter>) => void }): ReactElement {
   const store = useStore();
+  const requests = useRequests();
   const alpenglow = useAlpenglow();
   const list = useRef<HTMLDivElement>(null);
   const columnBar = useRef<HTMLDivElement>(null);
@@ -365,7 +368,7 @@ export function SchedulePage({
     try {
       // Aligned down to a turn boundary so a span never begins mid-turn.
       const first = Math.max(0, Math.floor((floor - SPAN_SLOTS) / SLOTS_PER_TURN) * SLOTS_PER_TURN);
-      const range = await store.request("slot.range", { first_slot: first, count: floor - first });
+      const range = await requests.request("slot.range", { first_slot: first, count: floor - first });
       if (started !== index.generation) return;
       // A span with nothing in it is older than the validator keeps.
       if (range.rows.every((row) => row === null)) {
@@ -375,14 +378,14 @@ export function SchedulePage({
       index.addHistory(first, range.rows);
       setFetched((was) => was + 1);
       // The far side of an epoch boundary needs the previous schedule to name its leaders.
-      if (epoch && first < epoch.start_slot) await store.loadEpoch(epoch.epoch - 1);
+      if (epoch && first < epoch.start_slot) await requests.loadEpoch(epoch.epoch - 1);
     } catch {
       failedAt.current = Date.now();
     } finally {
       busy.current = false;
       setLoading(false);
     }
-  }, [index, exhausted, store, epoch]);
+  }, [index, exhausted, requests, epoch]);
 
   // What the validator is asked, once typing pauses; the live window is matched here as typed.
   const freshAsk = useMemo(
@@ -403,8 +406,8 @@ export function SchedulePage({
 
   useEffect(() => {
     if (!searching) return;
-    void store.loadDisplays().catch(() => {});
-  }, [searching, store]);
+    void requests.loadDisplays().catch(() => {});
+  }, [searching, requests]);
 
   const [found, setFound] = useState<FoundTurns | null>(null);
   const [foundPages, setFoundPages] = useState(0);
@@ -418,7 +421,7 @@ export function SchedulePage({
       results.loading = true;
       setFoundPages((was) => was + 1);
       try {
-        const reply = await store.request("slot.search", {
+        const reply = await requests.request("slot.search", {
           ...scanParams(results.ask),
           before: results.next,
           forward: results.forward,
@@ -428,7 +431,7 @@ export function SchedulePage({
         results.add(reply.turns, reply.next, epoch, identity, reply.slow);
         // Turns from the previous epoch need its schedule to name their leaders.
         const oldest = reply.turns.at(results.forward ? 0 : -1)?.first_slot;
-        if (epoch && oldest !== undefined && oldest < epoch.start_slot) await store.loadEpoch(epoch.epoch - 1);
+        if (epoch && oldest !== undefined && oldest < epoch.start_slot) await requests.loadEpoch(epoch.epoch - 1);
       } catch {
         failedAt.current = Date.now();
       } finally {
@@ -436,7 +439,7 @@ export function SchedulePage({
         setFoundPages((was) => was + 1);
       }
     },
-    [store, epoch, identity],
+    [requests, epoch, identity],
   );
 
   // A new search starts below the live window's first turn, or where a jump lands, and reads down a
@@ -493,7 +496,7 @@ export function SchedulePage({
     let current = true;
     const read = (): void => {
       const top = ((index.numbers()[0] ?? 0) + 1) * SLOTS_PER_TURN;
-      store.request("slot.summary", { ...scanParams(asked.ask), before: top, slow: null }).then(
+      requests.request("slot.summary", { ...scanParams(asked.ask), before: top, slow: null }).then(
         (reply) => {
           if (!current) return;
           const read = asSummary(reply);
@@ -509,7 +512,7 @@ export function SchedulePage({
       current = false;
       clearInterval(timer);
     };
-  }, [asked.ask, hasLive, index, store]);
+  }, [asked.ask, hasLive, index, requests]);
   const held: Held | null = summary?.held_from ?? null;
   const summaryFiltered = asksAnything(asked.ask);
   // An epoch the validator does not hold whole yet: since when it does.
@@ -616,7 +619,7 @@ export function SchedulePage({
       if (Date.now() - futureFailedAt.current < RETRY_AFTER_MS) return false;
       held.loading = true;
       try {
-        const reply = await store.request("slot.future", {
+        const reply = await requests.request("slot.future", {
           ...scanParams(ask),
           ...NO_RANGE,
           ...held.window,
@@ -637,7 +640,7 @@ export function SchedulePage({
         setMatchedPages((was) => was + 1);
       }
     },
-    [store],
+    [requests],
   );
   const moreAhead = useCallback(() => {
     if (futureMode === "matches") {
@@ -835,7 +838,7 @@ export function SchedulePage({
       return;
     }
     if (!settled || liveTurn === null || !epoch) return;
-    const window = futureWindow(asked.ask.range, epoch.end_slot, completedSlot, estimatedNanos, Date.now());
+    const window = futureWindow(asked.ask.range, epoch.end_slot, completedSlot, estimatedNanos, store.now());
     if (!window) {
       setMatched(null);
       return;
@@ -877,7 +880,7 @@ export function SchedulePage({
     if (!turn) return null;
     const first = turn.slots.at(-1)?.slot ?? number * SLOTS_PER_TURN;
     const toCome = liveTurn !== null && number > liveTurn;
-    const now = Date.now();
+    const now = store.now();
     const expected =
       toCome && completedSlot !== undefined && estimatedNanos
         ? aboutClock(expectedAt(first, completedSlot, now, estimatedNanos), now)
@@ -1570,7 +1573,7 @@ function LiveEdge({
   completed: number | undefined;
   slotNanos: number | undefined;
 }) {
-  const now = Date.now();
+  const now = useStoreInstance().now();
   const until =
     nextLeader == null || completed === undefined || !slotNanos
       ? null
@@ -1615,7 +1618,7 @@ function EpochEnd({
   completed: number | undefined;
   slotNanos: number | undefined;
 }) {
-  const now = Date.now();
+  const now = useStoreInstance().now();
   const at = completed === undefined || !slotNanos ? null : expectedAt(last + 1, completed, now, slotNanos);
   return (
     <div className="schedule-epoch-end">

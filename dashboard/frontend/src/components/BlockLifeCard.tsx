@@ -14,7 +14,7 @@ import {
 import { useAlpenglow } from "../consensus";
 import { count, shortKey } from "../format";
 import type { BlockLifeStages } from "../types";
-import { useStore } from "../useStore";
+import { useRequests, useStore } from "../useStore";
 import { Explain, Fold, type FoldRule } from "./primitives";
 
 const PARTS: { part: LifePart; label: string }[] = [
@@ -94,6 +94,7 @@ function Axis() {
 
 export function BlockLifeCard(): ReactElement | null {
   const store = useStore();
+  const requests = useRequests();
   const alpenglow = useAlpenglow();
   const life = store.get("summary", "block_life");
   const epoch = store.get("epoch", "new");
@@ -101,8 +102,8 @@ export function BlockLifeCard(): ReactElement | null {
   // The slowest reach ten minutes back, so just after a boundary their leaders are last epoch's.
   const before = epoch !== undefined && earliest < epoch.start_slot ? epoch.epoch - 1 : null;
   useEffect(() => {
-    if (before !== null) void store.loadEpoch(before);
-  }, [store, before]);
+    if (before !== null) void requests.loadEpoch(before);
+  }, [requests, before]);
   if (!alpenglow || !life) return null;
 
   const { median } = life;

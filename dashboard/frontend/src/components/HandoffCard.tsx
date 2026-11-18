@@ -15,7 +15,7 @@ import {
   windowLabel,
 } from "../handoff";
 import type { HandoffBand, HandoffNow, HandoffSummary, HandoffTrend, LeaderFigures } from "../types";
-import { useStore } from "../useStore";
+import { useRequests, useStore } from "../useStore";
 import { Explain, Section } from "./primitives";
 
 type Tone = "plain" | "late" | "ours";
@@ -445,6 +445,7 @@ function Key() {
 
 export function HandoffCard(): ReactElement {
   const store = useStore();
+  const requests = useRequests();
   const summary = store.get("summary", "handoff") ?? null;
   const now = store.get("summary", "handoff_now") ?? null;
   const oursKey = store.get("summary", "identity_key") ?? null;
@@ -454,8 +455,8 @@ export function HandoffCard(): ReactElement {
   const named = summary !== null && summary.late.length > 0;
   // Late leaders are rarely in gossip's own names, so the cluster's table is fetched once.
   useEffect(() => {
-    if (named) void store.loadDisplays().catch(() => {});
-  }, [store, named]);
+    if (named) void requests.loadDisplays().catch(() => {});
+  }, [requests, named]);
 
   const nameOf = (key: string) => store.nameOf(key) ?? shortKey(key, 4, 4);
   const countryOf = (key: string) => store.countryOf(key);
@@ -483,7 +484,7 @@ export function HandoffCard(): ReactElement {
       return;
     }
     let live = true;
-    store
+    requests
       .request("handoff.bin", { from, to })
       .then((rows) => {
         if (live) setBinLeaders(rows ?? []);
@@ -492,7 +493,7 @@ export function HandoffCard(): ReactElement {
     return () => {
       live = false;
     };
-  }, [store, picked, from, to, summary]);
+  }, [requests, picked, from, to, summary]);
 
   const fold = (
     <>
@@ -514,7 +515,7 @@ export function HandoffCard(): ReactElement {
           <section className="card handoff-chart">
             <div className="card-head">
               <h3 className="card-title">
-                Gap Before Each Turn{summary ? `, ${windowLabel(summary.full, summary.since_millis, Date.now())}` : ""}
+                Gap Before Each Turn{summary ? `, ${windowLabel(summary.full, summary.since_millis, store.now())}` : ""}
               </h3>
               <span className="card-aside">{settled} leaders with 10+ handoffs</span>
             </div>

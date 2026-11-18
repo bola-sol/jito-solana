@@ -36,7 +36,11 @@ function isEnvelope(value: unknown): value is Envelope {
   );
 }
 
-export function connect(store: Store): () => void {
+/** `deliver` takes each frame and its length; by default the store applies it. */
+export function connect(
+  store: Store,
+  deliver: (envelope: Envelope, chars: number) => void = (envelope) => store.apply(envelope),
+): () => void {
   let socket: WebSocket | null = null;
   let retryMs = MIN_RETRY_MS;
   let timer: number | null = null;
@@ -82,7 +86,7 @@ export function connect(store: Store): () => void {
     socket = ws;
     lastMessageAt = Date.now();
 
-    const deliver = (text: string) => {
+    const receive = (text: string) => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(text);
@@ -92,7 +96,7 @@ export function connect(store: Store): () => void {
         return;
       }
       if (!isEnvelope(parsed)) return;
-      store.apply(parsed);
+      deliver(parsed, text.length);
     };
 
     // A deflated frame inflates on a promise, so every frame behind one waits
@@ -125,7 +129,7 @@ export function connect(store: Store): () => void {
       lastMessageAt = Date.now();
       const data: unknown = event.data;
       if (typeof data === "string" && queued === 0) {
-        deliver(data);
+        receive(data);
         return;
       }
       queued += 1;
@@ -137,7 +141,7 @@ export function connect(store: Store): () => void {
               : data instanceof ArrayBuffer
                 ? await inflate(data).catch(() => null)
                 : null;
-          if (ws === socket && text !== null) deliver(text);
+          if (ws === socket && text !== null) receive(text);
         })
         // A frame that fails is dropped rather than stalling the ones behind it.
         .catch(() => {})

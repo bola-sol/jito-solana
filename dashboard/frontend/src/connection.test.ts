@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { connect } from "./connection";
+import { Rewind } from "./rewind";
 import { Store } from "./store";
 
 class FakeSocket {
@@ -205,5 +206,27 @@ describe("the silence watchdog", () => {
     sockets()[0].onclose?.();
     expect(store.getConnection()).toBe("open");
     expect(latest()).toBe(replacement);
+  });
+});
+
+describe("recording", () => {
+  it("hands each frame and its length to the recorder, and a paused page keeps the watchdog fed", () => {
+    const rewind = new Rewind();
+    const seen: number[] = [];
+    connect(rewind.live, (envelope, chars) => {
+      seen.push(chars);
+      rewind.deliver(envelope, chars);
+    });
+    latest().accept();
+    rewind.pause();
+    for (let second = 0; second < 20; second += 1) {
+      vi.advanceTimersByTime(1_000);
+      latest().deliver("summary", "server_time_nanos", second);
+    }
+    expect(seen[0]).toBe(JSON.stringify({ topic: "summary", key: "server_time_nanos", value: 0 }).length);
+    expect(sockets()).toHaveLength(1);
+    expect(rewind.live.getConnection()).toBe("open");
+    expect(rewind.live.get("summary", "server_time_nanos")).toBe(19);
+    expect(rewind.view.get("summary", "server_time_nanos")).toBeUndefined();
   });
 });

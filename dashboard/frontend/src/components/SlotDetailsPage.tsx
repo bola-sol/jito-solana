@@ -33,7 +33,7 @@ import type {
   SlotWaterfall,
   TipRates,
 } from "../types";
-import { useStore } from "../useStore";
+import { useRequests, useStore } from "../useStore";
 import { useAlpenglow } from "../consensus";
 import {
   bundlesLabel,
@@ -77,6 +77,7 @@ export function SlotDetailsPage({
   onQuery: (query: string) => void;
 }): ReactElement {
   const store = useStore();
+  const requests = useRequests();
   const live = store.get("summary", "produced_blocks");
   const liveTurns = store.get("summary", "produced_turns");
   const floor = store.get("summary", "produced_floor");
@@ -96,17 +97,20 @@ export function SlotDetailsPage({
     if (connection !== "open") return;
     index.reset();
     void index.readAll(
-      (before) => store.request("produced.figures", before === undefined ? {} : { before }),
+      (before) => requests.request("produced.figures", before === undefined ? {} : { before }),
       () => setPages((was) => was + 1),
     );
     return () => index.reset();
-  }, [connection, index, store]);
+  }, [connection, index, requests]);
 
-  // Idempotent, so safe in a memo: the index only takes what differs.
+  // Idempotent, so safe in a memo: the index only takes what differs. A past view would put older copies
+  // over the history read, so the page stays as it was on pausing.
+  const isLive = store.isLive();
   useMemo(() => {
+    if (!isLive) return;
     if (floor !== undefined) index.setFloor(floor);
     index.mergeLive(live ?? [], liveTurns ?? []);
-  }, [index, floor, live, liveTurns]);
+  }, [index, floor, live, liveTurns, isLive]);
   const revision = index.revision;
 
   const heads = useMemo(() => [...index.heads.values()], [index, revision]);
@@ -282,20 +286,20 @@ export function SlotDetailsPage({
 
 /** One request per opened span; `undefined` while it is out, `null` if nothing came back. */
 function useDetail(first: number | null, last: number | null): ProducedDetail | null | undefined {
-  const store = useStore();
+  const requests = useRequests();
   const [answer, setAnswer] = useState<{ span: string; detail: ProducedDetail | null } | null>(null);
   const span = first === null || last === null ? null : `${first}-${last}`;
   useEffect(() => {
     if (first === null || last === null) return;
     let current = true;
-    store.request("produced.detail", { first, last }).then(
+    requests.request("produced.detail", { first, last }).then(
       (detail) => current && setAnswer({ span: `${first}-${last}`, detail }),
       () => current && setAnswer({ span: `${first}-${last}`, detail: null }),
     );
     return () => {
       current = false;
     };
-  }, [store, first, last]);
+  }, [requests, first, last]);
   return answer !== null && answer.span === span ? answer.detail : undefined;
 }
 

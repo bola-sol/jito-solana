@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type ReactElement } from "react";
+import type { CSSProperties, ReactNode, ReactElement } from "react";
 import { blockStamp, buildLabel, count, countryName, duration, LAMPORTS_PER_SOL, percent, shortKey, sol, solCompact } from "../format";
 import { toggleBalancesHidden, useBalancesHidden } from "../balances";
 import { toggleLogosHidden, useLogosHidden } from "../logo";
@@ -6,19 +6,22 @@ import { identityWarning, voteRunway, voteWarning, type BalanceWarning, type Vot
 import { noSeatLabel } from "../admission";
 import { bootTimes, type BootTimes } from "../startup";
 import { useAlpenglow } from "../consensus";
+import type { Page } from "../route";
 import { useStore } from "../useStore";
 import { BalancesToggle } from "./BalancesToggle";
 import { Copyable } from "./Copyable";
 import { FoldsToggle } from "./FoldsToggle";
 import { Logo } from "./Logo";
+import { LivePill } from "./LivePill";
 import { LogosToggle } from "./LogosToggle";
 import { Explain } from "./primitives";
 import { ThemeToggle } from "./ThemeToggle";
+import { TimeBar } from "./TimeBar";
 import { NodeVerdict } from "./Verdict";
 
 /** `folds` puts the open-all toggle beside the others, on the page whose panels it opens; `nav` ends
  *  the figures row. */
-export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): ReactElement {
+export function Header({ page, folds, nav }: { page: Page; folds: boolean; nav: ReactNode }): ReactElement {
   const store = useStore();
   const identity = store.get("summary", "identity_key");
   const voteKey = store.get("summary", "vote_key");
@@ -42,8 +45,6 @@ export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): Reac
   const version = store.get("summary", "version");
   const client = store.get("summary", "client");
   const shredVersion = store.get("summary", "shred_version");
-  const connection = store.getConnection();
-  const feedLag = store.getFeedLag();
 
   const identityName = store.get("summary", "identity_name");
   const name = identityName ?? "Private";
@@ -82,13 +83,15 @@ export function Header({ folds, nav }: { folds: boolean; nav: ReactNode }): Reac
           <Address />
         </span>
         <span className="who-right">
-          <Connection state={connection} lagMs={feedLag} />
+          <LivePill />
           {folds && <FoldsToggle />}
           <BalancesToggle hidden={balancesHidden} onToggle={toggleBalancesHidden} />
           <LogosToggle hidden={logosHidden} onToggle={toggleLogosHidden} />
           <ThemeToggle />
         </span>
       </div>
+
+      <TimeBar page={page} />
 
       <div className="figures-row">
         {identity ? (
@@ -409,67 +412,5 @@ function Boot({ boot }: { boot: BootTimes }) {
         </>
       )}
     </>
-  );
-}
-
-/** The nearest earlier sibling on the same line; in a stacked header it is not the previous one. */
-function lineBefore(element: Element): Element | null {
-  const box = element.getBoundingClientRect();
-  for (let sibling = element.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
-    const other = sibling.getBoundingClientRect();
-    if (other.top < box.bottom && other.bottom > box.top) return sibling;
-  }
-  return null;
-}
-
-/** Lag under this is delivery jitter, not worth a word. */
-const LAG_SHOWN_MS = 3_000;
-
-function Connection({ state, lagMs }: { state: string; lagMs: number | null }) {
-  const pillRef = useRef<HTMLDivElement>(null);
-  const pageRef = useRef<HTMLSpanElement>(null);
-  const pageWidth = useRef(0);
-  const [roomy, setRoomy] = useState(true);
-  const behind = state === "open" && lagMs !== null && lagMs >= LAG_SHOWN_MS;
-  const seconds = Math.round((lagMs ?? 0) / 1000);
-
-  // "page" is shown only where it fits on the pill's line.
-  useLayoutEffect(() => {
-    const right = pillRef.current?.parentElement;
-    const row = right?.parentElement;
-    if (!behind || !right || !row) return;
-    const before = lineBefore(right);
-    if (!before) return;
-    if (pageRef.current) pageWidth.current = pageRef.current.getBoundingClientRect().width;
-    const shown = pageRef.current ? 0 : pageWidth.current;
-    // A cut name counts at its full width, so "page" never cuts it.
-    const cut = row.querySelector(".who-name-text");
-    const hidden = cut ? cut.scrollWidth - cut.clientWidth : 0;
-    const start = before.getBoundingClientRect().right + hidden + parseFloat(getComputedStyle(row).columnGap);
-    const end = start + right.getBoundingClientRect().width + shown;
-    const rowEnd = row.getBoundingClientRect().right;
-    const next = end <= rowEnd;
-    if (next !== roomy) setRoomy(next);
-  });
-
-  const word = behind ? (
-    <span>
-      {roomy && <span ref={pageRef}>page </span>}
-      {seconds} s behind
-    </span>
-  ) : state === "open" ? (
-    "live"
-  ) : (
-    state
-  );
-  return (
-    <div
-      ref={pillRef}
-      className={`connection connection-${state}${behind ? " is-behind" : ""}`}
-      title={behind ? "Updates are reaching this page late." : `websocket ${state}`}
-    >
-      <span className="connection-dot" />
-      {word}
-    </div>
   );
 }

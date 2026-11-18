@@ -713,6 +713,297 @@ body {
   background: var(--warn);
 }
 
+/* ---- pause and rewind ---- */
+
+/* The live pill doubles as the pause button; lavender marks the page as past. */
+.rw-pill {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rw-pill:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.rw-pill:focus-visible,
+.rw-bar button:focus-visible,
+.rw-time:focus-visible,
+.rw-range:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rw-pill svg,
+.rw-bar svg {
+  display: block;
+}
+
+.rw-pill.is-past {
+  color: var(--lavender);
+  border-color: color-mix(in srgb, var(--lavender) 55%, var(--border));
+  background: color-mix(in srgb, var(--lavender) 12%, transparent);
+}
+
+/* Between the name row and the figures, only while the page is not live. */
+.rw-bar {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--lavender) 9%, var(--panel));
+  box-shadow: inset 0 2px 0 var(--lavender);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.rw-when {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.rw-step,
+.rw-chip,
+.rw-live {
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rw-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  padding: 0;
+}
+
+.rw-step:hover,
+.rw-chip:hover:not(:disabled),
+.rw-live:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.rw-play {
+  color: var(--lavender);
+  border-color: color-mix(in srgb, var(--lavender) 55%, var(--border));
+}
+
+.rw-chip {
+  padding: 0 7px;
+}
+
+.rw-chip:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.rw-speed {
+  flex: none;
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-time {
+  height: 24px;
+  width: 92px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-time[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+
+.rw-ago {
+  color: var(--lavender);
+}
+
+.rw-track {
+  position: relative;
+  height: 28px;
+}
+
+.rw-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 14px;
+  margin: 3px 0 0;
+  background: none;
+  cursor: pointer;
+}
+
+.rw-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--border) var(--rw-fill), color-mix(in srgb, var(--lavender) 45%, var(--border)) var(--rw-fill));
+}
+
+.rw-range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--border) var(--rw-fill), color-mix(in srgb, var(--lavender) 45%, var(--border)) var(--rw-fill));
+}
+
+.rw-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  background: var(--lavender);
+}
+
+.rw-range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  background: var(--lavender);
+}
+
+.rw-tick {
+  position: absolute;
+  top: 17px;
+  left: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-faint);
+}
+
+.rw-tick-mid {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.rw-tick-end {
+  left: auto;
+  right: 0;
+}
+
+.rw-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rw-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.rw-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  margin-left: 6px;
+  color: var(--text);
+  border-color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.rw-live .connection-dot {
+  background: var(--good);
+}
+
+.rw-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-faint);
+}
+
+@container header (width < 900px) {
+  .rw-bar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "when live"
+      "track track"
+      "chips chips";
+    padding: 8px 10px;
+  }
+
+  .rw-when {
+    grid-area: when;
+    min-width: 0;
+  }
+
+  .rw-track {
+    grid-area: track;
+  }
+
+  .rw-right {
+    display: contents;
+  }
+
+  .rw-chips {
+    grid-area: chips;
+  }
+
+  .rw-chips .rw-chip {
+    flex: 1;
+  }
+
+  .rw-live {
+    grid-area: live;
+    margin: 0;
+  }
+}
+
+/* The pill carries the "ago" on a phone. */
+@container header (width < 420px) {
+  .rw-bar {
+    column-gap: 8px;
+  }
+
+  .rw-when {
+    gap: 6px;
+  }
+
+  .rw-ago,
+  .rw-live-long,
+  .rw-word-long {
+    display: none;
+  }
+
+  .rw-time {
+    flex: 1;
+    min-width: 0;
+    padding: 0 6px;
+  }
+
+  .rw-chip {
+    padding: 0;
+    white-space: nowrap;
+  }
+}
+
 .banner {
   padding: 8px 12px;
   border-radius: var(--radius);

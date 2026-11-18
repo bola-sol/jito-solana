@@ -21,7 +21,7 @@ import {
   writerSummary,
 } from "../misses";
 import type { MissList, MissPlace, MissRow, MissValidator, MissWriter } from "../types";
-import { useStore } from "../useStore";
+import { useRequests, useStore } from "../useStore";
 import { Copyable } from "./Copyable";
 import { IpAddress } from "./IpAddress";
 import { WriterName } from "./WriterName";
@@ -29,6 +29,7 @@ import { WriterName } from "./WriterName";
 /** Explanations sit under the legend because a scrolling table clips bubbles. */
 export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement {
   const store = useStore();
+  const requests = useRequests();
   const participation = store.get("summary", "vote_participation");
   const [list, setList] = useState<MissList | null>(null);
   const [failed, setFailed] = useState(false);
@@ -58,7 +59,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
   const cancelReread = useRef(() => {});
   const read = useCallback(() => {
     setLoading(true);
-    store.request("summary.misses", {}).then(
+    requests.request("summary.misses", {}).then(
       (got) => {
         if (!live.current) return;
         setList(got);
@@ -71,7 +72,7 @@ export function MissesPanel({ onClose }: { onClose: () => void }): ReactElement 
         setLoading(false);
       },
     );
-  }, [store]);
+  }, [requests]);
   const load = useCallback(() => {
     cancelReread.current();
     cancelReread.current = readTwice(read);

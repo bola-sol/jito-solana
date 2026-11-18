@@ -3,6 +3,7 @@ import { count, duration } from "../format";
 import { aboutClock, expectedAt, nearestTurn, timeUntil } from "../future";
 import { SLOTS_PER_TURN } from "../schedule";
 import { useNarrow } from "../narrow";
+import { useStoreInstance } from "../useStore";
 
 const TILE_WIDTH = 170;
 const TILE_WIDTH_PHONE = 150;
@@ -52,6 +53,7 @@ export function TurnStrip({
   producing: number | null;
 }): ReactElement {
   const phone = useNarrow();
+  const clock = useStoreInstance();
   const step = (phone ? TILE_WIDTH_PHONE : TILE_WIDTH) + TILE_GAP;
   const row = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLButtonElement>(null);
@@ -112,7 +114,7 @@ export function TurnStrip({
   const position = first === last ? `${count(first + 1)} of ${count(total)}` : `${count(first + 1)}–${count(last + 1)} of ${count(total)}`;
   const drawFrom = Math.max(0, Math.floor(scrollLeft / step) - OVERSCAN);
   const drawTo = Math.min(total - 1, drawFrom + shown + OVERSCAN * 2);
-  const now = Date.now();
+  const now = clock.now();
   const gapText = (slots: number): string => {
     if (slots === 0) return "none";
     if (!slotNanos) return "—";

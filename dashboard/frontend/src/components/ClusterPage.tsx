@@ -148,7 +148,7 @@ function useFinalizedStall(): number | null {
   }, [finalized]);
   const now = useNow(1_000);
   const judged = stallJudged(
-    store.getConnection() === "open",
+    store.getConnection() === "open" && store.isLive(),
     store.getFeedLag(),
     store.get("summary", "behind_cluster"),
   );

@@ -17,7 +17,7 @@ import { GossipStakeCard } from "./components/GossipStakeCard";
 import { MissesPanel } from "./components/MissesPanel";
 import { SlotStrip } from "./components/SlotStrip";
 import { HOME, plainClick, routeAddress, useRoute, type Page } from "./route";
-import { useStore } from "./useStore";
+import { useRewindGeneration, useStore } from "./useStore";
 import { pageTitle } from "./title";
 
 export function App(): ReactElement {
@@ -28,6 +28,8 @@ export function App(): ReactElement {
   const cluster = store.get("summary", "cluster");
   const [route, go] = useRoute();
   const page = route.page;
+  // The schedule gathers turns as they pass, so a move back starts it afresh.
+  const generation = useRewindGeneration();
 
   useEffect(() => {
     document.title = pageTitle(name, identity, cluster);
@@ -43,6 +45,7 @@ export function App(): ReactElement {
     <div className={classes.join(" ")}>
       <main className="main">
         <Header
+          page={page}
           folds={page === "overview"}
           nav={<Nav page={page} onSelect={(next) => go({ ...HOME, page: next })} />}
         />
@@ -62,6 +65,7 @@ export function App(): ReactElement {
         )}
         {page === "schedule" && (
           <SchedulePage
+            key={generation}
             query={route.query}
             ours={route.ours}
             from={route.from}

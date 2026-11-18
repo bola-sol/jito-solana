@@ -12,8 +12,8 @@ export function usePolledRequest<R extends "peers.gossip" | "cluster.charts">(
 ): Requests[R]["reply"] {
   const store = useStore();
   const [reply, setReply] = useState<Requests[R]["reply"]>(null);
-  // Asked once the socket is open, and again on each new one.
-  const open = store.getConnection() === "open";
+  // Asked once the socket is open, and again on each new one. A past view holds the last reply.
+  const open = store.getConnection() === "open" && (store.isLive() || reply === null);
   useEffect(() => {
     if (!open) return;
     let live = true;

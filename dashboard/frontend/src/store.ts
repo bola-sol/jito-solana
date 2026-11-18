@@ -148,6 +148,12 @@ export class Store {
   /** Bumped whenever a leader could newly resolve, for memos over resolved
    *  leaders. */
   private leaderRevision = 0;
+  /** The live store a past view sends requests through and shares fetched tables with. */
+  private upstream: Store | null = null;
+  /** The past view following this store, told when a fetched table lands. */
+  private downstream: Store | null = null;
+  /** The moment a past view shows; null on the live store. */
+  private clock: (() => number) | null = null;
 
   private listeners = new Set<() => void>();
   private notifyPending = false;
@@ -171,7 +177,37 @@ export class Store {
   }
 
   getConnection(): ConnectionState {
-    return this.connection;
+    return this.upstream?.getConnection() ?? this.connection;
+  }
+
+  /** The moment the store shows: the wall clock when live. */
+  now = (): number => this.clock?.() ?? Date.now();
+
+  isLive(): boolean {
+    return this.clock === null;
+  }
+
+  /** Makes this store a past view of `live`, showing the moment `clock` returns. */
+  follow(live: Store, clock: () => number): void {
+    this.upstream = live;
+    this.clock = clock;
+    live.downstream = this;
+  }
+
+  /** Takes on `other`'s published state. Arrays are shared, as the store replaces them rather than
+   *  changing them. */
+  copyFrom(other: Store): void {
+    this.values = new Map(other.values);
+    this.slots = new Map(other.slots);
+    this.sorted = other.sorted;
+    this.tps = other.tps;
+    this.network = other.network;
+    this.threads = other.threads;
+    this.clockOffsets = other.clockOffsets;
+    this.clockOffset = other.clockOffset;
+    this.quickestOffset = other.quickestOffset;
+    this.feedLag = other.feedLag;
+    this.leadersChanged();
   }
 
   /** True once enough has arrived for the dashboard to be worth looking at. */
@@ -199,6 +235,8 @@ export class Store {
       for (const pending of inflight) pending.reject(new Error("connection lost"));
     }
     this.touch();
+    // The past view reports this connection, so it redraws with it.
+    this.downstream?.touch();
   }
 
   /** How to write to the current socket, installed by `connect`. */
@@ -212,6 +250,7 @@ export class Store {
     route: R,
     params: Requests[R]["params"],
   ): Promise<Requests[R]["reply"]> {
+    if (this.upstream) return this.upstream.request(route, params);
     const sender = this.sender;
     if (sender === null) return Promise.reject(new Error("not connected"));
 
@@ -235,12 +274,19 @@ export class Store {
 
   /** Fetches an epoch's schedule, once. Only the current one is pushed. */
   async loadEpoch(epoch: number): Promise<void> {
+    if (this.upstream) return this.upstream.loadEpoch(epoch);
     if (this.epochs.has(epoch)) return;
     const record = await this.request("epoch.query", { epoch });
     // Held even when nothing came back, so an epoch the validator has no
     // schedule for is asked about once rather than on every search.
     this.epochs.set(epoch, record ?? null);
-    if (record) this.leadersChanged();
+    if (record) this.tablesChanged();
+  }
+
+  /** A fetched table landed, which both this store and its past view resolve leaders from. */
+  private tablesChanged(): void {
+    this.leadersChanged();
+    this.downstream?.leadersChanged();
   }
 
   /** Every answer already given was given without whatever just arrived. */
@@ -263,7 +309,7 @@ export class Store {
     const key = this.leaderAtAny(slot);
     // The peer table first, being rebuilt every few seconds where the display table is fetched
     // once.
-    const shown = key === null ? undefined : (this.peersByIdentity().get(key) ?? this.displays.get(key));
+    const shown = key === null ? undefined : (this.peersByIdentity().get(key) ?? this.shared().displays.get(key));
     const leader: LeaderRef =
       key === null ? NO_LEADER : { key, name: shown?.name ?? null, icon: shown?.icon ?? null };
     this.leaderCache.set(slot, leader);
@@ -274,7 +320,7 @@ export class Store {
   private leaderAtAny(slot: number): string | null {
     const here = leaderAt(this.get("epoch", "new"), slot);
     if (here !== null) return here;
-    for (const past of this.epochs.values()) {
+    for (const past of this.shared().epochs.values()) {
       if (past === null) continue;
       const there = leaderAt(past, slot);
       if (there !== null) return there;
@@ -284,6 +330,7 @@ export class Store {
 
   /** Fetches the cluster's names and icons, once per session. */
   async loadDisplays(): Promise<void> {
+    if (this.upstream) return this.upstream.loadDisplays();
     if (this.displays.size > 0) return;
     const table = await this.request("summary.displays", {});
     const next = new Map<string, { name: string | null; icon: string | null }>();
@@ -291,7 +338,12 @@ export class Store {
       next.set(key, { name: table.names[index] ?? null, icon: table.icons[index] ?? null });
     });
     this.displays = next;
-    this.leadersChanged();
+    this.tablesChanged();
+  }
+
+  /** The store holding the fetched tables: the live one. */
+  private shared(): Store {
+    return this.upstream ?? this;
   }
 
   /** This validator, from the same three values the header is drawn from. */
@@ -311,7 +363,7 @@ export class Store {
   /** A validator's display name by identity, from the same sources as a slot's leader. */
   nameOf(key: string): string | null {
     if (key === this.get("summary", "identity_key")) return this.get("summary", "identity_name") ?? null;
-    return this.peersByIdentity().get(key)?.name ?? this.displays.get(key)?.name ?? null;
+    return this.peersByIdentity().get(key)?.name ?? this.shared().displays.get(key)?.name ?? null;
   }
 
   /** A validator's two-letter country, from the peer table. */
@@ -359,7 +411,8 @@ export class Store {
     return this.threads;
   }
 
-  apply(envelope: Envelope): void {
+  /** `at` is when the envelope arrived, which a replay passes from the recording. */
+  apply(envelope: Envelope, at = Date.now()): void {
     const { topic, key, value } = envelope;
 
     // Replies to our own requests carry an id and are not state; one nobody is waiting on, as after
@@ -384,9 +437,10 @@ export class Store {
       this.trimSlots();
     } else if (topic === "slot" && key === "update") {
       const entry = value as SlotEntry;
+      const added = !this.slots.has(entry.slot);
       this.slots.set(entry.slot, entry);
       this.sorted = null;
-      this.trimSlots();
+      if (added) this.trimSlots();
     } else if (topic === "summary" && key === "network_history") {
       if (!Array.isArray(value)) return;
       this.network = (value as NetworkSample[]).slice(-MAX_TPS_SAMPLES);
@@ -429,7 +483,7 @@ export class Store {
     } else {
       const serverTime = topic === "summary" && key === "server_time_nanos";
       if (serverTime && typeof value === "number") {
-        const offset = Date.now() - value / 1e6;
+        const offset = at - value / 1e6;
         this.clockOffsets = [...this.clockOffsets, offset].slice(-CLOCK_READINGS);
         this.clockOffset = Math.min(...this.clockOffsets);
         this.quickestOffset =
@@ -456,6 +510,11 @@ export class Store {
   }
 
   private touch(): void {
+    // Unwatched, as a keyframe or a view not shown: the next reader takes the new revision.
+    if (this.listeners.size === 0) {
+      this.revision += 1;
+      return;
+    }
     if (this.notifyPending) return;
     this.notifyPending = true;
     const notify = () =>

@@ -113,8 +113,8 @@ function usePolled<R extends "summary.written" | "summary.misses">(
   const [value, setValue] = useState<Requests[R]["reply"] | null>(null);
   const [failed, setFailed] = useState(false);
   const live = useRef(true);
-  // Asked once the socket is open, and again on each new one.
-  const open = store.getConnection() === "open";
+  // Asked once the socket is open, and again on each new one. A past view holds the last reply.
+  const open = store.getConnection() === "open" && (store.isLive() || value === null);
 
   useEffect(() => {
     if (!open) return;

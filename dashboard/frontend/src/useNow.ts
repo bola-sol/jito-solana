@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useStore } from "./useStore";
+import { useStore, useStoreInstance } from "./useStore";
 
 /** How far behind live the charts draw: two of `METER_INTERVAL` in `dashboard/src/meters.rs`, one
  *  for the sample and one for its delivery. */
@@ -14,14 +14,29 @@ export function useChartEdge(): number {
   return chartEdge(useNow(), store.getClockOffset());
 }
 
+/** The moment the page shows: the wall clock when live, the rewound time otherwise. */
 export function useNow(intervalMs = 100): number {
-  const [now, setNow] = useState(() => Date.now());
+  const store = useStoreInstance();
+  const [now, setNow] = useState(store.now);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    setNow(store.now());
+    const timer = window.setInterval(() => setNow(store.now()), intervalMs);
     return () => window.clearInterval(timer);
-  }, [intervalMs]);
+  }, [store, intervalMs]);
 
+  return now;
+}
+
+/** The wall clock, read every `everyMs` while `on`, for what is shown against now while the page is past. */
+export function useWallClock(on: boolean, everyMs = 1_000): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(timer);
+  }, [on, everyMs]);
   return now;
 }
 

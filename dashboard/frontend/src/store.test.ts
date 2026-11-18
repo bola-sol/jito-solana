@@ -487,3 +487,25 @@ describe("isReady", () => {
     expect(store.isReady()).toBe(true);
   });
 });
+
+describe("copyFrom", () => {
+  it("takes the other store's state and leaves it alone afterwards", () => {
+    const source = new Store();
+    source.apply(envelope("summary", "cluster", "testnet"));
+    source.apply(envelope("slot", "update", slot(1)));
+    const copy = new Store();
+    copy.copyFrom(source);
+    copy.apply(envelope("slot", "update", slot(2)));
+    copy.apply(envelope("summary", "cluster", "mainnet-beta"));
+    expect(source.getSlots().map((entry) => entry.slot)).toEqual([1]);
+    expect(source.get("summary", "cluster")).toBe("testnet");
+    expect(copy.getSlots().map((entry) => entry.slot)).toEqual([1, 2]);
+  });
+
+  it("moves the revision for a reader even with nobody subscribed", () => {
+    const store = new Store();
+    const before = store.getRevision();
+    store.apply(envelope("summary", "cluster", "testnet"));
+    expect(store.getRevision()).toBeGreaterThan(before);
+  });
+});

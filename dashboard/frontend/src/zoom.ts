@@ -39,7 +39,8 @@ export function zoomsFor(held: number): Zoom[] {
   return offered.length > 0 ? offered : ZOOMS.slice(0, 1);
 }
 
-/** The span chosen, widened when the moment shown lies before it. */
-export function zoomFor(zooms: Zoom[], chosen: number, back: number): Zoom | undefined {
-  return zooms.find((option) => option.ms >= chosen && option.ms >= back) ?? zooms[zooms.length - 1] ?? ZOOMS[0];
+/** The span chosen, or the widest offered when none is, widened when the moment shown lies before it. */
+export function zoomFor(zooms: Zoom[], chosen: number | null, back: number): Zoom | undefined {
+  const wanted = chosen ?? Number.POSITIVE_INFINITY;
+  return zooms.find((option) => option.ms >= wanted && option.ms >= back) ?? zooms[zooms.length - 1] ?? ZOOMS[0];
 }

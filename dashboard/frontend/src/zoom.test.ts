@@ -21,6 +21,12 @@ describe("zoom", () => {
     expect(zoomFor(zooms, 6 * HOUR, 5 * MINUTE)?.ms).toBe(6 * HOUR);
   });
 
+  it("spans everything held until a span is chosen", () => {
+    expect(zoomFor(zoomsFor(5 * MINUTE), null, 0)?.ms).toBe(15 * MINUTE);
+    expect(zoomFor(zoomsFor(2 * HOUR), null, 0)?.ms).toBe(6 * HOUR);
+    expect(zoomFor(zoomsFor(50 * HOUR), null, 0)?.ms).toBe(48 * HOUR);
+  });
+
   it("steps by each span's smallest jump", () => {
     expect(ZOOMS.map((zoom) => zoom.jumps[0]?.spoken)).toEqual(["10 seconds", "1 minute", "15 minutes", "1 hour"]);
   });

@@ -182,7 +182,8 @@ function Track({
 export function TimeBar({ page }: { page: Page }): ReactElement | null {
   const rewind = useRewind();
   const { live, playing, speed, loading } = useRewindState();
-  const [chosen, setChosen] = useState(ZOOMS[0]?.ms ?? MINUTES_15.ms);
+  // Null until a span is picked: the widest offered, so the slider covers all that is held.
+  const [chosen, setChosen] = useState<number | null>(null);
   // A quarter second while playing keeps the time and slider moving; a second otherwise ages "ago".
   const now = useWallClock(!live, playing ? 250 : 1_000);
   if (live) return null;

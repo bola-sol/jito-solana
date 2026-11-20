@@ -6,7 +6,7 @@
 
 use {
     crate::certs::VoteSent,
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_clock::{Epoch, Slot},
     solana_metrics::datapoint::DataPoint,
     solana_pubkey::Pubkey,
@@ -294,7 +294,7 @@ pub struct MetricsTap {
 }
 
 /// Where one of our leader slots' time went, merged from the reports that each carry part of it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeaderTiming {
     /// Under alpenglow, from trying to start the slot to its bank existing, any wait for the
     /// parent's replay included.
@@ -349,7 +349,7 @@ pub struct XdpConfig {
     pub kernel_version: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlotWaterfall {
     pub slot: Slot,
     pub source: SchedulerSource,
@@ -357,7 +357,7 @@ pub struct SlotWaterfall {
     pub counts: SchedulerTotals,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlotCost {
     pub slot: Slot,
     pub costliest_account: String,
@@ -416,6 +416,16 @@ impl<T: Clone> HeldSlots<T> {
         true
     }
 
+    /// Read back after a restart: kept where nothing is held, not marked changed.
+    fn restore(&mut self, values: impl IntoIterator<Item = (Slot, T)>) {
+        for (slot, value) in values {
+            if slot >= self.floor {
+                self.held.entry(slot).or_insert(value);
+            }
+        }
+        keep_newest(&mut self.held, MAX_HELD_SLOTS);
+    }
+
     fn recent(&self, count: usize) -> Vec<T> {
         let mut recent: Vec<T> = self.held.values().rev().take(count).cloned().collect();
         recent.reverse();
@@ -463,7 +473,7 @@ struct ClosedBlocks {
     waiting: BTreeMap<Slot, u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct StageTimes {
     pub cost_model: u64,
     pub load_execute: u64,
@@ -558,7 +568,7 @@ impl ReplaySlotTimes {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SchedulerSource {
     #[default]
@@ -595,7 +605,7 @@ macro_rules! counter_totals {
         }
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
         pub struct $totals {
             $($(#[$field_meta])* pub $field: u64,)*
         }
@@ -748,7 +758,7 @@ counter_totals! {
 }
 
 /// Kept apart from the counters so a window cannot sum them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuicLevels {
     pub open: u64,
     pub active_streams: u64,
@@ -1631,6 +1641,21 @@ impl MetricsTap {
             }
         }
         found
+    }
+
+    /// Our leader slots' reports read back after a restart.
+    pub fn restore_slots(
+        &self,
+        waterfalls: impl IntoIterator<Item = SlotWaterfall>,
+        costs: impl IntoIterator<Item = SlotCost>,
+    ) {
+        locked(&self.slot_waterfalls).restore(
+            waterfalls
+                .into_iter()
+                .map(|waterfall| (waterfall.slot, waterfall)),
+        );
+        locked(&self.slot_costs).restore(costs.into_iter().map(|cost| (cost.slot, cost)));
+        self.note_slot_lists_changed();
     }
 
     /// Our leader slots' reports older than `floor` are dropped and refused from then on.
@@ -3516,6 +3541,42 @@ mod tests {
         tap.observe(&slot_point(2, &[("num_received", "1i")]));
         assert_eq!(tap.slot_waterfalls().len(), 3);
         assert!(tap.take_changed_waterfalls().is_empty());
+    }
+
+    #[test]
+    fn test_reports_read_back_fill_only_what_is_missing_and_are_not_sent() {
+        let tap = MetricsTap::default();
+        tap.hold_slots_from(5);
+        tap.observe(&slot_point(6, &[("num_received", "9i")]));
+        tap.take_changed_waterfalls();
+        let revision = tap.slot_lists_revision();
+        let waterfall = |slot| SlotWaterfall {
+            slot,
+            source: SchedulerSource::Scheduler,
+            counts: SchedulerTotals::default(),
+        };
+        let cost = |slot| SlotCost {
+            slot,
+            ..SlotCost::default()
+        };
+        tap.restore_slots(
+            [waterfall(4), waterfall(6), waterfall(7)],
+            [cost(4), cost(7)],
+        );
+        let held = tap.slot_waterfalls();
+        assert_eq!(held.iter().map(|w| w.slot).collect::<Vec<_>>(), [6, 7]);
+        assert_eq!(held[0].counts.received, 9, "this run's report is kept");
+        assert_eq!(
+            tap.slot_costs().iter().map(|c| c.slot).collect::<Vec<_>>(),
+            [7]
+        );
+        assert!(tap.take_changed_waterfalls().is_empty());
+        assert!(tap.take_changed_costs().is_empty());
+        assert_ne!(
+            tap.slot_lists_revision(),
+            revision,
+            "the lists are sent whole"
+        );
     }
 
     #[test]

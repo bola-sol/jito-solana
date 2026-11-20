@@ -14,6 +14,7 @@ use {
         },
         produced::{Bundles, CostDetail, Execution, ProducedBlock, ProducedDetail, ProducedStore},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
+        refill::Refilled,
         search::{LeaderMap, LeaderTraits},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
         snapshot::{self, SnapshotTracker, Snapshots},
@@ -626,6 +627,8 @@ pub struct Collector {
     produced_unsent: bool,
     /// The root the produced list was last checked against.
     produced_settled_to: Slot,
+    /// What the rewind log held of ours, until it has been read and merged.
+    refill: Option<crossbeam_channel::Receiver<Refilled>>,
     snapshots: SnapshotTracker,
     snapshots_read_at: Instant,
 }
@@ -729,9 +732,15 @@ impl Collector {
             joined: 0,
             produced_unsent: false,
             produced_settled_to: 0,
+            refill: None,
             snapshots: SnapshotTracker::default(),
             snapshots_read_at: now.checked_sub(SNAPSHOT_READ).unwrap_or(now),
         }
+    }
+
+    /// Merges what arrives on `receiver` once, on the tick it comes.
+    pub fn refill_from(&mut self, receiver: crossbeam_channel::Receiver<Refilled>) {
+        self.refill = Some(receiver);
     }
 
     pub fn publish_static(&mut self) {
@@ -1638,6 +1647,11 @@ impl Collector {
         if !fees.is_empty() {
             let mut produced = self.replies.produced.write().unwrap();
             for block in fees {
+                // Sent so the rewind log holds them for a restart.
+                if produced.contains(block.slot) {
+                    self.publisher
+                        .publish_update(TOPIC_SUMMARY, "block_fees", block.slot, &block);
+                }
                 produced.set_fees(block);
             }
         }
@@ -1650,6 +1664,7 @@ impl Collector {
             |slot| blockstore.is_root(slot),
         );
         self.produced_settled_to = root;
+        let refilled = self.merge_refill(root);
         let retimed = self.retime(&became_full, &mut changed);
         // The next slot's first shred usually arrives before this block fills.
         for slot in &became_full {
@@ -1688,14 +1703,64 @@ impl Collector {
             .fill_leading(|slot| tap.leader_timing(slot));
         let read = self.fill_versions();
         let timed = self.fill_execution();
-        if dropped {
+        if dropped || refilled {
             // No message takes a block back, so the lists go whole.
             self.produced_unsent = true;
             self.publish_turns();
         }
-        if captured || filled || led || read || timed || retimed || dropped {
+        if captured || filled || led || read || timed || retimed || dropped || refilled {
             self.publish_produced();
         }
+    }
+
+    /// Merges what the rewind log held of ours once read, and returns whether any block was added.
+    /// Kept: blocks older than the ledger, rooted ones, and those above the root, checked later.
+    fn merge_refill(&mut self, root: Slot) -> bool {
+        let refilled = match self.refill.as_ref().map(|receiver| receiver.try_recv()) {
+            None | Some(Err(crossbeam_channel::TryRecvError::Empty)) => return false,
+            Some(Err(crossbeam_channel::TryRecvError::Disconnected)) => {
+                self.refill = None;
+                return false;
+            }
+            Some(Ok(refilled)) => refilled,
+        };
+        self.refill = None;
+        let Refilled {
+            blocks,
+            turns,
+            waterfalls,
+            costs,
+            fees,
+            ..
+        } = refilled;
+        let read = blocks.len();
+        let blockstore = &self.ctx.blockstore;
+        let lowest = blockstore.lowest_slot();
+        let (kept, dropped): (Vec<ProducedBlock>, Vec<ProducedBlock>) =
+            blocks.into_values().partition(|block| {
+                block.slot < lowest || block.slot > root || blockstore.is_root(block.slot)
+            });
+        if !dropped.is_empty() {
+            // So the next read drops them too, once the ledger no longer holds them.
+            let slots: Vec<Slot> = dropped.iter().map(|block| block.slot).collect();
+            self.publisher
+                .publish_ephemeral(TOPIC_SUMMARY, "produced_dropped", &slots);
+        }
+        let added = self.replies.produced.write().unwrap().restore(
+            kept,
+            turns.into_values(),
+            fees.into_values(),
+        );
+        self.metrics_tap
+            .restore_slots(waterfalls.into_values(), costs.into_values());
+        self.publisher
+            .publish(TOPIC_SUMMARY, "produced_refilled", &added);
+        if read > 0 {
+            log::info!(
+                "dashboard: restored {added} of {read} blocks read back from the rewind log"
+            );
+        }
+        added > 0
     }
 
     /// From the working fork's newest frozen bank, so failures on an abandoned fork drop out.
@@ -4202,5 +4267,108 @@ mod tests {
                 .published_key("summary", "produced_blocks")
                 .is_some()
         );
+    }
+
+    fn refilled(slots: &[Slot]) -> Refilled {
+        Refilled {
+            blocks: slots
+                .iter()
+                .map(|slot| (*slot, crate::produced::sample_block(*slot)))
+                .collect(),
+            ..Refilled::default()
+        }
+    }
+
+    fn held_slots(collector: &Collector) -> Vec<Slot> {
+        collector
+            .replies
+            .produced
+            .read()
+            .unwrap()
+            .recent_refs(usize::MAX)
+            .iter()
+            .map(|block| block.slot)
+            .collect()
+    }
+
+    #[test]
+    fn test_a_refill_keeps_what_rooted_and_what_the_ledger_cannot_judge() {
+        let harness = fixture();
+        // No shreds, so the ledger's lowest slot is its newest root.
+        harness.ctx.blockstore.set_roots([4, 6].iter()).unwrap();
+        let mut updates = harness.publisher.subscribe();
+        let mut collector = harness.collector();
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        collector.refill_from(receiver);
+        assert!(!collector.merge_refill(10), "nothing read yet");
+        sender.send(refilled(&[2, 6, 7, 12])).unwrap();
+        assert!(collector.merge_refill(10));
+        // 2 is older than the ledger, 6 rooted, 7 did not and 12 waits for the usual check.
+        assert_eq!(held_slots(&collector), [2, 6, 12]);
+        assert!(collector.refill.is_none(), "merged once");
+        let dropped = std::iter::from_fn(|| updates.try_recv().ok())
+            .find(|message| message.contains(r#""key":"produced_dropped""#))
+            .expect("the slot turned away is published");
+        assert!(dropped.ends_with(r#""value":[7]}"#), "{dropped}");
+        let refilled = harness
+            .published_key("summary", "produced_refilled")
+            .unwrap();
+        assert!(refilled.ends_with(r#""value":3}"#), "{refilled}");
+    }
+
+    #[test]
+    fn test_a_refill_merges_after_the_unrooted_check_and_goes_out_whole() {
+        let harness = fixture();
+        harness.advance_to(2);
+        harness.bank_forks.write().unwrap().set_root(2, None, None);
+        harness.ctx.blockstore.set_roots([2].iter()).unwrap();
+        let mut updates = harness.publisher.subscribe();
+        let mut collector = harness.collector();
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        sender.send(refilled(&[1])).unwrap();
+        collector.refill_from(receiver);
+        collector.tick();
+
+        // Unrooted by the ledger's word, but older than the ledger, so the first check spares it.
+        assert!(held_slots(&collector).contains(&1));
+        harness.advance_to(3);
+        collector.tick();
+        assert!(held_slots(&collector).contains(&1));
+
+        let mut whole = false;
+        while let Ok(message) = updates.try_recv() {
+            if message.contains(r#""key":"produced_block","#) {
+                let frame: serde_json::Value = serde_json::from_str(&message).unwrap();
+                assert_ne!(frame["value"]["slot"].as_u64(), Some(1), "sent one by one");
+            }
+            if message.contains(r#""key":"produced_blocks""#) {
+                let frame: serde_json::Value = serde_json::from_str(&message).unwrap();
+                whole |= frame["value"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|block| block["slot"].as_u64() == Some(1));
+            }
+        }
+        assert!(whole, "the list went whole with the refilled block");
+    }
+
+    #[test]
+    fn test_the_slot_page_holds_from_the_previous_epochs_first_slot() {
+        let harness = fixture();
+        let mut collector = harness.collector();
+        collector.tick();
+        assert_eq!(collector.held_from, 0, "the first epoch has none before it");
+
+        // Warmup epochs of 32 and 64 slots, so 100 is in epoch 2, which begins at 96.
+        let bank = harness.advance_to(100);
+        assert_eq!(bank.epoch(), 2);
+        harness
+            .bank_forks
+            .write()
+            .unwrap()
+            .set_root(100, None, None);
+        collector.tick();
+        assert_eq!(collector.held_from, 32);
     }
 }

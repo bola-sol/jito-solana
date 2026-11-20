@@ -35,20 +35,32 @@ impl Table {
     }
 }
 
-/// The two-letter code of the country DB-IP places `ip` in; none for IPv6 or an unplaced range.
-pub fn country(ip: IpAddr) -> Option<&'static str> {
+fn table() -> Option<&'static Table> {
     static TABLE: OnceLock<Option<Table>> = OnceLock::new();
-    let IpAddr::V4(ip) = ip.to_canonical() else {
-        return None;
-    };
     TABLE
         .get_or_init(|| {
             decode(PACKED)
                 .inspect_err(|err| log::error!("dashboard: country table unreadable: {err}"))
                 .ok()
         })
-        .as_ref()?
-        .country(u32::from(ip))
+        .as_ref()
+}
+
+/// The two-letter code of the country DB-IP places `ip` in; none for IPv6 or an unplaced range.
+pub fn country(ip: IpAddr) -> Option<&'static str> {
+    let IpAddr::V4(ip) = ip.to_canonical() else {
+        return None;
+    };
+    table()?.country(u32::from(ip))
+}
+
+/// The table's own copy of a country code; none for a code it does not hold.
+pub fn code(code: &str) -> Option<&'static str> {
+    table()?
+        .codes
+        .iter()
+        .find(|held| *held == code)
+        .map(String::as_str)
 }
 
 /// Each ISO country code's continent, as two letters: AF, AN, AS, EU, NA, OC or SA.

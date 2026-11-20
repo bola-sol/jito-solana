@@ -6,12 +6,12 @@ use {
         meters::QuicPort,
         metrics_tap::{ExecutedTotals, VerifyTotals},
     },
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     std::collections::VecDeque,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LeaderTurn {
     pub first: Slot,
     pub last: Slot,

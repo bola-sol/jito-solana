@@ -196,7 +196,7 @@ export function leaderSlotsLabel(counts: LeaderSlotCounts): string {
 /** Null unless fewer blocks are held than the chain shows produced, as after a restart. */
 export function heldShortLabel(held: number, counts: LeaderSlotCounts | undefined): string | null {
   if (!counts || held >= counts.produced) return null;
-  return `${count(held)} of ${count(counts.produced)} blocks seen since the restart`;
+  return `${count(held)} of ${count(counts.produced)} blocks held`;
 }
 
 export function certificateExplain(certificate: BlockCertificate): string {

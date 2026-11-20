@@ -13,6 +13,7 @@ use {
         meters::{METER_INTERVAL, Meters},
         metrics_tap::MetricsTap,
         proto::{Publisher, TOPIC_SUMMARY},
+        refill::{self, Refilled},
         rewind_log::{Recorder, RewindLog, Settings},
         server,
         startup::{GossipReadyReceiver, StartupPublisher, gossip_stake},
@@ -30,7 +31,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, JoinHandle},
-        time::{Duration, SystemTime},
+        time::{Duration, Instant, SystemTime},
     },
     tokio::{net::TcpListener, runtime::Builder},
 };
@@ -64,6 +65,9 @@ pub struct DashboardService {
     meters: Option<JoinHandle<()>>,
     info_loader: Option<JoinHandle<()>>,
     recorder: Option<JoinHandle<()>>,
+    filler: Option<JoinHandle<()>>,
+    /// Handed to the collector on attach.
+    refill: Option<crossbeam_channel::Receiver<Refilled>>,
 }
 
 impl DashboardService {
@@ -107,6 +111,35 @@ impl DashboardService {
                     None
                 }
             });
+
+        // Listed before the recorder opens a segment of its own.
+        let (refill, filler) = match &rewind {
+            Some(rewind_log) => {
+                let segments = rewind_log.range();
+                let rewind_log = rewind_log.clone();
+                let exit = exit.clone();
+                let (sender, receiver) = crossbeam_channel::bounded(1);
+                let filler = thread::Builder::new()
+                    .name("solDashFill".to_string())
+                    .spawn(move || {
+                        let started = Instant::now();
+                        let refilled =
+                            refill::read(&rewind_log, &segments, || exit.load(Ordering::Relaxed));
+                        log::info!(
+                            "dashboard: read back {} blocks and {} turns from {} segments in \
+                             {:?}, {} lines unread",
+                            refilled.blocks.len(),
+                            refilled.turns.len(),
+                            refilled.segments,
+                            started.elapsed(),
+                            refilled.unread,
+                        );
+                        let _ = sender.send(refilled);
+                    })?;
+                (Some(receiver), Some(filler))
+            }
+            None => (None, None),
+        };
 
         let runtime = Builder::new_multi_thread()
             .worker_threads(RUNTIME_THREADS)
@@ -253,6 +286,8 @@ impl DashboardService {
             meters: None,
             info_loader: None,
             recorder,
+            filler,
+            refill,
         })
     }
 
@@ -319,6 +354,7 @@ impl DashboardService {
             let metrics_tap = self.metrics_tap.clone();
             let tips = self.tip_payment_program_id.as_ref().map(TipMeter::new);
             let commission_bps = self.commission_bps;
+            let refill = self.refill.take();
             thread::Builder::new()
                 .name("solDashColl".to_string())
                 .spawn(move || {
@@ -335,6 +371,9 @@ impl DashboardService {
                     };
                     let mut collector =
                         Collector::new(context, shared, tips, commission_bps, frozen_banks);
+                    if let Some(refill) = refill {
+                        collector.refill_from(refill);
+                    }
                     collector.publish_static();
                     while !exit.load(Ordering::Relaxed) {
                         collector.tick();
@@ -357,6 +396,7 @@ impl DashboardService {
             self.server.take(),
             self.info_loader.take(),
             self.recorder.take(),
+            self.filler.take(),
         ]
         .into_iter()
         .flatten()
@@ -455,6 +495,51 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         assert!(recorded());
+        exit.store(true, Ordering::Relaxed);
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || sender.send(service.join()));
+        receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the dashboard did not stop within ten seconds")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_blocks_recorded_before_a_restart_are_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let rewind = dir.path().join("rewind");
+        {
+            let log = Arc::new(RewindLog::open(&rewind).unwrap());
+            let publisher = Arc::new(Publisher::new());
+            let mut recorder = Recorder::new(
+                log,
+                publisher.clone(),
+                Settings::default(),
+                Box::new(timestamp),
+            );
+            recorder.step();
+            let block = crate::produced::sample_block(7);
+            publisher.publish_update(TOPIC_SUMMARY, "produced_block", 7, &block);
+            recorder.step();
+            recorder.close();
+        }
+        let harness = fixture();
+        let exit = Arc::new(AtomicBool::new(false));
+        let mut service = DashboardService::start(
+            config(Some(rewind)),
+            Arc::new(RwLock::new(ValidatorStartProgress::Running)),
+            exit.clone(),
+            None,
+        )
+        .unwrap();
+        service.attach(harness.ctx.clone(), None).unwrap();
+        let replies = service.replies.clone();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let held = || replies.produced.read().unwrap().contains(7);
+        while !held() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(held(), "the recorded block was not read back");
         exit.store(true, Ordering::Relaxed);
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || sender.send(service.join()));

@@ -1449,6 +1449,12 @@ export interface Published {
     produced_turns: LeaderTurn[];
     /** The oldest of our slots the validator holds. */
     produced_floor: number;
+    /** Blocks read back from the rewind log after a restart. */
+    produced_refilled: number;
+    /** Slots read back after a restart that the ledger showed had not rooted. */
+    produced_dropped: number[];
+    /** Sent per block as its fee tables are read, for the rewind log. */
+    block_fees: BlockFees;
     tip_rates: TipRates;
     replay: ReplayWindow | null;
     host: Host | null;

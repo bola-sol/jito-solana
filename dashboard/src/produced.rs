@@ -4,11 +4,12 @@
 
 use {
     crate::{
+        meters::Static,
         metrics_tap::{LeaderTiming, Recurrence, SlotCost, SlotWaterfall, StageTimes},
         turns::LeaderTurn,
         versions::TxVersions,
     },
-    serde::{Serialize, Serializer},
+    serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
@@ -17,13 +18,13 @@ use {
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bundles {
     pub sanitized: u64,
     pub executed: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Execution {
     /// Thread time, not wall time.
     pub non_vote: StageTimes,
@@ -35,7 +36,7 @@ pub struct Execution {
 
 /// `transactions` and `non_vote_transactions` are differences against the parent; the rest are the
 /// bank's own.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProducedBlock {
     pub slot: Slot,
     pub slot_time_millis: Option<u64>,
@@ -64,10 +65,13 @@ pub struct ProducedBlock {
     pub leading: Option<LeaderTiming>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlockCertificate {
     pub rewards: Slot,
-    #[serde(serialize_with = "base58_or_null")]
+    #[serde(
+        serialize_with = "base58_or_null",
+        deserialize_with = "base58_or_null_from"
+    )]
     pub leader: Option<Pubkey>,
     pub leader_name: Option<String>,
     /// No fewer notarize votes than skip votes.
@@ -82,13 +86,14 @@ pub struct BlockCertificate {
     pub left_out: Vec<CertificateValidator>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CertificateValidator {
-    #[serde(serialize_with = "base58")]
+    #[serde(serialize_with = "base58", deserialize_with = "base58_from")]
     pub identity: Pubkey,
     pub name: Option<String>,
     pub ip: Option<IpAddr>,
-    pub country: Option<&'static str>,
+    #[serde(deserialize_with = "country_from")]
+    pub country: Option<Static>,
 }
 
 /// Base58 text, as `to_string` gives, written straight into the encoder.
@@ -103,8 +108,29 @@ fn base58_or_null<S: Serializer>(key: &Option<Pubkey>, serializer: S) -> Result<
     }
 }
 
+fn base58_from<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Pubkey, D::Error> {
+    let text = std::borrow::Cow::<str>::deserialize(deserializer)?;
+    text.parse().map_err(serde::de::Error::custom)
+}
+
+fn base58_or_null_from<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Pubkey>, D::Error> {
+    Option::<std::borrow::Cow<str>>::deserialize(deserializer)?
+        .map(|text| text.parse().map_err(serde::de::Error::custom))
+        .transpose()
+}
+
+/// A code outside the country table reads as none.
+fn country_from<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<&'static str>, D::Error> {
+    Ok(Option::<std::borrow::Cow<str>>::deserialize(deserializer)?
+        .and_then(|code| crate::geoip::code(&code)))
+}
+
 /// Well past two epochs of the largest stake's slots; a guard for a floor never set.
-const MAX_HELD_BLOCKS: usize = 65_536;
+pub(crate) const MAX_HELD_BLOCKS: usize = 65_536;
 
 /// The bundle stage reports within a few slots, and the tap keeps its reports about this long.
 const BUNDLE_REACH: usize = 512;
@@ -117,6 +143,43 @@ pub const FIGURES_PAGE: usize = 1024;
 
 /// The widest span one detail request covers.
 pub const MAX_DETAIL_SLOTS: u64 = 64;
+
+impl ProducedBlock {
+    /// Takes what `other` has and this lacks; destructured so a new field must be placed.
+    fn fill_from(&mut self, other: &ProducedBlock) {
+        let ProducedBlock {
+            slot: _,
+            slot_time_millis,
+            blockhash: _,
+            duration_nanos,
+            transactions: _,
+            non_vote_transactions: _,
+            failed_transactions: _,
+            entries: _,
+            block_cost: _,
+            block_cost_limit: _,
+            account_cost_limit: _,
+            total_fees: _,
+            priority_fees: _,
+            tips,
+            bundles,
+            versions,
+            execution,
+            certificate,
+            leading,
+        } = other;
+        self.slot_time_millis = self.slot_time_millis.or(*slot_time_millis);
+        self.duration_nanos = self.duration_nanos.or(*duration_nanos);
+        self.tips = self.tips.or(*tips);
+        self.bundles = self.bundles.or(*bundles);
+        self.versions = self.versions.or(*versions);
+        self.execution = self.execution.or(*execution);
+        self.leading = self.leading.or(*leading);
+        if self.certificate.is_none() {
+            self.certificate.clone_from(certificate);
+        }
+    }
+}
 
 /// The figures the list, its sort and its summary need, as one array per block: slot, time,
 /// transactions, block cost, cost limit, total fees, priority fees, tips and duration.
@@ -186,9 +249,9 @@ pub struct CostDetail {
 }
 
 /// A fee payer among those who paid the most in a block, in lamports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TopFeePayer {
-    #[serde(serialize_with = "base58")]
+    #[serde(serialize_with = "base58", deserialize_with = "base58_from")]
     pub payer: Pubkey,
     pub transactions: u64,
     pub failed: u64,
@@ -197,10 +260,10 @@ pub struct TopFeePayer {
 }
 
 /// A transaction among those that paid the most in a block, in lamports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TopFeeTransaction {
     pub signature: String,
-    #[serde(serialize_with = "base58")]
+    #[serde(serialize_with = "base58", deserialize_with = "base58_from")]
     pub payer: Pubkey,
     /// Absent where the status cache held no result.
     pub failed: Option<bool>,
@@ -209,7 +272,7 @@ pub struct TopFeeTransaction {
 }
 
 /// Who paid the most in one of our blocks, over its non-vote transactions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockFees {
     pub slot: Slot,
     pub payer_count: u64,
@@ -282,6 +345,51 @@ impl ProducedStore {
         if self.contains(fees.slot) {
             self.fees.insert(fees.slot, fees);
         }
+    }
+
+    /// What a restart read back, none of it marked changed; returns the blocks added. A block held
+    /// already keeps this run's copy unless the blockhash matches, when the recorded one fills it.
+    pub fn restore(
+        &mut self,
+        blocks: impl IntoIterator<Item = ProducedBlock>,
+        turns: impl IntoIterator<Item = LeaderTurn>,
+        fees: impl IntoIterator<Item = BlockFees>,
+    ) -> usize {
+        let mut added = 0usize;
+        for mut block in blocks {
+            if block.slot < self.floor {
+                continue;
+            }
+            match self.blocks.get_mut(&block.slot) {
+                Some(held) if held.blockhash == block.blockhash => {
+                    block.fill_from(held);
+                    *held = block;
+                }
+                Some(_) => {}
+                None => {
+                    self.blocks.insert(block.slot, block);
+                    added = added.saturating_add(1);
+                }
+            }
+        }
+        while self.blocks.len() > MAX_HELD_BLOCKS {
+            if let Some((slot, _)) = self.blocks.pop_first() {
+                self.fees.remove(&slot);
+            }
+        }
+        for mut turn in turns {
+            if turn.first < self.floor || self.turns.contains_key(&turn.first) {
+                continue;
+            }
+            turn.produced = self.produced_in(turn.first, turn.last);
+            self.turns.insert(turn.first, turn);
+        }
+        for fees in fees {
+            if self.contains(fees.slot) && !self.fees.contains_key(&fees.slot) {
+                self.fees.insert(fees.slot, fees);
+            }
+        }
+        added
     }
 
     pub fn fees(&self, slot: Slot) -> Option<BlockFees> {
@@ -509,7 +617,7 @@ pub(crate) fn sample_block(slot: Slot) -> ProducedBlock {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use {
         super::*,
         crate::{
@@ -553,7 +661,7 @@ mod tests {
         }
     }
 
-    fn turn(first: Slot, last: Slot) -> LeaderTurn {
+    pub(crate) fn turn(first: Slot, last: Slot) -> LeaderTurn {
         LeaderTurn {
             first,
             last,
@@ -574,6 +682,80 @@ mod tests {
 
     fn slots(blocks: &[ProducedBlock]) -> Vec<Slot> {
         blocks.iter().map(|block| block.slot).collect()
+    }
+
+    fn fees(slot: Slot) -> BlockFees {
+        BlockFees {
+            slot,
+            payer_count: 1,
+            payers: Vec::new(),
+            transactions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_what_a_restart_read_back_is_held_without_being_sent() {
+        let mut store = ProducedStore::default();
+        store.hold_from(10);
+        let mut turn = turn(8, 13);
+        turn.produced = 9;
+        let added = store.restore(
+            [block(9), block(11), block(12)],
+            [turn],
+            [fees(11), fees(9), fees(20)],
+        );
+        assert_eq!(added, 2);
+        assert_eq!(
+            slots(
+                &store
+                    .recent_refs(usize::MAX)
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            ),
+            [11, 12]
+        );
+        assert!(store.take_changed().is_empty());
+        assert!(store.recent_turns(usize::MAX).is_empty(), "below the floor");
+        assert!(store.fees(11).is_some());
+        assert!(store.fees(20).is_none(), "fees only for a held block");
+
+        store.restore([], [super::tests::turn(11, 14)], []);
+        assert_eq!(
+            store.recent_turns(1)[0].produced,
+            2,
+            "recounted from the blocks held"
+        );
+    }
+
+    #[test]
+    fn test_a_restored_block_already_held_keeps_this_runs_copy_unless_it_is_the_same() {
+        let mut store = ProducedStore::default();
+        let mut live = block(10);
+        live.certificate = Some(certificate(12));
+        store.insert(live);
+        store.insert(block(11));
+        store.take_changed();
+
+        let mut recorded = block(10);
+        recorded.execution = Some(execution());
+        let mut other = block(11);
+        other.blockhash = "another".to_owned();
+        other.tips = Some(5);
+        assert_eq!(store.restore([recorded, other], [], []), 0);
+
+        let held = store.recent_refs(2);
+        assert_eq!(held[0].execution, Some(execution()), "the recorded copy");
+        assert_eq!(
+            held[0].certificate,
+            Some(certificate(12)),
+            "with its gaps filled"
+        );
+        assert_eq!(
+            held[1].tips, None,
+            "another block at that slot is not ours now"
+        );
+        assert!(store.take_changed().is_empty());
     }
 
     #[test]

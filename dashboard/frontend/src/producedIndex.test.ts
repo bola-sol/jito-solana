@@ -66,6 +66,65 @@ describe("ProducedIndex", () => {
     expect(index.failed).toBe(true);
   });
 
+  it("refreshes from the top without clearing, as far as the newest it held", async () => {
+    const index = new ProducedIndex();
+    index.addPage(page([10, 9], null));
+    const asked: (number | undefined)[] = [];
+    const pages = new Map<number | undefined, FiguresPage>([
+      [undefined, page([14, 13], 13)],
+      [13, page([12, 10], 10)],
+      [10, page([9], null)],
+    ]);
+    await index.refresh(
+      (before) => {
+        asked.push(before);
+        return Promise.resolve(pages.get(before) ?? null);
+      },
+      () => undefined,
+      10,
+    );
+    expect(asked).toEqual([undefined, 13]);
+    expect([...index.heads.keys()].sort((a, b) => a - b)).toEqual([9, 10, 12, 13, 14]);
+    expect(index.reading).toBe(false);
+    expect(index.newest()).toBe(14);
+  });
+
+  it("notes a gap when every live block is newer than all held, until a refresh reaches it", async () => {
+    const index = new ProducedIndex();
+    await index.readAll((before) => Promise.resolve(before === undefined ? page([10, 9], null) : null), () => undefined);
+    index.mergeLive([block(10), block(11), block(12)], []);
+    expect(index.gapFrom).toBeNull();
+    index.mergeLive([block(20), block(21)], []);
+    expect(index.gapFrom).toBe(12);
+    index.mergeLive([block(20), block(21)], []);
+    expect(index.gapFrom).toBe(12);
+    const pages = new Map<number | undefined, FiguresPage>([
+      [undefined, page([21, 20, 19], 19)],
+      [19, page([12, 11], 11)],
+    ]);
+    await index.refresh((before) => Promise.resolve(pages.get(before) ?? null), () => undefined, 12);
+    expect(index.gapFrom).toBeNull();
+    expect(index.heads.has(19)).toBe(true);
+  });
+
+  it("keeps a gap a refresh did not reach", async () => {
+    const index = new ProducedIndex();
+    await index.readAll((before) => Promise.resolve(before === undefined ? page([10], null) : null), () => undefined);
+    index.mergeLive([block(20)], []);
+    await index.refresh(() => Promise.resolve(null), () => undefined, 10);
+    expect(index.gapFrom).toBe(10);
+  });
+
+  it("refreshes to the oldest without a place to stop", async () => {
+    const index = new ProducedIndex();
+    const pages = new Map<number | undefined, FiguresPage>([
+      [undefined, page([14], 14)],
+      [14, page([3], null)],
+    ]);
+    await index.refresh((before) => Promise.resolve(pages.get(before) ?? null), () => undefined);
+    expect([...index.heads.keys()].sort((a, b) => a - b)).toEqual([3, 14]);
+  });
+
   it("drops a read overtaken by a reset", async () => {
     const index = new ProducedIndex();
     let answer: (page: FiguresPage) => void = () => undefined;

@@ -162,10 +162,13 @@ and the files are deleted as they age out; nothing else in the directory is
 touched. The recorder listens as a page does, so the work done only while
 somebody watches runs all the time. A page reaches further back than its own
 fifteen minutes by fetching the blocks it needs, and restarts show as gaps.
+At startup the validator reads the recording back for our blocks, turns,
+waterfalls, costs and fee tables, so the Slots page keeps them across a restart.
 Without the flag nothing is written and a page rewinds no further back than
-when it was opened. Replies to requests are not recorded, so the Slots block
-list, schedule searches, the Gossip peer table and certificate lists and the
-Cluster charts are not rewound.
+when it was opened. Replies to requests are not recorded, so schedule searches,
+the Gossip peer table and certificate lists and the Cluster charts are not
+rewound. The Slots block list is cut at the moment shown: the newest 500 blocks
+as recorded then, older ones with the figures they settled on.
 
 [INPUTS.md](INPUTS.md) lists every validator input the dashboard reads and what
 each one feeds.
@@ -184,7 +187,7 @@ Topics currently published:
 
 | Topic     | Keys |
 |-----------|------|
-| `summary` | `version`, `client`, `gossip_address`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `finality_from_leader_micros`, `finalization_share`, `block_life`, `handoff`, `handoff_now`, `fee_payers`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_block`, `produced_turns`, `bundles`, `tip_rates`, `skip_rate`, `leader_slot_counts`, `health`, `host`, `snapshots`, `tps_history`, `tps_sample`, `network`, `network_sample`, `net_interfaces`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
+| `summary` | `version`, `client`, `gossip_address`, `cluster`, `consensus`, `shred_version`, `identity_key`, `identity_name`, `identity_icon`, `vote_key`, `startup_time_nanos`, `server_time_nanos`, `uptime_nanos`, `startup_progress`, `gossip_stake`, `caught_up_time_nanos`, `root_slot`, `optimistically_confirmed_slot`, `finalized_slot`, `completed_slot`, `estimated_slot`, `behind_cluster`, `replay_rate`, `block_height`, `next_leader_slot`, `vote_slot`, `identity_balance`, `vote_balance`, `vote_cost`, `vote_commission`, `stake`, `validator_counts`, `versions`, `estimated_slot_duration_nanos`, `observed_slot_duration_nanos`, `finality_from_leader_micros`, `finalization_share`, `block_life`, `handoff`, `handoff_now`, `fee_payers`, `epoch_span`, `epoch_remaining_nanos`, `program_cache`, `accounts_cache`, `replay`, `shreds`, `slot_waterfalls`, `slot_costs`, `quic_paths`, `ingest_paths`, `verify`, `executed`, `produced_blocks`, `produced_block`, `produced_turns`, `produced_floor`, `produced_refilled`, `produced_dropped`, `block_fees`, `bundles`, `tip_rates`, `skip_rate`, `leader_slot_counts`, `health`, `host`, `snapshots`, `tps_history`, `tps_sample`, `network`, `network_sample`, `net_interfaces`, `network_egress`, `xdp`, `turbine`, `threads_history`, `threads_sample`, `bls_key`, `admission`, `vote_credits`, `vote_participation`, `gossip` |
 | `epoch`   | `new` |
 | `peers`   | `all` |
 | `slot`    | `overview`, `update` |
@@ -192,6 +195,11 @@ Topics currently published:
 `summary.produced_blocks` is sent whole only to a client that is connecting;
 after that, each of our blocks that is added or filled in arrives alone as
 `summary.produced_block`.
+`summary.produced_refilled` counts the blocks read back from the recording
+after a restart, and `summary.produced_dropped` names those the ledger showed
+had not rooted, so a later read drops them too. `summary.block_fees` carries
+each of our blocks' top fee tables as they are read, so the recording holds
+them.
 
 `summary.network` totals the interfaces backed by a device, so a bond and its
 members, or a tunnel and the link under it, count once. A port whose master is

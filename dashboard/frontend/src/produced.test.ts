@@ -244,7 +244,7 @@ describe("leaderSlotsLabel", () => {
   });
 
   it("says how many were seen only when fewer are held than were produced", () => {
-    expect(heldShortLabel(104, counts({}))).toBe("104 of 286 blocks seen since the restart");
+    expect(heldShortLabel(104, counts({}))).toBe("104 of 286 blocks held");
     expect(heldShortLabel(286, counts({}))).toBeNull();
     expect(heldShortLabel(4, counts({ produced: 0 }))).toBeNull();
     expect(heldShortLabel(4, undefined)).toBeNull();

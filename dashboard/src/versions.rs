@@ -2,14 +2,14 @@
 //! transactions.
 
 use {
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_transaction::{
         simple_vote_transaction_checker::is_simple_vote_transaction_impl,
         versioned::{TransactionVersion, VersionedTransaction},
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct TxVersions {
     pub legacy: u64,
     pub v0: u64,

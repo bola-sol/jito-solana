@@ -21,7 +21,7 @@ use {
         udp_drops::{self, PortCounters, PortWindow},
     },
     agave_snapshots::snapshot_config::SnapshotConfig,
-    serde::Serialize,
+    serde::{Deserialize, Deserializer, Serialize},
     solana_clock::{Epoch, Slot},
     solana_core::validator::ValidatorStartProgress,
     solana_gossip::contact_info::{ContactInfo, Protocol},
@@ -296,9 +296,10 @@ pub struct IngestPath {
     pub quic: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuicPort {
-    pub name: &'static str,
+    #[serde(deserialize_with = "quic_port_name")]
+    pub name: Static,
     #[serde(flatten)]
     pub counts: QuicTotals,
     #[serde(flatten)]
@@ -306,6 +307,20 @@ pub struct QuicPort {
     /// Datagrams the kernel discarded on this port over the same span. Whole datagrams, unlike the
     /// counts beside them, so never added to them.
     pub kernel_drops: Option<u64>,
+}
+
+/// Through an alias, so the derive does not borrow the field from its input.
+pub(crate) type Static = &'static str;
+
+/// The ports a `QuicPort` is made for, so a recorded name reads back as its static.
+const QUIC_PORT_NAMES: [&str; 3] = ["tpu", "tpu forwards", "tpu vote quic"];
+
+fn quic_port_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<&'static str, D::Error> {
+    let name = std::borrow::Cow::<str>::deserialize(deserializer)?;
+    QUIC_PORT_NAMES
+        .into_iter()
+        .find(|known| *known == name)
+        .ok_or_else(|| serde::de::Error::custom(format!("unknown port {name}")))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

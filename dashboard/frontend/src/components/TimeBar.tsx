@@ -13,7 +13,6 @@ function sameDay(a: number, b: number): boolean {
 
 /** Pages drawn in part from replies the feed does not carry, which are not rewound. */
 const UNRECORDED: Partial<Record<Page, string>> = {
-  slots: "The block list is not rewound.",
   schedule: "Searches read the validator's present history.",
   gossip: "The peer table and certificate lists are not recorded and hold their last reply.",
   cluster: "The cluster charts are not recorded and hold their last reply.",

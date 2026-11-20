@@ -59,11 +59,17 @@ import { Explain } from "./primitives";
 import { Section } from "./TpuPathCard";
 import { turnOf, turnRangeLabel, turnRangeShortLabel, turnSections, turnSpanLabel } from "../turns";
 import { ProducedIndex, type TurnHead } from "../producedIndex";
+import { heldAt, type Shown } from "../producedPast";
+import type { Store } from "../store";
 import { ScrollTop } from "./ScrollTop";
 import { VirtualList } from "./VirtualList";
 
 /** Guessed before a row is measured: a closed row and its gap. */
 const ROW_HEIGHT_GUESS = 44;
+
+function figuresFrom(requests: Store) {
+  return (before: number | undefined) => requests.request("produced.figures", before === undefined ? {} : { before });
+}
 
 export function SlotDetailsPage({
   slot: open,
@@ -78,9 +84,15 @@ export function SlotDetailsPage({
 }): ReactElement {
   const store = useStore();
   const requests = useRequests();
-  const live = store.get("summary", "produced_blocks");
-  const liveTurns = store.get("summary", "produced_turns");
-  const floor = store.get("summary", "produced_floor");
+  const isLive = store.isLive();
+  // The index follows the validator as it is now, whichever moment the page shows.
+  const live = requests.get("summary", "produced_blocks");
+  const liveTurns = requests.get("summary", "produced_turns");
+  const floor = requests.get("summary", "produced_floor");
+  const refilled = requests.get("summary", "produced_refilled");
+  const pastBlocks = isLive ? undefined : store.get("summary", "produced_blocks");
+  const pastTurns = isLive ? undefined : store.get("summary", "produced_turns");
+  const pastFloor = isLive ? undefined : store.get("summary", "produced_floor");
   const rates = store.get("summary", "tip_rates");
   const epoch = store.get("epoch", "new");
   const slotCounts = store.get("summary", "leader_slot_counts");
@@ -91,36 +103,68 @@ export function SlotDetailsPage({
   const [index] = useState(() => new ProducedIndex());
   const [, setPages] = useState(0);
   const list = useRef<HTMLDivElement>(null);
+  /** The refill count the last whole read already covered. */
+  const refilledRead = useRef<number | undefined>(undefined);
 
-  // Everything held is read once per connection; the live feed keeps it current after that.
+  // Everything held is read whole once per connection; the live feed and refreshes keep it current.
   useEffect(() => {
     if (connection !== "open") return;
     index.reset();
+    refilledRead.current = undefined;
+    const figures = figuresFrom(requests);
+    let first = true;
     void index.readAll(
-      (before) => requests.request("produced.figures", before === undefined ? {} : { before }),
+      async (before) => {
+        const page = await figures(before);
+        // Taken with the first reply, which follows the snapshot carrying the count.
+        if (first) refilledRead.current = requests.get("summary", "produced_refilled");
+        first = false;
+        return page;
+      },
       () => setPages((was) => was + 1),
     );
     return () => index.reset();
   }, [connection, index, requests]);
 
-  // Idempotent, so safe in a memo: the index only takes what differs. A past view would put older copies
-  // over the history read, so the page stays as it was on pausing.
-  const isLive = store.isLive();
+  // Idempotent, so safe in a memo: the index only takes what differs.
   useMemo(() => {
-    if (!isLive) return;
     if (floor !== undefined) index.setFloor(floor);
     index.mergeLive(live ?? [], liveTurns ?? []);
-  }, [index, floor, live, liveTurns, isLive]);
+  }, [index, floor, live, liveTurns]);
+  // One refresh at a time; each effect runs again when the one before it ends.
+  const complete = index.complete;
+  const busy = index.reading;
+  const gapFrom = index.gapFrom;
+  useEffect(() => {
+    if (gapFrom === null || busy) return;
+    void index.refresh(figuresFrom(requests), () => setPages((was) => was + 1), gapFrom);
+  }, [gapFrom, busy, index, requests]);
+  // Blocks read back from the rewind log after the whole read took its count.
+  useEffect(() => {
+    // Read now, not at render: the gap's refresh may have started in this same commit.
+    if (!complete || index.reading || refilled === undefined || refilled === refilledRead.current) return;
+    refilledRead.current = refilled;
+    void index.refresh(figuresFrom(requests), () => setPages((was) => was + 1));
+  }, [complete, busy, refilled, index, requests]);
   const revision = index.revision;
 
-  const heads = useMemo(() => [...index.heads.values()], [index, revision]);
+  const slotsAt = isLive || pastBlocks?.length ? null : store.getSlots();
+  const tipAt = slotsAt?.[slotsAt.length - 1]?.slot ?? null;
+  const shown: Shown = useMemo(
+    () =>
+      isLive
+        ? { heads: index.heads, turns: index.turns, missingBefore: null }
+        : heldAt(index, pastBlocks, pastTurns, pastFloor, tipAt),
+    [index, revision, isLive, pastBlocks, pastTurns, pastFloor, tipAt],
+  );
+  const heads = useMemo(() => [...shown.heads.values()], [shown]);
   const summary = useMemo(() => blockSummary(heads, rates), [heads, rates]);
   const totals = useMemo(() => epochTotals(heads, (slot) => epochOf(epoch, slot), rates), [heads, epoch, rates]);
   const countsByEpoch = useMemo(
     () => new Map((slotCounts ?? []).map((counts) => [counts.epoch, counts])),
     [slotCounts],
   );
-  const turnBySlot = useMemo(() => turnOf(index.turns.values()), [index, revision]);
+  const turnBySlot = useMemo(() => turnOf(shown.turns.values()), [shown]);
   const ordered = useMemo(
     () =>
       sort
@@ -186,7 +230,7 @@ export function SlotDetailsPage({
   };
 
   const renderRow = (slot: number) => {
-    const head = index.heads.get(slot);
+    const head = shown.heads.get(slot);
     if (!head) return null;
     const { blockEpoch, epochDivider, turn, turnDivider } = shape(slot);
     return (
@@ -202,7 +246,7 @@ export function SlotDetailsPage({
         {turnDivider && turn && (
           <TurnDivider
             turn={turn}
-            heads={index.heads}
+            heads={shown.heads}
             open={openTurn === turn.first}
             onToggle={() => setOpenTurn(openTurn === turn.first ? null : turn.first)}
           />
@@ -224,9 +268,11 @@ export function SlotDetailsPage({
     return (
       <section className="slot-details">
         <div className="list-empty">
-          {reading
-            ? "reading the blocks this validator holds…"
-            : "nothing produced yet. Blocks appear here as this validator leads."}
+          {!isLive
+            ? "nothing recorded at this moment."
+            : reading
+              ? "reading the blocks this validator holds…"
+              : "nothing produced yet. Blocks appear here as this validator leads."}
         </div>
       </section>
     );
@@ -272,16 +318,25 @@ export function SlotDetailsPage({
         />
       </div>
       <div className="card-footnote">
-        {open !== null && !index.heads.has(open) && !reading && <>Slot {count(open)} is not among the blocks held. </>}
+        {open !== null && !shown.heads.has(open) && !reading && <>Slot {count(open)} is not among the blocks held. </>}
         {needle && `${count(keys.length)} of ${held} blocks match. `}
         {reading && index.held !== null && `Reading back ${held} of ${count(index.held)}. `}
         {index.failed && "The validator stopped answering before every block was read. "}
+        {shown.missingBefore !== null && `${missingText(epochOf(epoch, shown.missingBefore), shown.missingBefore)} `}
         {sort
           ? `Sorted by ${SORT_WORD[sort.key]}, ${sort.dir === "desc" ? "highest" : "lowest"} first.`
-          : "This epoch's blocks and all of the last epoch's."}
+          : isLive
+            ? "This epoch's blocks and all of the last epoch's."
+            : "The blocks held at the moment shown; the newest 500 as recorded then."}
       </div>
     </section>
   );
+}
+
+function missingText(epoch: number | null, slot: number): string {
+  return epoch === null
+    ? `Blocks before slot ${count(slot)} are no longer held.`
+    : `Blocks before epoch ${count(epoch)} are no longer held.`;
 }
 
 /** One request per opened span; `undefined` while it is out, `null` if nothing came back. */
@@ -614,7 +669,8 @@ function BlockDrawer({ slot, epoch, rates }: { slot: number; epoch: number | nul
   return (
     <div className="produced-detail">
       <BlockCompute block={block} cost={cost} rates={rates} />
-      {cost && <BlockAccount block={block} cost={cost} recurrence={asked?.recurrence ?? null} />}
+      {/* Counted over the blocks held now, so not shown for a past moment. */}
+      {cost && <BlockAccount block={block} cost={cost} recurrence={store.isLive() ? (asked?.recurrence ?? null) : null} />}
       {detail === undefined ? (
         <BlockFeeTables fees={PENDING_FEES} total={block.total_fees} pending />
       ) : (

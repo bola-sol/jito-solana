@@ -38,6 +38,14 @@ function pick<T, K extends keyof T>(from: T, keys: readonly K[]): Pick<T, K> {
   return Object.fromEntries(keys.map((key) => [key, from[key]])) as Pick<T, K>;
 }
 
+export function headOfBlock(block: ProducedBlock): BlockHead {
+  return pick(block, HEAD_KEYS);
+}
+
+export function headOfTurn(turn: LeaderTurn): TurnHead {
+  return { ...pick(turn, TURN_KEYS), bundles: turn.bundles ?? null };
+}
+
 function same<T>(a: T, b: T, keys: readonly (keyof T)[]): boolean {
   return keys.every((key) => a[key] === b[key]);
 }
@@ -56,7 +64,10 @@ export class ProducedIndex {
   failed = false;
   reading = false;
   revision = 0;
+  /** The newest block held when live blocks came all newer than it, until a refresh reaches it. */
+  gapFrom: number | null = null;
   private generation = 0;
+  private top: number | null = null;
 
   /** Reads every page, newest first. Ignored while a read is running or after one finished. */
   async readAll(
@@ -93,10 +104,55 @@ export class ProducedIndex {
     onChange();
   }
 
+  /** Reads pages newest first without clearing, stopping at the page that reaches `stopAt`, or the
+   *  oldest; for blocks the validator gained while the live list could not carry them all. */
+  async refresh(
+    request: (before: number | undefined) => Promise<FiguresPage | null>,
+    onChange: () => void,
+    stopAt?: number,
+  ): Promise<void> {
+    if (this.reading) return;
+    this.reading = true;
+    const generation = this.generation;
+    let before: number | undefined;
+    let reached = Number.POSITIVE_INFINITY;
+    try {
+      for (;;) {
+        const page = await request(before);
+        if (generation !== this.generation) return;
+        if (page === null) break;
+        this.addPage(page);
+        onChange();
+        const oldest = page.figures[page.figures.length - 1]?.[0];
+        if (page.next === null) reached = Number.NEGATIVE_INFINITY;
+        else if (oldest !== undefined) reached = oldest;
+        if (page.next === null || (stopAt !== undefined && oldest !== undefined && oldest <= stopAt)) break;
+        before = page.next;
+      }
+    } catch {
+      // A failed refresh leaves what was held.
+    }
+    if (generation !== this.generation) return;
+    if (this.gapFrom !== null && reached <= this.gapFrom) this.gapFrom = null;
+    this.reading = false;
+    this.revision += 1;
+    onChange();
+  }
+
+  /** The newest slot held, or null. */
+  newest(): number | null {
+    return this.top;
+  }
+
+  private hold(head: BlockHead): void {
+    this.heads.set(head.slot, head);
+    if (this.top === null || head.slot > this.top) this.top = head.slot;
+  }
+
   addPage(page: FiguresPage): void {
     this.setFloor(page.floor);
     for (const row of page.figures) {
-      if (row[0] >= this.floor) this.heads.set(row[0], headOf(row));
+      if (row[0] >= this.floor) this.hold(headOf(row));
     }
     for (const row of page.turns) {
       if (row[0] >= this.floor) this.turns.set(row[0], turnHeadOf(row));
@@ -105,20 +161,25 @@ export class ProducedIndex {
     this.revision += 1;
   }
 
-  /** Idempotent: what is already held as sent is left alone. */
+  /** Idempotent: what is already held as sent is left alone. Notes a gap when, after a whole read,
+   *  every block sent is newer than the newest held. */
   mergeLive(blocks: readonly ProducedBlock[], turns: readonly LeaderTurn[]): void {
     let changed = false;
+    const oldestSent = blocks.reduce((low, block) => Math.min(low, block.slot), Number.POSITIVE_INFINITY);
+    if (this.complete && this.top !== null && oldestSent !== Number.POSITIVE_INFINITY && oldestSent > this.top) {
+      this.gapFrom = Math.min(this.gapFrom ?? this.top, this.top);
+    }
     for (const block of blocks) {
       if (block.slot < this.floor) continue;
-      const head: BlockHead = pick(block, HEAD_KEYS);
+      const head = headOfBlock(block);
       const held = this.heads.get(block.slot);
       if (held && same(held, head, HEAD_KEYS)) continue;
-      this.heads.set(block.slot, head);
+      this.hold(head);
       changed = true;
     }
     for (const turn of turns) {
       if (turn.first < this.floor) continue;
-      const head: TurnHead = { ...pick(turn, TURN_KEYS), bundles: turn.bundles ?? null };
+      const head = headOfTurn(turn);
       const held = this.turns.get(turn.first);
       if (held && same(held, head, TURN_KEYS)) continue;
       this.turns.set(turn.first, head);
@@ -132,6 +193,7 @@ export class ProducedIndex {
     if (floor <= this.floor) return;
     this.floor = floor;
     for (const slot of this.heads.keys()) if (slot < floor) this.heads.delete(slot);
+    if (this.heads.size === 0) this.top = null;
     for (const first of this.turns.keys()) if (first < floor) this.turns.delete(first);
     this.revision += 1;
   }
@@ -145,6 +207,8 @@ export class ProducedIndex {
     this.complete = false;
     this.failed = false;
     this.reading = false;
+    this.gapFrom = null;
+    this.top = null;
     this.generation += 1;
     this.revision += 1;
   }

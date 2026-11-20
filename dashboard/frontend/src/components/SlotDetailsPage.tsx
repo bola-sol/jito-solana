@@ -278,7 +278,7 @@ export function SlotDetailsPage({
         {index.failed && "The validator stopped answering before every block was read. "}
         {sort
           ? `Sorted by ${SORT_WORD[sort.key]}, ${sort.dir === "desc" ? "highest" : "lowest"} first.`
-          : "This epoch's blocks, and the last epoch's until a fifth of this one has passed."}
+          : "This epoch's blocks and all of the last epoch's."}
       </div>
     </section>
   );

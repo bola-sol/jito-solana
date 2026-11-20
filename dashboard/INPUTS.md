@@ -101,7 +101,7 @@ Replay sends a notification for each bank it freezes. The dashboard adds a sende
 | `status_cache`, read with `get_status` by each transaction's message hash and recent blockhash against the bank's `ancestors`; `get_signature_status_slot` for those not found, which are durable nonce transactions | Whether each non-vote transaction failed, for Slot details' fee payers fold and each of our blocks' top fee tables: every transaction in our blocks, and in other leaders' blocks only those of payers seen in ours this epoch. The bank is held until the blockstore has the whole block, and a block counts once its slot is rooted. |
 | `epoch`, `feature_set` | The epoch a block's fee payers count in. The compute budget rules that turn a transaction's instructions into its priority fee; a v1 message states the fee itself. |
 
-The dashboard keeps our blocks for the current epoch. It keeps the previous epoch until a fifth of the new one has passed. An event with these fields, sent when a block completes, removes the need to hold a bank.
+The dashboard keeps our blocks for the current epoch and the whole previous epoch. An event with these fields, sent when a block completes, removes the need to hold a bank.
 
 ## Gossip and bank forks before the wait
 
@@ -171,7 +171,7 @@ A page can ask for data that is too large or too rare to push. Each answer comes
 | `summary.misses`, `summary.written` | Our unrewarded votes, and how often our certificates left out each validator |
 | `peers.gossip` | The Gossip page's peers table, with each staked node's delinquency and last vote |
 | `peers.leaders` | Each staked node's and scheduled leader's client, version, address, country and stake, for schedule rows the peer table no longer holds |
-| `produced.figures` | This epoch's blocks, and the previous epoch's until a fifth of this one has passed, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
+| `produced.figures` | This epoch's blocks and all of the previous epoch's, newest first, 1,024 to a page: nine numbers per block, with their leader turns |
 | `produced.detail` | Our blocks in a range of up to 64 slots, with their turns, waterfalls and costs; for a single slot, who paid the most in it |
 | `rewind.range` | With `--dashboard-history-dir`, the recorded segments' start, end and block count |
 | `rewind.read` | One recorded block of up to 768 KB: the messages the feed published, with when each went out. Two decoded at a time, on blocking threads. |

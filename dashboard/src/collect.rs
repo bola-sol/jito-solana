@@ -12,9 +12,7 @@ use {
             BundleLanding, MetricsTap, ShredFill, SlotCost, StageTimes, TapCounters,
             WindowedCounters, WorkerSum,
         },
-        produced::{
-            Bundles, CostDetail, Execution, ProducedBlock, ProducedDetail, ProducedStore, held_from,
-        },
+        produced::{Bundles, CostDetail, Execution, ProducedBlock, ProducedDetail, ProducedStore},
         proto::{Debounced, Publisher, TOPIC_EPOCH, TOPIC_PEERS, TOPIC_SLOT, TOPIC_SUMMARY},
         search::{LeaderMap, LeaderTraits},
         slots::{BlockDetail, ShredArrival, SlotEntry, SlotLevel, SlotRing},
@@ -1349,16 +1347,11 @@ impl Collector {
             .publish(TOPIC_SUMMARY, "produced_turns", &recent);
     }
 
-    /// This epoch's blocks, and the previous epoch's until a share of this one has passed.
+    /// This epoch's blocks and the whole previous epoch's.
     fn hold_produced_from(&mut self, root_bank: &Bank) {
         let schedule = root_bank.epoch_schedule();
-        let (epoch, index) = schedule.get_epoch_and_slot_index(root_bank.slot());
-        let floor = held_from(
-            schedule.get_first_slot_in_epoch(epoch),
-            schedule.get_first_slot_in_epoch(epoch.saturating_sub(1)),
-            index,
-            schedule.get_slots_in_epoch(epoch),
-        );
+        let epoch = schedule.get_epoch(root_bank.slot());
+        let floor = schedule.get_first_slot_in_epoch(epoch.saturating_sub(1));
         if floor == self.held_from {
             return;
         }

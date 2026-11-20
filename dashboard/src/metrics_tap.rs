@@ -173,8 +173,8 @@ const SHRED_FILLS: usize = 4096;
 /// Reports held until the collector copies them into one of our blocks.
 const PENDING_SLOTS: usize = 500;
 
-/// Well past 1.2 epochs of the largest stake's slots; a guard for a floor never set.
-const MAX_HELD_SLOTS: usize = 32_768;
+/// Well past two epochs of the largest stake's slots; a guard for a floor never set.
+const MAX_HELD_SLOTS: usize = 65_536;
 
 const WORKER_TIMINGS: usize = 2048;
 

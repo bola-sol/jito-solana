@@ -103,12 +103,8 @@ fn base58_or_null<S: Serializer>(key: &Option<Pubkey>, serializer: S) -> Result<
     }
 }
 
-/// The previous epoch's blocks stay until this share of the new one has passed, so the page is not
-/// empty just after a boundary.
-pub const PREVIOUS_EPOCH_KEPT_PERCENT: u64 = 20;
-
-/// Well past 1.2 epochs of the largest stake's slots; a guard for a floor never set.
-const MAX_HELD_BLOCKS: usize = 32_768;
+/// Well past two epochs of the largest stake's slots; a guard for a floor never set.
+const MAX_HELD_BLOCKS: usize = 65_536;
 
 /// The bundle stage reports within a few slots, and the tap keeps its reports about this long.
 const BUNDLE_REACH: usize = 512;
@@ -121,19 +117,6 @@ pub const FIGURES_PAGE: usize = 1024;
 
 /// The widest span one detail request covers.
 pub const MAX_DETAIL_SLOTS: u64 = 64;
-
-/// The oldest slot kept, given the epoch's first slot, the previous epoch's, and how far in the
-/// newest root is.
-pub fn held_from(first: Slot, previous_first: Slot, index: u64, slots_in_epoch: u64) -> Slot {
-    let passed = index.saturating_mul(100);
-    if first == previous_first
-        || passed >= slots_in_epoch.saturating_mul(PREVIOUS_EPOCH_KEPT_PERCENT)
-    {
-        first
-    } else {
-        previous_first
-    }
-}
 
 /// The figures the list, its sort and its summary need, as one array per block: slot, time,
 /// transactions, block cost, cost limit, total fees, priority fees, tips and duration.
@@ -245,8 +228,7 @@ pub struct ProducedDetail {
     pub fees: Option<BlockFees>,
 }
 
-/// Our blocks and leader turns for the current epoch, and the previous one for a while after the
-/// boundary; see [`held_from`].
+/// Our blocks and leader turns for the current epoch and the whole previous one.
 #[derive(Debug, Default)]
 pub struct ProducedStore {
     blocks: BTreeMap<Slot, ProducedBlock>,
@@ -799,17 +781,6 @@ mod tests {
             .map(|block| block.slot)
             .collect();
         assert_eq!(slots, vec![10, 11, 12, 13]);
-    }
-
-    #[test]
-    fn test_the_previous_epoch_is_kept_for_a_fifth_of_the_next() {
-        assert_eq!(held_from(1_000, 0, 199, 1_000), 0);
-        assert_eq!(held_from(1_000, 0, 200, 1_000), 1_000);
-        assert_eq!(
-            held_from(0, 0, 5, 1_000),
-            0,
-            "the first epoch has none before it"
-        );
     }
 
     #[test]

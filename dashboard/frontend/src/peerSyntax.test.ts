@@ -5,6 +5,7 @@ import {
   peerBrowse,
   peerConditionParts,
   peerHolds,
+  PEER_SYNONYMS,
   peerOffered,
   peerSuggest,
   peerValueText,
@@ -179,6 +180,7 @@ describe("peerSuggest", () => {
   it("offers keys, and kinds of peer by their own names", () => {
     expect(inserts("fin")).toEqual(["finalization>", "finalization<"]);
     expect(inserts("del")).toEqual(["is:delinquent"]);
+    expect(inserts("s")).toEqual(["stake>", "stake<", "snapshot>", "snapshot<", "is:staked", "is:silent"]);
     expect(inserts("-na")).toEqual(["-name:"]);
     expect(inserts("zzz")).toEqual([]);
   });
@@ -197,6 +199,24 @@ describe("peerSuggest", () => {
 
   it("leaves out what the table does not show", () => {
     expect(peerSuggest("arr", NO_ARRIVALS)).toEqual([]);
+  });
+
+  it("offers values and synonyms for a bare word", () => {
+    expect(peerSuggest("jito", OFFERED).map((option) => [option.insert, option.what])).toEqual([["client:JitoLabs", "1 peer"]]);
+    expect(inserts("braz")).toEqual(["geo:BR"]);
+    expect(inserts("offline")).toEqual(["is:delinquent", "is:silent"]);
+    expect(inserts("location")).toEqual(["geo:"]);
+    expect(inserts("-jito")).toEqual(["-client:JitoLabs"]);
+    expect(inserts("-del")).toEqual([]);
+    expect(inserts("north")).toEqual([]);
+    expect(peerSuggest("late", NO_ARRIVALS)).toEqual([]);
+  });
+
+  it("resolves every synonym", () => {
+    for (const [synonym, targets] of Object.entries(PEER_SYNONYMS)) {
+      const found = inserts(synonym);
+      for (const target of targets) expect(found.some((insert) => insert.startsWith(target)), `${synonym} → ${target}`).toBe(true);
+    }
   });
 });
 

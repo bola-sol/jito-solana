@@ -15,15 +15,19 @@ import {
   type Op,
 } from "./scheduleConditions";
 import {
+  byPart,
+  byStart,
+  byWord,
   EXPRESSION,
-  MAX_SUGGESTIONS,
   OPS,
   splitValues,
   suggestValues,
+  suggestWord,
   TYPED_OPS,
   type SearchRow,
   type Suggestion,
   type TypeAction,
+  type WordValue,
 } from "./scheduleSyntax";
 
 const UNITS = /\s*(ms|sol|slots?|%)$/i;
@@ -361,32 +365,59 @@ function valuesOf(key: PeerKey, offered: PeerOffered): (readonly [value: string,
   }
 }
 
-/** What to offer for the word being typed, the text up to the caret: names, then their values. */
+/** Words that mean a filter: a key's name, or a `key:value` that key offers. */
+export const PEER_SYNONYMS: Readonly<Record<string, readonly string[]>> = {
+  offline: ["is:delinquent", "is:silent"],
+  down: ["is:delinquent", "is:silent"],
+  quiet: ["is:silent"],
+  location: ["geo"],
+  country: ["geo"],
+  address: ["ip"],
+  uptime: ["up"],
+  seen: ["heard"],
+  late: ["arrival"],
+  votes: ["finalization"],
+  validators: ["is:staked"],
+};
+
+function peerKeyRow(key: PeerKey, not: string, op: string): Suggestion {
+  if (key.kind === "list") return { insert: `${not}${key.name}:`, ghost: key.example, what: key.what };
+  return { insert: `${key.name}${op}`, ghost: `${key.example}${key.unit ? ` ${key.unit}` : ""}`, what: key.what };
+}
+
+/** The kinds of peer, then every list value a bare word can find; names and addresses are left to the plain search. */
+function peerWordValues(offered: PeerOffered, not: string): WordValue[] {
+  const kinds = not
+    ? []
+    : ONLY_NAMES.map((name): WordValue => {
+        const what = `${ONLY_WHAT[name]}, ${peersText(offered.counts[name])}`;
+        return { key: "is", value: name, what, finds: byStart(name, 1) };
+      });
+  const lists = KEYS.filter((key) => key.kind === "list" && key.name !== "name" && key.name !== "ip").flatMap((key) =>
+    valuesOf(key, offered).map(([value, what]): WordValue => {
+      const finds = key.name === "geo" ? byWord(countryName(value)) : key.name === "client" ? byPart(value) : byStart(value);
+      return { key: key.name, value, what, finds };
+    }),
+  );
+  return [...kinds, ...lists];
+}
+
+/** What to offer for the word being typed, the text up to the caret: names, values and synonyms
+ *  for a bare word, a key's values after its name. */
 export function peerSuggest(before: string, offered: PeerOffered): Suggestion[] {
   const word = /(?:^|\s)(\S*)$/.exec(before)?.[1] ?? "";
   const bare = /^(-?)([a-z]+)$/i.exec(word);
   if (bare) {
     const [, not = "", typed = ""] = bare;
     const lower = typed.toLowerCase();
-    const keys = KEYS.filter(
-      (key) => key.name.startsWith(lower) && keyOffered(key, offered) && (!not || key.kind === "list"),
-    ).flatMap((key): Suggestion[] => {
-      const ghost = `${key.example}${key.unit ? ` ${key.unit}` : ""}`;
-      return key.kind === "list"
-        ? [{ insert: `${not}${key.name}:`, ghost: key.example, what: key.what }]
-        : [
-            { insert: `${key.name}>`, ghost, what: key.what },
-            { insert: `${key.name}<`, ghost, what: key.what },
-          ];
+    const usable = (key: PeerKey): boolean => keyOffered(key, offered) && (!not || key.kind === "list");
+    const keys = KEYS.filter((key) => key.name.startsWith(lower) && usable(key)).flatMap((key) =>
+      key.kind === "list" ? [peerKeyRow(key, not, ":")] : [peerKeyRow(key, not, ">"), peerKeyRow(key, not, "<")],
+    );
+    return suggestWord(not, lower, keys, peerWordValues(offered, not), PEER_SYNONYMS, (name) => {
+      const key = keyNamed(name);
+      return key && usable(key) ? peerKeyRow(key, not, key.op) : null;
     });
-    const only = not
-      ? []
-      : ONLY_NAMES.filter((name) => name.startsWith(lower)).map((name) => ({
-          insert: `is:${name}`,
-          ghost: "",
-          what: `${ONLY_WHAT[name]}, ${peersText(offered.counts[name])}`,
-        }));
-    return [...keys, ...only].slice(0, MAX_SUGGESTIONS);
   }
   return suggestValues(word, (name) => {
     const key = keyNamed(name);

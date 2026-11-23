@@ -323,27 +323,132 @@ export interface Suggestion {
 
 export const MAX_SUGGESTIONS = 6;
 
-/** What to offer for the word being typed, the text up to the caret: names, then their values. */
+/** Words that mean a filter: a key's name, or a `key:value` that key offers. */
+export const SYNONYMS: Readonly<Record<string, readonly string[]>> = {
+  offline: ["leader:delinquent"],
+  down: ["leader:delinquent"],
+  missed: ["is:skipped"],
+  late: ["is:slow", "received"],
+  empty: ["is:fewtxs"],
+  unpaid: ["voted:out"],
+  missing: ["voted:out"],
+  fee: ["basefee", "priority"],
+  fees: ["basefee", "priority"],
+  mev: ["tips"],
+  cu: ["compute"],
+  transactions: ["txs"],
+  tx: ["txs"],
+  location: ["geo"],
+  country: ["geo"],
+  blocktime: ["duration"],
+  slottime: ["duration"],
+  full: ["fill"],
+  next: ["gap"],
+  turn: ["gap"],
+};
+
+/** Whether a bare word, in lower case, finds a value. */
+export type Finds = (lower: string) => boolean;
+
+/** Found by its start, from `least` letters. */
+export function byStart(text: string, least = 3): Finds {
+  const held = text.toLowerCase();
+  return (lower) => lower.length >= least && held.startsWith(lower);
+}
+
+/** Found by any part, from three letters. */
+export function byPart(text: string): Finds {
+  const held = text.toLowerCase();
+  return (lower) => lower.length >= 3 && held.includes(lower);
+}
+
+/** Found by the start of any of its words, accents dropped, from three letters. */
+export function byWord(text: string): Finds {
+  const words = text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().split(/[^\p{L}]+/u);
+  return (lower) => lower.length >= 3 && words.some((word) => word.startsWith(lower));
+}
+
+/** A value a bare word can find, offered as the whole `key:value`. */
+export interface WordValue {
+  key: string;
+  value: string;
+  what: string;
+  finds: Finds;
+}
+
+/** A list value as typed, quoted where it holds a space or comma. */
+function typedValue(value: string): string {
+  return /[\s,]/.test(value) ? `"${value}"` : value;
+}
+
+/** A bare word's suggestions: the key names it starts, the values it finds, then the filters its
+ *  synonyms mean. `opener` gives a key's row by name, or null where it is not offered. */
+export function suggestWord(
+  not: string,
+  lower: string,
+  keys: readonly Suggestion[],
+  values: readonly WordValue[],
+  synonyms: Readonly<Record<string, readonly string[]>>,
+  opener: (name: string) => Suggestion | null,
+): Suggestion[] {
+  const row = (value: WordValue): Suggestion => ({ insert: `${not}${value.key}:${typedValue(value.value)}`, ghost: "", what: value.what });
+  const found = values.filter((value) => value.finds(lower)).map(row);
+  const meant = Object.entries(synonyms)
+    // Short synonyms only when typed whole.
+    .filter(([synonym]) => synonym.startsWith(lower) && (lower.length >= 3 || lower === synonym))
+    .flatMap(([, targets]) => targets)
+    .map((target) => {
+      const [name = "", value] = target.split(":");
+      if (value === undefined) return opener(name);
+      const held = values.find((candidate) => candidate.key === name && candidate.value === value);
+      return held ? row(held) : null;
+    });
+  const seen = new Set<string>();
+  const offered: Suggestion[] = [];
+  for (const suggestion of [...keys, ...found, ...meant]) {
+    if (!suggestion || seen.has(suggestion.insert)) continue;
+    seen.add(suggestion.insert);
+    offered.push(suggestion);
+  }
+  return offered.slice(0, MAX_SUGGESTIONS);
+}
+
+function keyRow(key: Key, not: string, op: string): Suggestion {
+  if (key.kind !== "number") return { insert: `${not}${key.name}:`, ghost: key.example, what: key.what };
+  const unit = key.field ? FIELDS[key.field].unit : "";
+  return { insert: `${key.name}${op}`, ghost: `${key.example}${unit ? ` ${unit}` : ""}`, what: key.what };
+}
+
+/** Every list and chip value a bare word can find; names are left to the name search. */
+function wordValues(offered: Offered, not: string): WordValue[] {
+  return KEYS.filter(
+    (key) =>
+      (key.kind === "list" || key.kind === "is") && key.field !== "name" && keyOffered(key, offered) && (!not || key.kind === "list"),
+  ).flatMap((key) =>
+    valuesOf(key, offered).map(([value, what]): WordValue => {
+      // A country by its name, a client by any part.
+      const finds = key.field === "country" ? byWord(what) : key.field === "client" ? byPart(value) : byStart(value);
+      return { key: key.name, value, what, finds };
+    }),
+  );
+}
+
+/** What to offer for the word being typed, the text up to the caret: names, values and synonyms
+ *  for a bare word, a key's values after its name. */
 export function suggest(before: string, offered: Offered): Suggestion[] {
   const word = /(?:^|\s)(\S*)$/.exec(before)?.[1] ?? "";
   const bare = /^(-?)([a-z]+)$/i.exec(word);
   if (bare) {
     const [, not = "", typed = ""] = bare;
     const lower = typed.toLowerCase();
-    return KEYS.filter(
-      (key) => !key.shown && key.name.startsWith(lower) && keyOffered(key, offered) && (!not || key.kind === "list"),
-    )
-      .flatMap((key): Suggestion[] => {
-        const unit = key.field ? FIELDS[key.field].unit : "";
-        const ghost = `${key.example}${unit ? ` ${unit}` : ""}`;
-        return key.kind === "number"
-          ? [
-              { insert: `${key.name}>`, ghost, what: key.what },
-              { insert: `${key.name}<`, ghost, what: key.what },
-            ]
-          : [{ insert: `${not}${key.name}:`, ghost: key.example, what: key.what }];
-      })
-      .slice(0, MAX_SUGGESTIONS);
+    const usable = (key: Key): boolean => !key.shown && keyOffered(key, offered) && (!not || key.kind === "list");
+    const keys = KEYS.filter((key) => key.name.startsWith(lower) && usable(key)).flatMap((key) =>
+      key.kind === "number" ? [keyRow(key, not, ">"), keyRow(key, not, "<")] : [keyRow(key, not, ":")],
+    );
+    return suggestWord(not, lower, keys, wordValues(offered, not), SYNONYMS, (name) => {
+      const key = keyNamed(name);
+      return key && usable(key) ? keyRow(key, not, key.op) : null;
+    });
   }
   return suggestValues(word, (name) => {
     const key = keyNamed(name);
@@ -372,7 +477,7 @@ export function suggestValues(
     // A value typed in full is not offered again.
     .filter(([value]) => fits(value) && value.toLowerCase() !== lower && !already.has(value.toLowerCase()))
     .slice(0, MAX_SUGGESTIONS)
-    .map(([value, what]) => ({ insert: `${not}${name}:${done}${/[\s,]/.test(value) ? `"${value}"` : value}`, ghost: "", what }));
+    .map(([value, what]) => ({ insert: `${not}${name}:${done}${typedValue(value)}`, ghost: "", what }));
 }
 
 function valuesOf(key: Key, offered: Offered): (readonly [value: string, what: string])[] {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FIELD_ORDER, type Condition } from "./scheduleConditions";
 import { ONLY } from "./scheduleFilters";
-import { browse, complete, readSearch, suggest, valueText, withValue, type Offered } from "./scheduleSyntax";
+import { browse, complete, readSearch, suggest, SYNONYMS, valueText, withValue, type Offered } from "./scheduleSyntax";
 
 const offered: Offered = {
   fields: FIELD_ORDER,
@@ -162,6 +162,87 @@ describe("suggest", () => {
     expect(suggest("name:Helius,ham", offered).map((suggestion) => suggestion.insert)).toEqual([
       'name:Helius,"Hamsa, Labs"',
     ]);
+  });
+
+  const inserts = (before: string, from: Offered = offered) => suggest(before, from).map((suggestion) => suggestion.insert);
+
+  it("offers a value for a bare word, whole", () => {
+    expect(suggest("delinq", offered).map((row) => [row.insert, row.what])).toEqual([["leader:delinquent", "not voting now"]]);
+    expect(inserts("delinquent")).toEqual(["leader:delinquent"]);
+    expect(inserts("slow")).toEqual(["is:slow"]);
+    expect(suggest("jito", offered).map((row) => [row.insert, row.what])).toEqual([["client:JitoLabs", "17,309 slots this epoch"]]);
+    expect(inserts("bam")).toEqual(["client:AgaveBam"]);
+    expect(suggest("germ", offered).map((row) => [row.insert, row.what])).toEqual([["geo:DE", "Germany"]]);
+    expect(inserts("states")).toEqual(["geo:US"]);
+  });
+
+  it("puts key names before values, and needs three letters for a value", () => {
+    expect(inserts("left")).toEqual(["leftout>", "leftout<", "is:leftout"]);
+    expect(inserts("de")).toEqual([]);
+    expect(inserts("sl")).toEqual(["slot:"]);
+  });
+
+  it("leaves names to the name search", () => {
+    expect(inserts("coin")).toEqual([]);
+    expect(inserts("heli")).toEqual([]);
+  });
+
+  it("offers what a synonym means", () => {
+    expect(suggest("fee", offered).map((row) => [row.insert, row.ghost])).toEqual([
+      ["basefee>", "0.0025 SOL"],
+      ["priority>", "0.01 SOL"],
+    ]);
+    expect(inserts("offline")).toEqual(["leader:delinquent"]);
+    expect(inserts("late")).toEqual(["is:slow", "received>"]);
+    expect(inserts("miss")).toEqual(["is:skipped", "voted:out"]);
+    expect(inserts("coun")).toEqual(["geo:"]);
+    expect(inserts("location")).toEqual(["geo:"]);
+  });
+
+  it("takes a short synonym only whole, once", () => {
+    expect(inserts("cu")).toEqual(["compute>"]);
+    expect(inserts("c")).toEqual(["compute>", "compute<", "client:"]);
+    expect(inserts("tx")).toEqual(["txs>", "txs<"]);
+  });
+
+  it("negates list values only", () => {
+    expect(inserts("-jito")).toEqual(["-client:JitoLabs"]);
+    expect(inserts("-offline")).toEqual(["-leader:delinquent"]);
+    expect(inserts("-slow")).toEqual([]);
+    expect(inserts("-fee")).toEqual([]);
+  });
+
+  it("leaves out what the validator does not offer", () => {
+    expect(inserts("mev", { ...offered, fields: FIELD_ORDER.filter((field) => field !== "tips") })).toEqual([]);
+    expect(inserts("slow", { ...offered, only: [] })).toEqual([]);
+    expect(inserts("offline", { ...offered, fields: FIELD_ORDER.filter((field) => field !== "leader") })).toEqual([]);
+  });
+
+  it("quotes a value holding a space", () => {
+    expect(inserts("fire", { ...offered, clients: [["Fire Fly", 10]] })).toEqual(['client:"Fire Fly"']);
+  });
+
+  it("finds a country by its name without accents", () => {
+    expect(inserts("turk", { ...offered, countries: ["TR"] })).toEqual(["geo:TR"]);
+  });
+
+  it("caps the list after values and synonyms together", () => {
+    const clients = ["FeeA", "FeeB", "FeeC", "FeeD", "FeeE"].map((client) => [client, 1] as const);
+    expect(inserts("fee", { ...offered, clients })).toEqual([
+      "client:FeeA",
+      "client:FeeB",
+      "client:FeeC",
+      "client:FeeD",
+      "client:FeeE",
+      "basefee>",
+    ]);
+  });
+
+  it("resolves every synonym", () => {
+    for (const [synonym, targets] of Object.entries(SYNONYMS)) {
+      const found = inserts(synonym);
+      for (const target of targets) expect(found.some((insert) => insert.startsWith(target)), `${synonym} → ${target}`).toBe(true);
+    }
   });
 });
 

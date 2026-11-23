@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { count, duration } from "../format";
+import { count, duration, splitDigits } from "../format";
 import { aboutClock, expectedAt, nearestTurn, timeUntil } from "../future";
 import { SLOTS_PER_TURN } from "../schedule";
 import { useNarrow } from "../narrow";
@@ -14,6 +14,10 @@ const OVERSCAN = 3;
 
 /** The ruler redraws its ticks each time the live edge passes this many slots. */
 const RULER_STEP_SLOTS = 256;
+
+/** Icons before a tile's time, on a 16-unit grid. */
+const CLOCK_PATH = "M8 1.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 1 0 0-12.5M8 4.5V8l2.5 1.5";
+const NEXT_PATH = "M2.5 8h11M9 3.5 13.5 8 9 12.5";
 
 /** One tick per column of the ruler, as one `M…V10` path. */
 function ticks(turns: readonly number[], from: number, span: number, width: number): string {
@@ -203,12 +207,15 @@ export function TurnStrip({
                     </>
                   ) : (
                     <>
-                      <span className="schedule-strip-when">{when === null ? "—" : aboutClock(when, now)}</span>
+                      <span className="schedule-strip-when">
+                        <TileIcon path={index === 0 ? NEXT_PATH : CLOCK_PATH} />
+                        {when === null ? "—" : aboutClock(when, now)}
+                      </span>
                       <span className="schedule-strip-count">{when === null ? "" : timeUntil(when, now)}</span>
                     </>
                   )}
                 </div>
-                <div className="schedule-strip-slot">{count(leading ? (producing ?? start) : start)}</div>
+                <SlotNumber text={count(leading ? (producing ?? start) : start)} />
                 <div className="schedule-strip-gap">
                   <span>{isLast ? "To epoch end" : "Next gap"}</span>
                   <b>{gap === null ? "—" : gapText(gap)}</b>
@@ -218,6 +225,24 @@ export function TurnStrip({
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TileIcon({ path }: { path: string }): ReactElement {
+  return (
+    <svg className="schedule-strip-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+}
+
+function SlotNumber({ text }: { text: string }): ReactElement {
+  const [lead, rest] = splitDigits(text);
+  return (
+    <div className="schedule-strip-slot">
+      {lead !== "" && <span className="schedule-strip-slot-lead">{lead}</span>}
+      {rest}
     </div>
   );
 }

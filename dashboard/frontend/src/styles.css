@@ -8708,16 +8708,19 @@ body {
 
 .schedule-strip-tiles {
   position: relative;
-  height: 81px;
+  height: 88px;
 }
 
 .schedule-strip-tile {
   position: absolute;
   top: 0;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   width: 170px;
-  height: 81px;
-  padding: 7px 10px;
+  height: 88px;
+  padding: 7px 10px 0;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--panel);
@@ -8725,20 +8728,36 @@ body {
 
 .schedule-strip-tile.is-next {
   border-color: var(--accent);
-  background: var(--panel-raised);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
 }
 
 .schedule-strip-top,
 .schedule-strip-gap {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 8px;
   font-size: 11.5px;
   white-space: nowrap;
 }
 
 .schedule-strip-when {
-  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+
+.schedule-strip-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .schedule-strip-count {
@@ -8747,8 +8766,13 @@ body {
 }
 
 .is-next .schedule-strip-count,
+.is-next .schedule-strip-when,
 .schedule-strip-now {
   color: var(--accent);
+}
+
+.schedule-strip-now {
+  font-weight: 600;
 }
 
 .schedule-strip-now i {
@@ -8762,29 +8786,44 @@ body {
 }
 
 .schedule-strip-slot {
-  margin-top: 3px;
+  margin-top: 6px;
   font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text);
 }
 
-.schedule-strip-gap {
-  margin-top: 5px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
+.schedule-strip-slot-lead {
+  font-weight: 400;
   color: var(--text-faint);
+}
+
+.is-next .schedule-strip-slot-lead {
+  color: var(--text-dim);
+}
+
+.schedule-strip-gap {
+  height: 28px;
+  margin: auto -10px 0;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-raised);
+  color: var(--text-dim);
 }
 
 .schedule-strip-gap b {
   font-family: var(--mono);
-  font-weight: 400;
-  color: var(--text-dim);
+  font-weight: 500;
+  color: var(--text);
 }
 
 @media (max-width: 700px) {
   .schedule-strip-tile {
     width: 150px;
+  }
+
+  .schedule-strip-icon {
+    display: none;
   }
 
   .schedule-strip-wide,

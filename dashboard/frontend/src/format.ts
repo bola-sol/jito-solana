@@ -61,6 +61,22 @@ export function count(value: number | undefined): string {
   return value === undefined ? "—" : PLAIN.format(value);
 }
 
+/** A formatted number split after the group separator before its last six digits. */
+export function splitDigits(text: string): [string, string] {
+  const isDigit = (index: number): boolean => text[index] >= "0" && text[index] <= "9";
+  let digits = 0;
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    if (!isDigit(index)) continue;
+    digits += 1;
+    if (digits === 6) {
+      let cut = index;
+      while (cut > 0 && isDigit(cut - 1)) cut -= 1;
+      return [text.slice(0, cut), text.slice(cut)];
+    }
+  }
+  return ["", text];
+}
+
 export function decimal(value: number | undefined, digits = 2): string {
   if (value === undefined || Number.isNaN(value)) return "—";
   return withDigits(digits).format(value);

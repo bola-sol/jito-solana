@@ -16,6 +16,7 @@ import {
   slotDelta,
   sol,
   solCompact,
+  splitDigits,
 } from "./format";
 
 // `toLocaleString` output is asserted only where it does not depend on the machine's locale.
@@ -263,5 +264,27 @@ describe("clockTime", () => {
 
   it("gives the time of day alone", () => {
     expect(clockTime(Date.UTC(2026, 7, 22, 9, 29, 57, 626))).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+});
+
+describe("splitDigits", () => {
+  it("splits before the last six digits", () => {
+    expect(splitDigits("472,123,456")).toEqual(["472,", "123,456"]);
+    expect(splitDigits("472.123.456")).toEqual(["472.", "123.456"]);
+    expect(splitDigits("472\u202f123\u202f456")).toEqual(["472\u202f", "123\u202f456"]);
+  });
+
+  it("cuts at a separator when groups are not threes", () => {
+    expect(splitDigits("47,21,23,456")).toEqual(["47,", "21,23,456"]);
+  });
+
+  it("leaves six digits or fewer whole", () => {
+    expect(splitDigits("123,456")).toEqual(["", "123,456"]);
+    expect(splitDigits("4,567")).toEqual(["", "4,567"]);
+    expect(splitDigits("—")).toEqual(["", "—"]);
+  });
+
+  it("leaves an ungrouped number whole", () => {
+    expect(splitDigits("472123456")).toEqual(["", "472123456"]);
   });
 });

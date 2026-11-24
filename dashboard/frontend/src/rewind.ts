@@ -2,9 +2,11 @@
  *  past view while paused, rewound or playing. */
 
 import { Archive, type ArchiveRequests } from "./archive";
+import { clockTime, count, dayText } from "./format";
 import { Ring, type Cursor } from "./ring";
+import { HAS_CLOCK, type SlotRange } from "./slotHistory";
 import { Store } from "./store";
-import type { Envelope } from "./types";
+import type { Envelope, EpochInfo } from "./types";
 
 export const SPEEDS = [0.25, 0.5, 1, 4, 16] as const;
 export type Speed = (typeof SPEEDS)[number];
@@ -117,6 +119,20 @@ export class Rewind {
   /** When `slot` first arrived, from what is held here or loaded from the recording. */
   slotArrival(slot: number): number | null {
     return this.ring.slotArrival(slot) ?? this.archive.slotArrival(slot);
+  }
+
+  /** What the time field resolves an entry against, from the live feed. */
+  momentSource(): MomentSource {
+    const epoch = this.live.get("epoch", "new");
+    return {
+      now: Date.now(),
+      earliest: this.earliest(),
+      tip: this.live.getSlots().at(-1)?.slot ?? null,
+      epoch: epoch ?? null,
+      held: (slot) => this.slotArrival(slot),
+      range: (first, size) => this.live.request("slot.range", { first_slot: first, count: size }),
+      offset: this.live.getClockOffset() ?? 0,
+    };
   }
 
   /** Shows `at`, clamped to what is held or recorded and to now; a gap snaps to what follows it. */
@@ -316,28 +332,125 @@ export class Rewind {
   }
 }
 
-/** A slot number, a time of day, or a date and time, in this browser's zone; null where none reads.
- *  A time of day later than now is yesterday's. */
-export function readMoment(text: string, now: number, slotArrival: (slot: number) => number | null): number | null {
+/** What the time field reads: a time, a slot or an epoch. */
+export type Typed =
+  | { kind: "time"; at: number }
+  | { kind: "slot"; slot: number }
+  | { kind: "epoch"; epoch: number }
+  | { kind: "none" };
+
+/** A time of day or a date and time in this browser's zone, a slot of five digits or more (grouped or
+ *  not), or an epoch as `e1066` or `epoch 1066`. A time of day later than now is yesterday's. */
+export function parseMoment(text: string, now: number): Typed {
   const trimmed = text.trim();
-  if (/^\d{5,}$/.test(trimmed)) return slotArrival(Number(trimmed));
+  const epoch = /^e(?:poch)?\s*(\d{1,6})$/i.exec(trimmed);
+  if (epoch) return { kind: "epoch", epoch: Number(epoch[1]) };
+  if (/^\d+$|^\d{1,3}(?:[,_ ]\d{3})+$/.test(trimmed)) {
+    const digits = trimmed.replace(/[,_ ]/g, "");
+    const slot = Number(digits);
+    return digits.length >= 5 && Number.isSafeInteger(slot) ? { kind: "slot", slot } : { kind: "none" };
+  }
   const moment = /^(?:(\d{4})-(\d{2})-(\d{2})\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
-  if (!moment) return null;
+  if (!moment) return { kind: "none" };
   const [year, month, day, hours, minutes, seconds] = [1, 2, 3, 4, 5, 6].map((index) => {
     const part = moment[index];
     return part === undefined ? null : Number(part);
   });
-  if (hours === null || minutes === null || hours === undefined || minutes === undefined) return null;
+  if (hours === null || minutes === null || hours === undefined || minutes === undefined) return { kind: "none" };
   const second = seconds ?? 0;
-  if (hours > 23 || minutes > 59 || second > 59) return null;
+  if (hours > 23 || minutes > 59 || second > 59) return { kind: "none" };
   const at = new Date(now);
   if (year !== null && year !== undefined && month !== null && month !== undefined && day !== null && day !== undefined) {
     at.setFullYear(year, month - 1, day);
     // A day the month does not have rolls over; refuse it rather than land elsewhere.
-    if (at.getDate() !== day || at.getMonth() !== month - 1) return null;
+    if (at.getDate() !== day || at.getMonth() !== month - 1) return { kind: "none" };
     at.setHours(hours, minutes, second, 0);
-    return at.getTime();
+    return { kind: "time", at: at.getTime() };
   }
   at.setHours(hours, minutes, second, 0);
-  return at.getTime() > now ? at.getTime() - 86_400_000 : at.getTime();
+  return { kind: "time", at: at.getTime() > now ? at.getTime() - 86_400_000 : at.getTime() };
+}
+
+/** Slots past a skipped or untimed one searched for the next with a time. */
+export const LOOK_AHEAD_SLOTS = 64;
+
+/** Slots the validator's history holds, `PACKED_SLOTS` in history.rs. */
+const HISTORY_SLOTS = 432_000;
+
+/** What resolving a typed moment needs, read when Enter is pressed. */
+export interface MomentSource {
+  now: number;
+  earliest: number | null;
+  /** The newest slot on the live feed. */
+  tip: number | null;
+  epoch: Pick<EpochInfo, "epoch" | "start_slot" | "slots_in_epoch"> | null;
+  held: (slot: number) => number | null;
+  range: (first: number, count: number) => Promise<SlotRange>;
+  /** How far this clock runs ahead of the validator's. */
+  offset: number;
+}
+
+export type Resolved = { at: number } | { refused: string };
+
+function startText(at: number, now: number): string {
+  return new Date(at).toDateString() === new Date(now).toDateString()
+    ? clockTime(at)
+    : `${dayText(at)} ${clockTime(at)}`;
+}
+
+/** When the validator first heard of `slot` or the next slot it has a time for, on this clock. */
+async function historyArrival(slot: number, source: MomentSource): Promise<number | null> {
+  const reply = await source.range(slot, LOOK_AHEAD_SLOTS);
+  // A reply without rows comes from a history the validator could not read.
+  if (!Array.isArray(reply.rows)) return null;
+  const row = reply.rows.find((found) => found !== null && (found[1] & HAS_CLOCK) !== 0);
+  return row ? row[8] + source.offset : null;
+}
+
+/** The moment a typed entry stands for, or why there is none. */
+export async function resolveMoment(typed: Typed, source: MomentSource): Promise<Resolved> {
+  if (typed.kind === "none") return { refused: "Not a time, a slot or an epoch." };
+  let at: number;
+  let named = "";
+  if (typed.kind === "time") {
+    at = typed.at;
+  } else {
+    let slot: number;
+    if (typed.kind === "epoch") {
+      named = `Epoch ${typed.epoch}`;
+      const known = source.epoch;
+      if (known === null) return { refused: "The epoch is not known yet." };
+      if (typed.epoch > known.epoch) return { refused: `${named} has not started.` };
+      slot = known.start_slot - (known.epoch - typed.epoch) * known.slots_in_epoch;
+      if (slot < 0) return { refused: `${named} is not in the validator's history.` };
+    } else {
+      slot = typed.slot;
+      named = `Slot ${count(slot)}`;
+      if (source.tip !== null && slot > source.tip) return { refused: `${named} has not been reached.` };
+    }
+    const held = source.held(slot);
+    if (held !== null) {
+      at = held;
+    } else {
+      const missing = { refused: `${named} is not in the validator's history.` };
+      if (source.tip !== null && slot + LOOK_AHEAD_SLOTS <= source.tip - HISTORY_SLOTS) return missing;
+      let found: number | null;
+      try {
+        found = await historyArrival(slot, source);
+      } catch {
+        return { refused: "The validator did not answer." };
+      }
+      if (found === null) return missing;
+      at = found;
+    }
+  }
+  if (source.earliest === null) return { refused: "Nothing is recorded yet." };
+  if (at < source.earliest) {
+    const starts = startText(source.earliest, source.now);
+    if (typed.kind === "epoch") return { refused: `${named} began before the recording, which starts ${starts}.` };
+    if (typed.kind === "slot") return { refused: `${named} is before the recording, which starts ${starts}.` };
+    return { refused: `Before the recording, which starts ${starts}.` };
+  }
+  if (at > source.now) return { refused: "Later than now." };
+  return { at };
 }

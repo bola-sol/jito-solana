@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement } from "react";
 import { clockTime, dateTimeText, dayText, duration } from "../format";
-import { readMoment, SPEEDS, type Rewind, type Speed } from "../rewind";
+import { parseMoment, resolveMoment, SPEEDS, type Rewind, type Speed } from "../rewind";
 import { MINUTES_15, SECONDS_10, ZOOMS, zoomFor, zoomsFor } from "../zoom";
 import type { Page } from "../route";
 import { useWallClock } from "../useNow";
@@ -23,50 +23,94 @@ function seekAndSettle(rewind: Rewind, at: number): void {
   rewind.settle();
 }
 
-/** The moment shown, typed over to jump to a time or a slot. */
+/** The moment shown, typed over to jump to a time, a slot or an epoch. */
 function TimeField({ rewind, at, now }: { rewind: Rewind; at: number; now: number }): ReactElement {
   const [typed, setTyped] = useState<string | null>(null);
-  const [wrong, setWrong] = useState(false);
+  const [reason, setReason] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  // Bumped by each entry and edit, so a lookup answered late changes nothing.
+  const asked = useRef(0);
+  useEffect(
+    () => () => {
+      asked.current += 1;
+    },
+    [],
+  );
+  const forget = () => {
+    asked.current += 1;
+    setBusy(false);
+  };
+  const submit = async (text: string) => {
+    asked.current += 1;
+    const token = asked.current;
+    const source = rewind.momentSource();
+    const from = rewind.at();
+    const parsed = parseMoment(text, source.now);
+    if (parsed.kind === "slot" || parsed.kind === "epoch") setBusy(true);
+    const resolved = await resolveMoment(parsed, source);
+    if (token !== asked.current) return;
+    setBusy(false);
+    // Another control moved the view meanwhile; playback moves it by itself.
+    if (!rewind.getState().playing && rewind.at() !== from) {
+      setTyped(null);
+      return;
+    }
+    if ("refused" in resolved) {
+      // A refusal for a field already left goes with what was typed.
+      if (document.activeElement === input.current) setReason(resolved.refused);
+      else setTyped(null);
+      return;
+    }
+    seekAndSettle(rewind, resolved.at);
+    setTyped(null);
+    setReason(null);
+    input.current?.blur();
+  };
   const onKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
+      forget();
       setTyped(null);
-      setWrong(false);
+      setReason(null);
       event.currentTarget.blur();
       return;
     }
-    if (event.key !== "Enter" || typed === null) return;
-    const moment = readMoment(typed, now, (slot) => rewind.slotArrival(slot));
-    const start = rewind.earliest();
-    if (moment === null || start === null || moment < start || moment > now) {
-      setWrong(true);
-      return;
-    }
-    seekAndSettle(rewind, moment);
-    setTyped(null);
-    setWrong(false);
-    event.currentTarget.blur();
+    if (event.key === "Enter" && typed !== null) void submit(typed);
   };
   return (
-    <input
-      className="rw-time"
-      aria-label="Time or slot"
-      aria-invalid={wrong}
-      title="A time, a date and time, or a slot number, then Enter."
-      value={typed ?? clockTime(at)}
-      onFocus={(event) => {
-        setTyped(sameDay(at, now) ? clockTime(at) : dateTimeText(at));
-        event.currentTarget.select();
-      }}
-      onBlur={() => {
-        setTyped(null);
-        setWrong(false);
-      }}
-      onChange={(event) => {
-        setTyped(event.target.value);
-        setWrong(false);
-      }}
-      onKeyDown={onKey}
-    />
+    <span className="rw-field">
+      <input
+        ref={input}
+        className="rw-time"
+        aria-label="Time, slot or epoch"
+        aria-invalid={reason !== null}
+        aria-busy={busy}
+        aria-describedby={reason !== null ? "rw-why" : undefined}
+        title="A time, a date and time, a slot or an epoch (e1066), then Enter."
+        value={typed ?? clockTime(at)}
+        onFocus={(event) => {
+          forget();
+          setTyped(sameDay(at, now) ? clockTime(at) : dateTimeText(at));
+          event.currentTarget.select();
+        }}
+        onBlur={() => {
+          // A lookup already asked still lands; only what was typed and its refusal go.
+          if (!busy) setTyped(null);
+          setReason(null);
+        }}
+        onChange={(event) => {
+          forget();
+          setTyped(event.target.value);
+          setReason(null);
+        }}
+        onKeyDown={onKey}
+      />
+      {reason !== null && (
+        <span id="rw-why" className="rw-why" role="alert">
+          {reason}
+        </span>
+      )}
+    </span>
   );
 }
 

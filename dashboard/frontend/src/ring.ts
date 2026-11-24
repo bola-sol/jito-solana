@@ -205,10 +205,16 @@ export class Ring {
     const first = this.segments[0];
     const before = first?.keyframe.getSlots().at(-1)?.slot;
     if (before !== undefined && slot <= before) return null;
+    // A ring that began with no slots holds nothing older than its first update.
+    let bounded = before !== undefined;
     for (const segment of this.segments) {
       for (const entry of segment.entries) {
         const { topic, key, value } = entry.envelope;
-        if (topic === "slot" && key === "update" && (value as { slot: number }).slot >= slot) return entry.at;
+        if (topic !== "slot" || key !== "update") continue;
+        const updated = (value as { slot: number }).slot;
+        if (!bounded && slot < updated) return null;
+        bounded = true;
+        if (updated >= slot) return entry.at;
       }
     }
     return null;

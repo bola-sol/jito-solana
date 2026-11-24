@@ -786,7 +786,7 @@ export interface ClusterCharts {
   countries: StakeByCountry | null;
 }
 
-/** Quartiles of handoff gaps in milliseconds. */
+/** Quartiles of handoff delays in milliseconds. */
 export interface HandoffBand {
   p25: number;
   p50: number;
@@ -799,7 +799,7 @@ export interface LateLeader {
   country: string | null;
   n: number;
   p50: number;
-  /** Handoffs with a gap above the p75 of its country's leaders. */
+  /** Handoffs with a delay above the p75 of its country's leaders. */
   over: number;
 }
 
@@ -815,14 +815,14 @@ export interface LeaderFigures {
   late: boolean;
 }
 
-/** The gap before each leader's turn, from the previous slot's block filling here to the next
- *  leader's first shred arriving here, over an epoch of slots. */
+/** The delay at each leader handoff, over an epoch of slots: the previous leader's last first shred
+ *  to the next leader's first, less the previous leader's spacing just before. Named gap on the wire. */
 export interface HandoffSummary {
   since_millis: number;
   /** Whether the window covers a whole epoch of slots. */
   full: boolean;
   cluster: HandoffBand;
-  /** Handoffs per 10 ms from nought; the first bin holds negative gaps, the last every longer one. */
+  /** Handoffs per 10 ms from nought; the first bin holds negative delays, the last every longer one. */
   gaps: number[];
   /** Settled leaders that are not late, per 6 ms of their median. */
   medians: number[];
@@ -838,7 +838,7 @@ export interface HandoffSummary {
   trend: HandoffTrend;
 }
 
-/** The mean gap over each minute of the last hour, oldest first; null for a minute without a handoff. */
+/** The mean delay over each minute of the last hour, oldest first; null for a minute without a handoff. */
 export interface HandoffTrend {
   mean: (number | null)[];
   p25: (number | null)[];
@@ -850,7 +850,8 @@ export interface HandoffTrend {
 export interface HandoffNow {
   leader: string;
   country: string | null;
-  /** Null until the slot before has filled, or where that slot was ours or skipped. */
+  /** Null until the previous leader's last two first shreds are known, and where one is missing, their
+   *  spacing is not positive, or that turn was ours. */
   gap: number | null;
   n: number;
   /** Null until settled. */

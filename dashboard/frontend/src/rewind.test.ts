@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { recording, slotsBlock } from "./archive.fixture";
-import { readMoment, Rewind } from "./rewind";
+import { clockTime, dayText } from "./format";
+import { LOOK_AHEAD_SLOTS, parseMoment, resolveMoment, Rewind, type MomentSource } from "./rewind";
+import { HAS_CLOCK, type SlotRange, type WireRow } from "./slotHistory";
 import { Ring } from "./ring";
 import type { Envelope, SlotEntry } from "./types";
 
@@ -368,31 +370,158 @@ describe("recorded on the validator", () => {
   });
 });
 
-describe("readMoment", () => {
+describe("parseMoment", () => {
   const now = new Date(2026, 10, 18, 12, 0, 0).getTime();
-  const arrival = (slot: number) => (slot === 400_000_000 ? 42 : null);
+  const time = (at: number) => ({ kind: "time", at });
+  const none = { kind: "none" };
 
   it("reads a time of day today, or yesterday when it is later than now", () => {
-    expect(readMoment("11:59:30", now, arrival)).toBe(now - 30_000);
-    expect(readMoment("11:58", now, arrival)).toBe(now - 120_000);
-    expect(readMoment("12:00:01", now, arrival)).toBe(now + 1_000 - 86_400_000);
+    expect(parseMoment("11:59:30", now)).toEqual(time(now - 30_000));
+    expect(parseMoment("11:58", now)).toEqual(time(now - 120_000));
+    expect(parseMoment("12:00:01", now)).toEqual(time(now + 1_000 - 86_400_000));
   });
 
-  it("reads a slot from when it arrived", () => {
-    expect(readMoment("400000000", now, arrival)).toBe(42);
-    expect(readMoment("400000001", now, arrival)).toBeNull();
+  it("reads a slot, grouped or not", () => {
+    for (const text of ["400000000", "400,000,000", "400_000_000", "400 000 000", " 400000000 "]) {
+      expect(parseMoment(text, now)).toEqual({ kind: "slot", slot: 400_000_000 });
+    }
+    expect(parseMoment("1234", now)).toEqual(none);
+    expect(parseMoment("12 30", now)).toEqual(none);
+    expect(parseMoment("1,234", now)).toEqual(none);
+    expect(parseMoment("11 59 30", now)).toEqual(none);
+    expect(parseMoment("400,00,000", now)).toEqual(none);
+    expect(parseMoment("99999999999999999999", now)).toEqual(none);
+  });
+
+  it("reads an epoch", () => {
+    for (const text of ["e1066", "E1066", "epoch 1066", "Epoch1066", " e 1066 "]) {
+      expect(parseMoment(text, now)).toEqual({ kind: "epoch", epoch: 1_066 });
+    }
+    for (const text of ["e", "epoch", "e10x", "1066"]) expect(parseMoment(text, now)).toEqual(none);
   });
 
   it("reads a date and time, and refuses a day the month does not have", () => {
-    expect(readMoment("2026-11-17 09:30", now, arrival)).toBe(new Date(2026, 10, 17, 9, 30, 0).getTime());
-    expect(readMoment("2026-11-16 23:59:59", now, arrival)).toBe(new Date(2026, 10, 16, 23, 59, 59).getTime());
-    expect(readMoment("2026-02-30 10:00", now, arrival)).toBeNull();
-    expect(readMoment("2026-11-17 24:00", now, arrival)).toBeNull();
+    expect(parseMoment("2026-11-17 09:30", now)).toEqual(time(new Date(2026, 10, 17, 9, 30, 0).getTime()));
+    expect(parseMoment("2026-11-16 23:59:59", now)).toEqual(time(new Date(2026, 10, 16, 23, 59, 59).getTime()));
+    expect(parseMoment("2026-02-30 10:00", now)).toEqual(none);
+    expect(parseMoment("2026-11-17 24:00", now)).toEqual(none);
   });
 
   it("refuses anything else", () => {
-    expect(readMoment("25:00", now, arrival)).toBeNull();
-    expect(readMoment("noon", now, arrival)).toBeNull();
-    expect(readMoment("", now, arrival)).toBeNull();
+    expect(parseMoment("25:00", now)).toEqual(none);
+    expect(parseMoment("noon", now)).toEqual(none);
+    expect(parseMoment("", now)).toEqual(none);
+  });
+});
+
+describe("resolveMoment", () => {
+  const now = new Date(2026, 10, 18, 12, 0, 0).getTime();
+  const earliest = now - 86_400_000;
+  const tip = 400_500_000;
+  const timed = (millis: number): WireRow => {
+    const row = new Array<number>(17).fill(0) as WireRow;
+    row[1] = HAS_CLOCK;
+    row[8] = millis;
+    return row;
+  };
+
+  /** A source whose history answers with `rows`, recording each range asked. */
+  function source(rows: (WireRow | null)[] | undefined, change: Partial<MomentSource> = {}) {
+    const asked: [number, number][] = [];
+    const given: MomentSource = {
+      now,
+      earliest,
+      tip,
+      epoch: { epoch: 1_066, start_slot: 400_200_000, slots_in_epoch: 432_000 },
+      held: () => null,
+      range: (first, count) => {
+        asked.push([first, count]);
+        return Promise.resolve({ first_slot: first, rows } as SlotRange);
+      },
+      offset: 250,
+      ...change,
+    };
+    return { given, asked };
+  }
+  const slot = (number: number) => ({ kind: "slot", slot: number }) as const;
+  const epoch = (number: number) => ({ kind: "epoch", epoch: number }) as const;
+
+  it("takes a slot held here without asking the validator", async () => {
+    const { given, asked } = source([], { held: (number) => (number === 400_400_000 ? now - 5_000 : null) });
+    expect(await resolveMoment(slot(400_400_000), given)).toEqual({ at: now - 5_000 });
+    expect(asked).toEqual([]);
+  });
+
+  it("asks the history and moves its time onto this clock", async () => {
+    const { given, asked } = source([timed(now - 60_000)]);
+    expect(await resolveMoment(slot(400_400_000), given)).toEqual({ at: now - 60_000 + 250 });
+    expect(asked).toEqual([[400_400_000, LOOK_AHEAD_SLOTS]]);
+  });
+
+  it("lands on the next slot with a time past skipped and untimed ones", async () => {
+    const untimed = timed(now - 70_000);
+    untimed[1] = 0;
+    const { given } = source([null, untimed, null, timed(now - 60_000)]);
+    expect(await resolveMoment(slot(400_400_000), given)).toEqual({ at: now - 60_000 + 250 });
+  });
+
+  it("refuses a slot the history has no time near", async () => {
+    const missing = { refused: "Slot 400,400,000 is not in the validator's history." };
+    expect(await resolveMoment(slot(400_400_000), source([null, null]).given)).toEqual(missing);
+    expect(await resolveMoment(slot(400_400_000), source(undefined).given)).toEqual(missing);
+  });
+
+  it("says when the validator does not answer", async () => {
+    const { given } = source([], { range: () => Promise.reject(new Error("closed")) });
+    expect(await resolveMoment(slot(400_400_000), given)).toEqual({ refused: "The validator did not answer." });
+  });
+
+  it("refuses slots past the tip or older than the history without asking", async () => {
+    const { given, asked } = source([timed(now)]);
+    expect(await resolveMoment(slot(tip + 1), given)).toEqual({ refused: "Slot 400,500,001 has not been reached." });
+    expect(await resolveMoment(slot(tip - 432_000 - LOOK_AHEAD_SLOTS), given)).toEqual({
+      refused: "Slot 400,067,936 is not in the validator's history.",
+    });
+    expect(asked).toEqual([]);
+  });
+
+  it("refuses a slot timed before the recording, naming when it starts", async () => {
+    const { given } = source([timed(earliest - 1_000)]);
+    const refused = await resolveMoment(slot(400_100_000), given);
+    expect(refused).toEqual({
+      refused: `Slot 400,100,000 is before the recording, which starts ${dayText(earliest)} ${clockTime(earliest)}.`,
+    });
+  });
+
+  it("finds an epoch from its first slot", async () => {
+    const current = source([timed(now - 60_000)]);
+    expect(await resolveMoment(epoch(1_066), current.given)).toEqual({ at: now - 60_000 + 250 });
+    expect(current.asked).toEqual([[400_200_000, LOOK_AHEAD_SLOTS]]);
+    // Only at the epoch's first slot is the previous epoch's start still within the history.
+    const previous = source([timed(earliest - 1_000)], { tip: 400_200_000 });
+    expect(await resolveMoment(epoch(1_065), previous.given)).toEqual({
+      refused: `Epoch 1065 began before the recording, which starts ${dayText(earliest)} ${clockTime(earliest)}.`,
+    });
+    expect(previous.asked).toEqual([[399_768_000, LOOK_AHEAD_SLOTS]]);
+  });
+
+  it("refuses an epoch not started or not known", async () => {
+    expect(await resolveMoment(epoch(1_067), source([]).given)).toEqual({ refused: "Epoch 1067 has not started." });
+    expect(await resolveMoment(epoch(1_066), source([], { epoch: null }).given)).toEqual({
+      refused: "The epoch is not known yet.",
+    });
+  });
+
+  it("bounds a time by the recording and by now", async () => {
+    const { given } = source([]);
+    expect(await resolveMoment({ kind: "time", at: now - 1_000 }, given)).toEqual({ at: now - 1_000 });
+    expect(await resolveMoment({ kind: "time", at: now + 1_000 }, given)).toEqual({ refused: "Later than now." });
+    expect(await resolveMoment({ kind: "time", at: earliest - 1 }, given)).toEqual({
+      refused: `Before the recording, which starts ${dayText(earliest)} ${clockTime(earliest)}.`,
+    });
+    expect(await resolveMoment({ kind: "time", at: now - 1_000 }, source([], { earliest: null }).given)).toEqual({
+      refused: "Nothing is recorded yet.",
+    });
+    expect(await resolveMoment({ kind: "none" }, given)).toEqual({ refused: "Not a time, a slot or an epoch." });
   });
 });

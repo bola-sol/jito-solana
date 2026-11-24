@@ -240,4 +240,14 @@ describe("slotArrival", () => {
     expect(ring.slotArrival(13)).toBeNull();
     expect(ring.slotArrival(8)).toBeNull();
   });
+
+  it("does not place an older slot at the start of a ring that began with no slots", () => {
+    const { ring, deliver } = feed();
+    deliver(slot(100), 1_000);
+    deliver(slot(101), 1_400);
+    expect(ring.slotArrival(50)).toBeNull();
+    expect(ring.slotArrival(99)).toBeNull();
+    expect(ring.slotArrival(100)).toBe(1_000);
+    expect(ring.slotArrival(101)).toBe(1_400);
+  });
 });

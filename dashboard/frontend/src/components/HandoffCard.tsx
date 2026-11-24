@@ -9,6 +9,8 @@ import {
   foldBins,
   leadingLine,
   place,
+  rangeText,
+  signed,
   tally,
   stackedBins,
   trendShape,
@@ -185,7 +187,7 @@ function Leading({
         {now === null ? "—" : <Who name={`${name}${ours ? " (ours)" : ""}`} country={country} />}
       </div>
       <div className="handoff-leading-figure">
-        {now?.gap != null ? `${count(now.gap)} ms` : "—"}
+        {now?.gap != null ? `${signed(now.gap)} ms` : "—"}
         <small>this handoff</small>
       </div>
       <div className="handoff-leading-sub">
@@ -250,7 +252,7 @@ function OursRow({ summary, name, country }: { summary: HandoffSummary | null; n
     <LateRow
       name={`${name} (ours)`}
       country={country}
-      median={ours?.p50 != null ? `${count(ours.p50)} ms` : "—"}
+      median={ours?.p50 != null ? `${signed(ours.p50)} ms` : "—"}
       late={
         <Explain text="Handoffs above the p75 of the leader's country." className="is-leftward">
           {share}
@@ -310,8 +312,8 @@ function BinCard({
               key={leader.leader}
               name={nameOf(leader.leader)}
               country={leader.country ?? countryOf(leader.leader)}
-              median={`${count(leader.p50)} ms`}
-              late={`${leader.p25}–${leader.p75}`}
+              median={`${signed(leader.p50)} ms`}
+              late={rangeText(leader.p25, leader.p75)}
               current={leader.leader === current}
               onTime={!leader.late}
             />
@@ -342,7 +344,7 @@ function LateCard({
     <section className="card handoff-late-card">
       <div className="card-head">
         <h3 className="card-title">
-          <Explain text="Leaders whose p25 gap is 10 ms over the p75 of their country's leaders.">
+          <Explain text="Leaders whose p25 delay is 10 ms over the p75 of their country's leaders.">
             Late for Their Country
           </Explain>
         </h3>
@@ -370,7 +372,7 @@ function LateCard({
               key={leader.leader}
               name={nameOf(leader.leader)}
               country={leader.country ?? countryOf(leader.leader)}
-              median={`${count(leader.p50)} ms`}
+              median={`${signed(leader.p50)} ms`}
               late={tally(leader.over, leader.n)}
               current={leader.leader === current}
             />
@@ -385,19 +387,19 @@ function LateCard({
 const TREND_WIDTH = 1000;
 const TREND_HEIGHT = 44;
 
-/** The last hour of the minute's mean, under the gap axis, on its own time axis. */
+/** The last hour of the minute's mean, under the delay axis, on its own time axis. */
 function Trend({ trend, minute }: { trend: HandoffTrend | null; minute: number | null }) {
   const shape = useMemo(() => (trend ? trendShape(trend, TREND_WIDTH, TREND_HEIGHT) : null), [trend]);
   const label = shape?.range
-    ? `The 60 second mean gap over the last hour, ${shape.range[0]} to ${shape.range[1]} ms`
+    ? `The 60 second mean delay over the last hour, ${signed(shape.range[0])} to ${signed(shape.range[1])} ms`
     : "No handoffs in the last hour yet";
   return (
     <div className="handoff-trend">
       <div className="handoff-trend-head">
         <span>60 s mean, last hour</span>
         <span>
-          now <b>{minute !== null ? `${count(minute)} ms` : "—"}</b> · hour{" "}
-          <b>{shape?.range ? `${shape.range[0]}–${shape.range[1]}` : "—"}</b>
+          now <b>{minute !== null ? `${signed(minute)} ms` : "—"}</b> · hour{" "}
+          <b>{shape?.range ? rangeText(shape.range[0], shape.range[1]) : "—"}</b>
         </span>
       </div>
       <svg viewBox={`0 0 ${TREND_WIDTH} ${TREND_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={label}>
@@ -409,7 +411,7 @@ function Trend({ trend, minute }: { trend: HandoffTrend | null; minute: number |
       </svg>
       <div className="handoff-trend-x" aria-hidden="true">
         <span>−60 min</span>
-        <span>dashed: hour median {trend?.hour_p50 != null ? `${count(trend.hour_p50)} ms` : "—"}</span>
+        <span>dashed: hour median {trend?.hour_p50 != null ? `${signed(trend.hour_p50)} ms` : "—"}</span>
         <span>now</span>
       </div>
     </div>
@@ -497,15 +499,15 @@ export function HandoffCard(): ReactElement {
 
   const fold = (
     <>
-      <b className="handoff-fig is-ms">{now?.minute_mean != null ? `${count(now.minute_mean)} ms` : "—"}</b>{" "}
-      <Explain text="Mean gap over the last minute from one leader's last block filling here to the next leader's first shred arriving here.">
-        between leaders
+      <b className="handoff-fig is-ms">{now?.minute_mean != null ? `${signed(now.minute_mean)} ms` : "—"}</b>{" "}
+      <Explain text="Mean over the last minute of how much later the next leader's first shred came than the previous leader's slot time just before.">
+        delay at handoffs
       </Explain>{" "}
       over the last minute, <b className="handoff-fig">{lateCount === null ? "—" : count(lateCount)}</b>{" "}
       {lateCount === 1 ? "leader late for its country" : "leaders late for their country"}
     </>
   );
-  const bandText = cluster ? `, cluster p25 ${cluster.p25} ms to p75 ${cluster.p75} ms` : "";
+  const bandText = cluster ? `, cluster p25 ${signed(cluster.p25)} ms to p75 ${signed(cluster.p75)} ms` : "";
   const settled = summary ? count(summary.settled) : "—";
 
   return (
@@ -515,19 +517,19 @@ export function HandoffCard(): ReactElement {
           <section className="card handoff-chart">
             <div className="card-head">
               <h3 className="card-title">
-                Gap Before Each Turn{summary ? `, ${windowLabel(summary.full, summary.since_millis, store.now())}` : ""}
+                Delay at Each Handoff{summary ? `, ${windowLabel(summary.full, summary.since_millis, store.now())}` : ""}
               </h3>
               <span className="card-aside">{settled} leaders with 10+ handoffs</span>
             </div>
             <div className="handoff-axis">
-              <Strip kind="hist" caption="all handoffs" label={`Histogram of handoff gaps${bandText}`}>
+              <Strip kind="hist" caption="all handoffs" label={`Histogram of handoff delays${bandText}`}>
                 <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} slotLabel />
                 {summary && <Bars values={gaps} className="handoff-hist" />}
               </Strip>
               <Strip
                 kind="leaders"
                 caption={summary ? `${settled} leaders by median` : "leaders by median"}
-                label={`Settled leaders by median gap, ${lateCount ?? 0} late for their country; pick a bin to list its leaders`}
+                label={`Settled leaders by median delay, ${lateCount ?? 0} late for their country; pick a bin to list its leaders`}
                 role="group"
               >
                 <Backdrop cluster={cluster} slotMillis={slotMillis} max={max} gap={gap} tone={tone} />
@@ -560,8 +562,7 @@ export function HandoffCard(): ReactElement {
             <Trend trend={summary?.trend ?? null} minute={now?.minute_mean ?? null} />
             <Key />
             <div className="handoff-foot">
-              Each gap runs from the previous block filling here to the next leader's first shred arriving here, so it
-              includes that shred's path from the leader through turbine.
+              Time between the two leaders' first shreds arriving here, less the previous leader's last slot time.
             </div>
           </section>
           <div className="handoff-side">

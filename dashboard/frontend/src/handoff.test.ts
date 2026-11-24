@@ -6,6 +6,8 @@ import {
   foldBins,
   leadingLine,
   place,
+  rangeText,
+  signed,
   stackedBins,
   tally,
   trendShape,
@@ -119,7 +121,7 @@ describe("tally", () => {
 
 describe("binRange", () => {
   it("leaves the first bin open below and the last open above", () => {
-    expect(binRange(0, 50, 6)).toEqual({ from: null, to: 6, label: "0–5" });
+    expect(binRange(0, 50, 6)).toEqual({ from: null, to: 6, label: "up to 5" });
     expect(binRange(7, 50, 6)).toEqual({ from: 42, to: 48, label: "42–47" });
     expect(binRange(49, 50, 6)).toEqual({ from: 294, to: null, label: "294+" });
   });
@@ -152,6 +154,32 @@ describe("leadingLine", () => {
 
   it("is empty without a leader", () => {
     expect(leadingLine(null)).toEqual({ kind: "none" });
+  });
+
+  it("spells out a usual range that starts below zero", () => {
+    expect(leadingLine(now({ judged: false, band: { p25: -1, p50: 3, p75: 8 } }))).toEqual({
+      kind: "unjudged",
+      usual: "usual \u22121 to 8 ms",
+    });
+  });
+});
+
+describe("signed", () => {
+  it("writes a true minus sign and groups thousands", () => {
+    expect(signed(-12)).toBe("\u221212");
+    expect(signed(0)).toBe("0");
+    expect(signed(5000)).toBe("5,000");
+  });
+});
+
+describe("rangeText", () => {
+  it("keeps the dash for two figures at or above zero", () => {
+    expect(rangeText(9, 106)).toBe("9–106");
+  });
+
+  it("says to where either end is below zero", () => {
+    expect(rangeText(-12, 104)).toBe("\u221212 to 104");
+    expect(rangeText(-30, -4)).toBe("\u221230 to \u22124");
   });
 });
 

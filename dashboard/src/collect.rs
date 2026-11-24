@@ -128,7 +128,7 @@ pub struct Replies {
 }
 
 impl Replies {
-    /// The settled leaders whose median gap is at least `from` and under `to`, each end open
+    /// The settled leaders whose median delay is at least `from` and under `to`, each end open
     /// where it is none.
     pub fn handoff_leaders_between(
         &self,
@@ -575,7 +575,7 @@ pub struct Collector {
     fee_payers: FeePayers,
     /// The newest slot whose first shred has arrived.
     newest_arrival: Slot,
-    /// The turn, whether its gap was known, and the summary it was measured against.
+    /// The turn, whether its delay was known, and the summary it was measured against.
     handoff_now_for: Option<(Slot, bool, Option<u64>)>,
     cert_formation_for: Option<FormationKey>,
     finalized_paths: FinalizedPaths,
@@ -1102,14 +1102,8 @@ impl Collector {
         }
 
         let retimed = self.retime(&filled, &mut changed);
-        let touched: BTreeSet<Slot> = changed
-            .iter()
-            .flat_map(|entry| [entry.slot, entry.slot.saturating_add(1)])
-            .collect();
-        for slot in touched {
-            self.note_handoff(root_bank, slot);
-        }
         for entry in &changed {
+            self.note_handoff(root_bank, entry.slot);
             self.publish_slot(entry);
         }
         if retimed {
@@ -1117,8 +1111,8 @@ impl Collector {
         }
     }
 
-    /// The gap before a leader's turn, once this slot's first shred and the previous slot's fill are
-    /// both known. Not after our own turn, where the gap is a round trip to the next leader, nor
+    /// The delay at a leader's handoff, once the first shreds of this slot and the previous leader's
+    /// last two are known. Not after our own turn, where it is a round trip to the next leader, nor
     /// while catching up, when repair rather than turbine brings the blocks.
     fn note_handoff(&mut self, root_bank: &Bank, slot: Slot) {
         if self.handoffs.holds(slot)
@@ -1129,35 +1123,30 @@ impl Collector {
         {
             return;
         }
-        let Some(previous) = slot.checked_sub(1) else {
+        let (Some(previous), Some(earlier)) = (slot.checked_sub(1), slot.checked_sub(2)) else {
             return;
         };
-        let (Some(arrived), Some(filled)) = (
-            self.slots.get(slot).and_then(|entry| entry.time_millis),
-            self.slots.get(previous).and_then(SlotEntry::full_at),
-        ) else {
-            return;
-        };
-        let cache = &self.ctx.leader_schedule_cache;
-        let (Some(leader), Some(before)) = (
-            cache.slot_leader_at(slot, Some(root_bank)),
-            cache.slot_leader_at(previous, Some(root_bank)),
-        ) else {
-            return;
-        };
-        if leader.id == before.id || before.id == self.ctx.identity() {
-            return;
-        }
-        let (Ok(arrived_at), Ok(filled_at)) = (i64::try_from(arrived), i64::try_from(filled))
+        let first = |slot: Slot| self.slots.get(slot).and_then(|entry| entry.time_millis);
+        let (Some(arrived), Some(last_at), Some(second_last_at)) =
+            (first(slot), first(previous), first(earlier))
         else {
             return;
         };
-        self.handoffs.note(
-            slot,
-            leader.id,
-            arrived_at.saturating_sub(filled_at),
-            arrived,
-        );
+        let cache = &self.ctx.leader_schedule_cache;
+        let (Some(leader), Some(last), Some(second_last)) = (
+            cache.slot_leader_at(slot, Some(root_bank)),
+            cache.slot_leader_at(previous, Some(root_bank)),
+            cache.slot_leader_at(earlier, Some(root_bank)),
+        ) else {
+            return;
+        };
+        if leader.id == last.id || last.id != second_last.id || last.id == self.ctx.identity() {
+            return;
+        }
+        let Some(delay) = handoff::delay(arrived, last_at, second_last_at) else {
+            return;
+        };
+        self.handoffs.note(slot, leader.id, delay, arrived);
     }
 
     /// The leader whose turn is arriving now, from the first slot of its run of turns.
@@ -1666,11 +1655,6 @@ impl Collector {
         self.produced_settled_to = root;
         let refilled = self.merge_refill(root);
         let retimed = self.retime(&became_full, &mut changed);
-        // The next slot's first shred usually arrives before this block fills.
-        for slot in &became_full {
-            self.note_handoff(root_bank, *slot);
-            self.note_handoff(root_bank, slot.saturating_add(1));
-        }
 
         // The loop above no longer covers slots that have fallen out of bank
         // forks, so their levels advance from the roots directly.

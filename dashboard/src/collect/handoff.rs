@@ -1,5 +1,5 @@
-//! The gap before each leader's turn: from the previous slot's block filling here to the first
-//! shred of the next leader's slot arriving here, kept for an epoch of slots.
+//! The delay at each leader handoff over an epoch of slots: the previous leader's last first shred to
+//! the next leader's first, less its spacing just before, all arriving here. Named gap on the wire.
 
 use {
     super::cluster_charts::at_percent,
@@ -12,7 +12,7 @@ use {
 /// An epoch of slots, rolling, so the figures do not empty at each boundary.
 const WINDOW_SLOTS: u64 = 432_000;
 
-/// Percentiles over an epoch of gaps are recomputed no more often than this.
+/// Percentiles over an epoch of delays are recomputed no more often than this.
 const STATS_EVERY_MILLIS: u64 = 10_000;
 
 /// A leader's own band means something from this many handoffs.
@@ -25,7 +25,7 @@ const HOUR_MILLIS: u64 = 3_600_000;
 const TREND_STEP_MILLIS: u64 = 15_000;
 const TREND_POINTS: u64 = 241;
 
-/// The histogram's bins in milliseconds; the last also holds every longer gap.
+/// The histogram's bins in milliseconds; the last also holds every longer delay.
 const GAP_BIN_MILLIS: i32 = 10;
 const GAP_BINS: usize = 60;
 
@@ -45,7 +45,7 @@ const LATE_MARGIN_MILLIS: i32 = 10;
 #[derive(Debug, Clone, Copy)]
 struct Handoff {
     leader: u16,
-    /// Milliseconds; negative where the next leader's first shred arrived before the block filled.
+    /// Milliseconds; negative where the next leader's first shred came sooner than the spacing before.
     gap: i32,
     /// When the next leader's first shred arrived, unix milliseconds.
     at: u64,
@@ -65,7 +65,7 @@ pub struct LateLeader {
     pub country: Option<&'static str>,
     pub n: u32,
     pub p50: i32,
-    /// Handoffs with a gap above the p75 of its country's leaders.
+    /// Handoffs with a delay above the p75 of its country's leaders.
     pub over: u32,
 }
 
@@ -100,9 +100,9 @@ pub struct HandoffSummary {
     /// Whether the window has rolled, so it covers a whole epoch of slots.
     pub full: bool,
     pub cluster: Band,
-    /// Handoffs per 10 ms of gap from nought; negative gaps count in the first bin.
+    /// Handoffs per 10 ms of delay from nought; negative delays count in the first bin.
     pub gaps: Vec<u32>,
-    /// Settled leaders that are not late, per 6 ms of their median gap.
+    /// Settled leaders that are not late, per 6 ms of their median delay.
     pub medians: Vec<u32>,
     /// Settled leaders that are late, in the same bins, all of them where the list is cut.
     pub late_medians: Vec<u32>,
@@ -116,7 +116,7 @@ pub struct HandoffSummary {
     pub trend: Trend,
 }
 
-/// The mean gap over each minute of the last hour, a point each 15 seconds, oldest first, with that
+/// The mean delay over each minute of the last hour, a point each 15 seconds, oldest first, with that
 /// minute's p25 and p75. A point with no handoffs in its minute is none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Trend {
@@ -124,7 +124,7 @@ pub struct Trend {
     pub mean: Vec<Option<i32>>,
     pub p25: Vec<Option<i32>>,
     pub p75: Vec<Option<i32>>,
-    /// The median gap over the whole hour.
+    /// The median delay over the whole hour.
     pub hour_p50: Option<i32>,
 }
 
@@ -132,7 +132,8 @@ pub struct Trend {
 pub struct HandoffNow {
     pub leader: String,
     pub country: Option<&'static str>,
-    /// None until the slot before has filled, or where that slot was ours or skipped.
+    /// None until the previous leader's last two first shreds are known, and where one is missing,
+    /// their spacing is not positive, or that turn was ours.
     pub gap: Option<i32>,
     pub n: u32,
     /// Only once settled.
@@ -143,7 +144,7 @@ pub struct HandoffNow {
     pub judged: bool,
     /// Each handoff, while too few for a band.
     pub gaps: Vec<i32>,
-    /// The mean handoff gap over the last minute.
+    /// The mean handoff delay over the last minute.
     pub minute_mean: Option<i32>,
 }
 
@@ -501,6 +502,18 @@ fn band(sorted: &[i32]) -> Option<Band> {
     })
 }
 
+/// Milliseconds from `before` to `first` beyond the spacing from `earlier` to `before`, all first
+/// shreds here. None where the spacing before is not positive.
+pub(super) fn delay(first: u64, before: u64, earlier: u64) -> Option<i64> {
+    let (first, before, earlier) = (
+        i64::try_from(first).ok()?,
+        i64::try_from(before).ok()?,
+        i64::try_from(earlier).ok()?,
+    );
+    let spacing = before.checked_sub(earlier).filter(|spacing| *spacing > 0)?;
+    first.checked_sub(before)?.checked_sub(spacing)
+}
+
 fn bin(millis: i32, width: i32, bins: usize) -> usize {
     let index = usize::try_from(millis.max(0).checked_div(width).unwrap_or(0)).unwrap_or(0);
     index.min(bins.saturating_sub(1))
@@ -672,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_leader_with_few_handoffs_sends_each_gap() {
+    fn test_a_leader_with_few_handoffs_sends_each_delay() {
         let mut handoffs = cluster();
         handoffs.summary(0, &key(1), no_country);
         handoffs.note(50_000, key(42), 80, 1_010);
@@ -709,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn test_negative_and_long_gaps_land_in_the_end_bins() {
+    fn test_negative_and_long_delays_land_in_the_end_bins() {
         let mut handoffs = Handoffs::default();
         handoffs.note(4, key(1), -40, 1);
         handoffs.note(8, key(1), 5_000, 2);
@@ -717,6 +730,20 @@ mod tests {
         assert_eq!(summary.gaps[0], 1);
         assert_eq!(summary.gaps.last(), Some(&1));
         assert_eq!(summary.ours.n, 0);
+    }
+
+    #[test]
+    fn test_the_delay_is_the_spacing_beyond_the_one_before() {
+        assert_eq!(delay(432, 200, 0), Some(32));
+        assert_eq!(delay(390, 200, 0), Some(-10));
+        assert_eq!(delay(100, 200, 0), Some(-300));
+    }
+
+    #[test]
+    fn test_no_delay_without_a_positive_spacing_before() {
+        assert_eq!(delay(400, 200, 200), None);
+        assert_eq!(delay(400, 100, 200), None);
+        assert_eq!(delay(u64::MAX, 200, 0), None);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { bandPaths, linePath } from "./cluster";
+import { count } from "./format";
 import type { HandoffNow, HandoffTrend } from "./types";
 
 /** The server's bin widths, in milliseconds. */
@@ -11,7 +12,7 @@ export function axisMax(slotMillis: number | null): number {
   return Math.max(300, Math.ceil((1.15 * slot) / 10) * 10);
 }
 
-/** A gap's place along the axis in percent, clamped to its ends. */
+/** A delay's place along the axis in percent, clamped to its ends. */
 export function place(millis: number, max: number): number {
   if (max <= 0) return 0;
   return (Math.min(max, Math.max(0, millis)) / max) * 100;
@@ -27,9 +28,19 @@ export function foldBins(bins: readonly number[], width: number, max: number): n
   return folded;
 }
 
-/** Which of `count` bins of `width` a gap falls in, clamped to both ends. */
+/** Which of `count` bins of `width` a delay falls in, clamped to both ends. */
 export function binOf(millis: number, width: number, count: number): number {
   return Math.min(count - 1, Math.max(0, Math.floor(millis / width)));
+}
+
+/** Milliseconds with a true minus sign. */
+export function signed(millis: number): string {
+  return millis < 0 ? `\u2212${count(-millis)}` : count(millis);
+}
+
+/** Two figures as a range, spelled out where a dash would read as a minus. */
+export function rangeText(low: number, high: number): string {
+  return low < 0 || high < 0 ? `${signed(low)} to ${signed(high)}` : `${count(low)}–${count(high)}`;
 }
 
 /** One bin of settled leaders: heights in percent of the strip, both parts of one bar. */
@@ -69,7 +80,7 @@ export function binRange(index: number, count: number, width: number): BinRange 
   return {
     from: index === 0 ? null : low,
     to: last ? null : low + width,
-    label: last ? `${low}+` : `${low}–${low + width - 1}`,
+    label: last ? `${low}+` : index === 0 ? `up to ${width - 1}` : `${low}–${low + width - 1}`,
   };
 }
 
@@ -82,7 +93,7 @@ export type LeadingLine =
 export function leadingLine(now: HandoffNow | null): LeadingLine {
   if (now === null) return { kind: "none" };
   if (now.band !== null) {
-    const usual = `usual ${now.band.p25}–${now.band.p75} ms`;
+    const usual = `usual ${rangeText(now.band.p25, now.band.p75)} ms`;
     if (!now.judged) return { kind: "unjudged", usual };
     return {
       kind: "settled",

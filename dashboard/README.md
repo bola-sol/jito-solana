@@ -228,7 +228,7 @@ time,
 is being asked for, `peers.leaders` for the client, version, address, country
 and stake of every staked node and scheduled leader, where `peers.all` holds
 only the leaders near the tip, `handoff.bin` for the settled leaders whose median handoff
-gap falls in a range, from the figures each ten-second handoff summary keeps,
+delay falls in a range, from the figures each ten-second handoff summary keeps,
 `cluster.charts` for the Cluster page, gathered on the first ask and then
 every fifteen seconds only while it is being asked for, `rewind.range` for the
 recorded segments, and `rewind.read` for one recorded block, decoded off the

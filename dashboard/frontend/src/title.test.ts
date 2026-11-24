@@ -3,7 +3,7 @@ import { pageTitle, TITLE } from "./title";
 
 describe("pageTitle", () => {
   it("names the validator and its cluster", () => {
-    expect(pageTitle("Lantern", "HLj2…", "mainnet-beta")).toBe("Agave Dashboard | Lantern · mainnet-beta");
+    expect(pageTitle("Lantern", "HLj2…", "mainnet")).toBe("Agave Dashboard | Lantern · mainnet");
   });
 
   it("calls an unnamed node private", () => {

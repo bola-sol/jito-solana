@@ -69,7 +69,7 @@ impl DashboardContext {
 fn cluster_name(cluster_type: ClusterType) -> &'static str {
     match cluster_type {
         ClusterType::Testnet => "testnet",
-        ClusterType::MainnetBeta => "mainnet-beta",
+        ClusterType::MainnetBeta => "mainnet",
         ClusterType::Devnet => "devnet",
         ClusterType::Development => "development",
     }
@@ -88,9 +88,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cluster_names_are_the_ones_upstream_parses() {
-        for cluster_type in ClusterType::STRINGS.map(|name| name.parse::<ClusterType>().unwrap()) {
-            assert_eq!(cluster_name(cluster_type).parse(), Ok(cluster_type));
+    fn test_cluster_names_are_upstream_names_with_beta_dropped() {
+        for name in ClusterType::STRINGS {
+            let expected = name.strip_suffix("-beta").unwrap_or(name);
+            assert_eq!(cluster_name(name.parse().unwrap()), expected);
         }
     }
 }

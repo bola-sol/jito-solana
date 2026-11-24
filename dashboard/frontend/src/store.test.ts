@@ -59,8 +59,8 @@ describe("values", () => {
     const store = new Store();
     store.apply(envelope("summary", "cluster", "testnet"));
     expect(store.get("summary", "cluster")).toBe("testnet");
-    store.apply(envelope("summary", "cluster", "mainnet-beta"));
-    expect(store.get("summary", "cluster")).toBe("mainnet-beta");
+    store.apply(envelope("summary", "cluster", "mainnet"));
+    expect(store.get("summary", "cluster")).toBe("mainnet");
   });
 
   it("ignores replies to our own requests", () => {
@@ -496,7 +496,7 @@ describe("copyFrom", () => {
     const copy = new Store();
     copy.copyFrom(source);
     copy.apply(envelope("slot", "update", slot(2)));
-    copy.apply(envelope("summary", "cluster", "mainnet-beta"));
+    copy.apply(envelope("summary", "cluster", "mainnet"));
     expect(source.getSlots().map((entry) => entry.slot)).toEqual([1]);
     expect(source.get("summary", "cluster")).toBe("testnet");
     expect(copy.getSlots().map((entry) => entry.slot)).toEqual([1, 2]);

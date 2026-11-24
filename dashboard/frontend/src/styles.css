@@ -356,6 +356,8 @@ body {
   text-transform: lowercase;
 }
 
+/* mainnet-beta: history recorded before the rename. */
+.cluster-mainnet,
 .cluster-mainnet-beta {
   color: var(--good);
 }

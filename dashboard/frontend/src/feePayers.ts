@@ -1,0 +1,95 @@
+import { count, percent, sol } from "./format";
+import type { BlockFees, FeePayerRow, FeePayerSummary } from "./types";
+
+/** The server's rule, for the wording and the ratio's colour. */
+export const MIN_AWAY_TRANSACTIONS = 100;
+export const ESCALATE_RATIO = 3;
+
+export function failedShare(failed: number, transactions: number): number | null {
+  return transactions > 0 ? failed / transactions : null;
+}
+
+/** Our rate over the rate elsewhere; infinite where nothing failed elsewhere. */
+export function failedRatio(row: FeePayerRow): number | null {
+  const here = failedShare(row.failed, row.transactions);
+  const away = failedShare(row.away_failed, row.away_transactions);
+  if (here === null || away === null) return null;
+  if (away === 0) return here > 0 ? Infinity : null;
+  return here / away;
+}
+
+export function shareLabel(failed: number, transactions: number): string {
+  return percent(failedShare(failed, transactions), 1);
+}
+
+export function ratioLabel(row: FeePayerRow): string {
+  const ratio = failedRatio(row);
+  if (ratio === null) return "—";
+  return ratio === Infinity ? "∞" : `${ratio.toFixed(1)}×`;
+}
+
+export function priorityLabel(lamports: number): string {
+  return `${sol(lamports, 4)} SOL`;
+}
+
+const TOP_IN_BLOCK = 5;
+
+/** Full rows as wide as usual ones, drawn hidden to hold the tables' size until the reply comes. */
+export const PENDING_FEES: BlockFees = {
+  slot: 0,
+  payer_count: 0,
+  payers: Array.from({ length: TOP_IN_BLOCK }, (_, row) => ({
+    payer: `${row}`.repeat(9),
+    transactions: 10,
+    failed: 10,
+    priority: 0,
+    paid: 0,
+  })),
+  transactions: Array.from({ length: TOP_IN_BLOCK }, (_, row) => ({
+    signature: `${row}`.repeat(9),
+    payer: `${row}`.repeat(9),
+    failed: true,
+    priority: 0,
+    paid: 0,
+  })),
+};
+
+export function feesPaid(rows: readonly { paid: number }[]): number {
+  return rows.reduce((sum, row) => sum + row.paid, 0);
+}
+
+/** A share of the block's fees: one decimal under a tenth, whole above. */
+export function feeShare(paid: number, total: number): string {
+  if (total <= 0) return "—";
+  const share = paid / total;
+  return percent(share, share < 0.1 ? 1 : 0);
+}
+
+export function resultLabel(failed: boolean | null): string {
+  if (failed === null) return "—";
+  return failed ? "failed" : "ok";
+}
+
+/** The newest epoch's alerts. */
+export function alertCounts(summary: FeePayerSummary): { escalated: number; flagged: number } {
+  const newest = summary.epochs[0]?.epoch;
+  const current = summary.alerts.filter((row) => row.epoch === newest);
+  return {
+    escalated: current.filter((row) => row.alert === "escalated").length,
+    flagged: current.filter((row) => row.alert === "flagged").length,
+  };
+}
+
+export function alertText(row: FeePayerRow, newest: number): string {
+  const here = shareLabel(row.failed, row.transactions);
+  const away = shareLabel(row.away_failed, row.away_transactions);
+  const lead = row.epoch === newest ? "" : `Epoch ${count(row.epoch)}: `;
+  const since = row.flagged_slot === null ? "" : ` Since slot ${count(row.flagged_slot)}.`;
+  if (row.alert === "escalated") {
+    return `${lead}${here} failed in our slots against ${away} in other leaders' (${ratioLabel(row)}), ${priorityLabel(row.priority_failed)} priority on failed.${since}`;
+  }
+  if (row.away_transactions < MIN_AWAY_TRANSACTIONS) {
+    return `${lead}${here} failed in our slots; ${count(row.away_transactions)} of its txns seen elsewhere, too few to compare.${since}`;
+  }
+  return `${lead}${here} failed in our slots and ${away} elsewhere, so it is not escalated.${since}`;
+}

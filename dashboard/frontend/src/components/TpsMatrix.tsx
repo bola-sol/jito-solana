@@ -1,0 +1,91 @@
+import { useRef, type ReactElement } from "react";
+import {
+  ceilingFor,
+  columnRows,
+  geometry,
+  columnsFor,
+  meanSample,
+  ROWS_SHORT,
+  ROWS_TALL,
+  sampleSecond,
+  slotsFor,
+} from "../matrix";
+import type { TpsSample } from "../types";
+import { useWidth } from "../useWidth";
+
+const SERIES = ["vote", "failed", "success"] as const;
+
+/** `samples` is the window to draw, already cut to it. */
+export function TpsMatrix({ samples, short }: { samples: TpsSample[]; short?: boolean }): ReactElement {
+  const box = useRef<HTMLDivElement>(null);
+  const width = useWidth(box);
+
+  const rows = short ? ROWS_SHORT : ROWS_TALL;
+  const height = rows * (short ? 9 : 12);
+
+  return (
+    <div className="matrix" ref={box} style={{ height }}>
+      {width === null ? null : (
+        <Grid samples={samples} width={width} height={height} rows={rows} />
+      )}
+    </div>
+  );
+}
+
+function Grid({
+  samples,
+  width,
+  height,
+  rows,
+}: {
+  samples: TpsSample[];
+  width: number;
+  height: number;
+  rows: number;
+}) {
+  const columns = columnsFor(samples, slotsFor(width), sampleSecond, meanSample);
+  const peak = Math.max(...samples.map((sample) => sample.total), 0);
+  const ceiling = ceilingFor(peak);
+  const { pitch, rowHeight, dot } = geometry(width, height, columns.length, rows);
+
+  // One path per colour. The live column takes the brighter set, so the leading
+  // edge reads without a marker of its own.
+  const paths = new Map<string, string[]>();
+  const add = (key: string, x: number, y: number) => {
+    const square = `M${x.toFixed(2)} ${y.toFixed(2)}h${dot.toFixed(2)}v${dot.toFixed(2)}h-${dot.toFixed(2)}Z`;
+    const held = paths.get(key);
+    if (held) held.push(square);
+    else paths.set(key, [square]);
+  };
+
+  columns.forEach((sample, index) => {
+    const live = index === columns.length - 1;
+    const x = index * pitch + pitch / 2 - dot / 2;
+    const lit = sample
+      ? columnRows([sample.vote, sample.non_vote_failed, sample.non_vote_success], ceiling, rows)
+      : [0, 0, 0];
+
+    let row = 0;
+    for (const [series, count] of lit.entries()) {
+      for (let step = 0; step < count; step += 1, row += 1) {
+        const y = height - (row + 0.5) * rowHeight - dot / 2;
+        add(`${SERIES[series]}${live ? "-live" : ""}`, x, y);
+      }
+    }
+    // The unlit rows are drawn, not left out. The dark grid above the lit part
+    // is what says how much headroom there is.
+    for (; row < rows; row += 1) {
+      const y = height - (row + 0.5) * rowHeight - dot / 2;
+      add("off", x, y);
+    }
+  });
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img">
+      {["off", ...SERIES, ...SERIES.map((series) => `${series}-live`)].map((key) => {
+        const squares = paths.get(key);
+        return squares ? <path key={key} className={`matrix-${key}`} d={squares.join("")} /> : null;
+      })}
+    </svg>
+  );
+}
